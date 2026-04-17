@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Nested workspace packages are tracked in their own repositories
+packages/sp-base-relay/

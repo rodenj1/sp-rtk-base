@@ -1,0 +1,134 @@
+[project]
+name = "sp-base"
+version = "0.1.0"
+description = "Web UI and API for controlling and monitoring a u-blox GPS RTK base station relay"
+readme = "README.md"
+authors = [
+    { name = "John Roden", email = "rodenj@gmail.com" }
+]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.135.3",
+    "nicegui>=3.9.0",
+    "pydantic>=2.12.5",
+    "pyserial>=3.5",
+    "pyubx2>=1.2.43",
+    "pyyaml>=6.0.3",
+    "sp-base-relay",
+    "uvicorn>=0.42.0",
+]
+
+[project.scripts]
+sp-base = "sp_base.main:main"
+sp-base-gps-audit = "sp_base.cli.config_audit:main"
+
+[build-system]
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
+
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "--cov=src/sp_base",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=50",
+    "--strict-markers",
+    "--strict-config",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+norecursedirs = ["integration", "manual"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "conftest.py",
+    "*/ui/pages/*",
+    "*/ui/layout.py",
+    "*/ui/components/*",
+    "*/cli/config_audit.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "serial.*",
+    "prometheus_client.*",
+]
+ignore_missing_imports = true
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/node_modules", "**/__pycache__"]
+typeCheckingMode = "strict"
+deprecateTypingAliases = true
+reportDeprecated = "warning"
+extraPaths = ["src/"]
+
+[tool.uv.workspace]
+members = [
+    "packages/sp-base-relay",
+]
+
+[tool.uv.sources]
+sp-base-relay = { workspace = true, editable = true }
+
+[dependency-groups]
+dev = [
+    "pylance>=0.38.3",
+    "pyright>=1.1.407",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+]

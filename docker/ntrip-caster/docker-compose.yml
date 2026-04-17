@@ -1,0 +1,36 @@
+# Local NTRIP Caster for SP-Base development and testing.
+#
+# Supports both NTRIP v1.0 (SOURCE/ICY) and v2.0 (HTTP POST/GET).
+#
+# Usage:
+#   docker compose -f docker/ntrip-caster/docker-compose.yml up -d
+#
+# Verify:
+#   curl http://localhost:2101/
+#
+# Stop:
+#   docker compose -f docker/ntrip-caster/docker-compose.yml down
+#
+# Logs:
+#   docker compose -f docker/ntrip-caster/docker-compose.yml logs -f
+
+services:
+  ntrip-caster:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sp-base-ntrip-caster
+    ports:
+      - "2101:2101"
+    environment:
+      - CASTER_PORT=2101
+      - SERVER_PASSWORD=testpass
+      - LOG_LEVEL=debug
+    restart: unless-stopped
+    healthcheck:
+      # Simple TCP check — the caster should accept connections on port 2101
+      test: ["CMD-SHELL", "nc -z localhost 2101 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -4,7 +4,7 @@ Provides singleton service instances and initialization for the
 application's service layer:
 
 - ``ConfigService`` — YAML configuration persistence
-- ``RelayService`` — async wrapper around sp-base-relay RelayEngine
+- ``RelayService`` — async wrapper around sp-rtk-base-relay RelayEngine
 - ``EventBridge`` — thread-to-async event forwarding
 - ``MetricsService`` — Prometheus metrics from RelayStatus
 - ``DeviceService`` — GPS receiver connection & configuration (optional)

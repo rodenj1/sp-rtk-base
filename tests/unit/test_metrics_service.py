@@ -5,7 +5,7 @@ from __future__ import annotations
 from prometheus_client import CollectorRegistry
 
 from sp_base.services.metrics_service import MetricsService
-from sp_base_relay.core.status import (
+from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
     RelayStatus,
@@ -130,8 +130,14 @@ class TestMetricsServiceConstruction:
         svc = MetricsService(namespace="custom")
         status = _make_relay_status()
         svc.update_from_status(status)
-        val = _get_gauge_value(svc.registry, "custom_relay_running")
+        # Namespace prefixes sp-base-specific gauges (input/dest/etc.)
+        val = _get_gauge_value(svc.registry, "custom_input_connected")
         assert val == 1.0
+        # Relay engine gauges use the fixed sp_rtk_base_relay_* prefix,
+        # independent of this app's namespace.
+        assert (
+            _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 1.0
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -145,17 +151,17 @@ class TestUpdateFromStatus:
     def test_global_running(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(running=True))
-        assert _get_gauge_value(svc.registry, "sp_base_relay_running") == 1.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 1.0
 
     def test_global_not_running(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(running=False))
-        assert _get_gauge_value(svc.registry, "sp_base_relay_running") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 0.0
 
     def test_uptime(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(uptime=99.5))
-        assert _get_gauge_value(svc.registry, "sp_base_relay_uptime_seconds") == 99.5
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_uptime_seconds") == 99.5
 
     def test_input_connected(self) -> None:
         svc = MetricsService()
@@ -282,16 +288,16 @@ class TestUpdateIdle:
         svc = MetricsService()
         # First set running
         svc.update_from_status(_make_relay_status(running=True))
-        assert _get_gauge_value(svc.registry, "sp_base_relay_running") == 1.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 1.0
         # Then go idle
         svc.update_idle()
-        assert _get_gauge_value(svc.registry, "sp_base_relay_running") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 0.0
 
     def test_idle_zeros_uptime(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(uptime=120.0))
         svc.update_idle()
-        assert _get_gauge_value(svc.registry, "sp_base_relay_uptime_seconds") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_uptime_seconds") == 0.0
 
     def test_idle_sets_no_data(self) -> None:
         svc = MetricsService()

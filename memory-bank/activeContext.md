@@ -1,6 +1,35 @@
 # Active Context
 
-## Latest Change: Graceful Shutdown Fix — Ctrl+C Hangs (2026-04-17)
+## Latest Change: Embedded Relay Package Renamed `sp-base-relay` → `sp-rtk-base-relay` (2026-05-14)
+
+### Summary
+The embedded relay-engine package was renamed from `sp-base-relay` to `sp-rtk-base-relay` (directory + distribution name + import package `sp_base_relay` → `sp_rtk_base_relay`). All sp-base references were updated to match.
+
+### Files Updated in sp-base (outside packages/)
+- **Source (7)**: `src/sp_base/services/{relay_service,event_bridge,metrics_service,__init__}.py`, `src/sp_base/models/config_models.py`, `src/sp_base/ui/pages/{input,settings}.py`
+- **Tests (5)**: `tests/unit/test_{relay_service,event_bridge,metrics_service,api_metrics,config_models}.py`
+- **Docs**: `README.md`, `docs/relay-engine-api-spec.md`, `docs/ublox_gps_webui_planning.md`, `tools/test_ntrip_caster.py`
+- **Memory bank (6)**: `projectbrief.md`, `productContext.md`, `systemPatterns.md`, `techContext.md`, `activeContext.md`, `progress.md`
+
+### Prometheus Gauge Rename
+Two relay-engine-scoped gauges had names tied to the relay package and were updated:
+- `sp_base_relay_running` → `sp_rtk_base_relay_running`
+- `sp_base_relay_uptime_seconds` → `sp_rtk_base_relay_uptime_seconds`
+
+In `MetricsService` these now use literal names (not `f"{ns}_..."`) since they represent the relay engine rather than the sp-base app. The remaining sp-base-specific gauges (`sp_base_input_*`, `sp_base_dest_*`, etc.) still use the configurable `namespace` prefix (defaults to `sp_base`). The `test_custom_namespace` test was updated to assert this split contract.
+
+### Verification
+- `uv sync` — clean (package resolved via path dependency `packages/sp-rtk-base-relay`)
+- `uv run pytest tests/unit -q` — **480 passed**
+- `uv run pyright src/sp_base` — **0 errors, 0 warnings**
+- `grep -r "sp_base_relay\|sp-base-relay"` outside `packages/` — no matches
+
+### Operator Impact
+**Breaking for Grafana / alerting**: anyone scraping `/metrics` with dashboards or PromQL alerts referencing `sp_base_relay_running` or `sp_base_relay_uptime_seconds` must rename those queries to `sp_rtk_base_relay_*`. The shipped Grafana dashboard template lives in `packages/sp-rtk-base-relay/templates/grafana_dashboard.json` and was already updated as part of the package rename.
+
+---
+
+## Previous: Graceful Shutdown Fix — Ctrl+C Hangs (2026-04-17)
 
 ### Problem
 After the previous bluetooth disconnect fix, the application would hang on Ctrl+C, requiring multiple SIGINT signals to kill the process. Background threads (relay engine, event bridge, NTRIP destinations, bluetooth D-Bus loop) kept running during uvicorn's shutdown sequence because there was no `on_shutdown` handler. Additionally, the WebSocket event handler had a 30-second timeout that blocked graceful shutdown, and the NTRIP socket was set to infinite blocking mode.
@@ -26,7 +55,7 @@ After the previous bluetooth disconnect fix, the application would hang on Ctrl+
 ### Files Changed
 - `src/sp_base/app.py` — Added `_shutdown()` handler with `app.on_shutdown()`
 - `src/sp_base/api/events.py` — WebSocket timeout 30s → 5s
-- `packages/sp-base-relay/src/sp_base_relay/core/destinations/ntrip_destination.py` — Socket timeout `None` → `30.0`
+- `packages/sp-rtk-base-relay/src/sp_rtk_base_relay/core/destinations/ntrip_destination.py` — Socket timeout `None` → `30.0`
 
 ### Tests: All pass (21 sp-base, 77 relay)
 
@@ -66,10 +95,10 @@ When the saved config has input source=bluetooth but the paired device was disco
 - `test_disconnect_without_connected_mac_still_closes_manager` — cleanup path without MAC
 
 ### Files Changed
-- `packages/sp-base-relay/src/sp_base_relay/core/bluetooth_manager.py` — cache invalidation, recovery scan, retry logic
-- `packages/sp-base-relay/src/sp_base_relay/core/input_sources/bluetooth_input.py` — disconnect cleanup
-- `packages/sp-base-relay/tests/unit/test_bluetooth_manager.py` — 8 new tests
-- `packages/sp-base-relay/tests/unit/test_bluetooth_input.py` — 3 new tests
+- `packages/sp-rtk-base-relay/src/sp_rtk_base_relay/core/bluetooth_manager.py` — cache invalidation, recovery scan, retry logic
+- `packages/sp-rtk-base-relay/src/sp_rtk_base_relay/core/input_sources/bluetooth_input.py` — disconnect cleanup
+- `packages/sp-rtk-base-relay/tests/unit/test_bluetooth_manager.py` — 8 new tests
+- `packages/sp-rtk-base-relay/tests/unit/test_bluetooth_input.py` — 3 new tests
 
 ### Relay Package Tests: 55 passed (up from 44)
 
@@ -112,7 +141,7 @@ Enhanced the Input page serial source with the same port detection used on the G
 
 ### Bluetooth Discovery + Test Connection on Input Page
 Added interactive Bluetooth device management when source=bluetooth:
-- **Scan for Devices** button — creates a `BluetoothManager` (from sp-base-relay) and scans for ~8 seconds
+- **Scan for Devices** button — creates a `BluetoothManager` (from sp-rtk-base-relay) and scans for ~8 seconds
 - **Discovered device cards** — shows name, MAC address, "Paired" badge; click to auto-fill address field
 - **PIN Code field** — defaults to "0000", editable for devices with different PINs
 - **Test Connection button** — calls `BluetoothManager.ensure_device_ready()` (pair + trust + RFCOMM discovery)
@@ -123,7 +152,7 @@ Added interactive Bluetooth device management when source=bluetooth:
 
 ### Implementation Details
 - **Approach A1**: Reused `GpsReceiverDriver.list_serial_ports()` directly — no new backend needed
-- **Approach B1**: Imported `BluetoothManager` from sp-base-relay directly — no new service wrapper
+- **Approach B1**: Imported `BluetoothManager` from sp-rtk-base-relay directly — no new service wrapper
 - TCP source fields remain unchanged (simple host + port text inputs)
 - The old generic `FieldDef` pattern replaced with source-specific builders: `_build_tcp_fields()`, `_build_serial_fields()`, `_build_bluetooth_fields()`
 - `_save_input()` gathers values differently per source type (text inputs, select widgets, bt_state dict)

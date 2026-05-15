@@ -7,14 +7,14 @@
 - **UV Package Manager**: Fast Python package and project manager
 - **FastAPI**: Async REST API framework with automatic OpenAPI docs
 - **NiceGUI**: Python-native web UI framework (server-side rendering, no JS build)
-- **sp-base-relay v2.1**: RTCM relay engine (PyPI dependency)
+- **sp-rtk-base-relay v2.1**: RTCM relay engine (PyPI dependency)
 - **Pydantic v2**: Data validation and API models (included with FastAPI)
 - **PyYAML**: Configuration persistence
 
 ### Key Dependencies (as of April 2026)
 ```toml
 [project.dependencies]
-sp-base-relay = ">=2.1.0"       # RelayEngine API for RTCM relay
+sp-rtk-base-relay = ">=2.1.0"       # RelayEngine API for RTCM relay
 fastapi = ">=0.135.0"           # REST API + WebSocket (latest: 0.135.1)
 nicegui = ">=3.9.0"             # Python-native browser UI (latest: 3.9.0)
 uvicorn = ">=0.42.0"            # ASGI server (latest: 0.42.0)
@@ -37,7 +37,7 @@ dev = [
 ```
 pyubx2 >= 1.2.60       # u-blox UBX protocol for GPS configuration
 pyubxutils              # GPS config backup/restore/compare
-pyserial                # Serial port access (already a dep of sp-base-relay)
+pyserial                # Serial port access (already a dep of sp-rtk-base-relay)
 ```
 
 ## Development Setup
@@ -74,7 +74,7 @@ sp-base/                           # Monorepo root
 │   ├── techContext.md
 │   └── progress.md
 ├── docs/                          # Architecture & planning docs
-│   ├── relay-engine-api-spec.md   # sp-base-relay API reference
+│   ├── relay-engine-api-spec.md   # sp-rtk-base-relay API reference
 │   ├── ublox_gps_webui_planning.md # Full project planning
 │   └── Tools for Mass Configuration & Back.md
 ├── src/sp_base/                   # Main package source
@@ -113,19 +113,19 @@ sp-base/                           # Monorepo root
 │   ├── unit/
 │   └── integration/
 └── packages/                      # Local dev copies
-    └── sp-base-relay/             # sp-base-relay source (dev reference)
+    └── sp-rtk-base-relay/             # sp-rtk-base-relay source (dev reference)
 ```
 
-## sp-base-relay API Surface (v2.1)
+## sp-rtk-base-relay API Surface (v2.1)
 
 The primary integration point. Full spec in `docs/relay-engine-api-spec.md`.
 
 ### Core Imports
 ```python
-from sp_base_relay import RelayEngine
-from sp_base_relay import EventBus, EventSubscription, RelayEvent
-from sp_base_relay import RelayStatus, DestinationStatus, InputStatus
-from sp_base_relay.config import (
+from sp_rtk_base_relay import RelayEngine
+from sp_rtk_base_relay import EventBus, EventSubscription, RelayEvent
+from sp_rtk_base_relay import RelayStatus, DestinationStatus, InputStatus
+from sp_rtk_base_relay.config import (
     InputConfig,
     DestinationConfig,
     DestinationFilterConfig,
@@ -133,7 +133,7 @@ from sp_base_relay.config import (
     NtripDestinationConfig,
     TcpServerDestinationConfig,
 )
-from sp_base_relay.exceptions import ServiceError, ConfigurationError
+from sp_rtk_base_relay.exceptions import ServiceError, ConfigurationError
 ```
 
 ### Key API Methods

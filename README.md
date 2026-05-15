@@ -2,7 +2,7 @@
 
 Web UI and REST API for configuring and monitoring a u-blox GPS RTK base station and its RTCM correction data relay.
 
-SP-Base wraps the [sp-base-relay](packages/sp-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
+SP-Base wraps the [sp-rtk-base-relay](packages/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
 
 ## Features
 
@@ -171,8 +171,8 @@ scrape_configs:
 ```
 
 Key metrics include:
-- `sp_base_relay_running` — relay engine state (1/0)
-- `sp_base_relay_uptime_seconds` — engine uptime
+- `sp_rtk_base_relay_running` — relay engine state (1/0)
+- `sp_rtk_base_relay_uptime_seconds` — engine uptime
 - `sp_base_input_connected` — input source connection state
 - `sp_base_input_bytes_received` — total bytes from input
 - `sp_base_active_destinations` / `sp_base_total_destinations`
@@ -241,7 +241,7 @@ sp-base/
 │   ├── integration/      # End-to-end tests with real relay
 │   └── fixtures/         # TCP simulators, mock NTRIP caster, test helpers
 ├── packages/
-│   └── sp-base-relay/    # RTCM relay engine (workspace dependency)
+│   └── sp-rtk-base-relay/    # RTCM relay engine (workspace dependency)
 ├── docker/
 │   └── ntrip-caster/     # Local NTRIP caster for dev/testing
 ├── docs/                 # Architecture, planning, device config reference
@@ -252,7 +252,7 @@ sp-base/
 
 SP-Base is built on **FastAPI** (REST API + WebSocket) and **NiceGUI** (browser UI) sharing a single ASGI server on port 8080. Core components:
 
-- **sp-base-relay** — RTCM relay engine with TCP / serial / Bluetooth inputs and SurePath / NTRIP / TCP Server outputs, hot destination management, and in-process event bus
+- **sp-rtk-base-relay** — RTCM relay engine with TCP / serial / Bluetooth inputs and SurePath / NTRIP / TCP Server outputs, hot destination management, and in-process event bus
 - **GPS driver layer** — abstract `GpsReceiverDriver` base with a u-blox implementation via **PyUBX2** (UBX-MON-VER, CFG-VALSET/VALGET, NAV-PVT, NAV-SVIN, CFG-GNSS, survey-in, fixed-base, RTCM selection, save-to-flash)
 - **Services** — async orchestrators bridging the synchronous relay engine and GPS driver to FastAPI's event loop via `asyncio.to_thread()` and daemon-thread event queues
 - **Operator console** — 6-page workflow (Dashboard → Input → Outputs → Survey-In → Settings → Advanced GPS) driven by a shared navigation layout; the browser renders status and requests actions, while authoritative runtime state lives in the relay engine and backend services

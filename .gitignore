@@ -207,4 +207,4 @@ marimo/_lsp/
 __marimo__/
 
 # Nested workspace packages are tracked in their own repositories
-packages/sp-base-relay/
+packages/sp-rtk-base-relay/

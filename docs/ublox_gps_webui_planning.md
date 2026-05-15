@@ -21,7 +21,7 @@ This document captures the current planning decisions, architecture direction, r
 
 Create a maintainable system with **two clear layers**:
 
-1. **sp-base-relay** (existing package, enhanced in v2.1)
+1. **sp-rtk-base-relay** (existing package, enhanced in v2.1)
    - Owns RTCM data relay: input sources → fan-out → multiple output destinations
    - Provides `RelayEngine` facade API for programmatic control
    - Emits events via EventBus for real-time status updates
@@ -39,23 +39,23 @@ Create a maintainable system with **two clear layers**:
 
 ## Architecture Overview — Corrected
 
-### Key Architectural Decision: sp-base-relay is a Dependency
+### Key Architectural Decision: sp-rtk-base-relay is a Dependency
 
-sp-base-relay is **not** being renamed or restructured. It remains its own package with the same purpose: **relay RTCM correction data from GPS input sources to multiple output destinations**.
+sp-rtk-base-relay is **not** being renamed or restructured. It remains its own package with the same purpose: **relay RTCM correction data from GPS input sources to multiple output destinations**.
 
-The web UI imports sp-base-relay as a Python dependency and controls it **in-process** via the `RelayEngine` API.
+The web UI imports sp-rtk-base-relay as a Python dependency and controls it **in-process** via the `RelayEngine` API.
 
 ### Responsibility Separation
 
 | Responsibility | Owner |
 |---|---|
-| RTCM data relay (input → fan-out → destinations) | **sp-base-relay** |
-| Input source management (serial, TCP, Bluetooth) | **sp-base-relay** |
-| Destination management (SurePath, NTRIP, TCP server) | **sp-base-relay** |
-| Per-destination message filtering | **sp-base-relay** |
-| Prometheus metrics export | **sp-base-relay** |
-| Event bus & status snapshots | **sp-base-relay** (v2.1) |
-| Dynamic destination add/remove/start/stop | **sp-base-relay** (v2.1) |
+| RTCM data relay (input → fan-out → destinations) | **sp-rtk-base-relay** |
+| Input source management (serial, TCP, Bluetooth) | **sp-rtk-base-relay** |
+| Destination management (SurePath, NTRIP, TCP server) | **sp-rtk-base-relay** |
+| Per-destination message filtering | **sp-rtk-base-relay** |
+| Prometheus metrics export | **sp-rtk-base-relay** |
+| Event bus & status snapshots | **sp-rtk-base-relay** (v2.1) |
+| Dynamic destination add/remove/start/stop | **sp-rtk-base-relay** (v2.1) |
 | u-blox device configuration (UBX protocol) | **gps-webui** (via PyUBX2) |
 | Base station mode setup (survey-in, fixed) | **gps-webui** |
 | RTCM message selection on the GPS device | **gps-webui** (via PyUBX2) |
@@ -69,7 +69,7 @@ The web UI imports sp-base-relay as a Python dependency and controls it **in-pro
 
 ```
 gps-webui
-  ├── depends on: sp-base-relay  (RelayEngine API for RTCM relay)
+  ├── depends on: sp-rtk-base-relay  (RelayEngine API for RTCM relay)
   ├── depends on: pyubx2         (u-blox UBX protocol messages)
   ├── depends on: pyubxutils     (backup/restore/compare configs)
   ├── depends on: fastapi        (REST API backend)
@@ -77,7 +77,7 @@ gps-webui
   └── depends on: pyserial       (serial port access for GPS config)
 ```
 
-**sp-base-relay never depends on gps-webui.** The dependency is strictly one-way.
+**sp-rtk-base-relay never depends on gps-webui.** The dependency is strictly one-way.
 
 ### System Architecture Diagram
 
@@ -97,7 +97,7 @@ gps-webui
 │  ├── NiceGUI operator pages                                          │
 │  ├── Orchestration service layer                                     │
 │  │   ├── DeviceService (serial port ownership, UBX config)          │
-│  │   ├── RelayService (wraps sp-base-relay RelayEngine)             │
+│  │   ├── RelayService (wraps sp-rtk-base-relay RelayEngine)             │
 │  │   └── ProfileService (saved configs, persistence)                │
 │  └── u-blox config helpers (built on PyUBX2)                        │
 │      ├── configure_survey_in(...)                                    │
@@ -107,7 +107,7 @@ gps-webui
 └───────┬────────────────────────────┬────────────────────────────────┘
         │ Python API (in-process)    │ Serial/USB (when relay stopped)
 ┌───────▼──────────────┐    ┌───────▼──────────────────────────┐
-│  sp-base-relay v2.1  │    │  u-blox GPS Receiver (ZED-F9P)   │
+│  sp-rtk-base-relay v2.1  │    │  u-blox GPS Receiver (ZED-F9P)   │
 │  ├── RelayEngine     │    │  ├── RTCM output (serial/USB)    │
 │  ├── BroadcastHub    │◄───│  ├── UBX config interface        │
 │  ├── EventBus        │    │  └── NMEA position data          │
@@ -123,13 +123,13 @@ gps-webui
 
 ## Resolved Design Decisions
 
-### Decision 1: sp-base-relay stays sp-base-relay
-**Decision**: sp-base-relay is not renamed. It remains a standalone relay package enhanced in v2.1 to be embeddable.
+### Decision 1: sp-rtk-base-relay stays sp-rtk-base-relay
+**Decision**: sp-rtk-base-relay is not renamed. It remains a standalone relay package enhanced in v2.1 to be embeddable.
 
 **Reasoning**: The package already has a clear, well-tested purpose. Renaming or restructuring it would cause unnecessary disruption. Instead, v2.1 adds a `RelayEngine` facade that makes it easy to control programmatically.
 
 ### Decision 2: In-process integration (DR-8)
-**Decision**: gps-webui imports sp-base-relay as a Python dependency and controls it in the same process.
+**Decision**: gps-webui imports sp-rtk-base-relay as a Python dependency and controls it in the same process.
 
 **Reasoning**:
 - Simplest integration — direct Python method calls
@@ -151,7 +151,7 @@ gps-webui
 **Persistence**: The UI can serialize config to YAML for persistence (saving settings across restarts), but YAML is not required for runtime operation.
 
 ### Decision 4: Polling + Event Bus for status (DR-10)
-**Decision**: The UI uses both snapshot polling and a push-based event stream from sp-base-relay.
+**Decision**: The UI uses both snapshot polling and a push-based event stream from sp-rtk-base-relay.
 
 **Implementation**:
 - `RelayEngine.get_status()` → returns typed `RelayStatus` snapshot (polled ~1s by UI)
@@ -188,16 +188,16 @@ gps-webui
 5. User can configure GPS device again
 ```
 
-**Reasoning**: Dual ownership of a serial port causes race conditions. Clean separation avoids complex synchronization. The existing sp-base-relay engine already supports clean start/stop lifecycle.
+**Reasoning**: Dual ownership of a serial port causes race conditions. Clean separation avoids complex synchronization. The existing sp-rtk-base-relay engine already supports clean start/stop lifecycle.
 
 ### Decision 8: Separate packages, one repository initially
-**Decision**: gps-webui is a separate Python package from sp-base-relay. During development, both may live in the same repository for convenience.
+**Decision**: gps-webui is a separate Python package from sp-rtk-base-relay. During development, both may live in the same repository for convenience.
 
 **Repository layout** (initial):
 ```
 repo/
   packages/
-    sp-base-relay/    (existing, enhanced to v2.1)
+    sp-rtk-base-relay/    (existing, enhanced to v2.1)
     gps-webui/        (new)
 ```
 
@@ -300,7 +300,7 @@ Step 6: Start Relay
   - UI disconnects PyUBX2 from serial port
   - UI creates RelayEngine with serial input config
   - UI calls engine.start() with destination configs
-  - Relay begins: GPS → sp-base-relay → SurePath + RTK2go
+  - Relay begins: GPS → sp-rtk-base-relay → SurePath + RTK2go
 
 Step 7: Monitor
   - Status page shows live:
@@ -322,14 +322,14 @@ Step 9: Reconfigure (if needed)
 
 ---
 
-## sp-base-relay RelayEngine API Surface
+## sp-rtk-base-relay RelayEngine API Surface
 
 This is the exact API that gps-webui will use. Defined in detail in `docs/v2.1-architecture-plan.md`.
 
 ### Lifecycle
 ```python
-from sp_base_relay.engine import RelayEngine
-from sp_base_relay.config import InputConfig, DestinationConfig
+from sp_rtk_base_relay.engine import RelayEngine
+from sp_rtk_base_relay.config import InputConfig, DestinationConfig
 
 engine = RelayEngine(input_config=InputConfig(source="serial", config={...}))
 engine.start(destinations=[dest_config_1, dest_config_2])
@@ -347,8 +347,8 @@ engine.get_destination_names()                # List all destinations
 
 ### Status & Events
 ```python
-from sp_base_relay.core.status import RelayStatus
-from sp_base_relay.core.events import RelayEvent, EventSubscription
+from sp_rtk_base_relay.core.status import RelayStatus
+from sp_rtk_base_relay.core.events import RelayEvent, EventSubscription
 
 status: RelayStatus = engine.get_status()     # Typed snapshot
 events: list[RelayEvent] = engine.get_recent_events(count=50)
@@ -382,7 +382,7 @@ gps-webui/
         status_page.py         # Live status, events, throughput
     services/
       device_service.py        # Serial port + PyUBX2 GPS configuration
-      relay_service.py         # Wraps sp-base-relay RelayEngine
+      relay_service.py         # Wraps sp-rtk-base-relay RelayEngine
       profile_service.py       # Saved configs, persistence
     device/
       ublox_controller.py      # UBX config helpers (survey-in, fixed, RTCM)
@@ -401,7 +401,7 @@ gps-webui/
 The browser should act as an **operator console**, not the source of truth.
 
 The authoritative runtime state lives in:
-- **sp-base-relay** for relay state (via RelayEngine / EventBus)
+- **sp-rtk-base-relay** for relay state (via RelayEngine / EventBus)
 - **gps-webui backend** for device configuration state
 
 The browser:
@@ -413,13 +413,13 @@ The browser:
 
 ## Runtime Model
 
-### 1. Snapshot State (from sp-base-relay)
+### 1. Snapshot State (from sp-rtk-base-relay)
 `RelayEngine.get_status()` returns a frozen `RelayStatus` dataclass:
 - Input source: connected/disconnected, source type, bytes/sec
 - Per-destination: connected, bytes_sent, errors, queue_depth, last_error
 - Hub: running, uptime, frames_parsed, no_data_warnings
 
-### 2. Event Stream (from sp-base-relay)
+### 2. Event Stream (from sp-rtk-base-relay)
 `RelayEngine.subscribe_events()` provides real-time `RelayEvent` objects:
 - `hub.started`, `hub.stopped`
 - `destination.connected`, `destination.error`, `destination.added`, `destination.removed`
@@ -432,7 +432,7 @@ When relay is stopped and PyUBX2 has the serial port:
 - Satellite count (numSV)
 - Survey-in progress (NAV-SVIN: dur, meanAcc, active, valid)
 
-### 4. Prometheus Metrics (from sp-base-relay)
+### 4. Prometheus Metrics (from sp-rtk-base-relay)
 Per-destination counters/gauges for monitoring and alerting.
 
 ---
@@ -472,7 +472,7 @@ Per-destination counters/gauges for monitoring and alerting.
 
 ## Testing Direction
 
-### sp-base-relay tests (existing + v2.1 additions)
+### sp-rtk-base-relay tests (existing + v2.1 additions)
 - All existing 956+ tests unchanged
 - New v2.1 tests (~200): EventBus, RelayStatus, dynamic destinations, RelayEngine facade
 
@@ -499,7 +499,7 @@ Per-destination counters/gauges for monitoring and alerting.
 ## Open Questions Remaining
 
 ### 1. Threading vs asyncio boundary in gps-webui
-sp-base-relay uses threads internally. FastAPI is async. The gps-webui service layer needs to bridge:
+sp-rtk-base-relay uses threads internally. FastAPI is async. The gps-webui service layer needs to bridge:
 - Thread-based EventSubscription → async WebSocket push
 - Sync RelayEngine calls → async FastAPI endpoints
 
@@ -533,7 +533,7 @@ Decision deferred to later planning.
 
 ## Design Patterns In Use
 
-### In sp-base-relay (existing + v2.1)
+### In sp-rtk-base-relay (existing + v2.1)
 | Pattern | Usage |
 |---|---|
 | **Strategy** | Input sources (InputSource ABC) and destinations (BaseDestination ABC) |
@@ -556,7 +556,7 @@ Decision deferred to later planning.
 
 ## Proposed Near-Term Next Steps
 
-### Step 1: sp-base-relay v2.1 (prerequisite)
+### Step 1: sp-rtk-base-relay v2.1 (prerequisite)
 Implement the v2.1 enhancements as defined in `docs/v2.1-architecture-plan.md`:
 1. Event Bus system
 2. Typed status snapshots
@@ -597,12 +597,12 @@ Complete the status page:
 
 The architecture direction is:
 
-- **sp-base-relay** remains the standalone RTCM relay engine, enhanced in v2.1 with embeddable API, events, and dynamic destination management
-- **gps-webui** is a new separate package that depends on sp-base-relay for relay functionality and PyUBX2 for GPS device configuration
+- **sp-rtk-base-relay** remains the standalone RTCM relay engine, enhanced in v2.1 with embeddable API, events, and dynamic destination management
+- **gps-webui** is a new separate package that depends on sp-rtk-base-relay for relay functionality and PyUBX2 for GPS device configuration
 - **FastAPI + NiceGUI** for the web layer — Python-native, backend-first philosophy
-- **In-process integration** — gps-webui imports and controls sp-base-relay directly via RelayEngine
-- **Clean separation** — relay logic stays in sp-base-relay, device config stays in gps-webui
+- **In-process integration** — gps-webui imports and controls sp-rtk-base-relay directly via RelayEngine
+- **Clean separation** — relay logic stays in sp-rtk-base-relay, device config stays in gps-webui
 - **Serial port handoff** — relay owns the port when running, PyUBX2 owns it when relay is stopped
 - **Event-driven status** — EventBus for real-time updates, snapshot polling for current state
 
-This architecture preserves sp-base-relay's standalone utility while making it a powerful foundation for the GPS base station management UI.
+This architecture preserves sp-rtk-base-relay's standalone utility while making it a powerful foundation for the GPS base station management UI.

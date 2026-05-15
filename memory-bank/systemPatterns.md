@@ -33,7 +33,7 @@ SP-Base follows a **layered architecture** with clear separation between UI, API
 │  └───────────────────────────┬───────────────────────────┘    │
 │                              │ Python API (in-process)        │
 │  ┌───────────────────────────▼───────────────────────────┐    │
-│  │  sp-base-relay v2.1 (PyPI dependency)                  │    │
+│  │  sp-rtk-base-relay v2.1 (PyPI dependency)                  │    │
 │  │  ├── RelayEngine (facade API)                          │    │
 │  │  ├── BroadcastHub (fan-out to destinations)            │    │
 │  │  ├── EventBus (real-time events + ring buffer)         │    │
@@ -54,7 +54,7 @@ UI (NiceGUI pages) → API (FastAPI routes) → Services → RelayEngine
 Each layer only talks to the layer below it. The UI never calls RelayEngine directly.
 
 ### 2. Adapter Pattern — RelayService
-**Purpose**: Wrap sp-base-relay's RelayEngine to provide app-level state management and async bridging.
+**Purpose**: Wrap sp-rtk-base-relay's RelayEngine to provide app-level state management and async bridging.
 
 ```python
 class RelayService:
@@ -72,7 +72,7 @@ class RelayService:
 ```
 
 ### 3. Event Bridge Pattern — EventSubscription → WebSocket
-**Purpose**: Bridge sp-base-relay's threaded EventSubscription to async WebSocket push for browser clients.
+**Purpose**: Bridge sp-rtk-base-relay's threaded EventSubscription to async WebSocket push for browser clients.
 
 ```python
 class EventBridge:
@@ -138,7 +138,7 @@ def get_relay_service() -> RelayService:
 │    ├── NiceGUI page rendering                    │
 │    └── ui.timer callbacks (status polling)       │
 │                                                  │
-│  RelayEngine threads (managed by sp-base-relay): │
+│  RelayEngine threads (managed by sp-rtk-base-relay): │
 │    ├── Input thread (serial/TCP reader)          │
 │    ├── Broadcast thread (RTCM router)            │
 │    └── Destination threads × N                   │
@@ -159,7 +159,7 @@ def get_relay_service() -> RelayService:
 ### Dependency Graph
 ```
 sp-base
-  ├── sp-base-relay (>=2.1.0)  — RelayEngine, EventBus, config dataclasses
+  ├── sp-rtk-base-relay (>=2.1.0)  — RelayEngine, EventBus, config dataclasses
   ├── fastapi                    — REST API + WebSocket
   ├── nicegui                    — Browser UI (shares ASGI server with FastAPI)
   ├── uvicorn                    — ASGI server
@@ -171,7 +171,7 @@ sp-base
 ```
 main.py (entry point)
   ├── app.py (FastAPI app factory + NiceGUI init)
-  │   ├── api/relay.py      → services/relay_service.py → sp_base_relay.RelayEngine
+  │   ├── api/relay.py      → services/relay_service.py → sp_rtk_base_relay.RelayEngine
   │   ├── api/outputs.py    → services/relay_service.py + services/config_service.py
   │   ├── api/inputs.py     → services/config_service.py
   │   ├── api/events.py     → services/relay_service.py
@@ -181,17 +181,17 @@ main.py (entry point)
   │       ├── outputs.py    → api endpoints
   │       └── settings.py   → api endpoints
   └── services/
-      ├── relay_service.py   → sp_base_relay.RelayEngine (in-process)
+      ├── relay_service.py   → sp_rtk_base_relay.RelayEngine (in-process)
       ├── config_service.py  → YAML file I/O
-      └── event_bridge.py    → sp_base_relay.EventSubscription → asyncio.Queue
+      └── event_bridge.py    → sp_rtk_base_relay.EventSubscription → asyncio.Queue
 ```
 
 ## Architecture Decisions (Phase 2+)
 
 ### DR-15: Device Info/Config Lives in sp-base
-- **Decision**: All PyUBX2 interaction (device querying, GPS configuration) belongs in sp-base, NOT sp-base-relay
-- **Rationale**: sp-base-relay is a pure RTCM relay. Adding PyUBX2 would add unnecessary complexity and an unrelated dependency.
-- **Impact**: sp-base-relay stays focused; sp-base owns all u-blox device management
+- **Decision**: All PyUBX2 interaction (device querying, GPS configuration) belongs in sp-base, NOT sp-rtk-base-relay
+- **Rationale**: sp-rtk-base-relay is a pure RTCM relay. Adding PyUBX2 would add unnecessary complexity and an unrelated dependency.
+- **Impact**: sp-rtk-base-relay stays focused; sp-base owns all u-blox device management
 
 ### DR-16: Two-Port Architecture Support
 - **Separate ports** (e.g., FTDI UART for UBX, Bluetooth for RTCM): No relay interruption needed for device queries/config
@@ -201,7 +201,7 @@ main.py (entry point)
 #### Config A: Separate Ports (Preferred — No Relay Interruption)
 ```
 UBX Config Port: /dev/ttyUSB0 (FTDI FT232 @ 57600)  →  PyUBX2 (anytime)
-RTCM Relay Port: Bluetooth serial                     →  sp-base-relay (continuous)
+RTCM Relay Port: Bluetooth serial                     →  sp-rtk-base-relay (continuous)
 ```
 - sp-base can query/configure GPS at any time without stopping relay
 - Relay runs uninterrupted on a dedicated RTCM output port
@@ -209,7 +209,7 @@ RTCM Relay Port: Bluetooth serial                     →  sp-base-relay (contin
 
 #### Config B: Shared Port (Requires Serial Handoff)
 ```
-Shared Port: /dev/ttyACM0 @ 115200  →  Either PyUBX2 OR sp-base-relay
+Shared Port: /dev/ttyACM0 @ 115200  →  Either PyUBX2 OR sp-rtk-base-relay
 ```
 - sp-base must: `engine.stop()` → PyUBX2 session → `engine.start()`
 - RelayEngine.stop() is synchronous, releases port immediately
@@ -221,7 +221,7 @@ Shared Port: /dev/ttyACM0 @ 115200  →  Either PyUBX2 OR sp-base-relay
 
 ```
 Relay stopped  → sp-base owns serial port (PyUBX2 for GPS config)
-Relay running  → sp-base-relay owns serial port (data relay)
+Relay running  → sp-rtk-base-relay owns serial port (data relay)
 ```
 
 ## Phase 2+ Startup Flow

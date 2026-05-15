@@ -3,7 +3,7 @@
 **Version**: 2.1.0  
 **Date**: March 2026  
 **Audience**: GPS Base Station Web UI (gps-webui) developers  
-**Package**: `sp-base-relay`
+**Package**: `sp-rtk-base-relay`
 
 ---
 
@@ -26,23 +26,23 @@
 ### Install as dependency
 
 ```bash
-uv add sp-base-relay          # or: pip install sp-base-relay
+uv add sp-rtk-base-relay          # or: pip install sp-rtk-base-relay
 ```
 
 ### Primary imports (public API)
 
 ```python
 # The engine facade — this is the main entry point
-from sp_base_relay import RelayEngine
+from sp_rtk_base_relay import RelayEngine
 
 # Event system
-from sp_base_relay import EventBus, EventSubscription, RelayEvent
+from sp_rtk_base_relay import EventBus, EventSubscription, RelayEvent
 
 # Status snapshots
-from sp_base_relay import RelayStatus, DestinationStatus, InputStatus
+from sp_rtk_base_relay import RelayStatus, DestinationStatus, InputStatus
 
 # Configuration dataclasses (build programmatically — no YAML needed)
-from sp_base_relay.config import (
+from sp_rtk_base_relay.config import (
     InputConfig,
     DestinationConfig,
     DestinationFilterConfig,
@@ -52,7 +52,7 @@ from sp_base_relay.config import (
 )
 
 # Exceptions
-from sp_base_relay.exceptions import (
+from sp_rtk_base_relay.exceptions import (
     ServiceError,
     ConfigurationError,
 )
@@ -61,7 +61,7 @@ from sp_base_relay.exceptions import (
 ### Package version
 
 ```python
-from sp_base_relay import __version__  # "2.1.0"
+from sp_rtk_base_relay import __version__  # "2.1.0"
 ```
 
 ---
@@ -258,7 +258,7 @@ dest_tcp = DestinationConfig(
 `RelayEngine` is the **single entry point** for all relay operations. Import it from the package root.
 
 ```python
-from sp_base_relay import RelayEngine
+from sp_rtk_base_relay import RelayEngine
 ```
 
 ### 3.1 Constructor
@@ -470,7 +470,7 @@ class RelayEvent:
 
 Import constants from:
 ```python
-from sp_base_relay.core.events import (
+from sp_rtk_base_relay.core.events import (
     ENGINE_STARTED, ENGINE_STOPPED,
     HUB_STARTED, HUB_STOPPED,
     INPUT_CONNECTED, INPUT_DISCONNECTED, INPUT_NO_DATA_WARNING,
@@ -650,7 +650,7 @@ The GPS receiver's serial port can only be opened by **one process at a time**. 
                    engine.start()
                             │
                  ┌──────────▼──────────┐
-                 │   sp-base-relay     │
+                 │   sp-rtk-base-relay     │
                  │   owns serial port  │
                  │   (relay running)   │
                  └──────────┬──────────┘
@@ -716,7 +716,7 @@ SPBaseRelayError (base)
 ### 7.3 Recommended Error Handling Pattern
 
 ```python
-from sp_base_relay.exceptions import ServiceError, ConfigurationError
+from sp_rtk_base_relay.exceptions import ServiceError, ConfigurationError
 
 try:
     engine.start(destinations)
@@ -793,8 +793,8 @@ When `engine.start()` is called, these threads are created:
 ### 9.1 Minimal — Start Relay with One Destination
 
 ```python
-from sp_base_relay import RelayEngine
-from sp_base_relay.config import (
+from sp_rtk_base_relay import RelayEngine
+from sp_rtk_base_relay.config import (
     InputConfig,
     DestinationConfig,
     DestinationFilterConfig,
@@ -834,16 +834,16 @@ engine.stop()
 ```python
 import asyncio
 import threading
-from sp_base_relay import RelayEngine, EventSubscription, RelayEvent
-from sp_base_relay.config import (
+from sp_rtk_base_relay import RelayEngine, EventSubscription, RelayEvent
+from sp_rtk_base_relay.config import (
     InputConfig, DestinationConfig, DestinationFilterConfig,
     NtripDestinationConfig, TcpServerDestinationConfig,
 )
-from sp_base_relay.core.events import (
+from sp_rtk_base_relay.core.events import (
     DESTINATION_CONNECTED, DESTINATION_DISCONNECTED, DESTINATION_ERROR,
     INPUT_NO_DATA_WARNING, ENGINE_STARTED, ENGINE_STOPPED,
 )
-from sp_base_relay.exceptions import ServiceError, ConfigurationError
+from sp_rtk_base_relay.exceptions import ServiceError, ConfigurationError
 
 
 class RelayManager:

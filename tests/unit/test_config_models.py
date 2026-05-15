@@ -17,7 +17,7 @@ from sp_base.models.config_models import (
     SurePathProfile,
     TcpServerProfile,
 )
-from sp_base_relay.config import (
+from sp_rtk_base_relay.config import (
     DestinationFilterConfig,
     NtripDestinationConfig,
     SurePathDestinationConfig,

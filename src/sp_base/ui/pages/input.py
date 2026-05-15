@@ -47,12 +47,12 @@ TCP_FIELDS: list[FieldDef] = [
 
 
 def _try_import_bluetooth_manager() -> type | None:
-    """Attempt to import BluetoothManager from sp-base-relay.
+    """Attempt to import BluetoothManager from sp-rtk-base-relay.
 
     Returns the class if available, None otherwise (dbus-fast not installed).
     """
     try:
-        from sp_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
+        from sp_rtk_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
             BluetoothManager,
         )
         return BluetoothManager  # type: ignore[no-any-return]

@@ -1,4 +1,4 @@
-"""Relay engine service — async wrapper around sp-base-relay RelayEngine.
+"""Relay engine service — async wrapper around sp-rtk-base-relay RelayEngine.
 
 Provides lifecycle management (start/stop), status queries, and
 dynamic destination management with async bridging via
@@ -12,15 +12,15 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from sp_base_relay import EventSubscription, RelayEngine, RelayEvent, RelayStatus
-from sp_base_relay.config import DestinationConfig, InputConfig
-from sp_base_relay.exceptions import ServiceError
+from sp_rtk_base_relay import EventSubscription, RelayEngine, RelayEvent, RelayStatus
+from sp_rtk_base_relay.config import DestinationConfig, InputConfig
+from sp_rtk_base_relay.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
 
 
 class RelayService:
-    """Async adapter for sp-base-relay's threaded RelayEngine.
+    """Async adapter for sp-rtk-base-relay's threaded RelayEngine.
 
     All blocking ``RelayEngine`` methods are wrapped with
     ``asyncio.to_thread()`` so they can be called safely from

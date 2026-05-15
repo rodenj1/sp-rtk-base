@@ -12,7 +12,7 @@ import pytest
 
 from sp_base.services.event_bridge import EventBridge
 from sp_base.services.relay_service import RelayService
-from sp_base_relay import RelayEvent
+from sp_rtk_base_relay import RelayEvent
 
 
 def _make_event(event_type: str = "engine.started", msg: str = "Test") -> RelayEvent:

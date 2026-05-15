@@ -2,12 +2,12 @@
 
 ## Why SP-Base Exists
 
-RTK GPS base station operators need a simple way to configure, control, and monitor their RTCM correction data relay without SSH-ing into a device and editing YAML files. SP-Base provides a browser-based operator console that wraps the sp-base-relay engine with an intuitive web interface.
+RTK GPS base station operators need a simple way to configure, control, and monitor their RTCM correction data relay without SSH-ing into a device and editing YAML files. SP-Base provides a browser-based operator console that wraps the sp-rtk-base-relay engine with an intuitive web interface.
 
 ## Problems It Solves
 
 ### 1. No Operator-Friendly Interface for Relay Control
-- **Problem**: sp-base-relay v2.1 has a powerful RelayEngine API, but the only interface is CLI + YAML config files. Operators must SSH into the device, edit YAML, and restart the service to make changes.
+- **Problem**: sp-rtk-base-relay v2.1 has a powerful RelayEngine API, but the only interface is CLI + YAML config files. Operators must SSH into the device, edit YAML, and restart the service to make changes.
 - **Solution**: Web UI with point-and-click destination management, start/stop controls, and live status.
 - **Impact**: Non-technical operators can manage the base station from any device with a browser.
 
@@ -18,7 +18,7 @@ RTK GPS base station operators need a simple way to configure, control, and moni
 
 ### 3. Dynamic Destination Management
 - **Problem**: Adding or removing a destination (e.g., a new NTRIP caster) requires editing config and restarting the service, which interrupts all active connections.
-- **Solution**: Hot add/remove/start/stop destinations via the web UI using sp-base-relay v2.1's dynamic destination management.
+- **Solution**: Hot add/remove/start/stop destinations via the web UI using sp-rtk-base-relay v2.1's dynamic destination management.
 - **Impact**: Zero-downtime changes to the destination list.
 
 ### 4. GPS Device Configuration (Phase 2+)
@@ -47,7 +47,7 @@ RTK GPS base station operators need a simple way to configure, control, and moni
 ### For System Administrators
 - **API-First**: REST API enables automation and integration with other tools
 - **Familiar Patterns**: FastAPI + Pydantic — standard Python web patterns
-- **Observable**: Prometheus metrics from sp-base-relay still available for monitoring stacks
+- **Observable**: Prometheus metrics from sp-rtk-base-relay still available for monitoring stacks
 
 ## How It Should Work
 
@@ -66,7 +66,7 @@ RTK GPS base station operators need a simple way to configure, control, and moni
 
 ### Architecture Principle
 The browser is an **operator console**, not the source of truth. Authoritative runtime state lives in:
-- **sp-base-relay RelayEngine** for relay state
+- **sp-rtk-base-relay RelayEngine** for relay state
 - **sp-base backend services** for configuration and orchestration
 
 The browser requests actions and renders status — it does NOT directly manage threads, sockets, or serial ports.

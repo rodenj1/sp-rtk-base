@@ -1,5 +1,14 @@
 # Progress
 
+## Recent Changes
+
+### 2026-05-14 — Relay Package Rename `sp-base-relay` → `sp-rtk-base-relay`
+The embedded relay-engine package was renamed; all sp-base references updated:
+- 7 src files, 5 test files, 4 docs, 6 memory-bank files
+- Prometheus gauges `sp_base_relay_running` / `sp_base_relay_uptime_seconds` renamed to `sp_rtk_base_relay_*` (literal, no namespace prefix). Other gauges (`sp_base_input_*`, `sp_base_dest_*`) keep configurable `namespace`.
+- **Operator action required**: rename Grafana/PromQL queries referencing the old metric names.
+- Verified: `uv sync` clean, **480 unit tests pass**, **pyright 0 errors**, grep confirms zero remaining `sp_base_relay`/`sp-base-relay` references outside `packages/`.
+
 ## Completed Phases
 
 ### Phase 1 — Project Scaffold ✅
@@ -10,7 +19,7 @@
 
 ### Phase 2 — Service Layer ✅
 - `ConfigService`: YAML-based config persistence (~/.config/sp-base/config.yaml)
-- `RelayService`: Wraps sp-base-relay engine with async start/stop/status
+- `RelayService`: Wraps sp-rtk-base-relay engine with async start/stop/status
 - `EventBridge`: Subscribes to relay engine events, maintains event buffer
 - Pydantic config models (AppConfig, InputProfile, DestinationProfile, AppSettings)
 - Full unit tests for all services and models
@@ -135,7 +144,7 @@
   - 480 unit tests passing, 0 pyright errors
 - **Step 3.10.1 ✅ — Input Page Configuration Helpers**:
   - Serial port dropdown with GPS auto-detect (⭐ markers), refresh button, baud rate select — reuses `GpsReceiverDriver.list_serial_ports()`
-  - Bluetooth device scan via `BluetoothManager` from sp-base-relay, discovered device cards (name + MAC + paired badge)
+  - Bluetooth device scan via `BluetoothManager` from sp-rtk-base-relay, discovered device cards (name + MAC + paired badge)
   - PIN code field, Test Connection button (pair + trust + RFCOMM discovery), auto-fill channel on success
   - Graceful fallback when `dbus-fast` not installed (manual entry still works)
   - Source-specific UI builders replace generic `FieldDef` pattern for serial and bluetooth

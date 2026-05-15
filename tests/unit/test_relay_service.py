@@ -17,13 +17,13 @@ from sp_base.services.relay_service import RelayService
 # Get a reference to the actual module (not the singleton variable
 # shadowed by sp_base.services.__init__).
 _relay_module = sys.modules["sp_base.services.relay_service"]
-from sp_base_relay.config import (
+from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,
     InputConfig,
     NtripDestinationConfig,
 )
-from sp_base_relay.exceptions import ServiceError
+from sp_rtk_base_relay.exceptions import ServiceError
 
 
 def _make_input_config() -> InputConfig:
@@ -364,7 +364,7 @@ class TestRelayServiceEvents:
         svc = RelayService()
         mock_engine = MagicMock()
 
-        from sp_base_relay import RelayEvent
+        from sp_rtk_base_relay import RelayEvent
 
         mock_events = [
             RelayEvent(

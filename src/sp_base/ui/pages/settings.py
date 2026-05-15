@@ -91,7 +91,7 @@ def settings_page() -> None:
 
             # Get relay version
             try:
-                from sp_base_relay import __version__ as relay_version
+                from sp_rtk_base_relay import __version__ as relay_version
             except ImportError:
                 relay_version = "not installed"
 

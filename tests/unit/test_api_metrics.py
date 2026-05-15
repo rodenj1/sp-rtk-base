@@ -12,7 +12,7 @@ from sp_base.services import get_config_service, get_metrics_service, get_relay_
 from sp_base.services.config_service import ConfigService
 from sp_base.services.metrics_service import MetricsService
 from sp_base.services.relay_service import RelayService
-from sp_base_relay.core.status import (
+from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
     RelayStatus,
@@ -119,8 +119,8 @@ class TestMetricsEndpoint:
         resp = client.get("/metrics")
         body = resp.text
 
-        assert "sp_base_relay_running 0.0" in body
-        assert "sp_base_relay_uptime_seconds 0.0" in body
+        assert "sp_rtk_base_relay_running 0.0" in body
+        assert "sp_rtk_base_relay_uptime_seconds 0.0" in body
         assert "sp_base_input_connected 0.0" in body
 
     def test_metrics_populated_when_running(self) -> None:
@@ -132,8 +132,8 @@ class TestMetricsEndpoint:
         resp = client.get("/metrics")
         body = resp.text
 
-        assert "sp_base_relay_running 1.0" in body
-        assert "sp_base_relay_uptime_seconds 60.0" in body
+        assert "sp_rtk_base_relay_running 1.0" in body
+        assert "sp_rtk_base_relay_uptime_seconds 60.0" in body
         assert "sp_base_input_connected 1.0" in body
         assert "sp_base_input_bytes_received 5000.0" in body
         assert "sp_base_active_destinations 1.0" in body
@@ -161,7 +161,7 @@ class TestMetricsEndpoint:
         resp = client.get("/metrics")
         body = resp.text
 
-        assert "sp_base_relay_running 0.0" in body
+        assert "sp_rtk_base_relay_running 0.0" in body
 
     def test_contains_help_text(self) -> None:
         relay = MagicMock(spec=RelayService)
@@ -171,8 +171,8 @@ class TestMetricsEndpoint:
         resp = client.get("/metrics")
         body = resp.text
 
-        assert "# HELP sp_base_relay_running" in body
-        assert "# TYPE sp_base_relay_running gauge" in body
+        assert "# HELP sp_rtk_base_relay_running" in body
+        assert "# TYPE sp_rtk_base_relay_running gauge" in body
 
 
 class TestMetricsDisabled:

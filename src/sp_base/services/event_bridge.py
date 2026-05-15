@@ -1,6 +1,6 @@
 """Event bridge — thread-to-async relay event forwarding.
 
-Consumes ``EventSubscription`` events from the sp-base-relay
+Consumes ``EventSubscription`` events from the sp-rtk-base-relay
 threaded event system and pushes them into an ``asyncio.Queue``
 for async consumers (WebSocket handlers, NiceGUI timers, etc.).
 """
@@ -13,7 +13,7 @@ import threading
 from dataclasses import asdict
 from typing import Any
 
-from sp_base_relay import EventSubscription, RelayEvent
+from sp_rtk_base_relay import EventSubscription, RelayEvent
 
 from sp_base.services.relay_service import RelayService
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class EventBridge:
-    """Bridge between sp-base-relay's threaded events and async consumers.
+    """Bridge between sp-rtk-base-relay's threaded events and async consumers.
 
     Runs a daemon thread that consumes ``EventSubscription.get_event()``
     (blocking) and pushes events into an ``asyncio.Queue`` that async

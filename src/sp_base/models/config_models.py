@@ -4,7 +4,7 @@ Defines the data structures that are serialized to/from YAML
 for persisting input source, destination profiles, and app settings.
 
 These models bridge the gap between the YAML config file and
-sp-base-relay's dataclass-based configuration objects.
+sp-rtk-base-relay's dataclass-based configuration objects.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from sp_base_relay.config import (
+from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,
     InputConfig,
@@ -36,7 +36,7 @@ class FilterProfile(BaseModel):
     message_ids: list[int] = Field(default_factory=lambda: list[int]())
 
     def to_relay_config(self) -> DestinationFilterConfig:
-        """Convert to sp-base-relay DestinationFilterConfig dataclass.
+        """Convert to sp-rtk-base-relay DestinationFilterConfig dataclass.
 
         Returns:
             DestinationFilterConfig instance.
@@ -48,7 +48,7 @@ class FilterProfile(BaseModel):
 
     @classmethod
     def from_relay_config(cls, config: DestinationFilterConfig) -> FilterProfile:
-        """Create from sp-base-relay DestinationFilterConfig.
+        """Create from sp-rtk-base-relay DestinationFilterConfig.
 
         Args:
             config: Relay engine filter config dataclass.
@@ -79,7 +79,7 @@ class SurePathProfile(BaseModel):
     retry_multiplier: float = 2.0
 
     def to_relay_config(self) -> SurePathDestinationConfig:
-        """Convert to sp-base-relay SurePathDestinationConfig.
+        """Convert to sp-rtk-base-relay SurePathDestinationConfig.
 
         Returns:
             SurePathDestinationConfig instance.
@@ -113,7 +113,7 @@ class NtripProfile(BaseModel):
     retry_multiplier: float = 2.0
 
     def to_relay_config(self) -> NtripDestinationConfig:
-        """Convert to sp-base-relay NtripDestinationConfig.
+        """Convert to sp-rtk-base-relay NtripDestinationConfig.
 
         Returns:
             NtripDestinationConfig instance.
@@ -140,7 +140,7 @@ class TcpServerProfile(BaseModel):
     max_clients: int = 10
 
     def to_relay_config(self) -> TcpServerDestinationConfig:
-        """Convert to sp-base-relay TcpServerDestinationConfig.
+        """Convert to sp-rtk-base-relay TcpServerDestinationConfig.
 
         Returns:
             TcpServerDestinationConfig instance.
@@ -157,7 +157,7 @@ class DestinationProfile(BaseModel):
 
     The ``config`` field holds the destination-type-specific settings
     as a plain dictionary. Use ``to_relay_config()`` to convert to
-    the sp-base-relay ``DestinationConfig`` dataclass.
+    the sp-rtk-base-relay ``DestinationConfig`` dataclass.
     """
 
     name: str
@@ -167,7 +167,7 @@ class DestinationProfile(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
     def to_relay_config(self) -> DestinationConfig:
-        """Convert to sp-base-relay DestinationConfig dataclass.
+        """Convert to sp-rtk-base-relay DestinationConfig dataclass.
 
         Returns:
             DestinationConfig with the appropriate type-specific config.
@@ -213,7 +213,7 @@ class InputProfile(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
     def to_relay_config(self) -> InputConfig:
-        """Convert to sp-base-relay InputConfig dataclass.
+        """Convert to sp-rtk-base-relay InputConfig dataclass.
 
         Returns:
             InputConfig instance.

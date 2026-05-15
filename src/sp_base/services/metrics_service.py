@@ -18,7 +18,7 @@ import logging
 
 from prometheus_client import CollectorRegistry, Gauge
 
-from sp_base_relay.core.status import RelayStatus
+from sp_rtk_base_relay.core.status import RelayStatus
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,15 @@ class MetricsService:
         ns = namespace
 
         # ── Global gauges ─────────────────────────────────────────
+        # Relay engine gauges use the sp_rtk_base_relay_* prefix
+        # (the embedded relay package name), independent of this app's namespace.
         self.relay_running = Gauge(
-            f"{ns}_relay_running",
+            "sp_rtk_base_relay_running",
             "Relay engine running (1=running, 0=stopped)",
             registry=self.registry,
         )
         self.relay_uptime_seconds = Gauge(
-            f"{ns}_relay_uptime_seconds",
+            "sp_rtk_base_relay_uptime_seconds",
             "Relay engine uptime in seconds",
             registry=self.registry,
         )

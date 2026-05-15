@@ -5,7 +5,7 @@ Tests a local (or remote) NTRIP caster by performing protocol-level
 handshakes for both NTRIP v1.0 and v2.0, verifying authentication,
 sourcetable retrieval, and data push capabilities.
 
-This is a standalone tool — no sp-base or sp-base-relay imports needed.
+This is a standalone tool — no sp-base or sp-rtk-base-relay imports needed.
 
 Usage:
     uv run python tools/test_ntrip_caster.py

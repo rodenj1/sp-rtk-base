@@ -4,7 +4,7 @@
 
 SP-Base is a Python web UI and API for controlling and monitoring a u-blox GPS device used as an RTK base station. It provides an operator console for configuring RTCM correction data relay, managing output destinations, and monitoring real-time system status.
 
-The package depends on `sp-base-relay` (installed via PyPI) as its relay engine, and adds a browser-based control plane on top.
+The package depends on `sp-rtk-base-relay` (installed via PyPI) as its relay engine, and adds a browser-based control plane on top.
 
 ## Core Requirements
 
@@ -39,9 +39,9 @@ The package depends on `sp-base-relay` (installed via PyPI) as its relay engine,
 
 ## Project Goals
 
-1. **Primary Goal (Phase 1)**: Provide a web-based operator console for configuring, starting, stopping, and monitoring the sp-base-relay RTCM relay engine
+1. **Primary Goal (Phase 1)**: Provide a web-based operator console for configuring, starting, stopping, and monitoring the sp-rtk-base-relay RTCM relay engine
 2. **Primary Goal (Phase 2)**: Enable u-blox GPS device configuration via the web UI (survey-in, fixed base, RTCM message selection)
-3. **Integration Goal**: Use sp-base-relay v2.1 RelayEngine API as an in-process Python dependency
+3. **Integration Goal**: Use sp-rtk-base-relay v2.1 RelayEngine API as an in-process Python dependency
 4. **Operational Goal**: Provide real-time status visibility with live event streaming
 5. **Development Goal**: Maintain >90% unit test coverage following Python 3.10+ standards
 
@@ -66,5 +66,5 @@ The package depends on `sp-base-relay` (installed via PyPI) as its relay engine,
 - UV package management framework
 - >90% unit test coverage using Pytest
 - Resolve all pylance/pyright linting issues (strict mode)
-- sp-base-relay as a PyPI dependency (not vendored)
+- sp-rtk-base-relay as a PyPI dependency (not vendored)
 - Single-process deployment (FastAPI + NiceGUI + RelayEngine in one process)

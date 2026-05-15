@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
-from sp_base.models.device_models import (
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.device_models import (
     BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
@@ -17,9 +17,9 @@ from sp_base.models.device_models import (
     DeviceStatus,
     SurveyInProgress,
 )
-from sp_base.services.config_service import ConfigService
-from sp_base.services.device_service import DeviceService
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.relay_service import RelayService
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def mock_config_service() -> ConfigService:
 @pytest.fixture()
 def client(mock_device_service: DeviceService) -> TestClient:
     """Create a test client with the device service dependency overridden."""
-    from sp_base.services import get_device_service
+    from sp_rtk_base.services import get_device_service
 
     app = create_api_app()
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
@@ -73,7 +73,7 @@ def handoff_client(
     mock_config_service: ConfigService,
 ) -> TestClient:
     """Create a test client with all three dependencies overridden."""
-    from sp_base.services import get_config_service, get_device_service, get_relay_service
+    from sp_rtk_base.services import get_config_service, get_device_service, get_relay_service
 
     app = create_api_app()
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
@@ -90,9 +90,9 @@ def handoff_client(
 class TestListPorts:
     """Tests for GET /api/device/ports."""
 
-    @patch("sp_base.services.drivers.base.GpsReceiverDriver.list_serial_ports")
+    @patch("sp_rtk_base.services.drivers.base.GpsReceiverDriver.list_serial_ports")
     def test_list_ports(self, mock_list: MagicMock, client: TestClient) -> None:
-        from sp_base.models.device_models import SerialPortInfo
+        from sp_rtk_base.models.device_models import SerialPortInfo
 
         mock_list.return_value = [
             SerialPortInfo(
@@ -111,7 +111,7 @@ class TestListPorts:
         assert data[0]["port"] == "/dev/ttyUSB0"
         assert data[0]["is_gps"] is True
 
-    @patch("sp_base.services.drivers.base.GpsReceiverDriver.list_serial_ports")
+    @patch("sp_rtk_base.services.drivers.base.GpsReceiverDriver.list_serial_ports")
     def test_list_ports_empty(self, mock_list: MagicMock, client: TestClient) -> None:
         mock_list.return_value = []
         resp = client.get("/api/device/ports")
@@ -127,7 +127,7 @@ class TestListPorts:
 class TestConnect:
     """Tests for POST /api/device/connect."""
 
-    @patch("sp_base.api.device.create_driver")
+    @patch("sp_rtk_base.api.device.create_driver")
     def test_connect_success(
         self,
         mock_create: MagicMock,
@@ -151,7 +151,7 @@ class TestConnect:
         assert "ZED-F9P" in data["message"]
         mock_device_service.set_driver.assert_called_once_with(mock_driver)
 
-    @patch("sp_base.api.device.create_driver")
+    @patch("sp_rtk_base.api.device.create_driver")
     def test_connect_unknown_vendor(
         self,
         mock_create: MagicMock,
@@ -165,7 +165,7 @@ class TestConnect:
         assert resp.status_code == 400
         assert "Unknown GPS driver" in resp.json()["detail"]
 
-    @patch("sp_base.api.device.create_driver")
+    @patch("sp_rtk_base.api.device.create_driver")
     def test_connect_already_connected(
         self,
         mock_create: MagicMock,
@@ -182,7 +182,7 @@ class TestConnect:
         })
         assert resp.status_code == 409
 
-    @patch("sp_base.api.device.create_driver")
+    @patch("sp_rtk_base.api.device.create_driver")
     def test_connect_relay_running(
         self,
         mock_create: MagicMock,
@@ -199,7 +199,7 @@ class TestConnect:
         })
         assert resp.status_code == 409
 
-    @patch("sp_base.api.device.create_driver")
+    @patch("sp_rtk_base.api.device.create_driver")
     def test_connect_serial_error(
         self,
         mock_create: MagicMock,
@@ -637,7 +637,7 @@ class TestHandoff:
         mock_config_service: MagicMock,
     ) -> None:
         """Handoff passes enabled destinations to relay start."""
-        from sp_base.models.config_models import DestinationProfile
+        from sp_rtk_base.models.config_models import DestinationProfile
 
         mock_device_service.is_connected = True
         mock_device_service.get_status.return_value = DeviceStatus(

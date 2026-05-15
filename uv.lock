@@ -9,7 +9,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "sp-base",
+    "sp-rtk-base",
     "sp-rtk-base-relay",
 ]
 
@@ -2296,7 +2296,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sp-base"
+name = "sp-rtk-base"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

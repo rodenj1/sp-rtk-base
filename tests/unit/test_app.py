@@ -1,10 +1,10 @@
-"""Tests for sp_base.app module — FastAPI app factory and API endpoints."""
+"""Tests for sp_rtk_base.app module — FastAPI app factory and API endpoints."""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
+from sp_rtk_base.app import create_api_app
 
 
 class TestCreateApiApp:
@@ -17,8 +17,8 @@ class TestCreateApiApp:
         assert app.title == "SP-Base API"
 
     def test_app_has_version(self) -> None:
-        """Application version matches sp_base.__version__."""
-        from sp_base import __version__
+        """Application version matches sp_rtk_base.__version__."""
+        from sp_rtk_base import __version__
 
         app = create_api_app()
         assert app.version == __version__
@@ -40,7 +40,7 @@ class TestHealthEndpoint:
 
     def test_health_returns_version(self, api_client: TestClient) -> None:
         """Health check response contains the application version."""
-        from sp_base import __version__
+        from sp_rtk_base import __version__
 
         response = api_client.get("/api/health")
         data = response.json()
@@ -52,7 +52,7 @@ class TestInitApp:
 
     def test_init_app_does_not_raise(self) -> None:
         """init_app completes without errors."""
-        from sp_base.app import init_app
+        from sp_rtk_base.app import init_app
 
         # init_app registers routes on the NiceGUI app singleton.
         # Just verify it doesn't raise.

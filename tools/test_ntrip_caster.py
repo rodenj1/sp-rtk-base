@@ -5,7 +5,7 @@ Tests a local (or remote) NTRIP caster by performing protocol-level
 handshakes for both NTRIP v1.0 and v2.0, verifying authentication,
 sourcetable retrieval, and data push capabilities.
 
-This is a standalone tool — no sp-base or sp-rtk-base-relay imports needed.
+This is a standalone tool — no sp-rtk-base or sp-rtk-base-relay imports needed.
 
 Usage:
     uv run python tools/test_ntrip_caster.py
@@ -136,7 +136,7 @@ def test_sourcetable_v1(host: str, port: int) -> bool:
         sock = tcp_connect(host, port)
         request = (
             f"GET / HTTP/1.0\r\n"
-            f"User-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"User-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"\r\n"
         )
         sock.sendall(request.encode("ascii"))
@@ -170,7 +170,7 @@ def test_sourcetable_v2(host: str, port: int) -> bool:
             f"GET / HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Ntrip-Version: Ntrip/2.0\r\n"
-            f"User-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"User-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"\r\n"
         )
         sock.sendall(request.encode("ascii"))
@@ -199,7 +199,7 @@ def test_v1_source_auth(
 
     Protocol:
         SOURCE <password> /<mountpoint>\\r\\n
-        Source-Agent: NTRIP sp-base-test/1.0\\r\\n
+        Source-Agent: NTRIP sp-rtk-base-test/1.0\\r\\n
         \\r\\n
 
     Expected: ICY 200 OK
@@ -208,7 +208,7 @@ def test_v1_source_auth(
         sock = tcp_connect(host, port)
         request = (
             f"SOURCE {password} /{mountpoint}\r\n"
-            f"Source-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"Source-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"\r\n"
         )
         sock.sendall(request.encode("ascii"))
@@ -239,7 +239,7 @@ def test_v1_source_auth_failure(
         sock = tcp_connect(host, port)
         request = (
             f"SOURCE WRONG_PASSWORD /{mountpoint}\r\n"
-            f"Source-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"Source-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"\r\n"
         )
         sock.sendall(request.encode("ascii"))
@@ -277,7 +277,7 @@ def test_v2_post_auth(
         Host: <host>\\r\\n
         Ntrip-Version: Ntrip/2.0\\r\\n
         Authorization: Basic <base64(user:pass)>\\r\\n
-        User-Agent: NTRIP sp-base-test/1.0\\r\\n
+        User-Agent: NTRIP sp-rtk-base-test/1.0\\r\\n
         Transfer-Encoding: chunked\\r\\n
         \\r\\n
 
@@ -294,7 +294,7 @@ def test_v2_post_auth(
             f"Host: {host}\r\n"
             f"Ntrip-Version: Ntrip/2.0\r\n"
             f"Authorization: Basic {credentials}\r\n"
-            f"User-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"User-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
         )
@@ -333,7 +333,7 @@ def test_v2_post_auth_failure(
             f"Host: {host}\r\n"
             f"Ntrip-Version: Ntrip/2.0\r\n"
             f"Authorization: Basic {credentials}\r\n"
-            f"User-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"User-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
         )
@@ -368,7 +368,7 @@ def test_v1_data_push(
         sock = tcp_connect(host, port)
         request = (
             f"SOURCE {password} /{mountpoint}\r\n"
-            f"Source-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"Source-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"\r\n"
         )
         sock.sendall(request.encode("ascii"))
@@ -411,7 +411,7 @@ def test_v2_data_push(
             f"Host: {host}\r\n"
             f"Ntrip-Version: Ntrip/2.0\r\n"
             f"Authorization: Basic {credentials}\r\n"
-            f"User-Agent: NTRIP sp-base-test/1.0\r\n"
+            f"User-Agent: NTRIP sp-rtk-base-test/1.0\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
         )

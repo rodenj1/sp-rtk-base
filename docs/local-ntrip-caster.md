@@ -64,7 +64,7 @@ The `docker-compose.yml` maps port 2101 and configures the environment:
 services:
   ntrip-caster:
     build: .
-    container_name: sp-base-ntrip-caster
+    container_name: sp-rtk-base-ntrip-caster
     ports:
       - "2101:2101"
     environment:
@@ -105,7 +105,7 @@ curl http://localhost:2101/
 curl -H "Ntrip-Version: Ntrip/2.0" http://localhost:2101/
 ```
 
-### Testing with sp-base Relay
+### Testing with sp-rtk-base Relay
 
 Configure an NTRIP destination pointing to the local caster:
 

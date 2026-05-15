@@ -13,7 +13,7 @@ SP-Base follows a **layered architecture** with clear separation between UI, API
 └───────────────┬──────────────────────────────────────────────┘
                 │ HTTP / WebSocket
 ┌───────────────▼──────────────────────────────────────────────┐
-│  sp-base package (FastAPI + NiceGUI)                          │
+│  sp-rtk-base package (FastAPI + NiceGUI)                          │
 │                                                               │
 │  ┌─ UI Layer (NiceGUI) ─────────────────────────────────┐    │
 │  │  pages/dashboard.py, outputs.py, settings.py          │    │
@@ -105,7 +105,7 @@ class ConfigService:
     def remove_destination(self, name: str) -> None: ...
 ```
 
-Storage location: `~/.config/sp-base/config.yaml`
+Storage location: `~/.config/sp-rtk-base/config.yaml`
 
 ### 5. Singleton Pattern — Service Instances
 **Purpose**: Single instances of RelayService, ConfigService, EventBridge shared across the app via FastAPI dependency injection.
@@ -158,7 +158,7 @@ def get_relay_service() -> RelayService:
 
 ### Dependency Graph
 ```
-sp-base
+sp-rtk-base
   ├── sp-rtk-base-relay (>=2.1.0)  — RelayEngine, EventBus, config dataclasses
   ├── fastapi                    — REST API + WebSocket
   ├── nicegui                    — Browser UI (shares ASGI server with FastAPI)
@@ -188,22 +188,22 @@ main.py (entry point)
 
 ## Architecture Decisions (Phase 2+)
 
-### DR-15: Device Info/Config Lives in sp-base
-- **Decision**: All PyUBX2 interaction (device querying, GPS configuration) belongs in sp-base, NOT sp-rtk-base-relay
+### DR-15: Device Info/Config Lives in sp-rtk-base
+- **Decision**: All PyUBX2 interaction (device querying, GPS configuration) belongs in sp-rtk-base, NOT sp-rtk-base-relay
 - **Rationale**: sp-rtk-base-relay is a pure RTCM relay. Adding PyUBX2 would add unnecessary complexity and an unrelated dependency.
-- **Impact**: sp-rtk-base-relay stays focused; sp-base owns all u-blox device management
+- **Impact**: sp-rtk-base-relay stays focused; sp-rtk-base owns all u-blox device management
 
 ### DR-16: Two-Port Architecture Support
 - **Separate ports** (e.g., FTDI UART for UBX, Bluetooth for RTCM): No relay interruption needed for device queries/config
 - **Shared port** (single USB/UART for both): Must use serial port handoff (stop relay → UBX session → restart)
-- **Impact**: sp-base must detect which configuration is in use and adapt behavior accordingly
+- **Impact**: sp-rtk-base must detect which configuration is in use and adapt behavior accordingly
 
 #### Config A: Separate Ports (Preferred — No Relay Interruption)
 ```
 UBX Config Port: /dev/ttyUSB0 (FTDI FT232 @ 57600)  →  PyUBX2 (anytime)
 RTCM Relay Port: Bluetooth serial                     →  sp-rtk-base-relay (continuous)
 ```
-- sp-base can query/configure GPS at any time without stopping relay
+- sp-rtk-base can query/configure GPS at any time without stopping relay
 - Relay runs uninterrupted on a dedicated RTCM output port
 - This is the current test hardware configuration
 
@@ -211,22 +211,22 @@ RTCM Relay Port: Bluetooth serial                     →  sp-rtk-base-relay (co
 ```
 Shared Port: /dev/ttyACM0 @ 115200  →  Either PyUBX2 OR sp-rtk-base-relay
 ```
-- sp-base must: `engine.stop()` → PyUBX2 session → `engine.start()`
+- sp-rtk-base must: `engine.stop()` → PyUBX2 session → `engine.start()`
 - RelayEngine.stop() is synchronous, releases port immediately
 
 ### DR-17: Serial Port Handoff Pattern
 - Already implemented in RelayEngine (`engine.stop()` is synchronous, releases port immediately)
 - Documented in API spec with code examples
-- sp-base uses this for shared-port configurations
+- sp-rtk-base uses this for shared-port configurations
 
 ```
-Relay stopped  → sp-base owns serial port (PyUBX2 for GPS config)
+Relay stopped  → sp-rtk-base owns serial port (PyUBX2 for GPS config)
 Relay running  → sp-rtk-base-relay owns serial port (data relay)
 ```
 
 ## Phase 2+ Startup Flow
 
-When GPS device configuration is added, the sp-base startup sequence will be:
+When GPS device configuration is added, the sp-rtk-base startup sequence will be:
 
 ```
 1. Query device info (UBX-MON-VER) — identify GPS module

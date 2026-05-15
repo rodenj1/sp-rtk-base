@@ -18,13 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sp_base.models.device_models import (
+from sp_rtk_base.models.device_models import (
     DeviceCapability,
     FixedBaseConfig,
     RtcmMessageConfig,
     SurveyInConfig,
 )
-from sp_base.services.drivers.ublox import UbloxDriver
+from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from sp_base.services.drivers.ublox import UbloxDriver
 @pytest.fixture(autouse=True)
 def _mock_fcntl() -> object:  # type: ignore[misc]
     """Prevent fcntl.flock from running on mock file descriptors."""
-    with patch("sp_base.services.drivers.ublox.fcntl.flock"):
+    with patch("sp_rtk_base.services.drivers.ublox.fcntl.flock"):
         yield
 
 
@@ -155,8 +155,8 @@ class TestUbloxDriverIdentity:
 class TestUbloxDriverConnect:
     """Test connect / disconnect."""
 
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_success(
         self,
         mock_serial_cls: MagicMock,
@@ -186,7 +186,7 @@ class TestUbloxDriverConnect:
             exclusive=True,
         )
 
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_serial_exception(self, mock_serial_cls: MagicMock) -> None:
         import serial  # type: ignore[import-untyped]
         mock_serial_cls.side_effect = serial.SerialException("Port busy")
@@ -196,8 +196,8 @@ class TestUbloxDriverConnect:
             driver.connect("/dev/ttyUSB0")
         assert driver.is_connected is False
 
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_already_connected(
         self,
         mock_serial_cls: MagicMock,
@@ -217,8 +217,8 @@ class TestUbloxDriverConnect:
         with pytest.raises(ConnectionError, match="Already connected"):
             driver.connect("/dev/ttyUSB0")
 
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_disconnect(
         self,
         mock_serial_cls: MagicMock,
@@ -245,8 +245,8 @@ class TestUbloxDriverConnect:
         driver.disconnect()  # Should not raise
         assert driver.is_connected is False
 
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_mon_ver_timeout(
         self,
         mock_serial_cls: MagicMock,
@@ -274,9 +274,9 @@ class TestUbloxDriverConnect:
 class TestUbloxDriverConfiguration:
     """Test base station configuration methods."""
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_configure_survey_in(
         self,
         mock_serial_cls: MagicMock,
@@ -315,9 +315,9 @@ class TestUbloxDriverConfiguration:
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys
         assert "CFG_TMODE_SVIN_ACC_LIMIT" in keys
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_configure_fixed_base(
         self,
         mock_serial_cls: MagicMock,
@@ -359,9 +359,9 @@ class TestUbloxDriverConfiguration:
         assert "CFG_TMODE_LON" in keys
         assert "CFG_TMODE_HEIGHT" in keys
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_configure_rtcm_messages(
         self,
         mock_serial_cls: MagicMock,
@@ -391,9 +391,9 @@ class TestUbloxDriverConfiguration:
 
         mock_ubx_msg.config_set.assert_called_once()
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_configure_rtcm_unknown_message_id(
         self,
         mock_serial_cls: MagicMock,
@@ -422,9 +422,9 @@ class TestUbloxDriverConfiguration:
         config = RtcmMessageConfig(message_ids=[1005, 9999], rate_hz=1)
         driver.configure_rtcm_messages(config)  # Should not raise, just warn
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_save_to_flash(
         self,
         mock_serial_cls: MagicMock,
@@ -472,9 +472,9 @@ class TestUbloxDriverConfiguration:
 class TestUbloxDriverAckNak:
     """Test ACK/NAK response handling."""
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_nak_raises_runtime_error(
         self,
         mock_serial_cls: MagicMock,
@@ -502,9 +502,9 @@ class TestUbloxDriverAckNak:
         with pytest.raises(RuntimeError, match="NAK"):
             driver.configure_survey_in(SurveyInConfig())
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_no_ack_raises_runtime_error(
         self,
         mock_serial_cls: MagicMock,
@@ -541,9 +541,9 @@ class TestUbloxDriverAckNak:
 class TestUbloxDriverStatus:
     """Test status polling methods."""
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_get_survey_in_status(
         self,
         mock_serial_cls: MagicMock,
@@ -575,9 +575,9 @@ class TestUbloxDriverStatus:
         assert status.mean_accuracy_mm == 2500.0  # 25000 / 10
         assert status.observations == 45
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_get_survey_in_status_no_response(
         self,
         mock_serial_cls: MagicMock,
@@ -606,9 +606,9 @@ class TestUbloxDriverStatus:
         assert status.active is False
         assert status.valid is False
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_get_device_info(
         self,
         mock_serial_cls: MagicMock,
@@ -653,7 +653,7 @@ class TestSerialPortDiscovery:
 
     @patch("serial.tools.list_ports")
     def test_list_serial_ports(self, mock_list_ports: MagicMock) -> None:
-        from sp_base.services.drivers.base import GpsReceiverDriver
+        from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
         mock_port = SimpleNamespace(
             device="/dev/ttyUSB0",
@@ -674,7 +674,7 @@ class TestSerialPortDiscovery:
 
     @patch("serial.tools.list_ports")
     def test_non_gps_port(self, mock_list_ports: MagicMock) -> None:
-        from sp_base.services.drivers.base import GpsReceiverDriver
+        from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
         mock_port = SimpleNamespace(
             device="/dev/ttyACM0",
@@ -692,7 +692,7 @@ class TestSerialPortDiscovery:
 
     @patch("serial.tools.list_ports")
     def test_port_with_none_vid(self, mock_list_ports: MagicMock) -> None:
-        from sp_base.services.drivers.base import GpsReceiverDriver
+        from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
         mock_port = SimpleNamespace(
             device="/dev/ttyS0",
@@ -711,7 +711,7 @@ class TestSerialPortDiscovery:
 
     @patch("serial.tools.list_ports")
     def test_empty_ports(self, mock_list_ports: MagicMock) -> None:
-        from sp_base.services.drivers.base import GpsReceiverDriver
+        from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
         mock_list_ports.comports.return_value = []
         ports = GpsReceiverDriver.list_serial_ports()
@@ -719,7 +719,7 @@ class TestSerialPortDiscovery:
 
     @patch("serial.tools.list_ports")
     def test_ftdi_port_is_gps(self, mock_list_ports: MagicMock) -> None:
-        from sp_base.services.drivers.base import GpsReceiverDriver
+        from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
         mock_port = SimpleNamespace(
             device="/dev/ttyUSB1",
@@ -745,18 +745,18 @@ class TestUbloxDriverRegistry:
     """Test that u-blox driver is properly registered."""
 
     def test_ublox_registered(self) -> None:
-        from sp_base.services.drivers import get_driver_class
+        from sp_rtk_base.services.drivers import get_driver_class
         cls = get_driver_class("ublox")
         assert cls is UbloxDriver
 
     def test_create_ublox_driver(self) -> None:
-        from sp_base.services.drivers import create_driver
+        from sp_rtk_base.services.drivers import create_driver
         driver = create_driver("ublox")
         assert isinstance(driver, UbloxDriver)
         assert driver.vendor_name == "u-blox"
 
     def test_ublox_in_list(self) -> None:
-        from sp_base.services.drivers import list_drivers
+        from sp_rtk_base.services.drivers import list_drivers
         assert "ublox" in list_drivers()
 
 
@@ -768,9 +768,9 @@ class TestUbloxDriverRegistry:
 class TestMonVerParsing:
     """Test MON-VER parsing edge cases."""
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_mon_ver_bytes_sw_version(
         self,
         mock_serial_cls: MagicMock,
@@ -799,9 +799,9 @@ class TestMonVerParsing:
         assert info.model == "ZED-F9P"
         assert "CORE" in info.firmware_version
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_mon_ver_model_from_extension(
         self,
         mock_serial_cls: MagicMock,
@@ -974,8 +974,8 @@ class TestConnectTimeoutAndCancel:
         driver = UbloxDriver()
         driver.CONNECT_TIMEOUT = 0.2  # Very short for test
 
-        with patch("sp_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
+            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
                 start = _time.monotonic()
                 with pytest.raises(ConnectionError, match="MON-VER|No response|check baud"):
                     driver.connect("/dev/ttyUSB0", 9600)
@@ -993,8 +993,8 @@ class TestConnectTimeoutAndCancel:
         driver = UbloxDriver()
         driver.CONNECT_TIMEOUT = 0.2
 
-        with patch("sp_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
+            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
                 with pytest.raises(ConnectionError, match="No response from device|Connection failed"):
                     driver.connect("/dev/ttyUSB0", 9600)
 
@@ -1023,8 +1023,8 @@ class TestConnectTimeoutAndCancel:
             time.sleep(0.1)
             driver.cancel_connect()
 
-        with patch("sp_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
+            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
                 t = threading.Thread(target=_cancel_after_delay)
                 t.start()
                 with pytest.raises(ConnectionError, match="cancelled|Connection failed"):
@@ -1041,8 +1041,8 @@ class TestConnectTimeoutAndCancel:
         # Set up a successful reader
         reader: MagicMock = mock_reader_factory.create([_make_mon_ver_response()])  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        with patch("sp_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
+            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
                 info = driver.connect("/dev/ttyUSB0", 115200)
                 assert info.model == "ZED-F9P"
                 assert not driver._cancel_event.is_set()  # pyright: ignore[reportPrivateUsage]
@@ -1092,9 +1092,9 @@ class TestGetRtcmConfig:
         assert 1077 in result.message_ids
         assert result.rate_hz == 1  # most common
 
-    @patch("sp_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_base.services.drivers.ublox.UBXReader")
-    @patch("sp_base.services.drivers.ublox.serial.Serial")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_get_rtcm_config_success(
         self,
         mock_serial_cls: MagicMock,
@@ -1137,8 +1137,8 @@ class TestDeviceServiceCancelConnect:
 
     def test_set_connecting(self) -> None:
         """set_connecting() sets state to CONNECTING."""
-        from sp_base.models.device_models import DeviceConnectionState
-        from sp_base.services.device_service import DeviceService
+        from sp_rtk_base.models.device_models import DeviceConnectionState
+        from sp_rtk_base.services.device_service import DeviceService
 
         svc = DeviceService()
         assert svc.state == DeviceConnectionState.DISCONNECTED
@@ -1147,8 +1147,8 @@ class TestDeviceServiceCancelConnect:
 
     def test_cancel_connect_no_driver(self) -> None:
         """cancel_connect() is safe when no driver is loaded."""
-        from sp_base.models.device_models import DeviceConnectionState
-        from sp_base.services.device_service import DeviceService
+        from sp_rtk_base.models.device_models import DeviceConnectionState
+        from sp_rtk_base.services.device_service import DeviceService
 
         svc = DeviceService()
         svc.cancel_connect()  # should not raise
@@ -1156,8 +1156,8 @@ class TestDeviceServiceCancelConnect:
 
     def test_cancel_connect_with_driver(self) -> None:
         """cancel_connect() calls driver.cancel_connect() if available."""
-        from sp_base.models.device_models import DeviceConnectionState
-        from sp_base.services.device_service import DeviceService
+        from sp_rtk_base.models.device_models import DeviceConnectionState
+        from sp_rtk_base.services.device_service import DeviceService
 
         mock_driver = MagicMock()
         mock_driver.cancel_connect = MagicMock()

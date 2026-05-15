@@ -1,11 +1,11 @@
-"""Tests for sp_base.api.settings — settings and input config API endpoints."""
+"""Tests for sp_rtk_base.api.settings — settings and input config API endpoints."""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from sp_base.models.config_models import InputProfile
-from sp_base.services.config_service import ConfigService
+from sp_rtk_base.models.config_models import InputProfile
+from sp_rtk_base.services.config_service import ConfigService
 
 
 class TestGetSettings:

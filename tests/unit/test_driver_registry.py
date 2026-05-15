@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sp_base.models.device_models import (
+from sp_rtk_base.models.device_models import (
     BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
@@ -17,7 +17,7 @@ from sp_base.models.device_models import (
     SurveyInConfig,
     SurveyInProgress,
 )
-from sp_base.services.drivers import (
+from sp_rtk_base.services.drivers import (
     _DRIVER_REGISTRY,  # pyright: ignore[reportPrivateUsage]
     clear_registry,
     create_driver,
@@ -25,7 +25,7 @@ from sp_base.services.drivers import (
     list_drivers,
     register_driver,
 )
-from sp_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 
 # ---------------------------------------------------------------------------

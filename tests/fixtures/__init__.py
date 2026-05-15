@@ -1,1 +1,1 @@
-"""Shared test fixtures for sp-base integration tests."""
+"""Shared test fixtures for sp-rtk-base integration tests."""

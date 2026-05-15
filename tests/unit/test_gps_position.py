@@ -16,14 +16,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
-from sp_base.models.device_models import (
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.device_models import (
     DeviceConnectionState,
     GpsFixType,
     GpsPosition,
 )
-from sp_base.services.device_service import DeviceService
-from sp_base.services.drivers.ublox import UbloxDriver
+from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ class TestPositionAPI:
 
     @pytest.fixture()
     def client(self, mock_device_service: DeviceService) -> TestClient:
-        from sp_base.services import get_device_service
+        from sp_rtk_base.services import get_device_service
 
         app = create_api_app()
         app.dependency_overrides[get_device_service] = lambda: mock_device_service

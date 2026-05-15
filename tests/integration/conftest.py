@@ -1,5 +1,5 @@
 # pyright: reportUnknownMemberType=false
-"""Shared fixtures for sp-base integration tests.
+"""Shared fixtures for sp-rtk-base integration tests.
 
 Provides a fresh set of real services, a TCP RTCM source simulator,
 and a TCP destination test client for each integration test.
@@ -14,11 +14,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
-from sp_base.services import get_config_service, get_event_bridge, get_relay_service
-from sp_base.services.config_service import ConfigService
-from sp_base.services.event_bridge import EventBridge
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.services import get_config_service, get_event_bridge, get_relay_service
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.event_bridge import EventBridge
+from sp_rtk_base.services.relay_service import RelayService
 from tests.fixtures.tcp_destination_client import TCPDestinationClient
 from tests.fixtures.tcp_source_simulator import TCPSourceSimulator
 
@@ -26,7 +26,7 @@ from tests.fixtures.tcp_source_simulator import TCPSourceSimulator
 @pytest.fixture()
 def tmp_config_dir() -> Generator[Path, None, None]:
     """Provide a temporary directory for config files."""
-    with tempfile.TemporaryDirectory(prefix="sp_base_integ_") as d:
+    with tempfile.TemporaryDirectory(prefix="sp_rtk_base_integ_") as d:
         yield Path(d)
 
 

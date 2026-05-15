@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from prometheus_client import CollectorRegistry
 
-from sp_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
@@ -130,7 +130,7 @@ class TestMetricsServiceConstruction:
         svc = MetricsService(namespace="custom")
         status = _make_relay_status()
         svc.update_from_status(status)
-        # Namespace prefixes sp-base-specific gauges (input/dest/etc.)
+        # Namespace prefixes sp-rtk-base-specific gauges (input/dest/etc.)
         val = _get_gauge_value(svc.registry, "custom_input_connected")
         assert val == 1.0
         # Relay engine gauges use the fixed sp_rtk_base_relay_* prefix,
@@ -166,17 +166,17 @@ class TestUpdateFromStatus:
     def test_input_connected(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(input_connected=True))
-        assert _get_gauge_value(svc.registry, "sp_base_input_connected") == 1.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_input_connected") == 1.0
 
     def test_input_disconnected(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(input_connected=False))
-        assert _get_gauge_value(svc.registry, "sp_base_input_connected") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_input_connected") == 0.0
 
     def test_input_bytes_received(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
-        assert _get_gauge_value(svc.registry, "sp_base_input_bytes_received") == 1000.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_input_bytes_received") == 1000.0
 
     def test_active_destinations(self) -> None:
         svc = MetricsService()
@@ -185,7 +185,7 @@ class TestUpdateFromStatus:
             _make_destination_status("d2", connected=False),
         ]
         svc.update_from_status(_make_relay_status(destinations=dests))
-        assert _get_gauge_value(svc.registry, "sp_base_active_destinations") == 1.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_active_destinations") == 1.0
 
     def test_total_destinations(self) -> None:
         svc = MetricsService()
@@ -194,17 +194,17 @@ class TestUpdateFromStatus:
             _make_destination_status("d2"),
         ]
         svc.update_from_status(_make_relay_status(destinations=dests))
-        assert _get_gauge_value(svc.registry, "sp_base_total_destinations") == 2.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_total_destinations") == 2.0
 
     def test_chunks_distributed(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
-        assert _get_gauge_value(svc.registry, "sp_base_chunks_distributed") == 50.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_chunks_distributed") == 50.0
 
     def test_frames_parsed(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
-        assert _get_gauge_value(svc.registry, "sp_base_frames_parsed") == 10.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_frames_parsed") == 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ class TestPerDestinationMetrics:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
         val = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_connected", {"destination": "test-dest"}
+            svc.registry, "sp_rtk_base_dest_connected", {"destination": "test-dest"}
         )
         assert val == 1.0
 
@@ -228,7 +228,7 @@ class TestPerDestinationMetrics:
         dests = [_make_destination_status("d1", connected=False)]
         svc.update_from_status(_make_relay_status(destinations=dests))
         val = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_connected", {"destination": "d1"}
+            svc.registry, "sp_rtk_base_dest_connected", {"destination": "d1"}
         )
         assert val == 0.0
 
@@ -237,7 +237,7 @@ class TestPerDestinationMetrics:
         dests = [_make_destination_status("d1", bytes_sent=9999)]
         svc.update_from_status(_make_relay_status(destinations=dests))
         val = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_bytes_sent", {"destination": "d1"}
+            svc.registry, "sp_rtk_base_dest_bytes_sent", {"destination": "d1"}
         )
         assert val == 9999.0
 
@@ -246,7 +246,7 @@ class TestPerDestinationMetrics:
         dests = [_make_destination_status("d1", errors=5)]
         svc.update_from_status(_make_relay_status(destinations=dests))
         val = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_errors", {"destination": "d1"}
+            svc.registry, "sp_rtk_base_dest_errors", {"destination": "d1"}
         )
         assert val == 5.0
 
@@ -255,7 +255,7 @@ class TestPerDestinationMetrics:
         dests = [_make_destination_status("d1", queue_depth=42)]
         svc.update_from_status(_make_relay_status(destinations=dests))
         val = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_queue_depth", {"destination": "d1"}
+            svc.registry, "sp_rtk_base_dest_queue_depth", {"destination": "d1"}
         )
         assert val == 42.0
 
@@ -267,10 +267,10 @@ class TestPerDestinationMetrics:
         ]
         svc.update_from_status(_make_relay_status(destinations=dests))
         alpha = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_bytes_sent", {"destination": "alpha"}
+            svc.registry, "sp_rtk_base_dest_bytes_sent", {"destination": "alpha"}
         )
         beta = _get_labelled_gauge(
-            svc.registry, "sp_base_dest_bytes_sent", {"destination": "beta"}
+            svc.registry, "sp_rtk_base_dest_bytes_sent", {"destination": "beta"}
         )
         assert alpha == 100.0
         assert beta == 200.0
@@ -303,7 +303,7 @@ class TestUpdateIdle:
         svc = MetricsService()
         svc.update_idle()
         assert (
-            _get_gauge_value(svc.registry, "sp_base_input_seconds_since_last_data")
+            _get_gauge_value(svc.registry, "sp_rtk_base_input_seconds_since_last_data")
             == -1.0
         )
 
@@ -311,5 +311,5 @@ class TestUpdateIdle:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
         svc.update_idle()
-        assert _get_gauge_value(svc.registry, "sp_base_active_destinations") == 0.0
-        assert _get_gauge_value(svc.registry, "sp_base_total_destinations") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_active_destinations") == 0.0
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_total_destinations") == 0.0

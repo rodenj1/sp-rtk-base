@@ -44,29 +44,29 @@ pyserial                # Serial port access (already a dep of sp-rtk-base-relay
 
 ### Package Management with UV
 ```bash
-cd /opt/development/sp-base
+cd /opt/development/sp-rtk-base
 
 # Install dependencies
 uv sync
 
 # Run the app
-uv run sp-base
+uv run sp-rtk-base
 
 # Run tests
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=src/sp_base --cov-report=term-missing
+uv run pytest --cov=src/sp_rtk_base --cov-report=term-missing
 ```
 
 ### Project Structure
 ```
-sp-base/                           # Monorepo root
-├── pyproject.toml                 # sp-base package config (UV)
+sp-rtk-base/                           # Monorepo root
+├── pyproject.toml                 # sp-rtk-base package config (UV)
 ├── .python-version                # Python version (3.10+)
 ├── .gitignore
 ├── README.md
-├── memory-bank/                   # Memory bank for sp-base
+├── memory-bank/                   # Memory bank for sp-rtk-base
 │   ├── projectbrief.md
 │   ├── productContext.md
 │   ├── activeContext.md
@@ -77,13 +77,13 @@ sp-base/                           # Monorepo root
 │   ├── relay-engine-api-spec.md   # sp-rtk-base-relay API reference
 │   ├── ublox_gps_webui_planning.md # Full project planning
 │   └── Tools for Mass Configuration & Back.md
-├── src/sp_base/                   # Main package source
+├── src/sp_rtk_base/                   # Main package source
 │   ├── __init__.py
-│   ├── main.py                    # Entry point (sp-base)
+│   ├── main.py                    # Entry point (sp-rtk-base)
 │   ├── app.py                     # FastAPI + NiceGUI app factory
 │   ├── cli/                       # CLI tools
 │   │   ├── __init__.py
-│   │   └── config_audit.py        # GPS config audit (sp-base-gps-audit)
+│   │   └── config_audit.py        # GPS config audit (sp-rtk-base-gps-audit)
 │   ├── api/                       # REST API endpoints
 │   │   ├── relay.py               # /api/relay/*
 │   │   ├── outputs.py             # /api/outputs/*
@@ -182,7 +182,7 @@ def dashboard():
 ## Configuration Persistence
 
 ### YAML Config File
-Location: `~/.config/sp-base/config.yaml`
+Location: `~/.config/sp-rtk-base/config.yaml`
 
 ```yaml
 input:

@@ -1,31 +1,63 @@
 # Active Context
 
-## Latest Change: Embedded Relay Package Renamed `sp-base-relay` → `sp-rtk-base-relay` (2026-05-14)
+## Latest Change: Top-Level Package Renamed `sp-base` → `sp-rtk-base` (2026-05-15)
+
+### Summary
+The web-UI/API package was renamed from `sp-base` to `sp-rtk-base`:
+- **Distribution**: `sp-base` → `sp-rtk-base` (pyproject.toml `[project].name`)
+- **Import package / source dir**: `src/sp_base/` → `src/sp_rtk_base/` (via `git mv` — history preserved)
+- **Console scripts**: `sp-base` → `sp-rtk-base`, `sp-base-gps-audit` → `sp-rtk-base-gps-audit`
+- **Config dir**: `~/.config/sp-base/` → `~/.config/sp-rtk-base/`
+- **Env var**: `SP_BASE_CONFIG` → `SP_RTK_BASE_CONFIG`
+- **NiceGUI storage secret**: `sp-base-dev-secret` → `sp-rtk-base-dev-secret`
+- **Event bridge thread name**: `sp-base-event-bridge` → `sp-rtk-base-event-bridge`
+- **Config export filename**: `sp-base-config.yaml` → `sp-rtk-base-config.yaml`
+- **NTRIP caster Source-Agent**: `sp-base-caster` → `sp-rtk-base-caster`
+- **Prometheus namespace**: default `sp_base` → `sp_rtk_base`. All sp-rtk-base-scoped gauges renamed: `sp_base_input_*` → `sp_rtk_base_input_*`, `sp_base_dest_*` → `sp_rtk_base_dest_*`, `sp_base_active_destinations` → `sp_rtk_base_active_destinations`, `sp_base_total_destinations`, `sp_base_chunks_distributed`, `sp_base_frames_parsed`, `sp_base_input_*` connection/bytes/seconds gauges. (The relay-engine-scoped `sp_rtk_base_relay_*` gauges from the May 2026 rename are unchanged.)
+
+### Coverage of Changes
+- **Source (all of `src/sp_rtk_base/`)**: imports + runtime strings + namespace default
+- **Tests**: all `from sp_base` imports rewritten to `from sp_rtk_base`; all metric-name assertions rewritten; config-path fixtures updated
+- **Tools**: `tools/{demo_with_simulator,read_gps_config,test_ntrip_caster,test_hardware_gps}.py`
+- **Docker**: `docker/ntrip-caster/{docker-compose.yml,ntrip_caster.py}` — container name + sourcetable agent
+- **Docs**: `README.md`, `docs/*.md`
+- **Memory bank**: all 6 files
+- **`pyproject.toml`**: name, scripts, `--cov=src/sp_rtk_base`
+
+### Verification
+- `uv sync` — clean (`sp-rtk-base==0.1.0` installed; relay package `sp-rtk-base-relay` resolved via workspace member)
+- `uv run pytest tests/unit -q` — **480 passed, 91.74% coverage**
+- `uv run pyright src/sp_rtk_base` — **0 errors, 0 warnings** (strict mode)
+- `grep -rE "\bsp-base\b|\bsp_base\b|\bSP_BASE\b"` outside `packages/` and `.venv/` — **no matches** (every reference is now `sp-rtk-base` / `sp_rtk_base` / `SP_RTK_BASE`)
+
+### Operator Impact (Breaking)
+1. **Grafana / PromQL**: dashboards/alerts referencing `sp_base_input_*`, `sp_base_dest_*`, `sp_base_active_destinations`, `sp_base_total_destinations`, `sp_base_chunks_distributed`, `sp_base_frames_parsed`, or other `sp_base_*` gauges **must** be renamed to `sp_rtk_base_*`. The relay-engine gauges (`sp_rtk_base_relay_running`, `sp_rtk_base_relay_uptime_seconds`) are unchanged.
+2. **Configuration**: existing `~/.config/sp-base/config.yaml` is no longer read. Users start with defaults and must re-create destinations / input config (or manually `cp -r ~/.config/sp-base ~/.config/sp-rtk-base`). Per user direction, no automatic migration was implemented.
+3. **Env var**: `SP_BASE_CONFIG` is no longer honored; use `SP_RTK_BASE_CONFIG`.
+4. **CLI entry points**: `sp-base` and `sp-base-gps-audit` no longer exist; use `sp-rtk-base` and `sp-rtk-base-gps-audit`.
+
+### Post-Rename Manual Steps (for operator)
+1. Rename GitHub repo `rodenj1/sp-base` → `rodenj1/sp-rtk-base` (github.com → Settings → Rename).
+2. Rename working directory: `mv /opt/development/sp-base /opt/development/sp-rtk-base`.
+3. Update git remote: `cd /opt/development/sp-rtk-base && git remote set-url origin https://github.com/rodenj1/sp-rtk-base.git`.
+4. Reopen the project in VS Code from the new path; rerun `uv sync` to refresh the venv path-binding.
+
+---
+
+## Previous: Embedded Relay Package Renamed `sp-base-relay` → `sp-rtk-base-relay` (2026-05-14)
 
 ### Summary
 The embedded relay-engine package was renamed from `sp-base-relay` to `sp-rtk-base-relay` (directory + distribution name + import package `sp_base_relay` → `sp_rtk_base_relay`). All sp-base references were updated to match.
-
-### Files Updated in sp-base (outside packages/)
-- **Source (7)**: `src/sp_base/services/{relay_service,event_bridge,metrics_service,__init__}.py`, `src/sp_base/models/config_models.py`, `src/sp_base/ui/pages/{input,settings}.py`
-- **Tests (5)**: `tests/unit/test_{relay_service,event_bridge,metrics_service,api_metrics,config_models}.py`
-- **Docs**: `README.md`, `docs/relay-engine-api-spec.md`, `docs/ublox_gps_webui_planning.md`, `tools/test_ntrip_caster.py`
-- **Memory bank (6)**: `projectbrief.md`, `productContext.md`, `systemPatterns.md`, `techContext.md`, `activeContext.md`, `progress.md`
 
 ### Prometheus Gauge Rename
 Two relay-engine-scoped gauges had names tied to the relay package and were updated:
 - `sp_base_relay_running` → `sp_rtk_base_relay_running`
 - `sp_base_relay_uptime_seconds` → `sp_rtk_base_relay_uptime_seconds`
 
-In `MetricsService` these now use literal names (not `f"{ns}_..."`) since they represent the relay engine rather than the sp-base app. The remaining sp-base-specific gauges (`sp_base_input_*`, `sp_base_dest_*`, etc.) still use the configurable `namespace` prefix (defaults to `sp_base`). The `test_custom_namespace` test was updated to assert this split contract.
-
-### Verification
-- `uv sync` — clean (package resolved via path dependency `packages/sp-rtk-base-relay`)
-- `uv run pytest tests/unit -q` — **480 passed**
-- `uv run pyright src/sp_base` — **0 errors, 0 warnings**
-- `grep -r "sp_base_relay\|sp-base-relay"` outside `packages/` — no matches
+In `MetricsService` these now use literal names (not `f"{ns}_..."`) since they represent the relay engine rather than the sp-base app. The sp-base-specific gauges still used the configurable `namespace` prefix until the 2026-05-15 rename above.
 
 ### Operator Impact
-**Breaking for Grafana / alerting**: anyone scraping `/metrics` with dashboards or PromQL alerts referencing `sp_base_relay_running` or `sp_base_relay_uptime_seconds` must rename those queries to `sp_rtk_base_relay_*`. The shipped Grafana dashboard template lives in `packages/sp-rtk-base-relay/templates/grafana_dashboard.json` and was already updated as part of the package rename.
+**Breaking for Grafana / alerting**: PromQL queries referencing `sp_base_relay_running` or `sp_base_relay_uptime_seconds` were renamed to `sp_rtk_base_relay_*`. The shipped Grafana dashboard template (`packages/sp-rtk-base-relay/templates/grafana_dashboard.json`) was updated as part of the package rename.
 
 ---
 
@@ -53,11 +85,11 @@ After the previous bluetooth disconnect fix, the application would hang on Ctrl+
    - 30-second timeout is generous enough for normal operation
 
 ### Files Changed
-- `src/sp_base/app.py` — Added `_shutdown()` handler with `app.on_shutdown()`
-- `src/sp_base/api/events.py` — WebSocket timeout 30s → 5s
+- `src/sp_rtk_base/app.py` — Added `_shutdown()` handler with `app.on_shutdown()`
+- `src/sp_rtk_base/api/events.py` — WebSocket timeout 30s → 5s
 - `packages/sp-rtk-base-relay/src/sp_rtk_base_relay/core/destinations/ntrip_destination.py` — Socket timeout `None` → `30.0`
 
-### Tests: All pass (21 sp-base, 77 relay)
+### Tests: All pass (21 sp-rtk-base, 77 relay)
 
 ## Previous: Bluetooth Stale D-Bus Cache Bug Fix (2026-04-17)
 
@@ -193,14 +225,14 @@ Both GPS pages now have explicit reload buttons (only visible when connected):
 UI pages, layout, components, and CLI audit tool excluded from coverage measurement (NiceGUI presentation code can't be unit tested). Coverage: 92.28% on measured code.
 
 ## Key Files Changed
-- `src/sp_base/ui/layout.py` — New nav items with separators
-- `src/sp_base/ui/pages/input.py` — New (extracted from settings)
-- `src/sp_base/ui/pages/survey.py` — New (survey workflow + positions + live position + reload button)
-- `src/sp_base/ui/pages/gps_config.py` — New (RTCM + GNSS + flash + handoff + reload button)
-- `src/sp_base/ui/pages/dashboard.py` — Slimmed (relay-only)
-- `src/sp_base/ui/pages/settings.py` — Slimmed (app settings only)
-- `src/sp_base/app.py` — Updated page registrations
-- `src/sp_base/ui/pages/device.py` — Deleted
+- `src/sp_rtk_base/ui/layout.py` — New nav items with separators
+- `src/sp_rtk_base/ui/pages/input.py` — New (extracted from settings)
+- `src/sp_rtk_base/ui/pages/survey.py` — New (survey workflow + positions + live position + reload button)
+- `src/sp_rtk_base/ui/pages/gps_config.py` — New (RTCM + GNSS + flash + handoff + reload button)
+- `src/sp_rtk_base/ui/pages/dashboard.py` — Slimmed (relay-only)
+- `src/sp_rtk_base/ui/pages/settings.py` — Slimmed (app settings only)
+- `src/sp_rtk_base/app.py` — Updated page registrations
+- `src/sp_rtk_base/ui/pages/device.py` — Deleted
 - `pyproject.toml` — Coverage omit for UI/CLI code
 
 ## Key Metrics

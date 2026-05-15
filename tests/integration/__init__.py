@@ -1,1 +1,1 @@
-"""Integration tests for sp-base end-to-end functionality."""
+"""Integration tests for sp-rtk-base end-to-end functionality."""

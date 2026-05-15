@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # pyright: reportUnknownMemberType=false
-"""Demo script: run sp-base with simulated RTCM source and mock destinations.
+"""Demo script: run sp-rtk-base with simulated RTCM source and mock destinations.
 
 Starts:
   1. A TCP source simulator streaming synthetic RTCM3 data
   2. A mock NTRIP caster that accepts and logs incoming data
-  3. The full sp-base NiceGUI application pre-configured with:
+  3. The full sp-rtk-base NiceGUI application pre-configured with:
      - TCP input pointing to the simulator
      - A tcp_server destination (port 19876)
      - An NTRIP destination pointing to the mock caster
@@ -128,15 +128,15 @@ def main() -> None:
         ntrip_mountpoint=NTRIP_MOUNTPOINT,
     )
 
-    tmp_dir = tempfile.mkdtemp(prefix="sp_base_demo_")
+    tmp_dir = tempfile.mkdtemp(prefix="sp_rtk_base_demo_")
     config_path = Path(tmp_dir) / "config.yaml"
     config_path.write_text(
         yaml.dump(config_data, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
     )
 
-    # Point sp-base at the demo config
-    os.environ["SP_BASE_CONFIG"] = str(config_path)
+    # Point sp-rtk-base at the demo config
+    os.environ["SP_RTK_BASE_CONFIG"] = str(config_path)
 
     # 4. Start a TCP client that connects to the tcp_server destination
     #    (without a connected client, tcp_server shows 0 bytes sent)
@@ -188,8 +188,8 @@ def main() -> None:
     print("=" * 65)
     print()
 
-    # 6. Launch the sp-base app (blocks until shutdown)
-    from sp_base.app import init_app
+    # 6. Launch the sp-rtk-base app (blocks until shutdown)
+    from sp_rtk_base.app import init_app
 
     # pyright: ignore[reportUnknownMemberType]
     from nicegui import ui  # type: ignore[import-untyped]
@@ -204,7 +204,7 @@ def main() -> None:
         dark=True,
         reload=False,
         show=False,
-        storage_secret="sp-base-demo-secret",
+        storage_secret="sp-rtk-base-demo-secret",
     )
 
 

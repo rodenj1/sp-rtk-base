@@ -1,5 +1,5 @@
 [project]
-name = "sp-base"
+name = "sp-rtk-base"
 version = "0.1.0"
 description = "Web UI and API for controlling and monitoring a u-blox GPS RTK base station relay"
 readme = "README.md"
@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-sp-base = "sp_base.main:main"
-sp-base-gps-audit = "sp_base.cli.config_audit:main"
+sp-rtk-base = "sp_rtk_base.main:main"
+sp-rtk-base-gps-audit = "sp_rtk_base.cli.config_audit:main"
 
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]
@@ -31,7 +31,7 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = [
-    "--cov=src/sp_base",
+    "--cov=src/sp_rtk_base",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
     "--cov-fail-under=50",

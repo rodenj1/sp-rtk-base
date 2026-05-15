@@ -45,7 +45,7 @@ These changes configure the communication ports for base station operation.
 > minimize serial traffic. Polled UBX command/response (e.g., from pyubx2) still
 > works — the receiver responds to polls regardless of this setting. However,
 > periodic UBX messages (like position updates) won't appear on UART1 unless this
-> is re-enabled. The sp-base web app polls explicitly, so this works fine.
+> is re-enabled. The sp-rtk-base web app polls explicitly, so this works fine.
 
 ---
 
@@ -206,7 +206,7 @@ uv run python tools/read_gps_config.py --port /dev/ttyUSB0 --baud 57600 --show-s
 uv run python tools/read_gps_config.py --port /dev/ttyUSB0 --baud 57600 --json
 ```
 
-> **⚠️ Important:** The web app (sp-base) must be stopped before running the audit
+> **⚠️ Important:** The web app (sp-rtk-base) must be stopped before running the audit
 > tool. If both processes have the serial port open simultaneously, they compete for
 > serial bytes and reads become unreliable. This is the same class of issue that the
 > `threading.Lock` in `UbloxDriver` solves within the web app — but across processes,

@@ -8,17 +8,17 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
-from sp_base.services import (
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.services import (
     get_config_service,
     get_event_bridge,
     get_metrics_service,
     get_relay_service,
 )
-from sp_base.services.config_service import ConfigService
-from sp_base.services.event_bridge import EventBridge
-from sp_base.services.metrics_service import MetricsService
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.event_bridge import EventBridge
+from sp_rtk_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.relay_service import RelayService
 
 
 @pytest.fixture()
@@ -35,7 +35,7 @@ def api_client() -> TestClient:
 @pytest.fixture()
 def config_path(tmp_path: Path) -> Path:
     """Provide a temp config file path for tests."""
-    return tmp_path / "sp-base" / "config.yaml"
+    return tmp_path / "sp-rtk-base" / "config.yaml"
 
 
 @pytest.fixture()

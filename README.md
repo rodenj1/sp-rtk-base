@@ -41,12 +41,12 @@ SP-Base wraps the [sp-rtk-base-relay](packages/sp-rtk-base-relay/) engine with a
 
 ```bash
 # Clone and install dependencies
-git clone https://github.com/rodenj1/sp-base.git
-cd sp-base
+git clone https://github.com/rodenj1/sp-rtk-base.git
+cd sp-rtk-base
 uv sync
 
 # Start the application
-uv run sp-base
+uv run sp-rtk-base
 ```
 
 Open **http://localhost:8080** in your browser.
@@ -164,7 +164,7 @@ Example `prometheus.yml` scrape config:
 
 ```yaml
 scrape_configs:
-  - job_name: "sp-base"
+  - job_name: "sp-rtk-base"
     scrape_interval: 10s
     static_configs:
       - targets: ["localhost:8080"]
@@ -173,11 +173,11 @@ scrape_configs:
 Key metrics include:
 - `sp_rtk_base_relay_running` — relay engine state (1/0)
 - `sp_rtk_base_relay_uptime_seconds` — engine uptime
-- `sp_base_input_connected` — input source connection state
-- `sp_base_input_bytes_received` — total bytes from input
-- `sp_base_active_destinations` / `sp_base_total_destinations`
-- `sp_base_dest_connected{destination="name"}` — per-destination status
-- `sp_base_dest_bytes_sent{destination="name"}` — per-destination throughput
+- `sp_rtk_base_input_connected` — input source connection state
+- `sp_rtk_base_input_bytes_received` — total bytes from input
+- `sp_rtk_base_active_destinations` / `sp_rtk_base_total_destinations`
+- `sp_rtk_base_dest_connected{destination="name"}` — per-destination status
+- `sp_rtk_base_dest_bytes_sent{destination="name"}` — per-destination throughput
 
 ## Development
 
@@ -210,8 +210,8 @@ uv run pyright src/
 ### Project Structure
 
 ```
-sp-base/
-├── src/sp_base/
+sp-rtk-base/
+├── src/sp_rtk_base/
 │   ├── api/              # FastAPI REST endpoints
 │   │   ├── config.py        # YAML import/export
 │   │   ├── destinations.py  # Destination CRUD

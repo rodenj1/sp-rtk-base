@@ -1,4 +1,4 @@
-"""Tests for sp_base.main module — application entry point."""
+"""Tests for sp_rtk_base.main module — application entry point."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ class TestMainModule:
     """Tests for the main module structure."""
 
     def test_main_function_exists(self) -> None:
-        """main function is importable from sp_base.main."""
-        from sp_base.main import main
+        """main function is importable from sp_rtk_base.main."""
+        from sp_rtk_base.main import main
 
         assert callable(main)
 
     def test_version_importable(self) -> None:
         """Package version is importable."""
-        from sp_base import __version__
+        from sp_rtk_base import __version__
 
         assert isinstance(__version__, str)
         assert __version__ == "0.1.0"
@@ -32,10 +32,10 @@ class TestMainEntryPoint:
         mock_nicegui.ui = mock_ui
 
         with (
-            patch("sp_base.main.init_app") as mock_init_app,
+            patch("sp_rtk_base.main.init_app") as mock_init_app,
             patch.dict("sys.modules", {"nicegui": mock_nicegui}),
         ):
-            from sp_base.main import main
+            from sp_rtk_base.main import main
 
             main()
 

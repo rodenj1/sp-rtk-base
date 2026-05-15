@@ -146,7 +146,7 @@ class MountpointRegistry:
                 # nav-system;network;country-code;lat;lon;nmea;solution;generator;
                 # compression;auth;fee;bitrate;misc
                 lines.append(
-                    f"STR;{name};;;;;;GPS+GLO;none;;;0.00;0.00;0;0;sp-base-caster;none;N;N;0;"
+                    f"STR;{name};;;;;;GPS+GLO;none;;;0.00;0.00;0;0;sp-rtk-base-caster;none;N;N;0;"
                 )
         lines.append("ENDSOURCETABLE")
         return "\r\n".join(lines) + "\r\n"

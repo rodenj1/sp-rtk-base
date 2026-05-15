@@ -1,11 +1,11 @@
-"""Tests for sp_base.api.destinations — destination CRUD API endpoints."""
+"""Tests for sp_rtk_base.api.destinations — destination CRUD API endpoints."""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from sp_base.models.config_models import DestinationProfile
-from sp_base.services.config_service import ConfigService
+from sp_rtk_base.models.config_models import DestinationProfile
+from sp_rtk_base.services.config_service import ConfigService
 
 
 def _add_test_dest(config_svc: ConfigService, name: str = "rtk2go") -> None:

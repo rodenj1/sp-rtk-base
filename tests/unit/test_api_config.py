@@ -7,13 +7,13 @@ import io
 import yaml
 from fastapi.testclient import TestClient
 
-from sp_base.models.config_models import (
+from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     DestinationProfile,
     InputProfile,
 )
-from sp_base.services.config_service import ConfigService
+from sp_rtk_base.services.config_service import ConfigService
 
 
 class TestExportConfig:
@@ -27,7 +27,7 @@ class TestExportConfig:
         resp = api_client_with_services.get("/api/config/export")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/x-yaml"
-        assert "sp-base-config.yaml" in resp.headers["content-disposition"]
+        assert "sp-rtk-base-config.yaml" in resp.headers["content-disposition"]
 
         data = yaml.safe_load(resp.text)
         assert isinstance(data, dict)

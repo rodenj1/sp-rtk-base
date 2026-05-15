@@ -1,4 +1,4 @@
-"""Tests for sp_base.services.relay_service — async RelayEngine wrapper."""
+"""Tests for sp_rtk_base.services.relay_service — async RelayEngine wrapper."""
 
 # pyright: reportPrivateUsage=false
 # Tests need to set internal state (e.g. _engine) for unit testing.
@@ -12,11 +12,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.services.relay_service import RelayService
 
 # Get a reference to the actual module (not the singleton variable
-# shadowed by sp_base.services.__init__).
-_relay_module = sys.modules["sp_base.services.relay_service"]
+# shadowed by sp_rtk_base.services.__init__).
+_relay_module = sys.modules["sp_rtk_base.services.relay_service"]
 from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,

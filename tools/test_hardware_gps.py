@@ -15,7 +15,7 @@ import argparse
 
 def list_ports() -> None:
     """List all available serial ports with GPS detection."""
-    from sp_base.services.drivers.base import GpsReceiverDriver
+    from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
     ports = GpsReceiverDriver.list_serial_ports()
     if not ports:
@@ -32,7 +32,7 @@ def list_ports() -> None:
 
 def test_connect(port: str, baud: int) -> None:
     """Connect to a u-blox receiver and display device info."""
-    from sp_base.services.drivers.ublox import UbloxDriver
+    from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
     driver = UbloxDriver()
 

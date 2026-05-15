@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
-from sp_base.app import create_api_app
-from sp_base.models.config_models import AppSettings
-from sp_base.services import get_config_service, get_metrics_service, get_relay_service
-from sp_base.services.config_service import ConfigService
-from sp_base.services.metrics_service import MetricsService
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.config_models import AppSettings
+from sp_rtk_base.services import get_config_service, get_metrics_service, get_relay_service
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
@@ -121,7 +121,7 @@ class TestMetricsEndpoint:
 
         assert "sp_rtk_base_relay_running 0.0" in body
         assert "sp_rtk_base_relay_uptime_seconds 0.0" in body
-        assert "sp_base_input_connected 0.0" in body
+        assert "sp_rtk_base_input_connected 0.0" in body
 
     def test_metrics_populated_when_running(self) -> None:
         relay = MagicMock(spec=RelayService)
@@ -134,10 +134,10 @@ class TestMetricsEndpoint:
 
         assert "sp_rtk_base_relay_running 1.0" in body
         assert "sp_rtk_base_relay_uptime_seconds 60.0" in body
-        assert "sp_base_input_connected 1.0" in body
-        assert "sp_base_input_bytes_received 5000.0" in body
-        assert "sp_base_active_destinations 1.0" in body
-        assert "sp_base_chunks_distributed 100.0" in body
+        assert "sp_rtk_base_input_connected 1.0" in body
+        assert "sp_rtk_base_input_bytes_received 5000.0" in body
+        assert "sp_rtk_base_active_destinations 1.0" in body
+        assert "sp_rtk_base_chunks_distributed 100.0" in body
 
     def test_per_destination_labels(self) -> None:
         relay = MagicMock(spec=RelayService)
@@ -148,8 +148,8 @@ class TestMetricsEndpoint:
         resp = client.get("/metrics")
         body = resp.text
 
-        assert 'sp_base_dest_connected{destination="test-dest"} 1.0' in body
-        assert 'sp_base_dest_bytes_sent{destination="test-dest"} 2000.0' in body
+        assert 'sp_rtk_base_dest_connected{destination="test-dest"} 1.0' in body
+        assert 'sp_rtk_base_dest_bytes_sent{destination="test-dest"} 2000.0' in body
 
     def test_idle_when_status_returns_none(self) -> None:
         """When relay is 'running' but get_status returns None."""

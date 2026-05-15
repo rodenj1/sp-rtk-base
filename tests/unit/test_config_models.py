@@ -1,4 +1,4 @@
-"""Tests for sp_base.models.config_models — Pydantic config models."""
+"""Tests for sp_rtk_base.models.config_models — Pydantic config models."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from sp_base.models.config_models import (
+from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     DestinationProfile,

@@ -1,4 +1,4 @@
-"""Tests for sp_base.services.event_bridge — thread-to-async event forwarding."""
+"""Tests for sp_rtk_base.services.event_bridge — thread-to-async event forwarding."""
 
 # pyright: reportPrivateUsage=false
 # Tests need to access internal state for unit testing.
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sp_base.services.event_bridge import EventBridge
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.services.event_bridge import EventBridge
+from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base_relay import RelayEvent
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sp_base.ui.validators import (
+from sp_rtk_base.ui.validators import (
     FieldDef,
     ValidationDict,
     is_non_empty,

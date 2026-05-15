@@ -2,12 +2,22 @@
 
 ## Recent Changes
 
+### 2026-05-15 — Top-Level Package Rename `sp-base` → `sp-rtk-base`
+The web-UI/API package was renamed end-to-end:
+- Distribution: `sp-base` → `sp-rtk-base`; import package: `sp_base` → `sp_rtk_base`; source dir moved via `git mv`
+- Console scripts: `sp-base` / `sp-base-gps-audit` → `sp-rtk-base` / `sp-rtk-base-gps-audit`
+- Config dir: `~/.config/sp-base/` → `~/.config/sp-rtk-base/`; env var `SP_BASE_CONFIG` → `SP_RTK_BASE_CONFIG`
+- Prometheus namespace + all `sp_base_*` gauges renamed to `sp_rtk_base_*` (input, dest, active/total destinations, chunks, frames). Relay-engine gauges (`sp_rtk_base_relay_*`) unchanged.
+- Updated: `pyproject.toml`, all 50+ Python files, README, all docs, all memory-bank files, docker compose + caster sourcetable agent
+- **Operator action required**: rename Grafana/PromQL queries from `sp_base_*` → `sp_rtk_base_*`; manually move `~/.config/sp-base/` → `~/.config/sp-rtk-base/` if you want to preserve existing config; rename GitHub repo + working dir + git remote post-commit
+- Verified: `uv sync` clean (`sp-rtk-base==0.1.0` built), **480 unit tests pass, 91.74% coverage**, **pyright 0 errors/0 warnings** (strict), grep confirms zero remaining `sp-base`/`sp_base`/`SP_BASE` tokens outside `packages/` and `.venv/`.
+
 ### 2026-05-14 — Relay Package Rename `sp-base-relay` → `sp-rtk-base-relay`
 The embedded relay-engine package was renamed; all sp-base references updated:
 - 7 src files, 5 test files, 4 docs, 6 memory-bank files
-- Prometheus gauges `sp_base_relay_running` / `sp_base_relay_uptime_seconds` renamed to `sp_rtk_base_relay_*` (literal, no namespace prefix). Other gauges (`sp_base_input_*`, `sp_base_dest_*`) keep configurable `namespace`.
+- Prometheus gauges `sp_base_relay_running` / `sp_base_relay_uptime_seconds` renamed to `sp_rtk_base_relay_*` (literal, no namespace prefix). Other gauges (`sp_rtk_base_input_*`, `sp_rtk_base_dest_*`) keep configurable `namespace`.
 - **Operator action required**: rename Grafana/PromQL queries referencing the old metric names.
-- Verified: `uv sync` clean, **480 unit tests pass**, **pyright 0 errors**, grep confirms zero remaining `sp_base_relay`/`sp-base-relay` references outside `packages/`.
+- Verified: `uv sync` clean, **480 unit tests pass**, **pyright 0 errors**, grep confirms zero remaining `sp_base_relay`/`sp-rtk-base-relay` references outside `packages/`.
 
 ## Completed Phases
 
@@ -18,7 +28,7 @@ The embedded relay-engine package was renamed; all sp-base references updated:
 - Initial unit tests for app and main
 
 ### Phase 2 — Service Layer ✅
-- `ConfigService`: YAML-based config persistence (~/.config/sp-base/config.yaml)
+- `ConfigService`: YAML-based config persistence (~/.config/sp-rtk-base/config.yaml)
 - `RelayService`: Wraps sp-rtk-base-relay engine with async start/stop/status
 - `EventBridge`: Subscribes to relay engine events, maintains event buffer
 - Pydantic config models (AppConfig, InputProfile, DestinationProfile, AppSettings)
@@ -125,11 +135,11 @@ The embedded relay-engine package was renamed; all sp-base references updated:
   - GPS serial ports sorted to top of port list
   - 7 new tests (3 service + 4 API); 443 total passing; pyright 0 errors
 - **Step 3.9 ✅ — GPS Configuration Audit Tool**:
-  - `sp_base/cli/config_audit.py` — reads all u-blox Gen9 config keys from RAM and factory-default layers via CFG-VALGET, reports differences
+  - `sp_rtk_base/cli/config_audit.py` — reads all u-blox Gen9 config keys from RAM and factory-default layers via CFG-VALGET, reports differences
   - 40+ configuration groups: UART/USB/I2C/SPI ports & protocols, TMODE, SIGNAL, RTCM, NMEA, NAVSPG, rates, power mgmt, etc.
   - Uses pyubx2 `UBX_CONFIG_DATABASE` for complete key coverage; fresh UBXReader per poll to avoid buffer corruption
   - Human-readable formatting: enum maps, annotations explaining each change, `--json` output, `--show-same` flag
-  - Bundled as `sp-base-gps-audit` console_scripts entry point in pyproject.toml
+  - Bundled as `sp-rtk-base-gps-audit` console_scripts entry point in pyproject.toml
   - Exclusive serial port locking (TIOCEXCL + fcntl.flock) in both UbloxDriver and audit tool
   - Documentation: `docs/zed-f9p-base-station-config-reference.md`
   - `tools/read_gps_config.py` retained as thin wrapper for dev convenience
@@ -166,7 +176,7 @@ The embedded relay-engine package was renamed; all sp-base references updated:
 - **Pyright**: 0 errors, 0 warnings (strict mode)
 - **Python**: 3.10+ compatible
 - **API endpoints**: 35 (health, relay, destinations, settings, events, metrics, config, device×19)
-- **CLI tools**: `sp-base` (web app), `sp-base-gps-audit` (config audit)
+- **CLI tools**: `sp-rtk-base` (web app), `sp-rtk-base-gps-audit` (config audit)
 - **UI pages**: 6 (Dashboard, Input, Outputs, Survey-In, Settings, Advanced GPS)
 
 ## What's Left to Build

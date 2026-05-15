@@ -1,5 +1,5 @@
 # pyright: reportUnknownMemberType=false
-"""End-to-end integration tests for sp-base.
+"""End-to-end integration tests for sp-rtk-base.
 
 Tests the full pipeline:
   TCP Source Simulator → RelayEngine (via API) → TCP Server Destination → Test Client

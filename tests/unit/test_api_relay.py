@@ -1,4 +1,4 @@
-"""Tests for sp_base.api.relay — relay control API endpoints."""
+"""Tests for sp_rtk_base.api.relay — relay control API endpoints."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
-from sp_base.models.config_models import DestinationProfile, InputProfile
-from sp_base.services.config_service import ConfigService
+from sp_rtk_base.models.config_models import DestinationProfile, InputProfile
+from sp_rtk_base.services.config_service import ConfigService
 
 
 @dataclass(frozen=True)

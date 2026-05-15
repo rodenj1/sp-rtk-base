@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sp_base.models.device_models import (
+from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
     RtcmOutputPort,
@@ -112,20 +112,20 @@ class TestRtcmKeyMapping:
     """Tests for the _rtcm_key helper and key constants."""
 
     def test_rtcm_key_standard(self) -> None:
-        from sp_base.services.drivers.ublox import _rtcm_key
+        from sp_rtk_base.services.drivers.ublox import _rtcm_key
 
         assert _rtcm_key(1005, "USB") == "CFG_MSGOUT_RTCM_3X_TYPE1005_USB"
         assert _rtcm_key(1077, "UART1") == "CFG_MSGOUT_RTCM_3X_TYPE1077_UART1"
         assert _rtcm_key(1087, "I2C") == "CFG_MSGOUT_RTCM_3X_TYPE1087_I2C"
 
     def test_rtcm_key_4072(self) -> None:
-        from sp_base.services.drivers.ublox import _rtcm_key
+        from sp_rtk_base.services.drivers.ublox import _rtcm_key
 
         assert _rtcm_key(4072, "USB") == "CFG_MSGOUT_RTCM_3X_TYPE4072_0_USB"
         assert _rtcm_key(4072, "UART2") == "CFG_MSGOUT_RTCM_3X_TYPE4072_0_UART2"
 
     def test_legacy_usb_keys_match(self) -> None:
-        from sp_base.services.drivers.ublox import _RTCM_KEY_BASES, _RTCM_USB_KEYS
+        from sp_rtk_base.services.drivers.ublox import _RTCM_KEY_BASES, _RTCM_USB_KEYS
 
         for msg_id, expected in _RTCM_USB_KEYS.items():
             base = _RTCM_KEY_BASES[msg_id]
@@ -152,7 +152,7 @@ class TestParseRtcmPortValget:
     """Tests for UbloxDriver._parse_rtcm_port_valget."""
 
     def test_parse_all_zero(self) -> None:
-        from sp_base.services.drivers.ublox import UbloxDriver
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
         parsed = _FakeValget()  # All defaults to 0
 
@@ -166,7 +166,7 @@ class TestParseRtcmPortValget:
                 assert r == 0
 
     def test_parse_some_enabled(self) -> None:
-        from sp_base.services.drivers.ublox import UbloxDriver, _rtcm_key
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver, _rtcm_key
 
         parsed = _FakeValget({
             _rtcm_key(1005, "USB"): 1,
@@ -190,7 +190,7 @@ class TestConfigureRtcmPorts:
     """Tests for UbloxDriver.configure_rtcm_ports."""
 
     def test_configure_calls_valset(self) -> None:
-        from sp_base.services.drivers.ublox import UbloxDriver
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
         driver = UbloxDriver()
         driver._serial = MagicMock()
@@ -218,7 +218,7 @@ class TestConfigureRtcmPorts:
             assert usb_entry[0][1] == 1
 
     def test_configure_empty_config(self) -> None:
-        from sp_base.services.drivers.ublox import UbloxDriver
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
         driver = UbloxDriver()
         driver._serial = MagicMock()
@@ -233,7 +233,7 @@ class TestConfigureRtcmPorts:
             mock_valset.assert_not_called()
 
     def test_configure_unknown_msg_skipped(self) -> None:
-        from sp_base.services.drivers.ublox import UbloxDriver
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
         driver = UbloxDriver()
         driver._serial = MagicMock()
@@ -259,7 +259,7 @@ class TestDeviceServiceRtcmPorts:
 
     @pytest.mark.asyncio
     async def test_get_rtcm_port_config(self) -> None:
-        from sp_base.services.device_service import DeviceService
+        from sp_rtk_base.services.device_service import DeviceService
 
         mock_driver = MagicMock()
         mock_driver.is_connected = True
@@ -271,7 +271,7 @@ class TestDeviceServiceRtcmPorts:
         svc._state = MagicMock()
         svc._state.__eq__ = MagicMock(return_value=True)
         # Simulate CONNECTED state
-        from sp_base.models.device_models import DeviceConnectionState
+        from sp_rtk_base.models.device_models import DeviceConnectionState
         svc._state = DeviceConnectionState.CONNECTED
 
         result = await svc.get_rtcm_port_config()
@@ -280,8 +280,8 @@ class TestDeviceServiceRtcmPorts:
 
     @pytest.mark.asyncio
     async def test_configure_rtcm_ports(self) -> None:
-        from sp_base.models.device_models import DeviceConnectionState
-        from sp_base.services.device_service import DeviceService
+        from sp_rtk_base.models.device_models import DeviceConnectionState
+        from sp_rtk_base.services.device_service import DeviceService
 
         mock_driver = MagicMock()
         mock_driver.is_connected = True

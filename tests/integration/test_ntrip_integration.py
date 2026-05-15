@@ -1,5 +1,5 @@
 # pyright: reportUnknownMemberType=false
-"""NTRIP destination integration tests for sp-base.
+"""NTRIP destination integration tests for sp-rtk-base.
 
 Tests the full pipeline:
   TCP Source Simulator → RelayEngine (via API) → NTRIP Destination → Mock Caster

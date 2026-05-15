@@ -1,4 +1,4 @@
-"""Tests for sp_base.services.__init__ — service initialization and DI helpers."""
+"""Tests for sp_rtk_base.services.__init__ — service initialization and DI helpers."""
 
 from __future__ import annotations
 
@@ -7,17 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import sp_base.services as services_mod
-from sp_base.models.config_models import (
+import sp_rtk_base.services as services_mod
+from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     DestinationProfile,
     InputProfile,
 )
-from sp_base.services.config_service import ConfigService
-from sp_base.services.event_bridge import EventBridge
-from sp_base.services.metrics_service import MetricsService
-from sp_base.services.relay_service import RelayService
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.event_bridge import EventBridge
+from sp_rtk_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.relay_service import RelayService
 
 
 class TestDependencyInjectionHelpers:

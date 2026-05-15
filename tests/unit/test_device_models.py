@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sp_base.models.device_models import (
+from sp_rtk_base.models.device_models import (
     DeviceCapability,
     DeviceConnectionState,
     DeviceInfo,

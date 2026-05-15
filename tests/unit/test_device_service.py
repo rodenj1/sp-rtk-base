@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from sp_base.models.device_models import (
+from sp_rtk_base.models.device_models import (
     BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
@@ -18,8 +18,8 @@ from sp_base.models.device_models import (
     SurveyInConfig,
     SurveyInProgress,
 )
-from sp_base.services.device_service import DeviceService
-from sp_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 
 # ---------------------------------------------------------------------------

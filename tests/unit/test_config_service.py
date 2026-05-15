@@ -1,4 +1,4 @@
-"""Tests for sp_base.services.config_service — YAML config persistence."""
+"""Tests for sp_rtk_base.services.config_service — YAML config persistence."""
 
 from __future__ import annotations
 
@@ -7,19 +7,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sp_base.models.config_models import (
+from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     DestinationProfile,
     InputProfile,
 )
-from sp_base.services.config_service import ConfigService
+from sp_rtk_base.services.config_service import ConfigService
 
 
 @pytest.fixture()
 def config_path(tmp_path: Path) -> Path:
     """Provide a temp config file path."""
-    return tmp_path / "sp-base" / "config.yaml"
+    return tmp_path / "sp-rtk-base" / "config.yaml"
 
 
 @pytest.fixture()
@@ -331,16 +331,16 @@ class TestConfigPath:
     def test_env_var_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """ConfigService uses SP_BASE_CONFIG env var."""
+        """ConfigService uses SP_RTK_BASE_CONFIG env var."""
         env_path = tmp_path / "env-config.yaml"
-        monkeypatch.setenv("SP_BASE_CONFIG", str(env_path))
+        monkeypatch.setenv("SP_RTK_BASE_CONFIG", str(env_path))
 
         svc = ConfigService()
         assert svc.config_path == env_path
 
     def test_default_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """ConfigService uses ~/.config/sp-base/config.yaml by default."""
-        monkeypatch.delenv("SP_BASE_CONFIG", raising=False)
+        """ConfigService uses ~/.config/sp-rtk-base/config.yaml by default."""
+        monkeypatch.delenv("SP_RTK_BASE_CONFIG", raising=False)
         svc = ConfigService()
         assert svc.config_path.name == "config.yaml"
-        assert "sp-base" in str(svc.config_path)
+        assert "sp-rtk-base" in str(svc.config_path)

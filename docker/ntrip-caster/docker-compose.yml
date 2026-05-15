@@ -19,7 +19,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: sp-base-ntrip-caster
+    container_name: sp-rtk-base-ntrip-caster
     ports:
       - "2101:2101"
     environment:

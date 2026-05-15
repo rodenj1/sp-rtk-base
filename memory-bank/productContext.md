@@ -28,7 +28,7 @@ RTK GPS base station operators need a simple way to configure, control, and moni
 
 ### 5. GPS Device Management (Phase 2+)
 - **Problem**: Base station operators need to identify, configure, and monitor their u-blox GPS receiver (survey-in, RTCM output settings, base station mode) but currently rely on u-center (Windows-only) or manual UBX commands.
-- **Solution**: sp-base provides a web-based interface for device identification (UBX-MON-VER), configuration, and backup/restore using PyUBX2, with smart port handling (separate UBX + RTCM ports = no relay interruption; shared port = serial handoff via `engine.stop()`/`engine.start()`).
+- **Solution**: sp-rtk-base provides a web-based interface for device identification (UBX-MON-VER), configuration, and backup/restore using PyUBX2, with smart port handling (separate UBX + RTCM ports = no relay interruption; shared port = serial handoff via `engine.stop()`/`engine.start()`).
 - **Impact**: Complete browser-based management of the GPS base station — from initial configuration through ongoing monitoring — without needing Windows or u-center.
 
 ## User Experience Goals
@@ -67,6 +67,6 @@ RTK GPS base station operators need a simple way to configure, control, and moni
 ### Architecture Principle
 The browser is an **operator console**, not the source of truth. Authoritative runtime state lives in:
 - **sp-rtk-base-relay RelayEngine** for relay state
-- **sp-base backend services** for configuration and orchestration
+- **sp-rtk-base backend services** for configuration and orchestration
 
 The browser requests actions and renders status — it does NOT directly manage threads, sockets, or serial ports.

@@ -1,4 +1,4 @@
-"""Tests for sp_base.api.events — events REST endpoint and WebSocket."""
+"""Tests for sp_rtk_base.api.events — events REST endpoint and WebSocket."""
 
 from __future__ import annotations
 

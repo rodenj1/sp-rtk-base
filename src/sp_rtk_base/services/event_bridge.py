@@ -83,9 +83,7 @@ class EventBridge:
 
         subscription = relay_service.subscribe_events()
         if subscription is None:
-            raise RuntimeError(
-                "Cannot start EventBridge: relay engine not available"
-            )
+            raise RuntimeError("Cannot start EventBridge: relay engine not available")
 
         self._subscription = subscription
         self._running = True
@@ -130,7 +128,9 @@ class EventBridge:
     # Internal
     # ------------------------------------------------------------------
 
-    def _event_loop(self, ) -> None:
+    def _event_loop(
+        self,
+    ) -> None:
         """Daemon thread: consume events and push to async queue.
 
         Runs until ``self._running`` is set to False or the
@@ -173,9 +173,7 @@ class EventBridge:
             event_dict: Serialized event data.
         """
         if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(
-                self._enqueue_nowait, event_dict
-            )
+            self._loop.call_soon_threadsafe(self._enqueue_nowait, event_dict)
         else:
             # Fallback: direct put (works in tests without event loop)
             self._enqueue_nowait(event_dict)

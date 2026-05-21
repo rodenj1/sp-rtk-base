@@ -233,7 +233,13 @@ class TestUpdateDestinationErrors:
         _add_test_dest(mock_config_service)
         resp = api_client_with_services.put(
             "/api/destinations/rtk2go",
-            json={"config": {"caster": "new-caster.com", "mountpoint": "NEW", "password": "pw2"}},
+            json={
+                "config": {
+                    "caster": "new-caster.com",
+                    "mountpoint": "NEW",
+                    "password": "pw2",
+                }
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["config"]["caster"] == "new-caster.com"

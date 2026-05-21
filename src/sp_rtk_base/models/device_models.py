@@ -12,8 +12,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
-
 # ---------------------------------------------------------------------------
 # Connection state
 # ---------------------------------------------------------------------------
@@ -69,7 +67,9 @@ class DeviceInfo(BaseModel):
     firmware_version: str = Field(default="", description="Firmware version string")
     protocol_version: str = Field(default="", description="Protocol version string")
     hardware_version: str = Field(default="", description="Hardware version string")
-    serial_number: str = Field(default="", description="Device serial number if available")
+    serial_number: str = Field(
+        default="", description="Device serial number if available"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +160,12 @@ class CurrentBaseConfig(BaseModel):
     pos_type: str = Field(default="llh", description="Storage format: 'ecef' or 'llh'")
     latitude: float = Field(default=0.0, description="WGS84 latitude in degrees")
     longitude: float = Field(default=0.0, description="WGS84 longitude in degrees")
-    altitude_m: float = Field(default=0.0, description="Height above ellipsoid in metres")
-    accuracy_mm: int = Field(default=0, description="Configured position accuracy in mm")
+    altitude_m: float = Field(
+        default=0.0, description="Height above ellipsoid in metres"
+    )
+    accuracy_mm: int = Field(
+        default=0, description="Configured position accuracy in mm"
+    )
 
 
 class RtcmMessageConfig(BaseModel):
@@ -321,7 +325,9 @@ class GpsPosition(BaseModel):
     Updated by polling or streaming from the driver.
     """
 
-    fix_type: GpsFixType = Field(default=GpsFixType.NO_FIX, description="Position fix type")
+    fix_type: GpsFixType = Field(
+        default=GpsFixType.NO_FIX, description="Position fix type"
+    )
     rtk_status: str = Field(
         default="none",
         description="RTK status: 'none', 'float', or 'fixed'",
@@ -329,17 +335,23 @@ class GpsPosition(BaseModel):
     latitude: float = Field(default=0.0, description="WGS84 latitude (°)")
     longitude: float = Field(default=0.0, description="WGS84 longitude (°)")
     altitude_m: float = Field(default=0.0, description="Height above ellipsoid (m)")
-    altitude_msl_m: float = Field(default=0.0, description="Height above mean sea level (m)")
+    altitude_msl_m: float = Field(
+        default=0.0, description="Height above mean sea level (m)"
+    )
     horizontal_accuracy_m: float = Field(
         default=0.0, ge=0.0, description="Horizontal accuracy estimate (m)"
     )
     vertical_accuracy_m: float = Field(
         default=0.0, ge=0.0, description="Vertical accuracy estimate (m)"
     )
-    num_satellites: int = Field(default=0, ge=0, description="Number of satellites used in fix")
+    num_satellites: int = Field(
+        default=0, ge=0, description="Number of satellites used in fix"
+    )
     speed_m_s: float = Field(default=0.0, ge=0.0, description="Ground speed (m/s)")
     heading_deg: float = Field(default=0.0, description="Heading of motion (°)")
-    pdop: float = Field(default=99.9, ge=0.0, description="Position dilution of precision")
+    pdop: float = Field(
+        default=99.9, ge=0.0, description="Position dilution of precision"
+    )
     timestamp: datetime | None = Field(default=None, description="UTC time of the fix")
 
 
@@ -348,13 +360,21 @@ class SurveyInProgress(BaseModel):
 
     active: bool = Field(default=False, description="Survey-in is currently running")
     valid: bool = Field(default=False, description="Survey-in result is valid")
-    duration_seconds: int = Field(default=0, ge=0, description="Elapsed duration in seconds")
-    mean_accuracy_mm: float = Field(default=0.0, ge=0.0, description="Current mean accuracy in mm")
-    observations: int = Field(default=0, ge=0, description="Number of observations collected")
+    duration_seconds: int = Field(
+        default=0, ge=0, description="Elapsed duration in seconds"
+    )
+    mean_accuracy_mm: float = Field(
+        default=0.0, ge=0.0, description="Current mean accuracy in mm"
+    )
+    observations: int = Field(
+        default=0, ge=0, description="Number of observations collected"
+    )
     # Position from the survey result (populated when valid=True)
     latitude: float | None = Field(default=None, description="WGS84 latitude (°)")
     longitude: float | None = Field(default=None, description="WGS84 longitude (°)")
-    altitude_m: float | None = Field(default=None, description="Height above ellipsoid (m)")
+    altitude_m: float | None = Field(
+        default=None, description="Height above ellipsoid (m)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +388,9 @@ class DeviceStatus(BaseModel):
     state: DeviceConnectionState = DeviceConnectionState.DISCONNECTED
     port: str | None = Field(default=None, description="Connected serial port path")
     baud_rate: int | None = Field(default=None, description="Serial baud rate")
-    info: DeviceInfo | None = Field(default=None, description="Device identity (when connected)")
+    info: DeviceInfo | None = Field(
+        default=None, description="Device identity (when connected)"
+    )
     capabilities: list[DeviceCapability] = Field(
         default_factory=lambda: list[DeviceCapability](),
         description="Supported capabilities of the connected driver",
@@ -378,4 +400,6 @@ class DeviceStatus(BaseModel):
         description="Survey-in progress (when active)",
     )
     last_error: str | None = Field(default=None, description="Last error message")
-    connected_at: datetime | None = Field(default=None, description="Connection timestamp")
+    connected_at: datetime | None = Field(
+        default=None, description="Connection timestamp"
+    )

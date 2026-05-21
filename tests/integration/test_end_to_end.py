@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 from tests.fixtures.tcp_destination_client import TCPDestinationClient
 from tests.fixtures.tcp_source_simulator import TCPSourceSimulator
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

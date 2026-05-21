@@ -21,7 +21,6 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.relay_service import RelayService
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -73,7 +72,11 @@ def handoff_client(
     mock_config_service: ConfigService,
 ) -> TestClient:
     """Create a test client with all three dependencies overridden."""
-    from sp_rtk_base.services import get_config_service, get_device_service, get_relay_service
+    from sp_rtk_base.services import (
+        get_config_service,
+        get_device_service,
+        get_relay_service,
+    )
 
     app = create_api_app()
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
@@ -140,11 +143,14 @@ class TestConnect:
             return_value=DeviceInfo(vendor="u-blox", model="ZED-F9P"),
         )
 
-        resp = client.post("/api/device/connect", json={
-            "vendor": "ublox",
-            "port": "/dev/ttyUSB0",
-            "baud_rate": 57600,
-        })
+        resp = client.post(
+            "/api/device/connect",
+            json={
+                "vendor": "ublox",
+                "port": "/dev/ttyUSB0",
+                "baud_rate": 57600,
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
@@ -158,10 +164,13 @@ class TestConnect:
         client: TestClient,
     ) -> None:
         mock_create.side_effect = ValueError("Unknown GPS driver 'bad'")
-        resp = client.post("/api/device/connect", json={
-            "vendor": "bad",
-            "port": "/dev/ttyUSB0",
-        })
+        resp = client.post(
+            "/api/device/connect",
+            json={
+                "vendor": "bad",
+                "port": "/dev/ttyUSB0",
+            },
+        )
         assert resp.status_code == 400
         assert "Unknown GPS driver" in resp.json()["detail"]
 
@@ -176,10 +185,13 @@ class TestConnect:
         mock_device_service.set_driver.side_effect = RuntimeError(
             "Cannot change driver while connected"
         )
-        resp = client.post("/api/device/connect", json={
-            "vendor": "ublox",
-            "port": "/dev/ttyUSB0",
-        })
+        resp = client.post(
+            "/api/device/connect",
+            json={
+                "vendor": "ublox",
+                "port": "/dev/ttyUSB0",
+            },
+        )
         assert resp.status_code == 409
 
     @patch("sp_rtk_base.api.device.create_driver")
@@ -193,10 +205,13 @@ class TestConnect:
         mock_device_service.connect = AsyncMock(
             side_effect=RuntimeError("Cannot connect while relay is running"),
         )
-        resp = client.post("/api/device/connect", json={
-            "vendor": "ublox",
-            "port": "/dev/ttyUSB0",
-        })
+        resp = client.post(
+            "/api/device/connect",
+            json={
+                "vendor": "ublox",
+                "port": "/dev/ttyUSB0",
+            },
+        )
         assert resp.status_code == 409
 
     @patch("sp_rtk_base.api.device.create_driver")
@@ -210,10 +225,13 @@ class TestConnect:
         mock_device_service.connect = AsyncMock(
             side_effect=ConnectionError("Failed to open /dev/ttyUSB0"),
         )
-        resp = client.post("/api/device/connect", json={
-            "vendor": "ublox",
-            "port": "/dev/ttyUSB0",
-        })
+        resp = client.post(
+            "/api/device/connect",
+            json={
+                "vendor": "ublox",
+                "port": "/dev/ttyUSB0",
+            },
+        )
         assert resp.status_code == 502
         assert "Failed to open" in resp.json()["detail"]
 
@@ -327,10 +345,13 @@ class TestConfigureSurveyIn:
         mock_device_service: MagicMock,
     ) -> None:
         mock_device_service.configure_survey_in = AsyncMock()
-        resp = client.post("/api/device/configure/survey-in", json={
-            "min_duration_seconds": 300,
-            "accuracy_limit_mm": 40000,
-        })
+        resp = client.post(
+            "/api/device/configure/survey-in",
+            json={
+                "min_duration_seconds": 300,
+                "accuracy_limit_mm": 40000,
+            },
+        )
         assert resp.status_code == 200
         assert "Survey-in configured" in resp.json()["message"]
 
@@ -342,10 +363,13 @@ class TestConfigureSurveyIn:
         mock_device_service.configure_survey_in = AsyncMock(
             side_effect=RuntimeError("Device not connected"),
         )
-        resp = client.post("/api/device/configure/survey-in", json={
-            "min_duration_seconds": 120,
-            "accuracy_limit_mm": 50000,
-        })
+        resp = client.post(
+            "/api/device/configure/survey-in",
+            json={
+                "min_duration_seconds": 120,
+                "accuracy_limit_mm": 50000,
+            },
+        )
         assert resp.status_code == 409
 
 
@@ -358,12 +382,15 @@ class TestConfigureFixedBase:
         mock_device_service: MagicMock,
     ) -> None:
         mock_device_service.configure_fixed_base = AsyncMock()
-        resp = client.post("/api/device/configure/fixed-base", json={
-            "latitude": 47.3977,
-            "longitude": 8.5456,
-            "altitude_m": 408.0,
-            "accuracy_mm": 500,
-        })
+        resp = client.post(
+            "/api/device/configure/fixed-base",
+            json={
+                "latitude": 47.3977,
+                "longitude": 8.5456,
+                "altitude_m": 408.0,
+                "accuracy_mm": 500,
+            },
+        )
         assert resp.status_code == 200
         assert "Fixed base configured" in resp.json()["message"]
 
@@ -371,11 +398,14 @@ class TestConfigureFixedBase:
         self,
         client: TestClient,
     ) -> None:
-        resp = client.post("/api/device/configure/fixed-base", json={
-            "latitude": 200.0,  # invalid
-            "longitude": 8.5,
-            "altitude_m": 100.0,
-        })
+        resp = client.post(
+            "/api/device/configure/fixed-base",
+            json={
+                "latitude": 200.0,  # invalid
+                "longitude": 8.5,
+                "altitude_m": 100.0,
+            },
+        )
         assert resp.status_code == 422  # Pydantic validation
 
 
@@ -388,10 +418,13 @@ class TestConfigureRtcm:
         mock_device_service: MagicMock,
     ) -> None:
         mock_device_service.configure_rtcm_messages = AsyncMock()
-        resp = client.post("/api/device/configure/rtcm", json={
-            "message_ids": [1005, 1077, 1087],
-            "rate_hz": 1,
-        })
+        resp = client.post(
+            "/api/device/configure/rtcm",
+            json={
+                "message_ids": [1005, 1077, 1087],
+                "rate_hz": 1,
+            },
+        )
         assert resp.status_code == 200
         assert "RTCM messages configured" in resp.json()["message"]
 

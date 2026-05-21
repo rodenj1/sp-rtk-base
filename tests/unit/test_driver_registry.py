@@ -27,7 +27,6 @@ from sp_rtk_base.services.drivers import (
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
-
 # ---------------------------------------------------------------------------
 # Concrete stub driver for testing
 # ---------------------------------------------------------------------------

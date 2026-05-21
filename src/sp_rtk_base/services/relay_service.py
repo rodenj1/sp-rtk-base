@@ -136,7 +136,7 @@ class RelayService:
             ConfigurationError: If the config is invalid or name is duplicate.
         """
         self._require_running()
-        assert self._engine is not None  # guarded by _require_running  # noqa: S101
+        assert self._engine is not None  # guarded by _require_running
         return await asyncio.to_thread(self._engine.add_destination, config)
 
     async def remove_destination(self, name: str) -> None:
@@ -150,7 +150,7 @@ class RelayService:
             KeyError: If the destination is not found.
         """
         self._require_running()
-        assert self._engine is not None  # noqa: S101
+        assert self._engine is not None
         await asyncio.to_thread(self._engine.remove_destination, name)
 
     async def start_destination(self, name: str) -> None:
@@ -164,7 +164,7 @@ class RelayService:
             KeyError: If the destination is not found.
         """
         self._require_running()
-        assert self._engine is not None  # noqa: S101
+        assert self._engine is not None
         await asyncio.to_thread(self._engine.start_destination, name)
 
     async def stop_destination(self, name: str) -> None:
@@ -178,7 +178,7 @@ class RelayService:
             KeyError: If the destination is not found.
         """
         self._require_running()
-        assert self._engine is not None  # noqa: S101
+        assert self._engine is not None
         await asyncio.to_thread(self._engine.stop_destination, name)
 
     def get_destination_names(self) -> list[str]:

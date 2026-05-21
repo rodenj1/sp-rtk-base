@@ -59,13 +59,13 @@ Each layer only talks to the layer below it. The UI never calls RelayEngine dire
 ```python
 class RelayService:
     """Adapts threaded RelayEngine for async FastAPI context."""
-    
+
     async def start_relay(self, input_config, destinations) -> None:
         await asyncio.to_thread(self._engine.start, destinations)
-    
+
     async def stop_relay(self) -> None:
         await asyncio.to_thread(self._engine.stop)
-    
+
     async def get_status(self) -> dict:
         status = await asyncio.to_thread(self._engine.get_status)
         return self._format_status(status)
@@ -77,14 +77,14 @@ class RelayService:
 ```python
 class EventBridge:
     """Daemon thread consuming EventSubscription, pushing to async queue."""
-    
+
     def _event_loop(self, sub: EventSubscription) -> None:
         """Background thread: relay events → asyncio queue."""
         while not sub.is_closed:
             event = sub.get_event(timeout=1.0)
             if event:
                 self._async_queue.put_nowait(event)
-    
+
     async def stream_events(self, websocket: WebSocket) -> None:
         """Async generator: pull from queue → send to WebSocket."""
         while True:
@@ -98,7 +98,7 @@ class EventBridge:
 ```python
 class ConfigService:
     """YAML-based profile persistence."""
-    
+
     def save_profiles(self, profiles: AppConfig) -> None: ...
     def load_profiles(self) -> AppConfig: ...
     def save_destination(self, dest: DestinationProfile) -> None: ...

@@ -105,12 +105,14 @@ class TestWebSocketEvents:
         mock_event_bridge.event_queue = queue
 
         # Put an event so we can verify the WS works
-        queue.put_nowait({
-            "event_type": "test.event",
-            "message": "Test",
-            "timestamp": 1.0,
-            "payload": {},
-        })
+        queue.put_nowait(
+            {
+                "event_type": "test.event",
+                "message": "Test",
+                "timestamp": 1.0,
+                "payload": {},
+            }
+        )
 
         with api_client_with_services.websocket_connect("/api/events/ws") as ws:
             data = ws.receive_json()

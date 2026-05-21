@@ -80,9 +80,11 @@ def dashboard_page() -> None:
         with ui.card().classes("w-full q-pa-md q-mt-md"):
             ui.label("Recent Events").classes("text-h6 text-white")
             ui.separator()
-            event_log = ui.column().classes(
-                "w-full q-mt-sm"
-            ).style("max-height: 300px; overflow-y: auto")
+            event_log = (
+                ui.column()
+                .classes("w-full q-mt-sm")
+                .style("max-height: 300px; overflow-y: auto")
+            )
 
         # --- State update functions ---
         async def _refresh_status() -> None:
@@ -123,14 +125,16 @@ def dashboard_page() -> None:
                     inp: Any = status.input
                     connected: bool = getattr(inp, "connected", False)
                     color = "green" if connected else "red"
-                    ui.label(
-                        f"{'Connected' if connected else 'Disconnected'}"
-                    ).classes(f"text-{color}")
+                    ui.label(f"{'Connected' if connected else 'Disconnected'}").classes(
+                        f"text-{color}"
+                    )
                     status_metric(
                         "Source", getattr(inp, "source_type", "unknown"), "input"
                     )
                     status_metric(
-                        "Received", _format_bytes(getattr(inp, "bytes_received", 0)), "download"
+                        "Received",
+                        _format_bytes(getattr(inp, "bytes_received", 0)),
+                        "download",
                     )
                     status_metric(
                         "Messages", str(getattr(inp, "messages_received", 0)), "message"
@@ -144,9 +148,9 @@ def dashboard_page() -> None:
                     elif not connected:
                         reconnects: int = getattr(inp, "reconnect_attempts", 0)
                         if reconnects > 0:
-                            ui.label(
-                                f"Reconnect attempts: {reconnects}"
-                            ).classes("text-orange text-caption q-mt-xs")
+                            ui.label(f"Reconnect attempts: {reconnects}").classes(
+                                "text-orange text-caption q-mt-xs"
+                            )
                 else:
                     ui.label("Not running").classes("text-grey-6")
 
@@ -222,8 +226,12 @@ def dashboard_page() -> None:
 
                 if errors:
                     with error_banner:
-                        with ui.card().classes("w-full q-pa-sm").style(
-                            "background-color: #3d1515; border-left: 4px solid #ff4444"
+                        with (
+                            ui.card()
+                            .classes("w-full q-pa-sm")
+                            .style(
+                                "background-color: #3d1515; border-left: 4px solid #ff4444"
+                            )
                         ):
                             ui.label("⚠ Issues Detected").classes(
                                 "text-subtitle2 text-red-3"
@@ -363,7 +371,9 @@ def dashboard_page() -> None:
             try:
                 config = config_svc.get_config()
                 if config.input is None:
-                    ui.notify("No input source configured — go to Input first", type="warning")
+                    ui.notify(
+                        "No input source configured — go to Input first", type="warning"
+                    )
                     return
                 enabled = [d for d in config.destinations if d.enabled]
                 if not enabled:

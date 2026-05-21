@@ -156,8 +156,10 @@ class TestSurveyInProgress:
 
     def test_active_survey(self) -> None:
         prog = SurveyInProgress(
-            active=True, valid=False,
-            duration_seconds=60, mean_accuracy_mm=12500.0,
+            active=True,
+            valid=False,
+            duration_seconds=60,
+            mean_accuracy_mm=12500.0,
             observations=60,
         )
         assert prog.active is True

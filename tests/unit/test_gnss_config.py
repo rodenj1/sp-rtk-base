@@ -27,7 +27,6 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
-
 # ---------------------------------------------------------------------------
 # Model tests
 # ---------------------------------------------------------------------------
@@ -57,26 +56,32 @@ class TestGnssModels:
         assert cfg.enabled_constellations() == []
 
     def test_gnss_config_enabled_constellations(self) -> None:
-        cfg = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            GnssSystemConfig(constellation=GnssConstellation.GLONASS, enabled=False),
-            GnssSystemConfig(constellation=GnssConstellation.GALILEO, enabled=True),
-        ])
+        cfg = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+                GnssSystemConfig(
+                    constellation=GnssConstellation.GLONASS, enabled=False
+                ),
+                GnssSystemConfig(constellation=GnssConstellation.GALILEO, enabled=True),
+            ]
+        )
         enabled = cfg.enabled_constellations()
         assert GnssConstellation.GPS in enabled
         assert GnssConstellation.GALILEO in enabled
         assert GnssConstellation.GLONASS not in enabled
 
     def test_gnss_config_serialization(self) -> None:
-        cfg = GnssConfig(systems=[
-            GnssSystemConfig(
-                constellation=GnssConstellation.GPS,
-                enabled=True,
-                min_channels=8,
-                max_channels=16,
-                sig_cfg_mask=65537,
-            ),
-        ])
+        cfg = GnssConfig(
+            systems=[
+                GnssSystemConfig(
+                    constellation=GnssConstellation.GPS,
+                    enabled=True,
+                    min_channels=8,
+                    max_channels=16,
+                    sig_cfg_mask=65537,
+                ),
+            ]
+        )
         data = cfg.model_dump()
         assert data["systems"][0]["constellation"] == "gps"
         assert data["systems"][0]["enabled"] is True
@@ -122,7 +127,7 @@ class TestUbloxParseCfgGnss:
     def test_parse_single_system(self) -> None:
         msg = _make_cfg_gnss(
             numConfigBlocks=1,
-            gnssId_01=0,    # GPS
+            gnssId_01=0,  # GPS
             enable_01=1,
             resTrkCh_01=8,
             maxTrkCh_01=16,
@@ -138,17 +143,17 @@ class TestUbloxParseCfgGnss:
     def test_parse_multiple_systems(self) -> None:
         msg = _make_cfg_gnss(
             numConfigBlocks=3,
-            gnssId_01=0,     # GPS (block 0)
+            gnssId_01=0,  # GPS (block 0)
             enable_01=1,
             resTrkCh_01=8,
             maxTrkCh_01=16,
             sigCfMask_01=65537,
-            gnssId_02=6,     # GLONASS (block 1)
+            gnssId_02=6,  # GLONASS (block 1)
             enable_02=0,
             resTrkCh_02=4,
             maxTrkCh_02=14,
             sigCfMask_02=65537,
-            gnssId_03=2,     # Galileo (block 2)
+            gnssId_03=2,  # Galileo (block 2)
             enable_03=1,
             resTrkCh_03=4,
             maxTrkCh_03=12,
@@ -255,10 +260,14 @@ class TestUbloxGnssDriver:
         ack = SimpleNamespace(identity="ACK-ACK")
         connected_driver._reader.read.return_value = (b"raw", ack)  # pyright: ignore[reportPrivateUsage]
 
-        config = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            GnssSystemConfig(constellation=GnssConstellation.GLONASS, enabled=False),
-        ])
+        config = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+                GnssSystemConfig(
+                    constellation=GnssConstellation.GLONASS, enabled=False
+                ),
+            ]
+        )
         connected_driver.configure_gnss(config)
         # Should have written something to serial
         connected_driver._serial.write.assert_called()  # pyright: ignore[reportPrivateUsage]
@@ -267,17 +276,21 @@ class TestUbloxGnssDriver:
         nak = SimpleNamespace(identity="ACK-NAK")
         connected_driver._reader.read.return_value = (b"raw", nak)  # pyright: ignore[reportPrivateUsage]
 
-        config = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        config = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         with pytest.raises(RuntimeError, match="NAK"):
             connected_driver.configure_gnss(config)
 
     def test_configure_gnss_not_connected(self) -> None:
         driver = UbloxDriver()
-        config = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        config = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         with pytest.raises(ConnectionError):
             driver.configure_gnss(config)
 
@@ -307,9 +320,11 @@ class TestDeviceServiceGnss:
 
     @pytest.mark.asyncio()
     async def test_get_gnss_config(self, service_with_driver: DeviceService) -> None:
-        expected = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        expected = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         service_with_driver._driver.get_gnss_config.return_value = expected  # pyright: ignore[reportPrivateUsage]
         result = await service_with_driver.get_gnss_config()
         assert result == expected
@@ -322,9 +337,11 @@ class TestDeviceServiceGnss:
 
     @pytest.mark.asyncio()
     async def test_configure_gnss(self, service_with_driver: DeviceService) -> None:
-        config = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        config = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         await service_with_driver.configure_gnss(config)
         service_with_driver._driver.configure_gnss.assert_called_once_with(config)  # pyright: ignore[reportPrivateUsage]
         assert service_with_driver.state == DeviceConnectionState.CONNECTED
@@ -334,9 +351,11 @@ class TestDeviceServiceGnss:
         self, service_with_driver: DeviceService
     ) -> None:
         service_with_driver._driver.configure_gnss.side_effect = RuntimeError("fail")  # pyright: ignore[reportPrivateUsage]
-        config = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        config = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         with pytest.raises(RuntimeError, match="fail"):
             await service_with_driver.configure_gnss(config)
         # State should be restored to CONNECTED (not stuck in CONFIGURING)
@@ -374,9 +393,11 @@ class TestGnssApiEndpoints:
     def test_get_gnss_config(
         self, client: TestClient, mock_device_service: MagicMock
     ) -> None:
-        expected = GnssConfig(systems=[
-            GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-        ])
+        expected = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+            ]
+        )
         mock_device_service.get_gnss_config = AsyncMock(return_value=expected)
 
         resp = client.get("/api/device/gnss")

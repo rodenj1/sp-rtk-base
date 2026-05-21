@@ -153,9 +153,7 @@ class MountpointRegistry:
 
     @property
     def active_mountpoints(self) -> list[str]:
-        return [
-            n for n, m in self._mounts.items() if m.server_writer is not None
-        ]
+        return [n for n, m in self._mounts.items() if m.server_writer is not None]
 
 
 # Global registry
@@ -308,9 +306,7 @@ async def handle_connection(
             pass
 
 
-async def handle_sourcetable(
-    req: NtripRequest, writer: asyncio.StreamWriter
-) -> None:
+async def handle_sourcetable(req: NtripRequest, writer: asyncio.StreamWriter) -> None:
     """Serve the NTRIP sourcetable."""
     sourcetable = registry.get_sourcetable()
     content = sourcetable.encode("utf-8")
@@ -353,9 +349,7 @@ async def handle_v1_server(
     writer: asyncio.StreamWriter,
 ) -> None:
     """Handle NTRIP v1.0 SOURCE connection (server pushing data)."""
-    logger.info(
-        "🔌 v1.0 SOURCE request: mountpoint=/%s", req.mountpoint
-    )
+    logger.info("🔌 v1.0 SOURCE request: mountpoint=/%s", req.mountpoint)
 
     # Authenticate
     if req.source_password != _config["password"]:
@@ -372,9 +366,7 @@ async def handle_v1_server(
     # Register mountpoint
     mount = registry.register_server(req.mountpoint, writer)
     if mount is None:
-        logger.warning(
-            "✗ Mountpoint /%s already in use", req.mountpoint
-        )
+        logger.warning("✗ Mountpoint /%s already in use", req.mountpoint)
         writer.write(b"ERROR - Mountpoint Taken\r\n\r\n")
         await writer.drain()
         writer.close()
@@ -392,9 +384,7 @@ async def handle_v1_server(
             data = await reader.read(4096)
             if not data:
                 break
-            logger.debug(
-                "v1.0 data: /%s — %d bytes", req.mountpoint, len(data)
-            )
+            logger.debug("v1.0 data: /%s — %d bytes", req.mountpoint, len(data))
             registry.broadcast(req.mountpoint, data)
     except (ConnectionError, asyncio.CancelledError):
         pass
@@ -409,9 +399,7 @@ async def handle_v2_server(
     writer: asyncio.StreamWriter,
 ) -> None:
     """Handle NTRIP v2.0 POST connection (server pushing data)."""
-    logger.info(
-        "🔌 v2.0 POST request: mountpoint=/%s", req.mountpoint
-    )
+    logger.info("🔌 v2.0 POST request: mountpoint=/%s", req.mountpoint)
 
     # Authenticate — use password already extracted during request parsing
     password = req.source_password
@@ -423,13 +411,11 @@ async def handle_v2_server(
     )
 
     if password != _config["password"]:
-        logger.warning(
-            "✗ v2.0 POST auth FAILED for /%s", req.mountpoint
-        )
+        logger.warning("✗ v2.0 POST auth FAILED for /%s", req.mountpoint)
         response = (
             "HTTP/1.1 401 Unauthorized\r\n"
             "Server: SP-Base-NTRIP-Caster/1.0\r\n"
-            "WWW-Authenticate: Basic realm=\"NTRIP Caster\"\r\n"
+            'WWW-Authenticate: Basic realm="NTRIP Caster"\r\n'
             "Connection: close\r\n"
             "\r\n"
         )
@@ -442,9 +428,7 @@ async def handle_v2_server(
     # Register mountpoint
     mount = registry.register_server(req.mountpoint, writer)
     if mount is None:
-        logger.warning(
-            "✗ Mountpoint /%s already in use", req.mountpoint
-        )
+        logger.warning("✗ Mountpoint /%s already in use", req.mountpoint)
         response = (
             "HTTP/1.1 409 Conflict\r\n"
             "Server: SP-Base-NTRIP-Caster/1.0\r\n"
@@ -493,9 +477,7 @@ async def handle_v2_server(
         logger.info("🔌 v2.0 POST disconnected: /%s", req.mountpoint)
 
 
-async def _read_chunked_data(
-    reader: asyncio.StreamReader, mountpoint: str
-) -> None:
+async def _read_chunked_data(reader: asyncio.StreamReader, mountpoint: str) -> None:
     """Read HTTP chunked transfer encoding data."""
     while True:
         # Read chunk size line
@@ -596,7 +578,9 @@ async def main() -> None:
     args = parser.parse_args()
 
     log_level_name = str(_config["log_level"])
-    level = logging.DEBUG if args.debug else getattr(logging, log_level_name, logging.INFO)
+    level = (
+        logging.DEBUG if args.debug else getattr(logging, log_level_name, logging.INFO)
+    )
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -613,9 +597,7 @@ async def main() -> None:
     logger.info("  Supports: NTRIP v1.0 (SOURCE/ICY) and v2.0 (HTTP)")
     logger.info("═══════════════════════════════════════════════════")
 
-    server = await asyncio.start_server(
-        handle_connection, "0.0.0.0", args.port
-    )
+    server = await asyncio.start_server(handle_connection, "0.0.0.0", args.port)
 
     logger.info("Listening on 0.0.0.0:%d", args.port)
     logger.info("Test: curl http://localhost:%d/", args.port)

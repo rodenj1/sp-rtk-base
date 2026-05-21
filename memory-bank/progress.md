@@ -2,6 +2,88 @@
 
 ## Recent Changes
 
+### 2026-05-20 — CI / Release Pipeline + Pre-commit + Conventional Commits
+Added the full publish-grade tooling stack adapted from `sp-rtk-base-relay`:
+
+**Workflows** (`.github/workflows/`):
+- **`ci.yml`** — 4 sequential jobs on every push/PR to `main`:
+  1. `pre-commit` — runs the full hook suite on every file (skips heavy
+     pyright/pytest hooks; those are dedicated jobs).
+  2. `lint` — `ruff check` + `ruff format --check` + `mypy --strict` +
+     `pyright` strict + advisory `pylint --exit-zero`.
+  3. `test` — Python 3.10 / 3.11 / 3.12 / 3.13 matrix with coverage and
+     JUnit XML, uploads to Codecov via OIDC tokenless (public repo).
+  4. `build` — `uv build` (sdist + wheel) artifact sanity.
+- **`release.yml`** — triggered by `release: published`:
+  `verify-version` (tag ↔ pyproject) → `lint` → `test` matrix → `build`
+  + `twine check` + artifact-version verify → `publish-pypi` via PyPI
+  Trusted Publishing (OIDC, env `pypi`) → `github-release-assets`
+  (sigstore signing + attach `.tar.gz` / `.whl` / `.sigstore` to the
+  GitHub Release).  All third-party actions pinned to full commit SHAs.
+
+**Local tooling** (`.pre-commit-config.yaml`):
+- pre-commit stage: whitespace, EOF, YAML, TOML, large-files, ruff
+  lint + format, gitleaks.
+- commit-msg stage: commitizen (Conventional Commits 1.0.0).
+- pre-push stage: pyright strict + pytest unit suite (no-cov).
+
+**Configuration** (`pyproject.toml`):
+- Added PyPI metadata: `keywords`, `classifiers`, `urls`,
+  improved `description`.
+- `[tool.commitizen]` with `cz_customize` extending Angular type
+  list with `release` and `security`; version files include
+  `src/sp_rtk_base/__init__.py:__version__`.
+- mypy strict mode for all source files with overrides for the
+  NiceGUI UI layer (`sp_rtk_base.ui.*`) — pyright remains canonical.
+  Global `warn_unused_ignores = false` because most existing
+  `# type: ignore[...]` comments target pyright codes.
+- Ruff: dropped `black`; selected `B`, `UP`, `N`, `SIM`, `RUF` on
+  top of `E/W/F/I`.  Per-file ignores for FastAPI `Depends(...)`
+  (`B008`), u-blox `_CONST_LIKE` locals (`N806`), and NiceGUI
+  UI pages (`B`, `SIM`, `N806`).
+- Coverage gate raised to `--cov-fail-under=90`; UI pages and the
+  `config_audit` CLI excluded from coverage (un-testable headless).
+
+**Documentation**:
+- `docs/ci-setup.md` — workflow design + Codecov OIDC setup runbook.
+- `docs/release-process.md` — per-release checklist + Trusted
+  Publishing one-time setup.
+- `CHANGELOG.md` — Keep-a-Changelog format with an `Unreleased` entry
+  describing this CI/release work.
+- README badges (CI, Codecov, PyPI version, Python versions, license,
+  ruff, Conventional Commits).
+
+**Code-quality cleanup** (driven by the new ruff/mypy strict gates):
+- Moved late `from typing import Protocol` to the top of
+  `device_service.py`.
+- Fixed an `N806` clash in `ublox.py` (`key_name` re-bound to
+  `str | None`) by introducing a separate `mapped_key` local.
+- Added pyright suppressions on the dynamic NiceGUI position-pick
+  closure in `ui/pages/survey.py`.
+- Guarded an unreachable `Literal` fallthrough in
+  `config_models.py` with `# pragma: no cover` + `# type: ignore[unreachable]`.
+
+**Verification**:
+- `uv run ruff check .` — all checks pass.
+- `uv run ruff format --check .` — 76 files OK.
+- `uv run mypy src` — 0 errors (39 source files).
+- `uv run pyright src` — 0 errors, 1 unrelated `contextmanager`
+  deprecation warning.
+- `uv run pytest tests/unit` — **480 passed**, **91.73 % coverage**
+  (gate is 90 %).
+- `uv run pre-commit run --all-files --hook-stage pre-push` — all
+  hooks pass including pyright + full pytest suite.
+
+**Operator action required** (one-time, before first PyPI release):
+1. Register the PyPI Trusted Publisher: project `sp-rtk-base`, owner
+   `rodenj1`, repo `sp-rtk-base`, workflow `release.yml`,
+   environment `pypi` (see `docs/release-process.md`).
+2. Create the GitHub environment `pypi` in repo Settings.
+3. Link the repo at <https://app.codecov.io/> (OIDC starts working on
+   the next CI run; no secret needed).
+4. Install pre-commit hooks locally:
+   `uv run pre-commit install --install-hooks --hook-type pre-commit --hook-type commit-msg --hook-type pre-push`.
+
 ### 2026-05-20 — Switched `sp-rtk-base-relay` to Published PyPI Dependency
 - Deleted local `packages/sp-rtk-base-relay/` directory; relay package is now consumed from PyPI (`sp-rtk-base-relay==2.1.1`).
 - Regenerated `uv.lock`: relay source switched from `editable = "packages/sp-rtk-base-relay"` → `registry = "https://pypi.org/simple"`. Workspace manifest no longer lists `sp-rtk-base-relay`.

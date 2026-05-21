@@ -26,10 +26,10 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
-
 # ---------------------------------------------------------------------------
 # Auto-mock fcntl.flock — mock serial objects don't have real file descriptors
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _mock_fcntl() -> object:  # type: ignore[misc]
@@ -189,6 +189,7 @@ class TestUbloxDriverConnect:
     @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_serial_exception(self, mock_serial_cls: MagicMock) -> None:
         import serial  # type: ignore[import-untyped]
+
         mock_serial_cls.side_effect = serial.SerialException("Port busy")
 
         driver = UbloxDriver()
@@ -557,7 +558,12 @@ class TestUbloxDriverStatus:
         reader = MagicMock()
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),  # connect
-            (b"", _make_nav_svin_response(active=1, valid=0, dur=45, mean_acc=25000, obs=45)),
+            (
+                b"",
+                _make_nav_svin_response(
+                    active=1, valid=0, dur=45, mean_acc=25000, obs=45
+                ),
+            ),
         ]
         mock_reader_cls.return_value = reader
 
@@ -746,17 +752,20 @@ class TestUbloxDriverRegistry:
 
     def test_ublox_registered(self) -> None:
         from sp_rtk_base.services.drivers import get_driver_class
+
         cls = get_driver_class("ublox")
         assert cls is UbloxDriver
 
     def test_create_ublox_driver(self) -> None:
         from sp_rtk_base.services.drivers import create_driver
+
         driver = create_driver("ublox")
         assert isinstance(driver, UbloxDriver)
         assert driver.vendor_name == "u-blox"
 
     def test_ublox_in_list(self) -> None:
         from sp_rtk_base.services.drivers import list_drivers
+
         assert "ublox" in list_drivers()
 
 
@@ -836,11 +845,11 @@ class TestParseCfgTmode:
     def test_parse_llh_pos_type(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """POS_TYPE=1 (LLH) reads LAT/LON/HEIGHT directly."""
         parsed = SimpleNamespace(
-            CFG_TMODE_MODE=2,       # FIXED
-            CFG_TMODE_POS_TYPE=1,   # LLH
-            CFG_TMODE_LAT=473977000,    # 47.3977° × 1e7
-            CFG_TMODE_LON=85456000,     # 8.5456° × 1e7
-            CFG_TMODE_HEIGHT=40800,     # 408.00m in cm
+            CFG_TMODE_MODE=2,  # FIXED
+            CFG_TMODE_POS_TYPE=1,  # LLH
+            CFG_TMODE_LAT=473977000,  # 47.3977° × 1e7
+            CFG_TMODE_LON=85456000,  # 8.5456° × 1e7
+            CFG_TMODE_HEIGHT=40800,  # 408.00m in cm
             CFG_TMODE_ECEF_X=0,
             CFG_TMODE_ECEF_Y=0,
             CFG_TMODE_ECEF_Z=0,
@@ -861,14 +870,14 @@ class TestParseCfgTmode:
         """POS_TYPE=0 (ECEF) reads ECEF_X/Y/Z and converts to LLH."""
         # Real values from u-center: a point near Portland, OR area
         parsed = SimpleNamespace(
-            CFG_TMODE_MODE=2,       # FIXED
-            CFG_TMODE_POS_TYPE=0,   # ECEF
-            CFG_TMODE_LAT=0,       # unused in ECEF mode
-            CFG_TMODE_LON=0,       # unused
-            CFG_TMODE_HEIGHT=0,    # unused
-            CFG_TMODE_ECEF_X=-245790204,   # cm
-            CFG_TMODE_ECEF_Y=-477512066,   # cm
-            CFG_TMODE_ECEF_Z=342909332,    # cm
+            CFG_TMODE_MODE=2,  # FIXED
+            CFG_TMODE_POS_TYPE=0,  # ECEF
+            CFG_TMODE_LAT=0,  # unused in ECEF mode
+            CFG_TMODE_LON=0,  # unused
+            CFG_TMODE_HEIGHT=0,  # unused
+            CFG_TMODE_ECEF_X=-245790204,  # cm
+            CFG_TMODE_ECEF_Y=-477512066,  # cm
+            CFG_TMODE_ECEF_Z=342909332,  # cm
             CFG_TMODE_ECEF_X_HP=0,
             CFG_TMODE_ECEF_Y_HP=0,
             CFG_TMODE_ECEF_Z_HP=0,
@@ -889,8 +898,8 @@ class TestParseCfgTmode:
     def test_parse_ecef_disabled_mode(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """DISABLED mode with ECEF pos_type still parses."""
         parsed = SimpleNamespace(
-            CFG_TMODE_MODE=0,       # DISABLED
-            CFG_TMODE_POS_TYPE=0,   # ECEF
+            CFG_TMODE_MODE=0,  # DISABLED
+            CFG_TMODE_POS_TYPE=0,  # ECEF
             CFG_TMODE_LAT=0,
             CFG_TMODE_LON=0,
             CFG_TMODE_HEIGHT=0,
@@ -909,8 +918,8 @@ class TestParseCfgTmode:
     def test_parse_survey_in_mode(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """Survey-in mode with LLH pos_type."""
         parsed = SimpleNamespace(
-            CFG_TMODE_MODE=1,       # SURVEY_IN
-            CFG_TMODE_POS_TYPE=1,   # LLH
+            CFG_TMODE_MODE=1,  # SURVEY_IN
+            CFG_TMODE_POS_TYPE=1,  # LLH
             CFG_TMODE_LAT=0,
             CFG_TMODE_LON=0,
             CFG_TMODE_HEIGHT=0,
@@ -962,7 +971,9 @@ class TestConnectTimeoutAndCancel:
     """Tests for wall-clock timeout and cancel_connect() during _poll_mon_ver."""
 
     def test_connect_timeout_on_garbage(
-        self, mock_serial: MagicMock, mock_reader_factory: type,
+        self,
+        mock_serial: MagicMock,
+        mock_reader_factory: type,
     ) -> None:
         """Connect times out when device returns only garbage (wrong baud)."""
         import time as _time
@@ -974,17 +985,24 @@ class TestConnectTimeoutAndCancel:
         driver = UbloxDriver()
         driver.CONNECT_TIMEOUT = 0.2  # Very short for test
 
-        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial
+        ):
+            with patch(
+                "sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader
+            ):
                 start = _time.monotonic()
-                with pytest.raises(ConnectionError, match="MON-VER|No response|check baud"):
+                with pytest.raises(
+                    ConnectionError, match="MON-VER|No response|check baud"
+                ):
                     driver.connect("/dev/ttyUSB0", 9600)
                 elapsed = _time.monotonic() - start
                 # Should time out in ~0.2s, not hang
                 assert elapsed < 2.0
 
     def test_connect_timeout_on_exceptions(
-        self, mock_serial: MagicMock,
+        self,
+        mock_serial: MagicMock,
     ) -> None:
         """Connect times out when reader.read() keeps raising exceptions."""
         reader = MagicMock()
@@ -993,9 +1011,15 @@ class TestConnectTimeoutAndCancel:
         driver = UbloxDriver()
         driver.CONNECT_TIMEOUT = 0.2
 
-        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
-                with pytest.raises(ConnectionError, match="No response from device|Connection failed"):
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial
+        ):
+            with patch(
+                "sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader
+            ):
+                with pytest.raises(
+                    ConnectionError, match="No response from device|Connection failed"
+                ):
                     driver.connect("/dev/ttyUSB0", 9600)
 
     def test_cancel_connect_sets_event(self) -> None:
@@ -1006,7 +1030,8 @@ class TestConnectTimeoutAndCancel:
         assert driver._cancel_event.is_set()  # pyright: ignore[reportPrivateUsage]
 
     def test_cancel_connect_during_poll(
-        self, mock_serial: MagicMock,
+        self,
+        mock_serial: MagicMock,
     ) -> None:
         """Connect raises ConnectionError when cancelled mid-poll."""
         import threading
@@ -1020,19 +1045,28 @@ class TestConnectTimeoutAndCancel:
 
         def _cancel_after_delay() -> None:
             import time
+
             time.sleep(0.1)
             driver.cancel_connect()
 
-        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial
+        ):
+            with patch(
+                "sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader
+            ):
                 t = threading.Thread(target=_cancel_after_delay)
                 t.start()
-                with pytest.raises(ConnectionError, match="cancelled|Connection failed"):
+                with pytest.raises(
+                    ConnectionError, match="cancelled|Connection failed"
+                ):
                     driver.connect("/dev/ttyUSB0", 9600)
                 t.join(timeout=2.0)
 
     def test_connect_clears_cancel_event(
-        self, mock_serial: MagicMock, mock_reader_factory: type,
+        self,
+        mock_serial: MagicMock,
+        mock_reader_factory: type,
     ) -> None:
         """connect() clears a previously set cancel event."""
         driver = UbloxDriver()
@@ -1041,8 +1075,12 @@ class TestConnectTimeoutAndCancel:
         # Set up a successful reader
         reader: MagicMock = mock_reader_factory.create([_make_mon_ver_response()])  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        with patch("sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial):
-            with patch("sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader):
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=mock_serial
+        ):
+            with patch(
+                "sp_rtk_base.services.drivers.ublox.UBXReader", return_value=reader
+            ):
                 info = driver.connect("/dev/ttyUSB0", 115200)
                 assert info.model == "ZED-F9P"
                 assert not driver._cancel_event.is_set()  # pyright: ignore[reportPrivateUsage]

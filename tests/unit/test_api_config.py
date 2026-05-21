@@ -41,7 +41,9 @@ class TestExportConfig:
     ) -> None:
         """Export includes saved destinations and input config."""
         config = AppConfig(
-            input=InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015}),
+            input=InputProfile(
+                source="tcp", config={"host": "127.0.0.1", "port": 5015}
+            ),
             destinations=[
                 DestinationProfile(
                     name="rtk2go",
@@ -74,7 +76,11 @@ class TestImportConfig:
         """Import valid YAML config succeeds and persists."""
         config_data = {
             "destinations": [
-                {"name": "test-dest", "type": "tcp_server", "config": {"host": "0.0.0.0", "port": 9000}},
+                {
+                    "name": "test-dest",
+                    "type": "tcp_server",
+                    "config": {"host": "0.0.0.0", "port": 9000},
+                },
             ],
             "settings": {"auto_start": False},
         }
@@ -82,7 +88,13 @@ class TestImportConfig:
 
         resp = api_client_with_services.post(
             "/api/config/import",
-            files={"file": ("config.yaml", io.BytesIO(yaml_text.encode()), "application/x-yaml")},
+            files={
+                "file": (
+                    "config.yaml",
+                    io.BytesIO(yaml_text.encode()),
+                    "application/x-yaml",
+                )
+            },
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -109,7 +121,13 @@ class TestImportConfig:
 
         resp = api_client_with_services.post(
             "/api/config/import",
-            files={"file": ("config.yaml", io.BytesIO(yaml_text.encode()), "application/x-yaml")},
+            files={
+                "file": (
+                    "config.yaml",
+                    io.BytesIO(yaml_text.encode()),
+                    "application/x-yaml",
+                )
+            },
         )
         assert resp.status_code == 200
         assert "input=configured" in resp.json()["message"]
@@ -146,7 +164,13 @@ class TestImportConfig:
         """Import YAML that is not a mapping returns 400."""
         resp = api_client_with_services.post(
             "/api/config/import",
-            files={"file": ("config.yaml", io.BytesIO(b"- item1\n- item2"), "application/x-yaml")},
+            files={
+                "file": (
+                    "config.yaml",
+                    io.BytesIO(b"- item1\n- item2"),
+                    "application/x-yaml",
+                )
+            },
         )
         assert resp.status_code == 400
         assert "mapping" in resp.json()["detail"].lower()
@@ -159,7 +183,13 @@ class TestImportConfig:
         bad_schema = yaml.dump({"destinations": "not_a_list"})
         resp = api_client_with_services.post(
             "/api/config/import",
-            files={"file": ("config.yaml", io.BytesIO(bad_schema.encode()), "application/x-yaml")},
+            files={
+                "file": (
+                    "config.yaml",
+                    io.BytesIO(bad_schema.encode()),
+                    "application/x-yaml",
+                )
+            },
         )
         assert resp.status_code == 400
         assert "schema" in resp.json()["detail"].lower()
@@ -171,14 +201,18 @@ class TestImportConfig:
     ) -> None:
         """Export → import roundtrip preserves configuration."""
         config = AppConfig(
-            input=InputProfile(source="serial", config={"port": "/dev/ttyACM0", "baud_rate": 115200}),
+            input=InputProfile(
+                source="serial", config={"port": "/dev/ttyACM0", "baud_rate": 115200}
+            ),
             destinations=[
                 DestinationProfile(
-                    name="surepath", type="surepath",
+                    name="surepath",
+                    type="surepath",
                     config={"host": "surepath.example.com", "port": 2101},
                 ),
                 DestinationProfile(
-                    name="tcp-out", type="tcp_server",
+                    name="tcp-out",
+                    type="tcp_server",
                     config={"host": "0.0.0.0", "port": 9000},
                 ),
             ],
@@ -197,7 +231,9 @@ class TestImportConfig:
         # Import the exported YAML
         import_resp = api_client_with_services.post(
             "/api/config/import",
-            files={"file": ("config.yaml", io.BytesIO(exported_yaml), "application/x-yaml")},
+            files={
+                "file": ("config.yaml", io.BytesIO(exported_yaml), "application/x-yaml")
+            },
         )
         assert import_resp.status_code == 200
 

@@ -8,6 +8,20 @@ authors = [
 ]
 license = {text = "MIT"}
 requires-python = ">=3.10"
+keywords = ["rtcm", "gps", "gnss", "rtk", "base-station", "ublox", "ntrip", "fastapi", "nicegui"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: System :: Networking",
+]
 dependencies = [
     "fastapi>=0.135.3",
     "nicegui>=3.9.0",
@@ -23,6 +37,12 @@ dependencies = [
 sp-rtk-base = "sp_rtk_base.main:main"
 sp-rtk-base-gps-audit = "sp_rtk_base.cli.config_audit:main"
 
+[project.urls]
+Homepage = "https://github.com/rodenj1/sp-rtk-base"
+Documentation = "https://github.com/rodenj1/sp-rtk-base#readme"
+Repository = "https://github.com/rodenj1/sp-rtk-base"
+Issues = "https://github.com/rodenj1/sp-rtk-base/issues"
+
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]
 build-backend = "uv_build"
@@ -34,7 +54,7 @@ addopts = [
     "--cov=src/sp_rtk_base",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
-    "--cov-fail-under=50",
+    "--cov-fail-under=90",
     "--strict-markers",
     "--strict-config",
 ]
@@ -78,7 +98,11 @@ check_untyped_defs = true
 disallow_untyped_decorators = true
 no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_ignores = true
+# Most `# type: ignore[...]` comments in this codebase target pyright
+# codes (our canonical strict checker per .clinerules).  mypy cannot
+# see those codes, so it reports them as "unused".  Keep mypy strict
+# for real type errors but disable this stylistic warning.
+warn_unused_ignores = false
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
@@ -87,26 +111,95 @@ strict_equality = true
 module = [
     "serial.*",
     "prometheus_client.*",
+    "nicegui.*",
+    "sp_rtk_base_relay.*",
+    "httpx.*",
 ]
 ignore_missing_imports = true
 
-[tool.black]
+# NiceGUI's ui.element / ui.input / etc. use partially-unknown widget
+# types and dynamic property access.  pyright (our canonical strict
+# checker per .clinerules) accepts this pattern via the file-level
+# `# pyright: reportUnknownMemberType=false` directives the UI pages
+# already declare.  mypy cannot model nicegui's typing the same way,
+# so we relax mypy's strict checks on the UI layer.  Service /
+# model / API code remains under full mypy strict mode.
+[[tool.mypy.overrides]]
+module = [
+    "sp_rtk_base.ui.*",
+]
+warn_return_any = false
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "func-returns-value",
+    "has-type",
+    "misc",
+    "no-any-return",
+    "no-untyped-call",
+    "no-untyped-def",
+    "union-attr",
+]
+
+[tool.ruff]
 line-length = 88
-target-version = ['py310']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
+target-version = "py310"
+extend-exclude = [
+    "docs",
+    "htmlcov",
+    "build",
+    "dist",
+    ".venv",
+    "tools",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade (enforces modern Python 3.10+ syntax)
+    "N",    # pep8-naming
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length (handled by formatter)
+    # --- Legacy baseline (TODO: address in follow-up PRs, then remove) ---
+    "B904",    # raise ... from err inside except
+    "E722",    # bare except
+    "RUF002",  # ambiguous unicode character in docstring
+    "RUF003",  # ambiguous unicode character in comment
+    "RUF012",  # mutable class defaults should use ClassVar
+    "RUF043",  # pytest.raises(match=...) should use raw string / re.escape
+    "RUF059",  # unused unpacked variable (test helpers)
+    "SIM102",  # collapsible if
+    "SIM105",  # use contextlib.suppress
+    "SIM116",  # if/else chain could be dict lookup
+    "E741",    # ambiguous variable name
+    "F841",    # unused local variable
+    "W293",    # blank line with whitespace
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B", "N", "SIM", "E402"]
+"conftest.py" = ["B", "N"]
+# NiceGUI pages use partially-unknown widget types and complex closures.
+# Allow upper-case constants inside functions for color/label lookup tables.
+"src/sp_rtk_base/ui/pages/*.py" = ["B", "SIM", "N806"]
+# FastAPI route handlers use `Depends(...)` defaults (B008 false-positive).
+"src/sp_rtk_base/api/*.py" = ["B008"]
+# u-blox driver uses upper-case constants matching the UBX-CFG-VALSET keys.
+"src/sp_rtk_base/services/drivers/ublox.py" = ["N806"]
+"src/sp_rtk_base/models/device_models.py" = ["N806"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
 
 [tool.pyright]
 include = ["src", "tests"]
@@ -123,4 +216,56 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.5.0",
+    "pylint>=2.17.0",
+    "pre-commit>=3.0.0",
+    "commitizen>=4.0.0",
+    "types-PyYAML",
 ]
+
+# Commitizen — enforces Conventional Commits 1.0.0 on commit messages
+# via the pre-commit hook configured in .pre-commit-config.yaml.
+# Also drives `uv run cz bump` for SemVer-aware version + changelog
+# automation (optional; the release workflow doesn't depend on it).
+#
+# Conventional Commits spec: https://www.conventionalcommits.org/en/v1.0.0/
+#
+# We use `cz_customize` (not `cz_conventional_commits`) so we can extend
+# the default Angular type list with `release` and `security`, both of
+# which we use in practice. The Conventional Commits spec explicitly
+# permits projects to define their own type vocabulary.
+[tool.commitizen]
+name = "cz_customize"
+version = "0.1.0"
+version_provider = "pep621"
+version_files = [
+    "src/sp_rtk_base/__init__.py:__version__",
+]
+tag_format = "v$version"
+update_changelog_on_bump = true
+major_version_zero = true
+allowed_prefixes = [
+    "Merge",
+    "Revert",
+    "Pull request",
+    "fixup!",
+    "squash!",
+]
+bump_message = "release: bump $current_version -> $new_version"
+
+[tool.commitizen.customize]
+message_template = "{{change_type}}{% if scope %}({{scope}}){% endif %}: {{subject}}"
+schema = "<type>(<scope>): <subject>"
+schema_pattern = "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|release|security)(\\([a-z0-9_\\-.,/]+\\))?!?: .+"
+bump_pattern = "^(feat|fix|perf|refactor|release)"
+bump_map = {"BREAKING CHANGE" = "MAJOR", "feat" = "MINOR", "fix" = "PATCH", "perf" = "PATCH", "refactor" = "PATCH", "release" = "PATCH"}
+change_type_order = ["BREAKING CHANGE", "feat", "fix", "security", "perf", "refactor", "release", "docs", "test", "build", "ci", "chore"]
+info = """
+Allowed commit types: feat, fix, docs, style, refactor, perf, test,
+build, ci, chore, revert, release, security.
+
+Format: <type>(<optional-scope>): <short subject in imperative mood>
+
+See https://www.conventionalcommits.org/en/v1.0.0/
+"""

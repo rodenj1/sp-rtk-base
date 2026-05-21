@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same branch/PR when new commits arrive.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# All jobs run with read-only contents.  Codecov uploads use OIDC
+# (tokenless) since this is a public repo — no CODECOV_TOKEN required.
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # pre-commit — runs the full pre-commit hook suite on every file in
+  # the repo.  Catches contributors who bypassed local hooks with
+  # `git commit --no-verify`.  Hooks themselves (ruff, gitleaks,
+  # whitespace etc.) are pinned in .pre-commit-config.yaml.
+  # ------------------------------------------------------------------
+  pre-commit:
+    name: pre-commit (all files)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Run pre-commit on all files
+        # SKIP the pre-push hooks (pyright/pytest) — they're heavy and
+        # already covered by the `lint` + `test` jobs below.
+        env:
+          SKIP: pyright,pytest-unit
+        run: uv run pre-commit run --all-files --show-diff-on-failure --color=always
+
+  # ------------------------------------------------------------------
+  # Lint / format / type-check (single Python version, fast-fail gate)
+  # ------------------------------------------------------------------
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    needs: pre-commit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy (strict)
+        run: uv run mypy src
+
+      - name: pyright (strict, canonical)
+        run: uv run pyright src
+
+      - name: pylint (advisory)
+        # --exit-zero: pylint exits 0 even when it finds messages.  Without
+        # this, pylint's bitmask exit code (e.g. 28 = warning+refactor+
+        # convention) bubbles up as a red "::error" annotation in GitHub's
+        # UI even though `continue-on-error: true` keeps the job green.
+        continue-on-error: true
+        run: uv run pylint --exit-zero src
+
+  # ------------------------------------------------------------------
+  # Unit tests — matrix across Python 3.10, 3.11, 3.12, 3.13
+  # ------------------------------------------------------------------
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: lint
+    permissions:
+      contents: read
+      # OIDC token for tokenless Codecov uploads (public repo).
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Run pytest with coverage
+        run: |
+          uv run pytest tests/unit \
+            --cov-report=term \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --junitxml=pytest-junit.xml
+
+      - name: Upload coverage artifacts (Python 3.12 only)
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 14
+
+      - name: Upload pytest JUnit report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pytest-junit-py${{ matrix.python-version }}
+          path: pytest-junit.xml
+          retention-days: 14
+
+      - name: Upload coverage to Codecov (Python 3.12 only)
+        # Public repo → tokenless OIDC.  No CODECOV_TOKEN secret needed.
+        if: matrix.python-version == '3.12' && !cancelled()
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: coverage-py${{ matrix.python-version }}
+          use_oidc: true
+          fail_ci_if_error: false
+          verbose: false
+
+      - name: Upload test results to Codecov (Python 3.12 only)
+        if: matrix.python-version == '3.12' && !cancelled()
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        with:
+          files: ./pytest-junit.xml
+          flags: unittests
+          name: junit-py${{ matrix.python-version }}
+          report_type: test_results
+          use_oidc: true
+          fail_ci_if_error: false
+
+  # ------------------------------------------------------------------
+  # Package build sanity check — proves the project still produces a
+  # valid sdist + wheel even though we haven't released to PyPI yet.
+  # ------------------------------------------------------------------
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14

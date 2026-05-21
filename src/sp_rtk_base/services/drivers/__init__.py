@@ -65,9 +65,7 @@ def create_driver(vendor_key: str) -> GpsReceiverDriver:
     cls = _DRIVER_REGISTRY.get(vendor_key)
     if cls is None:
         available = ", ".join(list_drivers()) or "(none)"
-        raise ValueError(
-            f"Unknown GPS driver '{vendor_key}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown GPS driver '{vendor_key}'. Available: {available}")
     return cls()
 
 

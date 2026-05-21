@@ -5,19 +5,22 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
-
-from sp_rtk_base.app import create_api_app
-from sp_rtk_base.models.config_models import AppSettings
-from sp_rtk_base.services import get_config_service, get_metrics_service, get_relay_service
-from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.metrics_service import MetricsService
-from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
     RelayStatus,
 )
 
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.config_models import AppSettings
+from sp_rtk_base.services import (
+    get_config_service,
+    get_metrics_service,
+    get_relay_service,
+)
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.relay_service import RelayService
 
 # ---------------------------------------------------------------------------
 # Helpers

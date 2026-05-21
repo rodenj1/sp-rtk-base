@@ -80,9 +80,9 @@ def settings_page() -> None:
                     logger.exception("Failed to save settings")
                     ui.notify(f"Error saving settings: {exc}", type="negative")
 
-            ui.button(
-                "Save Settings", icon="save", on_click=_save_settings
-            ).props("color=primary").classes("q-mt-md")
+            ui.button("Save Settings", icon="save", on_click=_save_settings).props(
+                "color=primary"
+            ).classes("q-mt-md")
 
         # ---- Version Information Section ----
         with ui.card().classes("w-full q-pa-md q-mt-md"):
@@ -98,13 +98,14 @@ def settings_page() -> None:
             version_rows: list[tuple[str, str]] = [
                 ("SP-Base", app_version),
                 ("SP-Base Relay", relay_version),
-                ("Python", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"),
+                (
+                    "Python",
+                    f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                ),
                 ("Platform", platform.platform()),
             ]
 
             for label, version in version_rows:
                 with ui.row().classes("w-full items-center q-py-xs"):
-                    ui.label(label).classes("text-grey-4").style(
-                        "min-width: 140px"
-                    )
+                    ui.label(label).classes("text-grey-4").style("min-width: 140px")
                     ui.label(version).classes("text-white text-weight-medium")

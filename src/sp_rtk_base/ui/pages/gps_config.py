@@ -88,20 +88,22 @@ def gps_config_page() -> None:
             # Action buttons
             with ui.row().classes("gap-2 q-mt-sm items-center"):
                 connect_btn = ui.button("Connect", icon="link")
-                disconnect_btn = ui.button(
-                    "Disconnect", icon="link_off"
-                ).props("color=grey")
-                cancel_btn = ui.button(
-                    "Cancel", icon="cancel"
-                ).props("color=negative outline")
+                disconnect_btn = ui.button("Disconnect", icon="link_off").props(
+                    "color=grey"
+                )
+                cancel_btn = ui.button("Cancel", icon="cancel").props(
+                    "color=negative outline"
+                )
                 cancel_btn.set_visibility(False)
                 reload_device_btn = ui.button(
                     "Reload Device Config", icon="sync"
                 ).props("color=info outline")
                 reload_device_btn.set_visibility(False)
-                refresh_btn = ui.button(
-                    "", icon="refresh"
-                ).props("flat round color=white").tooltip("Refresh serial port list")
+                refresh_btn = (
+                    ui.button("", icon="refresh")
+                    .props("flat round color=white")
+                    .tooltip("Refresh serial port list")
+                )
 
             # Device info card (hidden until connected)
             info_card = ui.card().classes("w-full q-pa-md q-mt-md")
@@ -127,17 +129,17 @@ def gps_config_page() -> None:
 
                 with ui.column().classes("q-mt-sm gap-0 w-full"):
                     # Header row
-                    with ui.row().classes(
-                        "items-center w-full gap-0"
-                    ).style(
-                        "border-bottom: 1px solid #333; padding-bottom: 4px"
+                    with (
+                        ui.row()
+                        .classes("items-center w-full gap-0")
+                        .style("border-bottom: 1px solid #333; padding-bottom: 4px")
                     ):
-                        ui.label("Group").classes(
-                            "text-caption text-grey-5"
-                        ).style("width: 100px; flex-shrink: 0")
-                        ui.label("Message").classes(
-                            "text-caption text-grey-5"
-                        ).style("width: 180px; flex-shrink: 0")
+                        ui.label("Group").classes("text-caption text-grey-5").style(
+                            "width: 100px; flex-shrink: 0"
+                        )
+                        ui.label("Message").classes("text-caption text-grey-5").style(
+                            "width: 180px; flex-shrink: 0"
+                        )
                         for port in VISIBLE_PORTS:
                             ui.label(port.value).classes(
                                 "text-caption text-grey-5 text-center"
@@ -146,28 +148,21 @@ def gps_config_page() -> None:
                     # Message rows grouped
                     for group_name, messages in RTCM_MESSAGE_GROUPS:
                         for idx, (msg_id, msg_desc) in enumerate(messages):
-                            with ui.row().classes(
-                                "items-center w-full gap-0"
-                            ).style(
-                                "border-bottom: 1px solid #222; "
-                                "padding: 2px 0"
+                            with (
+                                ui.row()
+                                .classes("items-center w-full gap-0")
+                                .style("border-bottom: 1px solid #222; padding: 2px 0")
                             ):
                                 # Group label (only on first row)
                                 if idx == 0:
                                     ui.label(group_name).classes(
                                         "text-white text-caption"
-                                    ).style(
-                                        "width: 100px; flex-shrink: 0"
-                                    )
+                                    ).style("width: 100px; flex-shrink: 0")
                                 else:
-                                    ui.label("").style(
-                                        "width: 100px; flex-shrink: 0"
-                                    )
+                                    ui.label("").style("width: 100px; flex-shrink: 0")
 
                                 # Message ID + description
-                                ui.label(
-                                    f"{msg_id} {msg_desc}"
-                                ).classes(
+                                ui.label(f"{msg_id} {msg_desc}").classes(
                                     "text-grey-3 text-caption"
                                 ).style("width: 180px; flex-shrink: 0")
 
@@ -175,19 +170,24 @@ def gps_config_page() -> None:
                                 rtcm_port_checks[msg_id] = {}
                                 for port in VISIBLE_PORTS:
                                     cb = ui.checkbox(
-                                        "", value=False,
-                                    ).style(
-                                        "width: 65px; flex-shrink: 0"
-                                    )
-                                    rtcm_port_checks[msg_id][
-                                        port.value
-                                    ] = cb
+                                        "",
+                                        value=False,
+                                    ).style("width: 65px; flex-shrink: 0")
+                                    rtcm_port_checks[msg_id][port.value] = cb
 
                 # Rate selector + quick actions + buttons
                 with ui.row().classes("gap-4 q-mt-md items-center flex-wrap"):
-                    rtcm_rate = ui.number(
-                        "Rate", value=1, min=1, max=10, step=1,
-                    ).classes("w-24").props("dense")
+                    rtcm_rate = (
+                        ui.number(
+                            "Rate",
+                            value=1,
+                            min=1,
+                            max=10,
+                            step=1,
+                        )
+                        .classes("w-24")
+                        .props("dense")
+                    )
 
                     ui.label("|").classes("text-grey-6")
 
@@ -210,7 +210,8 @@ def gps_config_page() -> None:
                                     cbs[p].value = not any_on
 
                         ui.button(
-                            qp.value, on_click=_toggle_port,
+                            qp.value,
+                            on_click=_toggle_port,
                         ).props("dense flat size=sm color=grey-5")
 
                     def _clear_all() -> None:
@@ -219,16 +220,18 @@ def gps_config_page() -> None:
                                 cb.value = False
 
                     ui.button(
-                        "Clear All", icon="clear", on_click=_clear_all,
+                        "Clear All",
+                        icon="clear",
+                        on_click=_clear_all,
                     ).props("dense flat size=sm color=grey-5")
 
                 with ui.row().classes("gap-4 q-mt-sm items-center"):
                     rtcm_load_btn = ui.button(
                         "Load from Device", icon="download"
                     ).props("color=info outlined")
-                    rtcm_apply_btn = ui.button(
-                        "Apply RTCM Config", icon="send"
-                    ).props("color=primary")
+                    rtcm_apply_btn = ui.button("Apply RTCM Config", icon="send").props(
+                        "color=primary"
+                    )
 
         # ================================================================
         # Section C: GNSS Constellations (hidden until connected + capable)
@@ -261,9 +264,9 @@ def gps_config_page() -> None:
                         gnss_toggles[c_val] = sw
 
             with ui.row().classes("gap-4 q-mt-sm items-center"):
-                gnss_load_btn = ui.button(
-                    "Load from Device", icon="download"
-                ).props("color=info outlined")
+                gnss_load_btn = ui.button("Load from Device", icon="download").props(
+                    "color=info outlined"
+                )
                 gnss_apply_btn = ui.button(
                     "Apply GNSS Config", icon="satellite_alt"
                 ).props("color=primary")
@@ -276,9 +279,9 @@ def gps_config_page() -> None:
 
         with flash_card:
             with ui.row().classes("items-center gap-4"):
-                save_flash_btn = ui.button(
-                    "Save to Flash", icon="save"
-                ).props("color=warning")
+                save_flash_btn = ui.button("Save to Flash", icon="save").props(
+                    "color=warning"
+                )
                 ui.label(
                     "Persist current receiver configuration to non-volatile memory"
                 ).classes("text-grey-4")
@@ -296,9 +299,11 @@ def gps_config_page() -> None:
                 "Disconnect the device driver, configure the relay input "
                 "with the same serial port, and start the relay engine."
             ).classes("text-grey-4 q-mt-sm")
-            handoff_btn = ui.button(
-                "Handoff & Start Relay", icon="swap_horiz"
-            ).props("color=positive").classes("q-mt-sm")
+            handoff_btn = (
+                ui.button("Handoff & Start Relay", icon="swap_horiz")
+                .props("color=positive")
+                .classes("q-mt-sm")
+            )
 
         # ================================================================
         # Event handlers
@@ -332,11 +337,13 @@ def gps_config_page() -> None:
         def _save_device_settings() -> None:
             """Persist current port/baud/driver to config."""
             try:
-                config_svc.save_device_profile(DeviceProfile(
-                    port=str(port_select.value or ""),
-                    baud_rate=int(baud_select.value or DEFAULT_BAUD),
-                    vendor=str(driver_select.value or "ublox"),
-                ))
+                config_svc.save_device_profile(
+                    DeviceProfile(
+                        port=str(port_select.value or ""),
+                        baud_rate=int(baud_select.value or DEFAULT_BAUD),
+                        vendor=str(driver_select.value or "ublox"),
+                    )
+                )
             except Exception:
                 pass  # Non-critical
 
@@ -390,9 +397,7 @@ def gps_config_page() -> None:
             rtcm_section.set_visibility(
                 connected and DeviceCapability.RTCM_MESSAGE_SELECT in caps
             )
-            gnss_card.set_visibility(
-                connected and DeviceCapability.GNSS_SELECT in caps
-            )
+            gnss_card.set_visibility(connected and DeviceCapability.GNSS_SELECT in caps)
             flash_card.set_visibility(
                 connected and DeviceCapability.SAVE_TO_FLASH in caps
             )
@@ -486,9 +491,7 @@ def gps_config_page() -> None:
                 return
 
             try:
-                await svc.configure_rtcm_ports(
-                    RtcmPortConfig(messages=messages)
-                )
+                await svc.configure_rtcm_ports(RtcmPortConfig(messages=messages))
                 ui.notify("RTCM config applied ✓", type="positive")
             except Exception as exc:
                 ui.notify(f"RTCM config failed: {exc}", type="negative")
@@ -544,10 +547,12 @@ def gps_config_page() -> None:
 
             systems: list[GnssSystemConfig] = []
             for c_val, sw in gnss_toggles.items():
-                systems.append(GnssSystemConfig(
-                    constellation=GnssConstellation(c_val),
-                    enabled=bool(sw.value),
-                ))
+                systems.append(
+                    GnssSystemConfig(
+                        constellation=GnssConstellation(c_val),
+                        enabled=bool(sw.value),
+                    )
+                )
 
             try:
                 await svc.configure_gnss(GnssConfig(systems=systems))
@@ -572,9 +577,7 @@ def gps_config_page() -> None:
                 async with httpx.AsyncClient(
                     base_url="http://localhost:8080"
                 ) as client:
-                    resp = await client.post(
-                        "/api/device/handoff", timeout=15.0
-                    )
+                    resp = await client.post("/api/device/handoff", timeout=15.0)
                     if resp.status_code == 200:
                         ui.notify("Handed off to relay! ✓", type="positive")
                         ui.navigate.to("/")

@@ -21,7 +21,6 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,13 +43,20 @@ def _make_mock_driver(
     }
     type(driver).is_connected = PropertyMock(return_value=connected)
     driver.connect.return_value = DeviceInfo(
-        vendor=vendor, model=model, firmware_version="1.0",
+        vendor=vendor,
+        model=model,
+        firmware_version="1.0",
     )
     driver.get_device_info.return_value = DeviceInfo(
-        vendor=vendor, model=model, firmware_version="1.0",
+        vendor=vendor,
+        model=model,
+        firmware_version="1.0",
     )
     driver.get_survey_in_status.return_value = SurveyInProgress(
-        active=True, valid=False, duration_seconds=30, mean_accuracy_mm=25000.0,
+        active=True,
+        valid=False,
+        duration_seconds=30,
+        mean_accuracy_mm=25000.0,
     )
     return driver
 
@@ -316,7 +322,9 @@ class TestConfiguration:
             await svc.configure_survey_in(SurveyInConfig())
 
     @pytest.mark.asyncio()
-    async def test_configure_relay_running_raises(self, connected_svc: DeviceService) -> None:
+    async def test_configure_relay_running_raises(
+        self, connected_svc: DeviceService
+    ) -> None:
         connected_svc.set_relay_check(lambda: True)
         with pytest.raises(RuntimeError, match="relay is running"):
             await connected_svc.configure_survey_in(SurveyInConfig())

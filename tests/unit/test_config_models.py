@@ -6,6 +6,12 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from sp_rtk_base_relay.config import (
+    DestinationFilterConfig,
+    NtripDestinationConfig,
+    SurePathDestinationConfig,
+    TcpServerDestinationConfig,
+)
 
 from sp_rtk_base.models.config_models import (
     AppConfig,
@@ -17,13 +23,6 @@ from sp_rtk_base.models.config_models import (
     SurePathProfile,
     TcpServerProfile,
 )
-from sp_rtk_base_relay.config import (
-    DestinationFilterConfig,
-    NtripDestinationConfig,
-    SurePathDestinationConfig,
-    TcpServerDestinationConfig,
-)
-
 
 # ---------------------------------------------------------------------------
 # FilterProfile
@@ -96,17 +95,13 @@ class TestSurePathProfile:
 
     def test_required_fields(self) -> None:
         """SurePathProfile requires host, username, password."""
-        p = SurePathProfile(
-            host="sp.example.com", username="user", password="pass"
-        )
+        p = SurePathProfile(host="sp.example.com", username="user", password="pass")
         assert p.host == "sp.example.com"
         assert p.port == 50010  # default
 
     def test_to_relay_config(self) -> None:
         """to_relay_config produces SurePathDestinationConfig."""
-        p = SurePathProfile(
-            host="sp.example.com", username="user", password="pass"
-        )
+        p = SurePathProfile(host="sp.example.com", username="user", password="pass")
         cfg = p.to_relay_config()
         assert isinstance(cfg, SurePathDestinationConfig)
         assert cfg.host == "sp.example.com"
@@ -125,17 +120,13 @@ class TestNtripProfile:
 
     def test_required_fields(self) -> None:
         """NtripProfile requires caster, mountpoint, password."""
-        p = NtripProfile(
-            caster="rtk2go.com", mountpoint="MY_MOUNT", password="secret"
-        )
+        p = NtripProfile(caster="rtk2go.com", mountpoint="MY_MOUNT", password="secret")
         assert p.caster == "rtk2go.com"
         assert p.port == 2101  # default
 
     def test_to_relay_config(self) -> None:
         """to_relay_config produces NtripDestinationConfig."""
-        p = NtripProfile(
-            caster="rtk2go.com", mountpoint="MY_MOUNT", password="secret"
-        )
+        p = NtripProfile(caster="rtk2go.com", mountpoint="MY_MOUNT", password="secret")
         cfg = p.to_relay_config()
         assert isinstance(cfg, NtripDestinationConfig)
         assert cfg.caster == "rtk2go.com"

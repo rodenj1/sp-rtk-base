@@ -124,7 +124,9 @@ def outputs_page() -> None:
                             "text-blue-4 text-2xl"
                         )
                         with ui.column().classes("gap-0"):
-                            ui.label(dest.name).classes("text-body1 text-white font-bold")
+                            ui.label(dest.name).classes(
+                                "text-body1 text-white font-bold"
+                            )
                             ui.label(dest.type.replace("_", " ").title()).classes(
                                 "text-caption text-grey-5"
                             )
@@ -133,7 +135,9 @@ def outputs_page() -> None:
                         # Enable/disable toggle
                         ui.switch(
                             value=dest.enabled,
-                            on_change=lambda e, n=dest.name: _toggle_enabled(n, e.value),
+                            on_change=lambda e, n=dest.name: _toggle_enabled(
+                                n, e.value
+                            ),
                         ).props("color=green")
 
                         # Edit button
@@ -209,8 +213,9 @@ def outputs_page() -> None:
 
         def _show_add_dialog() -> None:
             """Show the add destination dialog."""
-            with ui.dialog() as dialog, ui.card().classes("q-pa-md").style(
-                "min-width: 400px"
+            with (
+                ui.dialog() as dialog,
+                ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label("Add Destination").classes("text-h6 text-white")
                 name_input = ui.input(
@@ -252,9 +257,7 @@ def outputs_page() -> None:
                             username_container.set_visibility(False)
 
                             with username_container:
-                                uname = ui.input(
-                                    "Username", value=""
-                                ).classes("w-full")
+                                uname = ui.input("Username", value="").classes("w-full")
                                 config_inputs["username"] = uname
 
                             def _on_version_change(e: object) -> None:
@@ -323,8 +326,9 @@ def outputs_page() -> None:
 
         def _show_edit_dialog(dest: DestinationProfile) -> None:
             """Show the edit destination dialog."""
-            with ui.dialog() as dialog, ui.card().classes("q-pa-md").style(
-                "min-width: 400px"
+            with (
+                ui.dialog() as dialog,
+                ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label(f"Edit: {dest.name}").classes("text-h6 text-white")
 

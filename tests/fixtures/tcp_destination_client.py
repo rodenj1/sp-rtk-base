@@ -79,9 +79,7 @@ class TCPDestinationClient:
                 )
                 self._thread.start()
 
-                logger.info(
-                    "TCP dest client connected to %s:%d", self.host, self.port
-                )
+                logger.info("TCP dest client connected to %s:%d", self.host, self.port)
                 return
             except (ConnectionRefusedError, OSError) as exc:
                 last_error = exc
@@ -136,7 +134,7 @@ class TCPDestinationClient:
                     break
                 with self._lock:
                     self._buffer.extend(chunk)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break

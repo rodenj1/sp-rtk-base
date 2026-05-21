@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,
@@ -22,7 +21,6 @@ from sp_rtk_base_relay.config import (
     SurePathDestinationConfig,
     TcpServerDestinationConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # Filter profile
@@ -188,9 +186,12 @@ class DestinationProfile(BaseModel):
             specific_config = NtripProfile(**self.config).to_relay_config()
         elif self.type == "tcp_server":
             specific_config = TcpServerProfile(**self.config).to_relay_config()
-        else:
-            msg = f"Unknown destination type: {self.type}"
-            raise ValueError(msg)
+        else:  # pragma: no cover - Literal guard; runtime safety only
+            # Defensive: pydantic validates `type` against the Literal, but
+            # keep this fallthrough so we fail loudly if a new type is ever
+            # added to the Literal without a corresponding branch above.
+            msg = f"Unknown destination type: {self.type}"  # type: ignore[unreachable]
+            raise ValueError(msg)  # type: ignore[unreachable]
 
         return DestinationConfig(
             name=self.name,

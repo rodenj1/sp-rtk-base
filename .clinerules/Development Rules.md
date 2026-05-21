@@ -3,7 +3,7 @@ Please follow these development rules.
 Use Python 3.10 or greater development standards
 Use python Type hints
 Follow pep8 Standards
-Targeting greater than 90% unit test code coverage 
+Targeting greater than 90% unit test code coverage
 Use Pytest as the testing framework
 Do you best to resolve all pylance and pyright linting/hint issues
 I am using UV as the package management framework

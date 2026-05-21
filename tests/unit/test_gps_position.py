@@ -25,7 +25,6 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
-
 # ---------------------------------------------------------------------------
 # Helpers — Mock NAV-PVT responses
 # ---------------------------------------------------------------------------
@@ -75,8 +74,6 @@ def _make_nav_pvt(
         second=second,
         nano=nano,
     )
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +235,12 @@ class TestUbloxGetPosition:
 
     def test_get_position_timestamp(self, connected_driver: UbloxDriver) -> None:
         nav_pvt = _make_nav_pvt(
-            year=2026, month=4, day=14,
-            hour=12, minute=30, second=45,
+            year=2026,
+            month=4,
+            day=14,
+            hour=12,
+            minute=30,
+            second=45,
             nano=500000000,
         )
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
@@ -253,7 +254,9 @@ class TestUbloxGetPosition:
         assert pos.timestamp.minute == 30
         assert pos.timestamp.second == 45
 
-    def test_get_position_timestamp_invalid_year(self, connected_driver: UbloxDriver) -> None:
+    def test_get_position_timestamp_invalid_year(
+        self, connected_driver: UbloxDriver
+    ) -> None:
         nav_pvt = _make_nav_pvt(year=0)
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
 
@@ -275,7 +278,9 @@ class TestUbloxGetPosition:
         assert pos.fix_type == GpsFixType.NO_FIX
         assert pos.latitude == 0.0
 
-    def test_get_position_skips_other_messages(self, connected_driver: UbloxDriver) -> None:
+    def test_get_position_skips_other_messages(
+        self, connected_driver: UbloxDriver
+    ) -> None:
         """Non-NAV-PVT messages should be skipped."""
         other_msg = SimpleNamespace(identity="NAV-SVIN", active=1)
         nav_pvt = _make_nav_pvt()
@@ -314,7 +319,9 @@ class TestUbloxGetPosition:
         pos = connected_driver.get_position()
         assert pos.fix_type == GpsFixType.TIME_ONLY
 
-    def test_fix_type_unknown_defaults_no_fix(self, connected_driver: UbloxDriver) -> None:
+    def test_fix_type_unknown_defaults_no_fix(
+        self, connected_driver: UbloxDriver
+    ) -> None:
         nav_pvt = _make_nav_pvt(fix_type=99)
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
 
@@ -355,7 +362,9 @@ class TestDeviceServiceGetPosition:
         return svc
 
     @pytest.mark.asyncio()
-    async def test_get_position_success(self, service_with_driver: DeviceService) -> None:
+    async def test_get_position_success(
+        self, service_with_driver: DeviceService
+    ) -> None:
         pos = await service_with_driver.get_position()
         assert pos.fix_type == GpsFixType.FIX_3D
         assert pos.latitude == 47.6
@@ -389,16 +398,18 @@ class TestPositionAPI:
         svc = MagicMock(spec=DeviceService)
         svc.is_available = True
         svc.is_connected = True
-        svc.get_position = AsyncMock(return_value=GpsPosition(
-            fix_type=GpsFixType.FIX_3D,
-            rtk_status="fixed",
-            latitude=47.6062,
-            longitude=-122.3321,
-            altitude_m=100.5,
-            horizontal_accuracy_m=0.015,
-            vertical_accuracy_m=0.025,
-            num_satellites=24,
-        ))
+        svc.get_position = AsyncMock(
+            return_value=GpsPosition(
+                fix_type=GpsFixType.FIX_3D,
+                rtk_status="fixed",
+                latitude=47.6062,
+                longitude=-122.3321,
+                altitude_m=100.5,
+                horizontal_accuracy_m=0.015,
+                vertical_accuracy_m=0.025,
+                num_satellites=24,
+            )
+        )
         return svc
 
     @pytest.fixture()
@@ -419,7 +430,9 @@ class TestPositionAPI:
         assert abs(data["longitude"] - (-122.3321)) < 0.001
         assert data["num_satellites"] == 24
 
-    def test_get_position_not_connected(self, client: TestClient, mock_device_service: DeviceService) -> None:
+    def test_get_position_not_connected(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
         mock_device_service.get_position = AsyncMock(  # type: ignore[assignment]
             side_effect=RuntimeError("Device not connected"),
         )
@@ -427,14 +440,18 @@ class TestPositionAPI:
         assert resp.status_code == 409
         assert "not connected" in resp.json()["detail"]
 
-    def test_get_position_no_driver(self, client: TestClient, mock_device_service: DeviceService) -> None:
+    def test_get_position_no_driver(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
         mock_device_service.get_position = AsyncMock(  # type: ignore[assignment]
             side_effect=RuntimeError("No GPS driver loaded"),
         )
         resp = client.get("/api/device/position")
         assert resp.status_code == 409
 
-    def test_get_position_no_fix(self, client: TestClient, mock_device_service: DeviceService) -> None:
+    def test_get_position_no_fix(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
         mock_device_service.get_position = AsyncMock(  # type: ignore[assignment]
             return_value=GpsPosition(),
         )

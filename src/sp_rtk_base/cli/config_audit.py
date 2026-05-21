@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Constants
 LAYER_RAM = 0
 LAYER_DEFAULT = 7
-SERIAL_TIMEOUT = 0.5   # Short timeout — we poll frequently
+SERIAL_TIMEOUT = 0.5  # Short timeout — we poll frequently
 MAX_READ_ATTEMPTS = 25  # Per poll — successes happen at read #0; keep low for speed
 MAX_KEYS_PER_POLL = 12  # Small batches for reliability
 
@@ -51,28 +51,45 @@ MAX_KEYS_PER_POLL = 12  # Small batches for reliability
 
 CONFIG_GROUPS: list[tuple[str, str, list[str]]] = [
     ("UART1", "UART1 port settings", ["CFG_UART1_"]),
-    ("UART1 Protocols", "UART1 input/output protocols",
-     ["CFG_UART1INPROT_", "CFG_UART1OUTPROT_"]),
+    (
+        "UART1 Protocols",
+        "UART1 input/output protocols",
+        ["CFG_UART1INPROT_", "CFG_UART1OUTPROT_"],
+    ),
     ("UART2", "UART2 port settings", ["CFG_UART2_"]),
-    ("UART2 Protocols", "UART2 input/output protocols",
-     ["CFG_UART2INPROT_", "CFG_UART2OUTPROT_"]),
+    (
+        "UART2 Protocols",
+        "UART2 input/output protocols",
+        ["CFG_UART2INPROT_", "CFG_UART2OUTPROT_"],
+    ),
     ("USB", "USB interface settings", ["CFG_USB_"]),
-    ("USB Protocols", "USB input/output protocols",
-     ["CFG_USBINPROT_", "CFG_USBOUTPROT_"]),
+    (
+        "USB Protocols",
+        "USB input/output protocols",
+        ["CFG_USBINPROT_", "CFG_USBOUTPROT_"],
+    ),
     ("I2C", "I2C interface settings", ["CFG_I2C_"]),
-    ("I2C Protocols", "I2C input/output protocols",
-     ["CFG_I2CINPROT_", "CFG_I2COUTPROT_"]),
+    (
+        "I2C Protocols",
+        "I2C input/output protocols",
+        ["CFG_I2CINPROT_", "CFG_I2COUTPROT_"],
+    ),
     ("SPI", "SPI interface settings", ["CFG_SPI_"]),
-    ("SPI Protocols", "SPI input/output protocols",
-     ["CFG_SPIINPROT_", "CFG_SPIOUTPROT_"]),
+    (
+        "SPI Protocols",
+        "SPI input/output protocols",
+        ["CFG_SPIINPROT_", "CFG_SPIOUTPROT_"],
+    ),
     ("RATE", "Navigation/measurement rate", ["CFG_RATE_"]),
-    ("NAVSPG", "Navigation engine settings (dynamic model, fix mode, etc.)",
-     ["CFG_NAVSPG_"]),
+    (
+        "NAVSPG",
+        "Navigation engine settings (dynamic model, fix mode, etc.)",
+        ["CFG_NAVSPG_"],
+    ),
     ("NAVHPG", "High-precision navigation", ["CFG_NAVHPG_"]),
     ("NAV2", "Secondary navigation output", ["CFG_NAV2_"]),
     ("NAVMASK", "Navigation masks", ["CFG_NAVMASK_"]),
-    ("TMODE", "Time/Base station mode (survey-in, fixed, disabled)",
-     ["CFG_TMODE_"]),
+    ("TMODE", "Time/Base station mode (survey-in, fixed, disabled)", ["CFG_TMODE_"]),
     ("SIGNAL", "GNSS constellation & signal selection", ["CFG_SIGNAL_"]),
     ("SBAS", "SBAS augmentation settings", ["CFG_SBAS_"]),
     ("BDS", "BeiDou-specific settings", ["CFG_BDS_"]),
@@ -88,32 +105,27 @@ CONFIG_GROUPS: list[tuple[str, str, list[str]]] = [
     ("TXREADY", "TX ready signaling", ["CFG_TXREADY_"]),
     ("SEC", "Security", ["CFG_SEC_"]),
     ("MOT", "Motion detection", ["CFG_MOT_"]),
-    ("MSGOUT: RTCM", "RTCM message output rates per port",
-     ["CFG_MSGOUT_RTCM_"]),
-    ("MSGOUT: NAV-PVT", "NAV-PVT output per port",
-     ["CFG_MSGOUT_UBX_NAV_PVT_"]),
-    ("MSGOUT: NAV-SVIN", "NAV-SVIN output per port",
-     ["CFG_MSGOUT_UBX_NAV_SVIN_"]),
-    ("MSGOUT: NAV-SAT", "NAV-SAT output per port",
-     ["CFG_MSGOUT_UBX_NAV_SAT_"]),
-    ("MSGOUT: NAV-STATUS", "NAV-STATUS output per port",
-     ["CFG_MSGOUT_UBX_NAV_STATUS_"]),
-    ("MSGOUT: NAV-HPPOSLLH", "NAV-HPPOSLLH output per port",
-     ["CFG_MSGOUT_UBX_NAV_HPPOSLLH_"]),
-    ("MSGOUT: MON-RF", "MON-RF output per port",
-     ["CFG_MSGOUT_UBX_MON_RF_"]),
-    ("MSGOUT: NMEA GGA", "NMEA GGA output per port",
-     ["CFG_MSGOUT_NMEA_ID_GGA_"]),
-    ("MSGOUT: NMEA RMC", "NMEA RMC output per port",
-     ["CFG_MSGOUT_NMEA_ID_RMC_"]),
-    ("MSGOUT: NMEA GSV", "NMEA GSV output per port",
-     ["CFG_MSGOUT_NMEA_ID_GSV_"]),
-    ("MSGOUT: NMEA GSA", "NMEA GSA output per port",
-     ["CFG_MSGOUT_NMEA_ID_GSA_"]),
-    ("MSGOUT: NMEA GLL", "NMEA GLL output per port",
-     ["CFG_MSGOUT_NMEA_ID_GLL_"]),
-    ("MSGOUT: NMEA VTG", "NMEA VTG output per port",
-     ["CFG_MSGOUT_NMEA_ID_VTG_"]),
+    ("MSGOUT: RTCM", "RTCM message output rates per port", ["CFG_MSGOUT_RTCM_"]),
+    ("MSGOUT: NAV-PVT", "NAV-PVT output per port", ["CFG_MSGOUT_UBX_NAV_PVT_"]),
+    ("MSGOUT: NAV-SVIN", "NAV-SVIN output per port", ["CFG_MSGOUT_UBX_NAV_SVIN_"]),
+    ("MSGOUT: NAV-SAT", "NAV-SAT output per port", ["CFG_MSGOUT_UBX_NAV_SAT_"]),
+    (
+        "MSGOUT: NAV-STATUS",
+        "NAV-STATUS output per port",
+        ["CFG_MSGOUT_UBX_NAV_STATUS_"],
+    ),
+    (
+        "MSGOUT: NAV-HPPOSLLH",
+        "NAV-HPPOSLLH output per port",
+        ["CFG_MSGOUT_UBX_NAV_HPPOSLLH_"],
+    ),
+    ("MSGOUT: MON-RF", "MON-RF output per port", ["CFG_MSGOUT_UBX_MON_RF_"]),
+    ("MSGOUT: NMEA GGA", "NMEA GGA output per port", ["CFG_MSGOUT_NMEA_ID_GGA_"]),
+    ("MSGOUT: NMEA RMC", "NMEA RMC output per port", ["CFG_MSGOUT_NMEA_ID_RMC_"]),
+    ("MSGOUT: NMEA GSV", "NMEA GSV output per port", ["CFG_MSGOUT_NMEA_ID_GSV_"]),
+    ("MSGOUT: NMEA GSA", "NMEA GSA output per port", ["CFG_MSGOUT_NMEA_ID_GSA_"]),
+    ("MSGOUT: NMEA GLL", "NMEA GLL output per port", ["CFG_MSGOUT_NMEA_ID_GLL_"]),
+    ("MSGOUT: NMEA VTG", "NMEA VTG output per port", ["CFG_MSGOUT_NMEA_ID_VTG_"]),
 ]
 
 
@@ -131,6 +143,7 @@ def get_keys_for_group(prefixes: list[str]) -> list[str]:
 @dataclass
 class ConfigValue:
     """A single configuration item with RAM and default values."""
+
     key_name: str
     ram_value: int | float | str | None = None
     default_value: int | float | str | None = None
@@ -147,6 +160,7 @@ class ConfigValue:
 @dataclass
 class GroupResult:
     """Results for one configuration group."""
+
     name: str
     description: str
     items: list[ConfigValue] = field(default_factory=lambda: list[ConfigValue]())
@@ -161,9 +175,7 @@ class GroupResult:
 
     @property
     def read_failures(self) -> int:
-        return sum(
-            1 for i in self.items if not i.ram_read_ok or not i.default_read_ok
-        )
+        return sum(1 for i in self.items if not i.ram_read_ok or not i.default_read_ok)
 
 
 class ConfigReader:
@@ -185,7 +197,7 @@ class ConfigReader:
         assert self._ser is not None
         return UBXReader(
             self._ser,
-            protfilter=7,   # NMEA + UBX + RTCM3
+            protfilter=7,  # NMEA + UBX + RTCM3
             quitonerror=0,  # ERR_IGNORE
         )
 
@@ -219,8 +231,7 @@ class ConfigReader:
         for _ in range(MAX_READ_ATTEMPTS):
             try:
                 raw, parsed = reader.read()  # type: ignore[misc]
-                if (parsed is not None
-                        and getattr(parsed, "identity", "") == "MON-VER"):
+                if parsed is not None and getattr(parsed, "identity", "") == "MON-VER":
                     return self._parse_mon_ver(parsed)
             except Exception:
                 continue
@@ -245,9 +256,9 @@ class ConfigReader:
             if ext is None:
                 continue
             if isinstance(ext, bytes):
-                ext_str = ext.replace(b"\x00", b"").decode(
-                    "ascii", errors="replace"
-                ).strip()
+                ext_str = (
+                    ext.replace(b"\x00", b"").decode("ascii", errors="replace").strip()
+                )
             else:
                 ext_str = str(ext).strip("\x00 ")
             if "FWVER=" in ext_str:
@@ -266,9 +277,7 @@ class ConfigReader:
             self._ser.close()
         self._ser = None
 
-    def _poll_valget(
-        self, keys: list[str], layer: int
-    ) -> dict[str, int | float | str]:
+    def _poll_valget(self, keys: list[str], layer: int) -> dict[str, int | float | str]:
         """Poll CFG-VALGET for a list of keys on one layer.
 
         Key fix: creates a FRESH UBXReader each time to avoid
@@ -298,13 +307,14 @@ class ConfigReader:
                         if val is not None:
                             results[key_name] = val
                     if self.verbose:
-                        print(f"\n    [L{layer}] got {len(results)}/{len(keys)}"
-                              f" keys at read #{i}")
+                        print(
+                            f"\n    [L{layer}] got {len(results)}/{len(keys)}"
+                            f" keys at read #{i}"
+                        )
                     return results
                 elif identity == "ACK-NAK":
                     if self.verbose:
-                        print(f"\n    [L{layer}] NAK at read #{i}"
-                              " (keys unsupported)")
+                        print(f"\n    [L{layer}] NAK at read #{i} (keys unsupported)")
                     return results
             except Exception:
                 continue
@@ -313,16 +323,14 @@ class ConfigReader:
             print(f"\n    [L{layer}] timeout ({MAX_READ_ATTEMPTS} reads)")
         return results
 
-    def poll_keys(
-        self, keys: list[str], layer: int
-    ) -> dict[str, int | float | str]:
+    def poll_keys(self, keys: list[str], layer: int) -> dict[str, int | float | str]:
         """Poll keys in batches, returning combined results."""
         if not self._ser:
             raise RuntimeError("Not connected")
 
         all_results: dict[str, int | float | str] = {}
         for chunk_start in range(0, len(keys), MAX_KEYS_PER_POLL):
-            chunk = keys[chunk_start:chunk_start + MAX_KEYS_PER_POLL]
+            chunk = keys[chunk_start : chunk_start + MAX_KEYS_PER_POLL]
             chunk_results = self._poll_valget(chunk, layer)
             all_results.update(chunk_results)
         return all_results
@@ -360,45 +368,43 @@ ENUM_MAPS: dict[str, dict[int, str]] = {
     "CFG_TMODE_MODE": {0: "Disabled", 1: "Survey-In", 2: "Fixed"},
     "CFG_TMODE_POS_TYPE": {0: "ECEF", 1: "LLH"},
     "CFG_NAVSPG_DYNMODEL": {
-        0: "Portable", 2: "Stationary", 3: "Pedestrian",
-        4: "Automotive", 5: "Sea", 6: "Airborne 1g",
-        7: "Airborne 2g", 8: "Airborne 4g", 9: "Wrist",
-        10: "Bike", 11: "Lawn mower", 12: "E-scooter",
+        0: "Portable",
+        2: "Stationary",
+        3: "Pedestrian",
+        4: "Automotive",
+        5: "Sea",
+        6: "Airborne 1g",
+        7: "Airborne 2g",
+        8: "Airborne 4g",
+        9: "Wrist",
+        10: "Bike",
+        11: "Lawn mower",
+        12: "E-scooter",
     },
     "CFG_NAVSPG_FIXMODE": {1: "2D Only", 2: "3D Only", 3: "Auto 2D/3D"},
     "CFG_NAVSPG_UTCSTANDARD": {
-        0: "Auto", 3: "USNO (GPS)", 5: "SU (GLONASS)", 6: "NTSC (BDS)",
+        0: "Auto",
+        3: "USNO (GPS)",
+        5: "SU (GLONASS)",
+        6: "NTSC (BDS)",
     },
     "CFG_RATE_NAV_PRIO": {0: "Speed", 1: "Accuracy"},
 }
 
 ANNOTATIONS: dict[str, str] = {
-    "CFG_UART1_BAUDRATE":
-        "Default 38400. Changed for faster throughput on base station.",
-    "CFG_UART2_BAUDRATE":
-        "Default 38400. Often raised for RTCM3 correction data I/O.",
-    "CFG_TMODE_MODE":
-        "Default 0 (Disabled). Changed for base station operation.",
-    "CFG_TMODE_POS_TYPE":
-        "Position storage. ECEF=0 (from survey-in), LLH=1 (manual).",
-    "CFG_TMODE_SVIN_MIN_DUR":
-        "Min survey-in duration (s). Longer = more reliable average.",
-    "CFG_TMODE_SVIN_ACC_LIMIT":
-        "Survey-in accuracy (0.1mm). Lower = more precise but slower.",
-    "CFG_NAVSPG_DYNMODEL":
-        "Default Portable(0). Stationary(2) typical for base stations.",
-    "CFG_RATE_MEAS":
-        "Measurement period (ms). Default 1000 = 1Hz.",
-    "CFG_RATE_NAV":
-        "Nav solutions per measurement. Usually 1.",
-    "CFG_UART1OUTPROT_NMEA":
-        "NMEA output on UART1. Often disabled to reduce port traffic.",
-    "CFG_UART1OUTPROT_UBX":
-        "UBX output on UART1. Needed for pyubx2 communication.",
-    "CFG_UART1OUTPROT_RTCM3X":
-        "RTCM3 output on UART1. Enabled for base station RTCM output.",
-    "CFG_UART2OUTPROT_RTCM3X":
-        "RTCM3 output on UART2. Often used as dedicated RTCM output.",
+    "CFG_UART1_BAUDRATE": "Default 38400. Changed for faster throughput on base station.",
+    "CFG_UART2_BAUDRATE": "Default 38400. Often raised for RTCM3 correction data I/O.",
+    "CFG_TMODE_MODE": "Default 0 (Disabled). Changed for base station operation.",
+    "CFG_TMODE_POS_TYPE": "Position storage. ECEF=0 (from survey-in), LLH=1 (manual).",
+    "CFG_TMODE_SVIN_MIN_DUR": "Min survey-in duration (s). Longer = more reliable average.",
+    "CFG_TMODE_SVIN_ACC_LIMIT": "Survey-in accuracy (0.1mm). Lower = more precise but slower.",
+    "CFG_NAVSPG_DYNMODEL": "Default Portable(0). Stationary(2) typical for base stations.",
+    "CFG_RATE_MEAS": "Measurement period (ms). Default 1000 = 1Hz.",
+    "CFG_RATE_NAV": "Nav solutions per measurement. Usually 1.",
+    "CFG_UART1OUTPROT_NMEA": "NMEA output on UART1. Often disabled to reduce port traffic.",
+    "CFG_UART1OUTPROT_UBX": "UBX output on UART1. Needed for pyubx2 communication.",
+    "CFG_UART1OUTPROT_RTCM3X": "RTCM3 output on UART1. Enabled for base station RTCM output.",
+    "CFG_UART2OUTPROT_RTCM3X": "RTCM3 output on UART2. Often used as dedicated RTCM output.",
 }
 
 
@@ -411,9 +417,7 @@ def format_value(key: str, value: int | float | str | None) -> str:
         return f"{value} ({enum_str})"
     if "BAUDRATE" in key and isinstance(value, int):
         return f"{value:,}"
-    if isinstance(value, int) and any(
-        p in key for p in ("INPROT_", "OUTPROT_")
-    ):
+    if isinstance(value, int) and any(p in key for p in ("INPROT_", "OUTPROT_")):
         return f"{value} ({'enabled' if value else 'disabled'})"
     if isinstance(value, int) and key.endswith("_ENA"):
         return f"{value} ({'ON' if value else 'OFF'})"
@@ -437,18 +441,20 @@ def get_annotation(key: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="ZED-F9P Config Audit — compare RAM vs factory defaults"
     )
     parser.add_argument("--port", default="/dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=57600)
-    parser.add_argument("--show-same", action="store_true",
-                        help="Also show values that match defaults")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Show per-poll debug info")
-    parser.add_argument("--json", action="store_true",
-                        help="Output as JSON")
+    parser.add_argument(
+        "--show-same", action="store_true", help="Also show values that match defaults"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show per-poll debug info"
+    )
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -477,7 +483,7 @@ def main() -> None:
         key_count = len(get_keys_for_group(prefixes))
         if key_count == 0:
             continue
-        progress = f"[{i+1}/{len(CONFIG_GROUPS)}]"
+        progress = f"[{i + 1}/{len(CONFIG_GROUPS)}]"
         sys.stdout.write(
             f"\r  Reading {progress} {name} ({key_count} keys)...          "
         )
@@ -495,33 +501,28 @@ def main() -> None:
     reader.disconnect()
     total_failures = total_keys - total_read_ok
     print(f"\r{'':70}")
-    print(
-        f"✓ Scanned {total_keys} config keys across"
-        f" {len(all_results)} groups"
-    )
+    print(f"✓ Scanned {total_keys} config keys across {len(all_results)} groups")
     print(f"  Successfully compared: {total_read_ok}")
     if total_failures > 0:
-        print(
-            f"  Unsupported/timeout:   {total_failures}"
-            " (normal for older FW)"
-        )
+        print(f"  Unsupported/timeout:   {total_failures} (normal for older FW)")
     print()
 
     if args.json:
         import json
+
         output: dict[str, list[dict[str, object]]] = {}
         for group in all_results:
             diffs: list[dict[str, object]] = []
             for item in group.items:
-                if item.is_different or (
-                    args.show_same and item.ram_read_ok
-                ):
-                    diffs.append({
-                        "key": item.key_name,
-                        "current": item.ram_value,
-                        "default": item.default_value,
-                        "changed": item.is_different,
-                    })
+                if item.is_different or (args.show_same and item.ram_read_ok):
+                    diffs.append(
+                        {
+                            "key": item.key_name,
+                            "current": item.ram_value,
+                            "default": item.default_value,
+                            "changed": item.is_different,
+                        }
+                    )
             if diffs:
                 output[group.name] = diffs
         print(json.dumps(output, indent=2, default=str))
@@ -530,9 +531,7 @@ def main() -> None:
     # Print results
     print("=" * 70)
     if total_diffs > 0:
-        print(
-            f"  DIFFERENCES FROM FACTORY DEFAULTS: {total_diffs} change(s)"
-        )
+        print(f"  DIFFERENCES FROM FACTORY DEFAULTS: {total_diffs} change(s)")
     else:
         print("  NO DIFFERENCES DETECTED (in readable keys)")
     print("=" * 70)
@@ -548,14 +547,10 @@ def main() -> None:
 
         marker = "⚡" if has_diffs else "✓"
         diff_info = (
-            f" — {len(group.differences)} change(s)"
-            if has_diffs else " — all defaults"
+            f" — {len(group.differences)} change(s)" if has_diffs else " — all defaults"
         )
         read_info = f" [{readable}/{len(group.items)} readable]"
-        print(
-            f"{marker} {group.name}: {group.description}"
-            f"{diff_info}{read_info}"
-        )
+        print(f"{marker} {group.name}: {group.description}{diff_info}{read_info}")
         print("-" * 70)
 
         for item in group.items:
@@ -566,9 +561,7 @@ def main() -> None:
 
             if item.is_different:
                 current_str = format_value(item.key_name, item.ram_value)
-                default_str = format_value(
-                    item.key_name, item.default_value
-                )
+                default_str = format_value(item.key_name, item.default_value)
                 print(f"  ▸ {item.key_name}")
                 print(f"      Current: {current_str}")
                 print(f"      Default: {default_str}")

@@ -15,7 +15,6 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
 )
 
-
 # ---------------------------------------------------------------------------
 # Model tests
 # ---------------------------------------------------------------------------
@@ -29,11 +28,13 @@ class TestRtcmPortConfig:
         assert config.messages == {}
 
     def test_enabled_on_port(self) -> None:
-        config = RtcmPortConfig(messages={
-            1005: {"USB": 1, "UART1": 0, "UART2": 1, "I2C": 0, "SPI": 0},
-            1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-            1087: {"USB": 0, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
-        })
+        config = RtcmPortConfig(
+            messages={
+                1005: {"USB": 1, "UART1": 0, "UART2": 1, "I2C": 0, "SPI": 0},
+                1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
+                1087: {"USB": 0, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
+            }
+        )
         usb_enabled = config.enabled_on_port(RtcmOutputPort.USB)
         assert 1005 in usb_enabled
         assert 1077 in usb_enabled
@@ -44,18 +45,22 @@ class TestRtcmPortConfig:
         assert 1005 not in uart1_enabled
 
     def test_is_enabled(self) -> None:
-        config = RtcmPortConfig(messages={
-            1005: {"USB": 1, "UART1": 0},
-        })
+        config = RtcmPortConfig(
+            messages={
+                1005: {"USB": 1, "UART1": 0},
+            }
+        )
         assert config.is_enabled(1005, RtcmOutputPort.USB) is True
         assert config.is_enabled(1005, RtcmOutputPort.UART1) is False
         # Non-existent message
         assert config.is_enabled(9999, RtcmOutputPort.USB) is False
 
     def test_rate(self) -> None:
-        config = RtcmPortConfig(messages={
-            1005: {"USB": 3, "UART1": 0},
-        })
+        config = RtcmPortConfig(
+            messages={
+                1005: {"USB": 3, "UART1": 0},
+            }
+        )
         assert config.rate(1005, RtcmOutputPort.USB) == 3
         assert config.rate(1005, RtcmOutputPort.UART1) == 0
         assert config.rate(9999, RtcmOutputPort.USB) == 0
@@ -168,11 +173,13 @@ class TestParseRtcmPortValget:
     def test_parse_some_enabled(self) -> None:
         from sp_rtk_base.services.drivers.ublox import UbloxDriver, _rtcm_key
 
-        parsed = _FakeValget({
-            _rtcm_key(1005, "USB"): 1,
-            _rtcm_key(1005, "UART1"): 2,
-            _rtcm_key(1077, "USB"): 1,
-        })
+        parsed = _FakeValget(
+            {
+                _rtcm_key(1005, "USB"): 1,
+                _rtcm_key(1005, "UART1"): 2,
+                _rtcm_key(1077, "USB"): 1,
+            }
+        )
 
         config = UbloxDriver._parse_rtcm_port_valget(parsed)
         assert config.is_enabled(1005, RtcmOutputPort.USB)
@@ -197,9 +204,11 @@ class TestConfigureRtcmPorts:
         driver._serial.is_open = True
         driver._reader = MagicMock()
 
-        config = RtcmPortConfig(messages={
-            1005: {"USB": 1, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
-        })
+        config = RtcmPortConfig(
+            messages={
+                1005: {"USB": 1, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
+            }
+        )
 
         with patch.object(driver, "_send_cfg_valset") as mock_valset:
             driver.configure_rtcm_ports(config)
@@ -210,10 +219,7 @@ class TestConfigureRtcmPorts:
             # Should have 5 keys (one per port)
             assert len(cfg_data) == 5
             # Check USB is rate 1
-            usb_entry = [
-                (k, v) for k, v in cfg_data
-                if k.endswith("_USB")
-            ]
+            usb_entry = [(k, v) for k, v in cfg_data if k.endswith("_USB")]
             assert len(usb_entry) == 1
             assert usb_entry[0][1] == 1
 
@@ -240,9 +246,11 @@ class TestConfigureRtcmPorts:
         driver._serial.is_open = True
         driver._reader = MagicMock()
 
-        config = RtcmPortConfig(messages={
-            9999: {"USB": 1},  # Unknown message
-        })
+        config = RtcmPortConfig(
+            messages={
+                9999: {"USB": 1},  # Unknown message
+            }
+        )
 
         with patch.object(driver, "_send_cfg_valset") as mock_valset:
             driver.configure_rtcm_ports(config)
@@ -272,6 +280,7 @@ class TestDeviceServiceRtcmPorts:
         svc._state.__eq__ = MagicMock(return_value=True)
         # Simulate CONNECTED state
         from sp_rtk_base.models.device_models import DeviceConnectionState
+
         svc._state = DeviceConnectionState.CONNECTED
 
         result = await svc.get_rtcm_port_config()

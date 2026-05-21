@@ -16,7 +16,11 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import generate_latest
 
-from sp_rtk_base.services import get_config_service, get_metrics_service, get_relay_service
+from sp_rtk_base.services import (
+    get_config_service,
+    get_metrics_service,
+    get_relay_service,
+)
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService

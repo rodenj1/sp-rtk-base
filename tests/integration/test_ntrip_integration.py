@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 from tests.fixtures.mock_ntrip_caster import MockNtripCaster
 from tests.fixtures.tcp_source_simulator import TCPSourceSimulator
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

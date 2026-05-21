@@ -608,7 +608,7 @@ async def status_poller(engine: RelayEngine):
     """Poll relay status every 2 seconds and push to UI."""
     while engine.is_running:
         status = engine.get_status()
-        
+
         # Update UI dashboard
         await update_dashboard(
             input_connected=status.input.connected,
@@ -628,7 +628,7 @@ async def status_poller(engine: RelayEngine):
                 for d in status.destinations
             ],
         )
-        
+
         await asyncio.sleep(2.0)
 ```
 
@@ -990,7 +990,7 @@ class GPSManager:
     def configure_gps(self, settings: dict) -> None:
         """Configure GPS via PyUBX2. Stops relay first if needed."""
         was_running = self.relay.engine.is_running
-        
+
         if was_running:
             self.relay.stop()
             # Port is now released — engine.stop() is synchronous
@@ -998,7 +998,7 @@ class GPSManager:
         # Open port with PyUBX2 and configure
         import serial
         from pyubx2 import UBXReader, UBXMessage
-        
+
         with serial.Serial(self.port, 115200) as ser:
             # ... apply u-blox configuration via UBX protocol ...
             pass

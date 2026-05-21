@@ -56,32 +56,39 @@ def survey_page() -> None:
 
             with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
                 port_select = ui.select(
-                    options=[], label="Serial Port", with_input=True,
+                    options=[],
+                    label="Serial Port",
+                    with_input=True,
                 ).classes("col-grow")
                 baud_select = ui.select(
                     options={r: str(r) for r in BAUD_RATES},
-                    label="Baud Rate", value=DEFAULT_BAUD,
+                    label="Baud Rate",
+                    value=DEFAULT_BAUD,
                 ).classes("w-40")
                 driver_select = ui.select(
-                    options=list_drivers(), label="Driver", value="ublox",
+                    options=list_drivers(),
+                    label="Driver",
+                    value="ublox",
                 ).classes("w-40")
 
             with ui.row().classes("gap-2 q-mt-sm items-center"):
                 connect_btn = ui.button("Connect", icon="link")
-                disconnect_btn = ui.button(
-                    "Disconnect", icon="link_off"
-                ).props("color=grey")
-                cancel_btn = ui.button(
-                    "Cancel", icon="cancel"
-                ).props("color=negative outline")
+                disconnect_btn = ui.button("Disconnect", icon="link_off").props(
+                    "color=grey"
+                )
+                cancel_btn = ui.button("Cancel", icon="cancel").props(
+                    "color=negative outline"
+                )
                 cancel_btn.set_visibility(False)
-                reload_device_btn = ui.button(
-                    "Reload Device Data", icon="sync"
-                ).props("color=info outline")
+                reload_device_btn = ui.button("Reload Device Data", icon="sync").props(
+                    "color=info outline"
+                )
                 reload_device_btn.set_visibility(False)
-                refresh_btn = ui.button(
-                    "", icon="refresh"
-                ).props("flat round color=white").tooltip("Refresh serial port list")
+                refresh_btn = (
+                    ui.button("", icon="refresh")
+                    .props("flat round color=white")
+                    .tooltip("Refresh serial port list")
+                )
 
             info_card = ui.card().classes("w-full q-pa-md q-mt-md")
             info_card.set_visibility(False)
@@ -148,32 +155,38 @@ def survey_page() -> None:
 
             with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
                 svin_duration = ui.number(
-                    "Min Duration (seconds)", value=120,
-                    min=60, max=86400, step=60,
+                    "Min Duration (seconds)",
+                    value=120,
+                    min=60,
+                    max=86400,
+                    step=60,
                 ).classes("col-grow")
                 svin_accuracy = ui.number(
-                    "Accuracy Limit (mm)", value=50000,
-                    min=1000, max=500000, step=1000,
+                    "Accuracy Limit (mm)",
+                    value=50000,
+                    min=1000,
+                    max=500000,
+                    step=1000,
                 ).classes("col-grow")
 
-            svin_start_btn = ui.button(
-                "Start Survey-In", icon="play_arrow"
-            ).props("color=primary").classes("q-mt-sm")
+            svin_start_btn = (
+                ui.button("Start Survey-In", icon="play_arrow")
+                .props("color=primary")
+                .classes("q-mt-sm")
+            )
 
             # Progress section (hidden until survey starts)
-            svin_progress_card = ui.card().classes(
-                "w-full q-pa-sm q-mt-md"
-            ).style("background-color: #1a1a2e")
+            svin_progress_card = (
+                ui.card()
+                .classes("w-full q-pa-sm q-mt-md")
+                .style("background-color: #1a1a2e")
+            )
             svin_progress_card.set_visibility(False)
 
             with svin_progress_card:
                 with ui.row().classes("items-center justify-between w-full"):
-                    ui.label("Survey-In Progress").classes(
-                        "text-subtitle2 text-grey-4"
-                    )
-                    svin_target_label = ui.label("").classes(
-                        "text-caption text-grey-5"
-                    )
+                    ui.label("Survey-In Progress").classes("text-subtitle2 text-grey-4")
+                    svin_target_label = ui.label("").classes("text-caption text-grey-5")
                 svin_status_label = ui.label("Idle").classes("text-white")
                 svin_progress_bar = ui.linear_progress(
                     value=0, show_value=False
@@ -185,76 +198,119 @@ def survey_page() -> None:
                     svin_obs_label = ui.label("Observations: 0").classes("text-grey-3")
 
                 # Convergence chart
-                svin_chart = ui.echart({
-                    "backgroundColor": "transparent",
-                    "animation": True,
-                    "grid": {"top": 30, "right": 20, "bottom": 40, "left": 65},
-                    "tooltip": {
-                        "trigger": "axis",
-                        "backgroundColor": "#1a1a2e",
-                        "borderColor": "#444",
-                        "textStyle": {"color": "#ccc"},
-                    },
-                    "legend": {
-                        "data": ["Accuracy (mm)", "Observations"],
-                        "textStyle": {"color": "#888"}, "top": 0,
-                    },
-                    "xAxis": {
-                        "type": "category", "data": [],
-                        "name": "Elapsed (s)",
-                        "nameTextStyle": {"color": "#888"},
-                        "axisLabel": {"color": "#888"},
-                        "axisLine": {"lineStyle": {"color": "#444"}},
-                        "splitLine": {"show": False},
-                    },
-                    "yAxis": [
+                svin_chart = (
+                    ui.echart(
                         {
-                            "type": "log", "name": "Accuracy (mm)",
-                            "nameTextStyle": {"color": "#888"},
-                            "axisLabel": {"color": "#888", "formatter": "{value}"},
-                            "axisLine": {"lineStyle": {"color": "#444"}},
-                            "splitLine": {"lineStyle": {"color": "#2a2a3e", "type": "dashed"}},
-                            "min": 100,
-                        },
-                        {
-                            "type": "value", "name": "Observations",
-                            "nameTextStyle": {"color": "#888"},
-                            "axisLabel": {"color": "#888"},
-                            "axisLine": {"lineStyle": {"color": "#444"}},
-                            "splitLine": {"show": False},
-                        },
-                    ],
-                    "series": [
-                        {
-                            "name": "Accuracy (mm)", "type": "line", "data": [],
-                            "smooth": True, "symbol": "none",
-                            "lineStyle": {"width": 2},
-                            "itemStyle": {"color": "#ff6b6b"},
-                            "areaStyle": {
-                                "color": {
-                                    "type": "linear", "x": 0, "y": 0, "x2": 0, "y2": 1,
-                                    "colorStops": [
-                                        {"offset": 0, "color": "rgba(255,107,107,0.3)"},
-                                        {"offset": 1, "color": "rgba(255,107,107,0.02)"},
-                                    ],
+                            "backgroundColor": "transparent",
+                            "animation": True,
+                            "grid": {"top": 30, "right": 20, "bottom": 40, "left": 65},
+                            "tooltip": {
+                                "trigger": "axis",
+                                "backgroundColor": "#1a1a2e",
+                                "borderColor": "#444",
+                                "textStyle": {"color": "#ccc"},
+                            },
+                            "legend": {
+                                "data": ["Accuracy (mm)", "Observations"],
+                                "textStyle": {"color": "#888"},
+                                "top": 0,
+                            },
+                            "xAxis": {
+                                "type": "category",
+                                "data": [],
+                                "name": "Elapsed (s)",
+                                "nameTextStyle": {"color": "#888"},
+                                "axisLabel": {"color": "#888"},
+                                "axisLine": {"lineStyle": {"color": "#444"}},
+                                "splitLine": {"show": False},
+                            },
+                            "yAxis": [
+                                {
+                                    "type": "log",
+                                    "name": "Accuracy (mm)",
+                                    "nameTextStyle": {"color": "#888"},
+                                    "axisLabel": {
+                                        "color": "#888",
+                                        "formatter": "{value}",
+                                    },
+                                    "axisLine": {"lineStyle": {"color": "#444"}},
+                                    "splitLine": {
+                                        "lineStyle": {
+                                            "color": "#2a2a3e",
+                                            "type": "dashed",
+                                        }
+                                    },
+                                    "min": 100,
                                 },
-                            },
-                            "yAxisIndex": 0,
-                            "markLine": {
-                                "silent": True, "data": [],
-                                "lineStyle": {"type": "dashed", "color": "#51cf66", "width": 2},
-                                "label": {"color": "#51cf66", "fontSize": 11, "formatter": "Target: {c} mm"},
-                            },
-                        },
-                        {
-                            "name": "Observations", "type": "line", "data": [],
-                            "smooth": True, "symbol": "none",
-                            "lineStyle": {"width": 1, "type": "dotted"},
-                            "itemStyle": {"color": "#74c0fc"},
-                            "yAxisIndex": 1,
-                        },
-                    ],
-                }).classes("w-full q-mt-sm").style("height: 260px")
+                                {
+                                    "type": "value",
+                                    "name": "Observations",
+                                    "nameTextStyle": {"color": "#888"},
+                                    "axisLabel": {"color": "#888"},
+                                    "axisLine": {"lineStyle": {"color": "#444"}},
+                                    "splitLine": {"show": False},
+                                },
+                            ],
+                            "series": [
+                                {
+                                    "name": "Accuracy (mm)",
+                                    "type": "line",
+                                    "data": [],
+                                    "smooth": True,
+                                    "symbol": "none",
+                                    "lineStyle": {"width": 2},
+                                    "itemStyle": {"color": "#ff6b6b"},
+                                    "areaStyle": {
+                                        "color": {
+                                            "type": "linear",
+                                            "x": 0,
+                                            "y": 0,
+                                            "x2": 0,
+                                            "y2": 1,
+                                            "colorStops": [
+                                                {
+                                                    "offset": 0,
+                                                    "color": "rgba(255,107,107,0.3)",
+                                                },
+                                                {
+                                                    "offset": 1,
+                                                    "color": "rgba(255,107,107,0.02)",
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "yAxisIndex": 0,
+                                    "markLine": {
+                                        "silent": True,
+                                        "data": [],
+                                        "lineStyle": {
+                                            "type": "dashed",
+                                            "color": "#51cf66",
+                                            "width": 2,
+                                        },
+                                        "label": {
+                                            "color": "#51cf66",
+                                            "fontSize": 11,
+                                            "formatter": "Target: {c} mm",
+                                        },
+                                    },
+                                },
+                                {
+                                    "name": "Observations",
+                                    "type": "line",
+                                    "data": [],
+                                    "smooth": True,
+                                    "symbol": "none",
+                                    "lineStyle": {"width": 1, "type": "dotted"},
+                                    "itemStyle": {"color": "#74c0fc"},
+                                    "yAxisIndex": 1,
+                                },
+                            ],
+                        }
+                    )
+                    .classes("w-full q-mt-sm")
+                    .style("height: 260px")
+                )
 
         # ================================================================
         # Card 3: Fixed Base Position (merged)
@@ -286,15 +342,15 @@ def survey_page() -> None:
                         fb_acc_label = ui.label("—").classes("text-white")
 
                 with ui.row().classes("gap-2 q-mt-md"):
-                    fb_edit_btn = ui.button(
-                        "Edit", icon="edit"
-                    ).props("color=primary outline")
-                    fb_save_btn = ui.button(
-                        "Save Position", icon="bookmark_add"
-                    ).props("color=primary outline")
-                    fb_load_btn = ui.button(
-                        "Load Saved", icon="folder_open"
-                    ).props("color=primary outline")
+                    fb_edit_btn = ui.button("Edit", icon="edit").props(
+                        "color=primary outline"
+                    )
+                    fb_save_btn = ui.button("Save Position", icon="bookmark_add").props(
+                        "color=primary outline"
+                    )
+                    fb_load_btn = ui.button("Load Saved", icon="folder_open").props(
+                        "color=primary outline"
+                    )
 
             # Edit mode (hidden by default)
             fb_editmode = ui.column().classes("w-full")
@@ -302,30 +358,45 @@ def survey_page() -> None:
             with fb_editmode:
                 with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
                     fb_edit_lat = ui.number(
-                        "Latitude (°)", value=0.0,
-                        min=-90.0, max=90.0, step=0.0000001, format="%.7f",
+                        "Latitude (°)",
+                        value=0.0,
+                        min=-90.0,
+                        max=90.0,
+                        step=0.0000001,
+                        format="%.7f",
                     ).classes("col-grow")
                     fb_edit_lon = ui.number(
-                        "Longitude (°)", value=0.0,
-                        min=-180.0, max=180.0, step=0.0000001, format="%.7f",
+                        "Longitude (°)",
+                        value=0.0,
+                        min=-180.0,
+                        max=180.0,
+                        step=0.0000001,
+                        format="%.7f",
                     ).classes("col-grow")
                 with ui.row().classes("w-full gap-4 sp-metric-row"):
                     fb_edit_alt = ui.number(
-                        "Altitude (m)", value=0.0,
-                        min=-1000.0, max=100000.0, step=0.01, format="%.2f",
+                        "Altitude (m)",
+                        value=0.0,
+                        min=-1000.0,
+                        max=100000.0,
+                        step=0.01,
+                        format="%.2f",
                     ).classes("col-grow")
                     fb_edit_acc = ui.number(
-                        "Accuracy (mm)", value=1000,
-                        min=1, max=100000, step=100,
+                        "Accuracy (mm)",
+                        value=1000,
+                        min=1,
+                        max=100000,
+                        step=100,
                     ).classes("col-grow")
 
                 with ui.row().classes("gap-2 q-mt-md"):
-                    fb_commit_btn = ui.button(
-                        "Commit", icon="check"
-                    ).props("color=positive")
-                    fb_cancel_btn = ui.button(
-                        "Cancel", icon="close"
-                    ).props("flat color=grey")
+                    fb_commit_btn = ui.button("Commit", icon="check").props(
+                        "color=positive"
+                    )
+                    fb_cancel_btn = ui.button("Cancel", icon="close").props(
+                        "flat color=grey"
+                    )
 
         # ================================================================
         # Card 4: Saved Positions
@@ -381,11 +452,13 @@ def survey_page() -> None:
 
         def _save_device_settings() -> None:
             try:
-                config_svc.save_device_profile(DeviceProfile(
-                    port=str(port_select.value or ""),
-                    baud_rate=int(baud_select.value or DEFAULT_BAUD),
-                    vendor=str(driver_select.value or "ublox"),
-                ))
+                config_svc.save_device_profile(
+                    DeviceProfile(
+                        port=str(port_select.value or ""),
+                        baud_rate=int(baud_select.value or DEFAULT_BAUD),
+                        vendor=str(driver_select.value or "ublox"),
+                    )
+                )
             except Exception:
                 pass
 
@@ -432,9 +505,7 @@ def survey_page() -> None:
                                 ui.badge(c.value).props("color=primary outline")
 
             position_section.set_visibility(connected)
-            survey_card.set_visibility(
-                connected and DeviceCapability.SURVEY_IN in caps
-            )
+            survey_card.set_visibility(connected and DeviceCapability.SURVEY_IN in caps)
             fixed_card.set_visibility(connected)
 
             status = svc.get_status()
@@ -450,16 +521,26 @@ def survey_page() -> None:
             try:
                 pos = await svc.get_position()
                 _FIX_COLORS = {
-                    "no_fix": "grey", "dead_reckoning": "orange",
-                    "2d": "amber", "3d": "green", "gnss_dr": "light-green",
+                    "no_fix": "grey",
+                    "dead_reckoning": "orange",
+                    "2d": "amber",
+                    "3d": "green",
+                    "gnss_dr": "light-green",
                     "time_only": "blue-grey",
                 }
                 _FIX_LABELS = {
-                    "no_fix": "No Fix", "dead_reckoning": "Dead Reckoning",
-                    "2d": "2D Fix", "3d": "3D Fix", "gnss_dr": "GNSS+DR",
+                    "no_fix": "No Fix",
+                    "dead_reckoning": "Dead Reckoning",
+                    "2d": "2D Fix",
+                    "3d": "3D Fix",
+                    "gnss_dr": "GNSS+DR",
                     "time_only": "Time Only",
                 }
-                fix_val = pos.fix_type.value if hasattr(pos.fix_type, "value") else str(pos.fix_type)
+                fix_val = (
+                    pos.fix_type.value
+                    if hasattr(pos.fix_type, "value")
+                    else str(pos.fix_type)
+                )
                 pos_fix_badge.text = _FIX_LABELS.get(fix_val, fix_val)
                 pos_fix_badge.props(f"color={_FIX_COLORS.get(fix_val, 'grey')}")
 
@@ -474,18 +555,26 @@ def survey_page() -> None:
 
                 pos_hacc_label.text = (
                     f"{pos.horizontal_accuracy_m:.3f} m"
-                    if pos.horizontal_accuracy_m > 0 else "—"
+                    if pos.horizontal_accuracy_m > 0
+                    else "—"
                 )
                 pos_vacc_label.text = (
                     f"{pos.vertical_accuracy_m:.3f} m"
-                    if pos.vertical_accuracy_m > 0 else "—"
+                    if pos.vertical_accuracy_m > 0
+                    else "—"
                 )
                 pos_sats_label.text = str(pos.num_satellites)
                 pos_pdop_label.text = f"{pos.pdop:.2f}" if pos.pdop > 0 else "—"
 
-                _RTK_COLORS = {"none": "text-grey-3", "float": "text-amber", "fixed": "text-green"}
+                _RTK_COLORS = {
+                    "none": "text-grey-3",
+                    "float": "text-amber",
+                    "fixed": "text-green",
+                }
                 pos_rtk_label.text = pos.rtk_status.capitalize()
-                pos_rtk_label.classes(replace=_RTK_COLORS.get(pos.rtk_status, "text-white"))
+                pos_rtk_label.classes(
+                    replace=_RTK_COLORS.get(pos.rtk_status, "text-white")
+                )
 
                 pos_speed_label.text = (
                     f"{pos.speed_m_s:.2f} m/s" if pos.speed_m_s > 0 else "0.00 m/s"
@@ -540,10 +629,14 @@ def survey_page() -> None:
             from sp_rtk_base.models.device_models import FixedBaseConfig
 
             try:
-                await svc.configure_fixed_base(FixedBaseConfig(
-                    latitude=lat, longitude=lon,
-                    altitude_m=alt, accuracy_mm=acc,
-                ))
+                await svc.configure_fixed_base(
+                    FixedBaseConfig(
+                        latitude=lat,
+                        longitude=lon,
+                        altitude_m=alt,
+                        accuracy_mm=acc,
+                    )
+                )
                 await svc.save_to_flash()
                 return True
             except Exception as exc:
@@ -582,8 +675,9 @@ def survey_page() -> None:
         async def _save_position_dialog() -> None:
             from sp_rtk_base.models.config_models import BaseStationPosition
 
-            with ui.dialog() as dlg, ui.card().classes("q-pa-md").style(
-                "min-width: 350px"
+            with (
+                ui.dialog() as dlg,
+                ui.card().classes("q-pa-md").style("min-width: 350px"),
             ):
                 ui.label("Save Position Profile").classes("text-h6 text-white")
                 ui.separator()
@@ -603,11 +697,16 @@ def survey_page() -> None:
                         if not name:
                             ui.notify("Enter a profile name", type="warning")
                             return
-                        config_svc.save_base_position(BaseStationPosition(
-                            name=name, latitude=_fb_lat, longitude=_fb_lon,
-                            altitude_m=_fb_alt, accuracy_mm=_fb_acc,
-                            source="survey_in",
-                        ))
+                        config_svc.save_base_position(
+                            BaseStationPosition(
+                                name=name,
+                                latitude=_fb_lat,
+                                longitude=_fb_lon,
+                                altitude_m=_fb_alt,
+                                accuracy_mm=_fb_acc,
+                                source="survey_in",
+                            )
+                        )
                         ui.notify(f"Position '{name}' saved ✓", type="positive")
                         dlg.close()
                         _refresh_saved_positions()
@@ -623,14 +722,15 @@ def survey_page() -> None:
                 ui.notify("No saved positions", type="warning")
                 return
 
-            with ui.dialog() as dlg, ui.card().classes("q-pa-md").style(
-                "min-width: 400px"
+            with (
+                ui.dialog() as dlg,
+                ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label("Load Saved Position").classes("text-h6 text-white")
                 ui.separator()
-                ui.label(
-                    "Select a position to commit directly to the device."
-                ).classes("text-grey-4 q-mt-xs text-caption")
+                ui.label("Select a position to commit directly to the device.").classes(
+                    "text-grey-4 q-mt-xs text-caption"
+                )
 
                 for pos in positions:
                     _pos = pos
@@ -638,20 +738,28 @@ def survey_page() -> None:
                     async def _pick(p: object = _pos) -> None:
                         dlg.close()
                         ui.notify("Committing position to device...", type="info")
+                        # `p` is typed `object` because it's used as a default
+                        # argument to bind the loop var.  At runtime it's a
+                        # BaseStationPosition; pyright can't see that.
                         ok = await _commit_fixed_base(
-                            p.latitude, p.longitude,  # type: ignore[union-attr]
-                            p.altitude_m, int(p.accuracy_mm),  # type: ignore[union-attr]
+                            p.latitude,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownArgumentType]
+                            p.longitude,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownArgumentType]
+                            p.altitude_m,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownArgumentType]
+                            int(p.accuracy_mm),  # pyright: ignore[reportAttributeAccessIssue,reportUnknownArgumentType]
                         )
                         if ok:
                             ui.notify(
-                                f"Position '{p.name}' committed ✓",  # type: ignore[union-attr]
+                                f"Position '{p.name}' committed ✓",  # pyright: ignore[reportAttributeAccessIssue]
                                 type="positive",
                             )
                             await _read_fixed_base()
 
-                    with ui.card().classes("w-full q-pa-sm cursor-pointer").style(
-                        "background-color: #1a1a2e"
-                    ).on("click", _pick):
+                    with (
+                        ui.card()
+                        .classes("w-full q-pa-sm cursor-pointer")
+                        .style("background-color: #1a1a2e")
+                        .on("click", _pick)
+                    ):
                         ui.label(pos.name).classes("text-subtitle2 text-white")
                         ui.label(
                             f"{pos.latitude:.7f}°, {pos.longitude:.7f}°, "
@@ -750,9 +858,9 @@ def survey_page() -> None:
                         dlg.close()
                         await _start_survey_in()
 
-                    ui.button(
-                        "Start Survey", on_click=_confirmed
-                    ).props("color=primary")
+                    ui.button("Start Survey", on_click=_confirmed).props(
+                        "color=primary"
+                    )
             dlg.open()
 
         async def _start_survey_in() -> None:
@@ -892,14 +1000,14 @@ def survey_page() -> None:
                     )
                     return
                 for pos in positions:
-                    with ui.card().classes("w-full q-pa-sm").style(
-                        "background-color: #1a1a2e"
+                    with (
+                        ui.card()
+                        .classes("w-full q-pa-sm")
+                        .style("background-color: #1a1a2e")
                     ):
                         with ui.row().classes("w-full items-center justify-between"):
                             with ui.column().classes("gap-0"):
-                                ui.label(pos.name).classes(
-                                    "text-subtitle2 text-white"
-                                )
+                                ui.label(pos.name).classes("text-subtitle2 text-white")
                                 ui.label(
                                     f"{pos.latitude:.7f}°, {pos.longitude:.7f}°, "
                                     f"{pos.altitude_m:.3f}m  (±{pos.accuracy_mm:.0f}mm)"
@@ -914,15 +1022,15 @@ def survey_page() -> None:
 
                                 async def _restore(
                                     n: str = _name,
-                                    la: float = _lat, lo: float = _lon,
-                                    al: float = _alt, ac: int = _acc,
+                                    la: float = _lat,
+                                    lo: float = _lon,
+                                    al: float = _alt,
+                                    ac: int = _acc,
                                 ) -> None:
                                     ui.notify(f"Restoring '{n}'...", type="info")
                                     ok = await _commit_fixed_base(la, lo, al, ac)
                                     if ok:
-                                        ui.notify(
-                                            f"'{n}' restored ✓", type="positive"
-                                        )
+                                        ui.notify(f"'{n}' restored ✓", type="positive")
                                         await _read_fixed_base()
 
                                 async def _delete(n: str = _name) -> None:
@@ -933,9 +1041,9 @@ def survey_page() -> None:
                                 ui.button(
                                     "Restore", icon="restore", on_click=_restore
                                 ).props("dense color=positive size=sm")
-                                ui.button(
-                                    "", icon="delete", on_click=_delete
-                                ).props("dense flat color=negative size=sm")
+                                ui.button("", icon="delete", on_click=_delete).props(
+                                    "dense flat color=negative size=sm"
+                                )
 
         # ---- Wire up events ----
         connect_btn.on_click(_connect)

@@ -178,7 +178,7 @@ class TCPSourceSimulator:
                     daemon=True,
                 )
                 handler.start()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break

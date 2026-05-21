@@ -73,9 +73,7 @@ async def import_config(
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid YAML: {exc}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
 
     if not isinstance(data, dict):
         raise HTTPException(

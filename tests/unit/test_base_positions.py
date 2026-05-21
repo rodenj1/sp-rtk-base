@@ -26,7 +26,6 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
-
 # ---------------------------------------------------------------------------
 # ECEF → LLH conversion
 # ---------------------------------------------------------------------------

@@ -107,7 +107,10 @@ class TestUpdateInputConfig:
         """Sets a new input configuration."""
         resp = api_client_with_services.put(
             "/api/input",
-            json={"source": "serial", "config": {"port": "/dev/ttyUSB0", "baud_rate": 115200}},
+            json={
+                "source": "serial",
+                "config": {"port": "/dev/ttyUSB0", "baud_rate": 115200},
+            },
         )
         assert resp.status_code == 200
         data = resp.json()

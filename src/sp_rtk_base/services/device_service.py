@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Protocol
 
 from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
@@ -168,7 +169,9 @@ class DeviceService:
             self._connected_at = datetime.now(tz=timezone.utc)
             logger.info(
                 "Connected to %s %s on %s",
-                info.vendor, info.model, port,
+                info.vendor,
+                info.model,
+                port,
             )
             return info
         except Exception as exc:
@@ -248,7 +251,8 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "Survey-in configured: %ds min, %dmm accuracy",
-                config.min_duration_seconds, config.accuracy_limit_mm,
+                config.min_duration_seconds,
+                config.accuracy_limit_mm,
             )
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
@@ -271,7 +275,9 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "Fixed base configured: %.6f, %.6f, %.1fm",
-                config.latitude, config.longitude, config.altitude_m,
+                config.latitude,
+                config.longitude,
+                config.altitude_m,
             )
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
@@ -294,7 +300,8 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "RTCM messages configured: %s @ %dHz",
-                config.message_ids, config.rate_hz,
+                config.message_ids,
+                config.rate_hz,
             )
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
@@ -458,8 +465,6 @@ class DeviceService:
 # ---------------------------------------------------------------------------
 # Type alias for relay running check callback
 # ---------------------------------------------------------------------------
-
-from typing import Protocol
 
 
 class _RelayRunningCheck(Protocol):

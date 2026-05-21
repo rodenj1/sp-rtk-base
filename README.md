@@ -1,5 +1,13 @@
 # SP-Base
 
+[![CI](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/rodenj1/sp-rtk-base/branch/main/graph/badge.svg)](https://codecov.io/gh/rodenj1/sp-rtk-base)
+[![PyPI version](https://img.shields.io/pypi/v/sp-rtk-base.svg)](https://pypi.org/project/sp-rtk-base/)
+[![Python versions](https://img.shields.io/pypi/pyversions/sp-rtk-base.svg)](https://pypi.org/project/sp-rtk-base/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://www.conventionalcommits.org/en/v1.0.0/)
+
 Web UI and REST API for configuring and monitoring a u-blox GPS RTK base station and its RTCM correction data relay.
 
 SP-Base wraps the [sp-rtk-base-relay](packages/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.

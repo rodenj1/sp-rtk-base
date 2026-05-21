@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from prometheus_client import CollectorRegistry
-
-from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base_relay.core.status import (
     DestinationStatus,
     InputStatus,
     RelayStatus,
 )
 
+from sp_rtk_base.services.metrics_service import MetricsService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -135,9 +134,7 @@ class TestMetricsServiceConstruction:
         assert val == 1.0
         # Relay engine gauges use the fixed sp_rtk_base_relay_* prefix,
         # independent of this app's namespace.
-        assert (
-            _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 1.0
-        )
+        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_running") == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +158,9 @@ class TestUpdateFromStatus:
     def test_uptime(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status(uptime=99.5))
-        assert _get_gauge_value(svc.registry, "sp_rtk_base_relay_uptime_seconds") == 99.5
+        assert (
+            _get_gauge_value(svc.registry, "sp_rtk_base_relay_uptime_seconds") == 99.5
+        )
 
     def test_input_connected(self) -> None:
         svc = MetricsService()
@@ -176,7 +175,9 @@ class TestUpdateFromStatus:
     def test_input_bytes_received(self) -> None:
         svc = MetricsService()
         svc.update_from_status(_make_relay_status())
-        assert _get_gauge_value(svc.registry, "sp_rtk_base_input_bytes_received") == 1000.0
+        assert (
+            _get_gauge_value(svc.registry, "sp_rtk_base_input_bytes_received") == 1000.0
+        )
 
     def test_active_destinations(self) -> None:
         svc = MetricsService()

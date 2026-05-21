@@ -10,7 +10,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from sp_rtk_base.models.api_models import DeviceActionResponse, DeviceConnectRequest
-from sp_rtk_base.models.config_models import BaseStationPosition, DeviceProfile, InputProfile
+from sp_rtk_base.models.config_models import (
+    BaseStationPosition,
+    DeviceProfile,
+    InputProfile,
+)
 from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
     DeviceStatus,
@@ -22,7 +26,11 @@ from sp_rtk_base.models.device_models import (
     SurveyInConfig,
     SurveyInProgress,
 )
-from sp_rtk_base.services import get_config_service, get_device_service, get_relay_service
+from sp_rtk_base.services import (
+    get_config_service,
+    get_device_service,
+    get_relay_service,
+)
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers import create_driver
@@ -312,11 +320,13 @@ async def handoff_to_relay(
     baud = status.baud_rate or 115200
 
     # 1. Persist device profile
-    cfg.save_device_profile(DeviceProfile(
-        vendor=svc.driver.vendor_name if svc.driver else "ublox",
-        port=port,
-        baud_rate=baud,
-    ))
+    cfg.save_device_profile(
+        DeviceProfile(
+            vendor=svc.driver.vendor_name if svc.driver else "ublox",
+            port=port,
+            baud_rate=baud,
+        )
+    )
 
     # 2. Disconnect driver (releases serial port)
     await svc.disconnect()

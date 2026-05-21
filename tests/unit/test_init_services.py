@@ -94,7 +94,9 @@ class TestInitServices:
         mock_config_svc = ConfigService(config_path=config_path)
 
         config = AppConfig(
-            input=InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015}),
+            input=InputProfile(
+                source="tcp", config={"host": "127.0.0.1", "port": 5015}
+            ),
             destinations=[
                 DestinationProfile(
                     name="test",
@@ -149,15 +151,15 @@ class TestInitServices:
             services_mod.relay_service = original_relay
 
     @pytest.mark.asyncio()
-    async def test_init_auto_start_failure_logs_exception(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_init_auto_start_failure_logs_exception(self, tmp_path: Path) -> None:
         """init_services logs but doesn't crash on auto-start failure."""
         config_path = tmp_path / "config.yaml"
         mock_config_svc = ConfigService(config_path=config_path)
 
         config = AppConfig(
-            input=InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015}),
+            input=InputProfile(
+                source="tcp", config={"host": "127.0.0.1", "port": 5015}
+            ),
             destinations=[
                 DestinationProfile(
                     name="test",

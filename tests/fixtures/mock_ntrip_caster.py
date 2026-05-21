@@ -137,7 +137,7 @@ class MockNtripCaster:
                 self._connection_count += 1
                 logger.debug(f"MockNtripCaster: connection from {addr}")
                 self._handle_client(client_sock)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 if self._running:
@@ -252,7 +252,7 @@ class MockNtripCaster:
                         )
                         break
 
-                except socket.timeout:
+                except TimeoutError:
                     continue
         except OSError:
             pass
@@ -275,7 +275,7 @@ class MockNtripCaster:
 
             size_str = remaining[:crlf_idx].decode("ascii", errors="replace").strip()
             if not size_str:
-                remaining = remaining[crlf_idx + 2:]
+                remaining = remaining[crlf_idx + 2 :]
                 continue
 
             try:
@@ -322,6 +322,6 @@ class MockNtripCaster:
                 # For v1.0, headers end after Source-Agent line
                 if b"\r\n" in buf and buf.startswith(b"SOURCE"):
                     break
-            except socket.timeout:
+            except TimeoutError:
                 break
         return buf.decode("ascii", errors="replace")

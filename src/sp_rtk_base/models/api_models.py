@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Relay status response models
 # ---------------------------------------------------------------------------
@@ -187,7 +186,9 @@ class DeviceConnectRequest(BaseModel):
 
     vendor: str = Field(default="ublox", description="Driver vendor key")
     port: str = Field(description="Serial port path (e.g. /dev/ttyUSB0)")
-    baud_rate: int = Field(default=115200, ge=4800, le=921600, description="Serial baud rate")
+    baud_rate: int = Field(
+        default=115200, ge=4800, le=921600, description="Serial baud rate"
+    )
 
 
 class DeviceActionResponse(BaseModel):

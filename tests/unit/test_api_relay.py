@@ -59,9 +59,7 @@ class TestGetRelayStatus:
         mock_relay_service: MagicMock,
     ) -> None:
         """Returns full status when engine is running."""
-        mock_relay_service.get_status = AsyncMock(
-            return_value=_MockRelayStatus()
-        )
+        mock_relay_service.get_status = AsyncMock(return_value=_MockRelayStatus())
         resp = api_client_with_services.get("/api/relay/status")
         assert resp.status_code == 200
         data = resp.json()

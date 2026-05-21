@@ -24,6 +24,8 @@ from pyubx2 import (  # type: ignore[import-untyped]
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
+)
+from sp_rtk_base.models.device_models import (
     BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
@@ -164,8 +166,8 @@ class UbloxDriver(GpsReceiverDriver):
 
             self._reader = UBXReader(
                 self._serial,
-                protfilter=7,    # NMEA + UBX + RTCM3
-                quitonerror=0,   # ERR_IGNORE — suppress console noise from corrupt frames
+                protfilter=7,  # NMEA + UBX + RTCM3
+                quitonerror=0,  # ERR_IGNORE — suppress console noise from corrupt frames
             )
 
             # Read device identity via MON-VER
@@ -173,7 +175,10 @@ class UbloxDriver(GpsReceiverDriver):
             self._device_info = info
             logger.info(
                 "Connected to u-blox %s (FW %s) on %s @ %d",
-                info.model, info.firmware_version, port, baud_rate,
+                info.model,
+                info.firmware_version,
+                port,
+                baud_rate,
             )
             return info
 
@@ -223,7 +228,8 @@ class UbloxDriver(GpsReceiverDriver):
         self._send_cfg_valset(cfg_data, layer=1)  # RAM only
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
-            config.min_duration_seconds, config.accuracy_limit_mm,
+            config.min_duration_seconds,
+            config.accuracy_limit_mm,
         )
 
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
@@ -243,7 +249,9 @@ class UbloxDriver(GpsReceiverDriver):
         self._send_cfg_valset(cfg_data, layer=1)  # RAM only
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm",
-            config.latitude, config.longitude, config.altitude_m,
+            config.latitude,
+            config.longitude,
+            config.altitude_m,
         )
 
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
@@ -255,16 +263,18 @@ class UbloxDriver(GpsReceiverDriver):
 
         # Then enable requested messages at the specified rate
         for msg_id in config.message_ids:
-            key_name = _RTCM_USB_KEYS.get(msg_id)
-            if key_name is not None:
-                cfg_data.append((key_name, config.rate_hz))
+            # New local name (different type from the str loop var above)
+            mapped_key = _RTCM_USB_KEYS.get(msg_id)
+            if mapped_key is not None:
+                cfg_data.append((mapped_key, config.rate_hz))
             else:
                 logger.warning("Unknown RTCM message ID %d — skipped", msg_id)
 
         self._send_cfg_valset(cfg_data, layer=1)  # RAM only
         logger.info(
             "RTCM messages configured: %s @ %dHz",
-            config.message_ids, config.rate_hz,
+            config.message_ids,
+            config.rate_hz,
         )
 
     def get_rtcm_config(self) -> RtcmMessageConfig:
@@ -458,13 +468,15 @@ class UbloxDriver(GpsReceiverDriver):
 
             constellation = cls._GNSS_ID_MAP.get(gnss_id)
             if constellation is not None:
-                systems.append(GnssSystemConfig(
-                    constellation=constellation,
-                    enabled=bool(enabled_raw),
-                    min_channels=min_ch,
-                    max_channels=max_ch,
-                    sig_cfg_mask=sig_mask,
-                ))
+                systems.append(
+                    GnssSystemConfig(
+                        constellation=constellation,
+                        enabled=bool(enabled_raw),
+                        min_channels=min_ch,
+                        max_channels=max_ch,
+                        sig_cfg_mask=sig_mask,
+                    )
+                )
 
         return GnssConfig(systems=systems)
 
@@ -607,7 +619,9 @@ class UbloxDriver(GpsReceiverDriver):
             nano = int(getattr(parsed, "nano", 0))
             if year >= 2000:
                 micro = max(0, nano // 1000)
-                ts = datetime(year, month, day, hour, minute, second, micro, tzinfo=timezone.utc)
+                ts = datetime(
+                    year, month, day, hour, minute, second, micro, tzinfo=timezone.utc
+                )
         except (ValueError, OverflowError):
             pass
 
@@ -658,7 +672,8 @@ class UbloxDriver(GpsReceiverDriver):
                             active=bool(getattr(parsed, "active", 0)),
                             valid=is_valid,
                             duration_seconds=int(getattr(parsed, "dur", 0)),
-                            mean_accuracy_mm=float(getattr(parsed, "meanAcc", 0)) / 10.0,
+                            mean_accuracy_mm=float(getattr(parsed, "meanAcc", 0))
+                            / 10.0,
                             observations=int(getattr(parsed, "obs", 0)),
                             latitude=lat,
                             longitude=lon,
@@ -892,12 +907,16 @@ class UbloxDriver(GpsReceiverDriver):
                         hw_raw = getattr(parsed, "hwVersion", b"")
 
                         if isinstance(sw_raw, bytes):
-                            sw_version_str = sw_raw.decode("ascii", errors="replace").strip("\x00 ")
+                            sw_version_str = sw_raw.decode(
+                                "ascii", errors="replace"
+                            ).strip("\x00 ")
                         else:
                             sw_version_str = str(sw_raw).strip("\x00 ")
 
                         if isinstance(hw_raw, bytes):
-                            hardware = hw_raw.decode("ascii", errors="replace").strip("\x00 ")
+                            hardware = hw_raw.decode("ascii", errors="replace").strip(
+                                "\x00 "
+                            )
                         else:
                             hardware = str(hw_raw).strip("\x00 ")
 
@@ -915,7 +934,11 @@ class UbloxDriver(GpsReceiverDriver):
                             missed = 0
 
                             if isinstance(ext, bytes):
-                                ext_str = ext.replace(b"\x00", b"").decode("ascii", errors="replace").strip()
+                                ext_str = (
+                                    ext.replace(b"\x00", b"")
+                                    .decode("ascii", errors="replace")
+                                    .strip()
+                                )
                             else:
                                 ext_str = str(ext).strip("\x00 ")
 
@@ -927,7 +950,10 @@ class UbloxDriver(GpsReceiverDriver):
                                 protocol = ext_str.split("=", 1)[1].strip()
                             elif "MOD=" in ext_str:
                                 model = ext_str.split("=", 1)[1].strip()
-                            elif any(m in ext_str for m in ("ZED-", "NEO-", "MAX-", "SAM-", "LEA-")):
+                            elif any(
+                                m in ext_str
+                                for m in ("ZED-", "NEO-", "MAX-", "SAM-", "LEA-")
+                            ):
                                 model = ext_str.strip()
 
                         # Firmware: prefer FWVER (HPG version), fallback to swVersion

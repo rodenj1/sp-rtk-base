@@ -55,6 +55,7 @@ def _try_import_bluetooth_manager() -> type | None:
         from sp_rtk_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
             BluetoothManager,
         )
+
         return BluetoothManager  # type: ignore[no-any-return]
     except (ImportError, Exception):
         return None
@@ -145,11 +146,14 @@ def input_page() -> None:
                     ).classes("col-grow")
                     serial_port_select["widget"] = ps
 
-                    refresh_btn = ui.button(
-                        "", icon="refresh",
-                    ).props(
-                        "flat round color=white"
-                    ).tooltip("Refresh serial port list")
+                    refresh_btn = (
+                        ui.button(
+                            "",
+                            icon="refresh",
+                        )
+                        .props("flat round color=white")
+                        .tooltip("Refresh serial port list")
+                    )
 
                 bs = ui.select(
                     options={r: str(r) for r in BAUD_RATES},
@@ -165,9 +169,7 @@ def input_page() -> None:
                         options: dict[str, str] = {}
                         for p in ports:
                             star = " ⭐" if p.is_gps else ""
-                            options[p.port] = (
-                                f"{p.port} — {p.description}{star}"
-                            )
+                            options[p.port] = f"{p.port} — {p.description}{star}"
                         ps.options = options  # type: ignore[assignment]
                         ps.update()
 
@@ -176,9 +178,7 @@ def input_page() -> None:
                             ps.value = ports[0].port
                     except Exception as exc:
                         logger.warning("Failed to list serial ports: %s", exc)
-                        ui.notify(
-                            f"Port scan failed: {exc}", type="warning"
-                        )
+                        ui.notify(f"Port scan failed: {exc}", type="warning")
 
                 refresh_btn.on_click(lambda: _refresh_serial_ports())
 
@@ -216,8 +216,10 @@ def input_page() -> None:
 
                 # ---- Scan section (only if dbus-fast available) ----
                 if bt_available:
-                    with ui.card().classes("w-full q-pa-sm q-mb-sm").style(
-                        "background-color: #1a1a2e"
+                    with (
+                        ui.card()
+                        .classes("w-full q-pa-sm q-mb-sm")
+                        .style("background-color: #1a1a2e")
                     ):
                         ui.label("Device Discovery").classes(
                             "text-subtitle2 text-grey-3"
@@ -285,54 +287,43 @@ def input_page() -> None:
                                                     type="info",
                                                 )
 
-                                            with ui.card().classes(
-                                                "w-full q-pa-xs cursor-pointer"
-                                            ).style(
-                                                "background-color: #252540"
-                                            ).on("click", _pick_device):
+                                            with (
+                                                ui.card()
+                                                .classes(
+                                                    "w-full q-pa-xs cursor-pointer"
+                                                )
+                                                .style("background-color: #252540")
+                                                .on("click", _pick_device)
+                                            ):
                                                 with ui.row().classes(
                                                     "items-center gap-2"
                                                 ):
-                                                    ui.icon(
-                                                        "bluetooth"
-                                                    ).classes(
+                                                    ui.icon("bluetooth").classes(
                                                         "text-blue text-body1"
                                                     )
-                                                    with ui.column().classes(
-                                                        "gap-0"
-                                                    ):
+                                                    with ui.column().classes("gap-0"):
                                                         ui.label(
-                                                            dev["name"]
-                                                            or "Unknown"
+                                                            dev["name"] or "Unknown"
                                                         ).classes(
-                                                            "text-white "
-                                                            "text-caption"
+                                                            "text-white text-caption"
                                                         )
-                                                        ui.label(
-                                                            dev["mac"]
-                                                        ).classes(
-                                                            "text-grey-5 "
-                                                            "text-caption"
+                                                        ui.label(dev["mac"]).classes(
+                                                            "text-grey-5 text-caption"
                                                         )
                                                         if dev.get("paired"):
-                                                            ui.badge(
-                                                                "Paired"
-                                                            ).props(
-                                                                "color=positive "
-                                                                "outline"
+                                                            ui.badge("Paired").props(
+                                                                "color=positive outline"
                                                             )
 
-                                scan_status.text = (
-                                    f"Found {len(devices)} device(s)"
-                                )
+                                scan_status.text = f"Found {len(devices)} device(s)"
 
                             except Exception as exc:
                                 logger.warning("Bluetooth scan failed: %s", exc)
                                 scan_status.text = f"Scan failed: {exc}"
                                 with scan_results_container:
-                                    ui.label(
-                                        f"Scan error: {exc}"
-                                    ).classes("text-negative text-caption")
+                                    ui.label(f"Scan error: {exc}").classes(
+                                        "text-negative text-caption"
+                                    )
                             finally:
                                 # Release Bluetooth resources so relay can use the device
                                 _mgr = bt_state.get("bt_manager")
@@ -352,15 +343,9 @@ def input_page() -> None:
                 saved_channel = "1"
                 saved_pin = "0000"
                 if current_input and current_input.source == "bluetooth":
-                    saved_address = str(
-                        current_input.config.get("mac_address", "")
-                    )
-                    saved_channel = str(
-                        current_input.config.get("channel", "1")
-                    )
-                    saved_pin = str(
-                        current_input.config.get("pin", "0000")
-                    )
+                    saved_address = str(current_input.config.get("mac_address", ""))
+                    saved_channel = str(current_input.config.get("channel", "1"))
+                    saved_pin = str(current_input.config.get("pin", "0000"))
 
                 addr_input = ui.input(
                     "Device Address (MAC)",
@@ -388,9 +373,9 @@ def input_page() -> None:
                 # ---- Test Connection section ----
                 if bt_available:
                     with ui.row().classes("gap-2 items-center q-mt-sm"):
-                        test_btn = ui.button(
-                            "Test Connection", icon="cable"
-                        ).props("color=positive outline")
+                        test_btn = ui.button("Test Connection", icon="cable").props(
+                            "color=positive outline"
+                        )
                         test_spinner = ui.spinner(size="sm")
                         test_spinner.set_visibility(False)
 
@@ -411,12 +396,8 @@ def input_page() -> None:
                         test_btn.disable()
                         test_spinner.set_visibility(True)
                         test_status_label.set_visibility(True)
-                        test_status_label.text = (
-                            "Testing connection..."
-                        )
-                        test_status_label.classes(
-                            replace="text-warning q-mt-xs"
-                        )
+                        test_status_label.text = "Testing connection..."
+                        test_status_label.classes(replace="text-warning q-mt-xs")
 
                         try:
                             mgr = bt_state.get("bt_manager")
@@ -441,24 +422,16 @@ def input_page() -> None:
                                 f"Device: {result_mac}, "
                                 f"RFCOMM Channel: {channel}"
                             )
-                            test_status_label.classes(
-                                replace="text-positive q-mt-xs"
-                            )
+                            test_status_label.classes(replace="text-positive q-mt-xs")
                             ui.notify(
                                 "Bluetooth test connection successful!",
                                 type="positive",
                             )
 
                         except Exception as exc:
-                            logger.warning(
-                                "Bluetooth test connection failed: %s", exc
-                            )
-                            test_status_label.text = (
-                                f"✗ Connection failed: {exc}"
-                            )
-                            test_status_label.classes(
-                                replace="text-negative q-mt-xs"
-                            )
+                            logger.warning("Bluetooth test connection failed: %s", exc)
+                            test_status_label.text = f"✗ Connection failed: {exc}"
+                            test_status_label.classes(replace="text-negative q-mt-xs")
                             ui.notify(
                                 f"Test connection failed: {exc}",
                                 type="negative",
@@ -524,25 +497,15 @@ def input_page() -> None:
                                 type="warning",
                             )
                             return
-                    config = {
-                        k: v.value
-                        for k, v in tcp_inputs.items()
-                        if v.value
-                    }
+                    config = {k: v.value for k, v in tcp_inputs.items() if v.value}
 
                 elif src == "serial":
                     port_widget = serial_port_select.get("widget")
                     baud_widget = serial_baud_select.get("widget")
-                    port_val = str(
-                        port_widget.value if port_widget else ""
-                    )
-                    baud_val = str(
-                        baud_widget.value if baud_widget else DEFAULT_BAUD
-                    )
+                    port_val = str(port_widget.value if port_widget else "")
+                    baud_val = str(baud_widget.value if baud_widget else DEFAULT_BAUD)
                     if not port_val:
-                        ui.notify(
-                            "Select a serial port", type="warning"
-                        )
+                        ui.notify("Select a serial port", type="warning")
                         return
                     config = {"port": port_val, "baud_rate": baud_val}
 
@@ -550,12 +513,8 @@ def input_page() -> None:
                     addr_inp = bt_state.get("address_input")
                     pin_inp = bt_state.get("pin_input")
 
-                    addr_val = str(
-                        addr_inp.value if addr_inp else ""
-                    ).strip()
-                    pin_val = str(
-                        pin_inp.value if pin_inp else "0000"
-                    ).strip()
+                    addr_val = str(addr_inp.value if addr_inp else "").strip()
+                    pin_val = str(pin_inp.value if pin_inp else "0000").strip()
 
                     if not addr_val:
                         ui.notify(
@@ -577,13 +536,11 @@ def input_page() -> None:
                     ui.notify("Input source saved ✓", type="positive")
                 except Exception as exc:
                     logger.exception("Failed to save input config")
-                    ui.notify(
-                        f"Error saving input: {exc}", type="negative"
-                    )
+                    ui.notify(f"Error saving input: {exc}", type="negative")
 
-            ui.button(
-                "Save Input Config", icon="save", on_click=_save_input
-            ).props("color=primary").classes("q-mt-md")
+            ui.button("Save Input Config", icon="save", on_click=_save_input).props(
+                "color=primary"
+            ).classes("q-mt-md")
 
 
 # ---------------------------------------------------------------------------
@@ -635,9 +592,7 @@ def _discover_bluetooth_devices(
 
                 # Get all managed objects (includes discovered + paired)
                 root_intro = await mgr._get_introspection("/")
-                manager_proxy = mgr._bus.get_proxy_object(
-                    "org.bluez", "/", root_intro
-                )
+                manager_proxy = mgr._bus.get_proxy_object("org.bluez", "/", root_intro)
                 obj_manager = manager_proxy.get_interface(
                     "org.freedesktop.DBus.ObjectManager"
                 )
@@ -646,21 +601,17 @@ def _discover_bluetooth_devices(
                 for _path, interfaces in raw_objects.items():
                     if "org.bluez.Device1" in interfaces:
                         props = interfaces["org.bluez.Device1"]
-                        name = mgr._unwrap_variant(
-                            props.get("Name")
-                        )
-                        address = mgr._unwrap_variant(
-                            props.get("Address")
-                        )
-                        paired = mgr._unwrap_variant(
-                            props.get("Paired", False)
-                        )
+                        name = mgr._unwrap_variant(props.get("Name"))
+                        address = mgr._unwrap_variant(props.get("Address"))
+                        paired = mgr._unwrap_variant(props.get("Paired", False))
                         if address:
-                            result.append({
-                                "name": str(name or "Unknown"),
-                                "mac": str(address),
-                                "paired": "yes" if paired else "",
-                            })
+                            result.append(
+                                {
+                                    "name": str(name or "Unknown"),
+                                    "mac": str(address),
+                                    "paired": "yes" if paired else "",
+                                }
+                            )
 
             except Exception as exc:
                 logger.debug("Error getting BT devices: %s", exc)
@@ -668,9 +619,7 @@ def _discover_bluetooth_devices(
             return result
 
         # Dispatch to the manager's background event loop
-        future = _asyncio.run_coroutine_threadsafe(
-            _get_devices(), mgr._loop
-        )
+        future = _asyncio.run_coroutine_threadsafe(_get_devices(), mgr._loop)
         devices = future.result(timeout=30)
 
     except Exception as exc:
@@ -679,9 +628,9 @@ def _discover_bluetooth_devices(
     # Sort: named + paired first, named + unpaired second, "Unknown" last
     devices.sort(
         key=lambda d: (
-            d["name"] == "Unknown",   # Unknown → bottom
-            not d.get("paired"),      # Paired → top
-            d["name"].lower(),        # Alphabetical within groups
+            d["name"] == "Unknown",  # Unknown → bottom
+            not d.get("paired"),  # Paired → top
+            d["name"].lower(),  # Alphabetical within groups
         )
     )
 

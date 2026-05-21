@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 
 from prometheus_client import CollectorRegistry, Gauge
-
 from sp_rtk_base_relay.core.status import RelayStatus
 
 logger = logging.getLogger(__name__)
@@ -148,9 +147,7 @@ class MetricsService:
         self.relay_uptime_seconds.set(status.uptime_seconds or 0.0)
         self.input_connected.set(1 if status.input.connected else 0)
         self.input_bytes_received.set(status.input.bytes_received)
-        self.input_seconds_since_last_data.set(
-            status.input.seconds_since_last_data
-        )
+        self.input_seconds_since_last_data.set(status.input.seconds_since_last_data)
         self.active_destinations.set(status.active_destination_count)
         self.total_destinations.set(status.total_destination_count)
         self.chunks_distributed.set(status.chunks_distributed)
@@ -159,20 +156,14 @@ class MetricsService:
         # Per-destination
         for dest in status.destinations:
             name = dest.name
-            self.dest_connected.labels(destination=name).set(
-                1 if dest.connected else 0
-            )
+            self.dest_connected.labels(destination=name).set(1 if dest.connected else 0)
             self.dest_bytes_sent.labels(destination=name).set(dest.bytes_sent)
-            self.dest_messages_sent.labels(destination=name).set(
-                dest.messages_sent
-            )
+            self.dest_messages_sent.labels(destination=name).set(dest.messages_sent)
             self.dest_messages_dropped.labels(destination=name).set(
                 dest.messages_dropped
             )
             self.dest_errors.labels(destination=name).set(dest.errors)
-            self.dest_queue_depth.labels(destination=name).set(
-                dest.queue_depth
-            )
+            self.dest_queue_depth.labels(destination=name).set(dest.queue_depth)
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

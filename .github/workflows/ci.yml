@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# All jobs run with read-only contents.  Codecov uploads use OIDC
-# (tokenless) since this is a public repo — no CODECOV_TOKEN required.
+# All jobs run with read-only contents.  Codecov uploads use the
+# CODECOV_TOKEN repository secret (Codecov's recommended/universal
+# path — works for public and private repos alike).
 permissions:
   contents: read
 
@@ -110,8 +111,6 @@ jobs:
     needs: lint
     permissions:
       contents: read
-      # OIDC token for tokenless Codecov uploads (public repo).
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -159,14 +158,16 @@ jobs:
           retention-days: 14
 
       - name: Upload coverage to Codecov (Python 3.12 only)
-        # Public repo → tokenless OIDC.  No CODECOV_TOKEN secret needed.
+        # Token-authenticated upload — works for public and private
+        # repos.  CODECOV_TOKEN is a repository secret (Settings →
+        # Secrets and variables → Actions).
         if: matrix.python-version == '3.12' && !cancelled()
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
           files: ./coverage.xml
           flags: unittests
           name: coverage-py${{ matrix.python-version }}
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
           verbose: false
 
@@ -178,7 +179,7 @@ jobs:
           flags: unittests
           name: junit-py${{ matrix.python-version }}
           report_type: test_results
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   # ------------------------------------------------------------------

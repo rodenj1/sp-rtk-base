@@ -1,8 +1,11 @@
 # CI / Coverage Setup
 
 The project uses GitHub Actions for CI and [Codecov](https://codecov.io)
-for coverage reporting.  Because the repository is **public**, Codecov
-uploads use **OIDC (tokenless)** — there are no secrets to manage.
+for coverage reporting.  Codecov uploads use the **`CODECOV_TOKEN`
+repository secret** — this is Codecov's recommended universal path and
+works for both public and private repos.  (OIDC tokenless is also
+supported but requires explicitly activating the repo on Codecov first,
+which is an extra manual step.)
 
 This document explains the workflow design and the one-time manual
 setup required to activate the Codecov badge.
@@ -30,9 +33,6 @@ Heavy `pre-commit` hooks (`pyright`, `pytest-unit`) are skipped in the
 
 ## Codecov setup (one-time)
 
-Because `sp-rtk-base` is a **public** repository, you can use OIDC
-tokenless upload — no `CODECOV_TOKEN` secret required.
-
 ### 1. Link the repository at Codecov
 
 1. Go to <https://app.codecov.io/>.
@@ -41,10 +41,24 @@ tokenless upload — no `CODECOV_TOKEN` secret required.
    page; if it's still missing, open **"Codecov's GitHub app"** from
    the banner and make sure `sp-rtk-base` is included under
    "Repository access".
-4. Click **Configure** next to `sp-rtk-base`.  No further action is
-   required — OIDC uploads will start working on the next CI run.
+4. Click **Configure** next to `sp-rtk-base` — Codecov's setup page
+   will display the repository **upload token** (a UUID).  Copy it.
 
-### 2. Grab the badge token
+### 2. Store the upload token as a GitHub Actions secret
+
+```bash
+# From the repo root, with gh CLI authenticated:
+echo "<paste-token-here>" | gh secret set CODECOV_TOKEN
+```
+
+Or in the GitHub UI: **Settings → Secrets and variables → Actions →
+New repository secret**, name `CODECOV_TOKEN`, value = the UUID from
+step 1.
+
+The workflow references it via `token: ${{ secrets.CODECOV_TOKEN }}`
+on both Codecov steps (coverage and test-results).
+
+### 3. Grab the badge token
 
 On the Codecov repo page, open **Settings → Badges & Graphs**.  Copy
 the Markdown snippet — it contains a read-only "badge token" in the
@@ -57,7 +71,7 @@ URL query string, e.g.:
 Paste that into `README.md`.  The badge token is safe to commit — it
 only grants read-only access to the coverage SVG for this branch.
 
-### 3. (Optional) Configure Codecov behaviour
+### 4. (Optional) Configure Codecov behaviour
 
 Create `codecov.yml` at the repo root to customise coverage
 thresholds, component groupings, PR comments, etc.  Sensible starter:
@@ -77,18 +91,19 @@ comment:
   require_changes: true       # only comment when coverage changed
 ```
 
-### If the repo ever goes private
+### Switching to OIDC tokenless (optional)
 
-OIDC tokenless upload is **public-repo-only**.  If the repo becomes
-private:
+If you prefer OIDC tokenless upload (no `CODECOV_TOKEN` secret to
+rotate; **public repos only**):
 
-1. Generate a Codecov upload token at **Settings → Tokens** on
-   <https://app.codecov.io>.
-2. Save it as `CODECOV_TOKEN` (Actions secret).
-3. In `ci.yml`, replace `use_oidc: true` with
-   `token: ${{ secrets.CODECOV_TOKEN }}` on both Codecov steps.
-4. (Optional) Remove `id-token: write` from the `test` job's
-   `permissions:` block.
+1. In `ci.yml`, replace `token: ${{ secrets.CODECOV_TOKEN }}` with
+   `use_oidc: true` on both Codecov steps.
+2. Add `id-token: write` back to the `test` job's `permissions:`
+   block.
+3. Visit <https://app.codecov.io/gh/rodenj1/sp-rtk-base> at least
+   once to activate the repo for Codecov.  Without this, OIDC
+   uploads return `{"message":"Repository not found"}`.
+4. (Optional) Delete the `CODECOV_TOKEN` secret — no longer needed.
 
 ## What the workflow uploads to Codecov
 

@@ -2,6 +2,13 @@
 
 ## Recent Changes
 
+### 2026-05-20 — Switched `sp-rtk-base-relay` to Published PyPI Dependency
+- Deleted local `packages/sp-rtk-base-relay/` directory; relay package is now consumed from PyPI (`sp-rtk-base-relay==2.1.1`).
+- Regenerated `uv.lock`: relay source switched from `editable = "packages/sp-rtk-base-relay"` → `registry = "https://pypi.org/simple"`. Workspace manifest no longer lists `sp-rtk-base-relay`.
+- Transitive bumps: pydantic 2.12.5→2.13.4, pyright 1.1.408→1.1.409, pytest 9.0.2→9.0.3, pyubx2 1.2.60→1.3.0, uvicorn 0.42.0→0.47.0, etc.
+- Verified: **480 unit tests pass**, **91.74% coverage**, **pyright 0 errors** (strict).
+- Dev tip: to test unreleased relay changes locally, `uv add --editable /path/to/sp-rtk-base-relay` then `git checkout -- pyproject.toml uv.lock && uv sync` to restore.
+
 ### 2026-05-15 — Top-Level Package Rename `sp-base` → `sp-rtk-base`
 The web-UI/API package was renamed end-to-end:
 - Distribution: `sp-base` → `sp-rtk-base`; import package: `sp_base` → `sp_rtk_base`; source dir moved via `git mv`

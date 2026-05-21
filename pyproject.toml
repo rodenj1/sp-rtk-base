@@ -15,7 +15,7 @@ dependencies = [
     "pyserial>=3.5",
     "pyubx2>=1.2.43",
     "pyyaml>=6.0.3",
-    "sp_rtk_base_relay",
+    "sp_rtk_base_relay>=2.1.1",
     "uvicorn>=0.42.0",
 ]
 
@@ -115,14 +115,6 @@ typeCheckingMode = "strict"
 deprecateTypingAliases = true
 reportDeprecated = "warning"
 extraPaths = ["src/"]
-
-[tool.uv.workspace]
-members = [
-    "packages/sp-rtk-base-relay",
-]
-
-[tool.uv.sources]
-sp_rtk_base_relay = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [

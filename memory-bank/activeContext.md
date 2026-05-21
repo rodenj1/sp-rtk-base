@@ -1,6 +1,28 @@
 # Active Context
 
-## Latest Change: Top-Level Package Renamed `sp-base` → `sp-rtk-base` (2026-05-15)
+## Latest Change: Switched `sp-rtk-base-relay` to Published PyPI Dependency (2026-05-20)
+
+### Summary
+The embedded relay-engine package (`packages/sp-rtk-base-relay/`) was deleted and `sp-rtk-base` now consumes the published PyPI release `sp-rtk-base-relay==2.1.1`.
+
+### What Changed
+- **`packages/sp-rtk-base-relay/` directory removed** from the repo (the package is now published to PyPI: https://pypi.org/project/sp-rtk-base-relay/).
+- **`pyproject.toml`**: `sp_rtk_base_relay>=2.1.1` was already declared; no edit needed.
+- **`uv.lock` regenerated**: `sp-rtk-base-relay` source switched from `editable = "packages/sp-rtk-base-relay"` → `registry = "https://pypi.org/simple"`, version `2.1.0` → `2.1.1`. Workspace manifest `members` no longer lists `sp-rtk-base-relay`.
+- **Incidental transitive bumps from re-lock**: `pydantic 2.12.5→2.13.4`, `pydantic-core 2.41.5→2.46.4`, `pylance 4.0.0→6.0.1`, `pyright 1.1.408→1.1.409`, `pytest 9.0.2→9.0.3`, `pyubx2 1.2.60→1.3.0`, `uvicorn 0.42.0→0.47.0`, `urllib3 2.6.3→2.7.0`, `watchfiles 1.1.1→1.2.0`, `yarl 1.23.0→1.24.2`, `pynmeagps 1.1.2→1.1.4`, `python-multipart 0.0.22→0.0.29`. New additions pulled in by deps: `pyarrow 24.0.0`, `tinycss2 1.5.1`, `webencodings 0.5.1`.
+
+### Verification
+- `uv pip show sp-rtk-base-relay` → `Version: 2.1.1`, `Location: .venv/lib/python3.10/site-packages` (non-editable) ✅
+- `grep -A2 'name = "sp-rtk-base-relay"' uv.lock` → `source = { registry = "https://pypi.org/simple" }` ✅
+- `uv run pytest tests/unit -q` → **480 passed, 91.74% coverage** ✅
+- `uv run pyright src/sp_rtk_base` → **0 errors** (1 pre-existing `contextmanager` deprecation warning in `ui/layout.py` unchanged) ✅
+
+### Dev Workflow Note
+For future relay-engine work, develop against a checkout of the `sp-rtk-base-relay` repo and release new versions to PyPI. To temporarily test an unreleased local copy from sp-rtk-base, use `uv add --editable /path/to/sp-rtk-base-relay` and restore with `git checkout -- pyproject.toml uv.lock && uv sync`.
+
+---
+
+## Previous: Top-Level Package Renamed `sp-base` → `sp-rtk-base` (2026-05-15)
 
 ### Summary
 The web-UI/API package was renamed from `sp-base` to `sp-rtk-base`:

@@ -85,6 +85,10 @@ paths = [
     '''^docs/.*\.md$''',
     # Memory bank documents the scrub itself.
     '''^memory-bank/.*\.md$''',
+    # CHANGELOG.md is auto-generated from commit history by commitizen
+    # (`cz bump`); historical commit subjects may legitimately reference
+    # scrub strings.  Working-tree review on every PR catches anything new.
+    '''^CHANGELOG\.md$''',
     # This file itself contains the forbidden patterns by definition.
     '''^\.gitleaks\.toml$''',
     # Pre-commit config mentions the scrub for context.

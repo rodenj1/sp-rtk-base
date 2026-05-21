@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, patch
+
+# Semantic-versioning regex (MAJOR.MINOR.PATCH with optional pre-release /
+# build metadata).  Keeps the test agnostic to `cz bump` increments.
+_SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class TestMainModule:
@@ -15,11 +24,13 @@ class TestMainModule:
         assert callable(main)
 
     def test_version_importable(self) -> None:
-        """Package version is importable."""
+        """Package exposes a valid SemVer ``__version__`` string."""
         from sp_rtk_base import __version__
 
         assert isinstance(__version__, str)
-        assert __version__ == "0.1.0"
+        assert _SEMVER_RE.match(__version__), (
+            f"__version__={__version__!r} is not valid SemVer"
+        )
 
 
 class TestMainEntryPoint:

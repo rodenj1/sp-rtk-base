@@ -39,25 +39,58 @@ SP-Base wraps the [sp-rtk-base-relay](packages/sp-rtk-base-relay/) engine with a
 
 ## Quick Start
 
-### Prerequisites
+`sp-rtk-base` is published on PyPI — install it the way that fits your
+host best.
 
-- Python 3.10+
-- [UV](https://docs.astral.sh/uv/) package manager
-- (Optional) BlueZ + `dbus-fast` on Linux for Bluetooth RTCM input
+### Production deploy on a Raspberry Pi (or any Debian host)
 
-### Install & Run
+One-shot installer creates a `sp-rtk-base` system user, an isolated
+venv at `/opt/sp-rtk-base/`, config in `/etc/sp-rtk-base/`, state in
+`/var/lib/sp-rtk-base/`, and a hardened systemd service:
 
 ```bash
-# Clone and install dependencies
-git clone https://github.com/rodenj1/sp-rtk-base.git
-cd sp-rtk-base
-uv sync
+curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
+    | sudo bash
+```
 
-# Start the application
-uv run sp-rtk-base
+Open **http://&lt;pi-ip&gt;:8080** in your browser when it finishes.
+
+```bash
+sudo systemctl status sp-rtk-base       # service status
+sudo journalctl -u sp-rtk-base -f       # live logs
+sudo ./deploy/upgrade.sh                # later: upgrade in place
+```
+
+See **[`docs/deployment-pi.md`](docs/deployment-pi.md)** for the full
+runbook (layout, nginx reverse proxy, backup/restore, troubleshooting,
+fleet management).
+
+### Single-user install on your workstation
+
+If you just want to try it out locally:
+
+```bash
+pipx install sp-rtk-base
+sp-rtk-base
+```
+
+Or with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install sp-rtk-base
+sp-rtk-base
 ```
 
 Open **http://localhost:8080** in your browser.
+
+### From source (developers only)
+
+```bash
+git clone https://github.com/rodenj1/sp-rtk-base.git
+cd sp-rtk-base
+uv sync
+uv run sp-rtk-base
+```
 
 ### Demo Mode
 

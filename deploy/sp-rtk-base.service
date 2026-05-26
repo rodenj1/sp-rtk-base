@@ -1,0 +1,33 @@
+[Unit]
+Description=SP-RTK-Base — RTK base station Web UI + Relay
+Documentation=https://github.com/rodenj1/sp-rtk-base
+After=network-online.target bluetooth.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sp-rtk-base
+Group=sp-rtk-base
+SupplementaryGroups=dialout bluetooth
+WorkingDirectory=/var/lib/sp-rtk-base
+Environment=SP_RTK_BASE_CONFIG=/etc/sp-rtk-base/config.yaml
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base
+Restart=on-failure
+RestartSec=5
+
+# --- Sandboxing / hardening ---------------------------------------------
+# Safe to leave enabled on Raspberry Pi OS Bookworm and any modern Debian.
+# Comment any line out if you hit permission errors during bring-up.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sp-rtk-base /etc/sp-rtk-base
+# Allow access to /dev/ttyUSB*, /dev/ttyACM* etc. (GPS serial).
+DevicePolicy=auto
+
+[Install]
+WantedBy=multi-user.target

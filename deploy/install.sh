@@ -166,6 +166,10 @@ done
 default_cfg="${CONFIG_DIR}/config.yaml"
 if [[ ! -e "$default_cfg" ]]; then
     log "Writing default config to ${default_cfg}…"
+    # NOTE: keep this heredoc in sync with the AppConfig pydantic model in
+    #       src/sp_rtk_base/models/config_models.py.  The unit test
+    #       tests/unit/test_install_default_config.py extracts this block
+    #       and validates it against the model so the two cannot drift.
     cat >"$default_cfg" <<'YAML'
 # sp-rtk-base config file — edit through the web UI at http://<host>:8080
 # or by hand here; the service must be restarted after manual edits:
@@ -173,11 +177,6 @@ if [[ ! -e "$default_cfg" ]]; then
 
 settings:
     metrics_enabled: true
-
-input:
-    source_type: tcp
-    tcp_host: 127.0.0.1
-    tcp_port: 19800
 
 destinations: []
 base_positions: []
@@ -187,6 +186,27 @@ YAML
     ok "Wrote default config (group-readable by ${SERVICE_USER})"
 else
     ok "Config already present at ${default_cfg} (left untouched)"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 7.5 — Validate config can be loaded by the package
+# ---------------------------------------------------------------------------
+# Catches future schema drift between this installer and the AppConfig model
+# *before* systemd tries to start the service.
+log "Validating ${default_cfg} loads cleanly into AppConfig…"
+if sudo -u "$SERVICE_USER" \
+        SP_RTK_BASE_CONFIG="$default_cfg" \
+        "${VENV_DIR}/bin/python" - <<'PY' 2>&1
+from sp_rtk_base.services.config_service import ConfigService
+ConfigService().load_config()
+PY
+then
+    ok "Config validated"
+else
+    die "Config at ${default_cfg} failed to validate (see traceback above).
+This usually means the installer's default config has drifted out of sync
+with the AppConfig pydantic model.  Please file an issue:
+  https://github.com/rodenj1/sp-rtk-base/issues/new"
 fi
 
 # ---------------------------------------------------------------------------

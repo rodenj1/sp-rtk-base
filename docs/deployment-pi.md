@@ -106,13 +106,12 @@ during bring-up, comment them out one at a time.
 ### Default config (`/etc/sp-rtk-base/config.yaml`)
 
 ```yaml
+# sp-rtk-base config file — edit through the web UI at http://<host>:8080
+# or by hand here; the service must be restarted after manual edits:
+#   sudo systemctl restart sp-rtk-base
+
 settings:
     metrics_enabled: true
-
-input:
-    source_type: tcp
-    tcp_host: 127.0.0.1
-    tcp_port: 19800
 
 destinations: []
 base_positions: []
@@ -121,6 +120,11 @@ base_positions: []
 This is just a starting point — the **vast majority of configuration
 is done through the web UI** at `http://<pi-ip>:8080`.  Anything you
 save in the UI is written back to this same YAML file.
+
+There is intentionally no `input:` block in the default config; the
+operator chooses Serial / Bluetooth / TCP from the **Input** page on
+first launch, and the YAML is populated then.  (`input:` is an
+optional field on `AppConfig`.)
 
 ---
 

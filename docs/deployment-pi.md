@@ -290,8 +290,106 @@ Common causes:
 |---|---|
 | `permission denied: /dev/ttyUSB0` | `sudo usermod -aG dialout sp-rtk-base && sudo systemctl restart sp-rtk-base` |
 | `org.bluez.NotFound` on Bluetooth pair | `sudo systemctl restart bluetooth && sudo systemctl restart sp-rtk-base` |
+| `org.bluez.Error.NotReady` on Bluetooth scan, or no devices found | See **"Bluetooth scan finds nothing"** below. |
 | `OSError: [Errno 98] Address already in use` | Another service is on port 8080.  Change either port. |
 | `ImportError: dbus-fast` | Run `sudo /opt/sp-rtk-base/venv/bin/pip install --force-reinstall sp-rtk-base` — the build wheel from PyPI should be picked up automatically. |
+
+### Bluetooth scan finds nothing
+
+Symptom: the **Input → Bluetooth** scan returns zero devices, or
+`journalctl -u sp-rtk-base` shows `org.bluez.Error.NotReady`.
+
+**99% of the time it's an rfkill soft-block.**  Raspberry Pi OS Bookworm
+ships with Bluetooth `rfkill`-soft-blocked by default, and
+`systemd-rfkill.service` faithfully restores that "blocked" state on
+every boot.  The fix has three layers — try them in order.
+
+#### Step 1 — Diagnose
+
+```bash
+rfkill list bluetooth
+# Look for:  Soft blocked: yes   ← that's the problem
+
+sudo grep -H . /var/lib/systemd/rfkill/*bluetooth*
+# Look for any line ending in :1 (1 means "blocked, restore as blocked")
+```
+
+Also verify the rest of the stack is healthy:
+
+```bash
+systemctl is-active bluetooth                  # expect: active
+groups sp-rtk-base | grep -q bluetooth && echo ✓ group OK
+sudo -u sp-rtk-base bluetoothctl -- show | head -3   # expect adapter info
+```
+
+#### Step 2 — Unblock + persist (most common fix)
+
+```bash
+sudo rfkill unblock bluetooth
+
+# Set BluetoothEnabled=true in NetworkManager.state — newer NetworkManager
+# (1.42+) will otherwise re-assert an rfkill block on every boot.
+nm_state=/var/lib/NetworkManager/NetworkManager.state
+if [[ -f "$nm_state" ]]; then
+    if sudo grep -q '^BluetoothEnabled=' "$nm_state"; then
+        sudo sed -i 's/^BluetoothEnabled=.*/BluetoothEnabled=true/' "$nm_state"
+    else
+        echo 'BluetoothEnabled=true' | sudo tee -a "$nm_state"
+    fi
+    sudo systemctl restart NetworkManager
+fi
+
+sudo reboot
+```
+
+After the reboot:
+
+```bash
+rfkill list bluetooth                          # expect: Soft blocked: no
+sudo -u sp-rtk-base timeout 8 bluetoothctl -- scan on 2>&1 | head -20
+```
+
+A clean shutdown lets `systemd-rfkill.service` save the unblocked
+state to `/var/lib/systemd/rfkill/*bluetooth*` (`:0`), so subsequent
+boots come up unblocked.  (The installer's Step 7.6 runs these two
+commands for you on first install — this section is for fixing an
+existing install or recovering after someone disabled BT via the GUI.)
+
+#### Step 3 — Fleet-bulletproof fallback: tell NetworkManager to never touch Bluetooth
+
+If Bluetooth still re-blocks after Step 2 (rare, usually NetworkManager
+versions 1.42+ with unusual settings), drop in this config snippet to
+take the killswitch out of NM's hands entirely:
+
+```bash
+sudo tee /etc/NetworkManager/conf.d/sp-rtk-base-no-bt.conf >/dev/null <<'EOF'
+[main]
+# sp-rtk-base manages Bluetooth via bluez directly; do not let
+# NetworkManager rfkill-block the adapter.
+rfkill-bluetooth=ignore
+EOF
+sudo systemctl restart NetworkManager
+sudo rfkill unblock bluetooth
+sudo reboot
+```
+
+(`rfkill-bluetooth=ignore` is documented in the upstream NetworkManager
+rfkill reference: <https://networkmanager.dev/docs/rfkill/>.)
+
+#### Step 4 — Kernel-cmdline last resort
+
+If even Step 3 doesn't stick (which would point at a non-NM rfkill
+source — uncommon on Pi OS), add the kernel parameter so the rfkill
+subsystem defaults to "unblocked" *before* userspace runs:
+
+```bash
+# Bookworm path (older Pi OS uses /boot/cmdline.txt instead)
+sudo sed -i 's/$/ rfkill.default_state=1/' /boot/firmware/cmdline.txt
+sudo reboot
+```
+
+`rfkill.default_state=1` means "default to unblocked at boot"
+([systemd-rfkill docs](https://www.man7.org/linux/man-pages/man8/systemd-rfkill.8.html)).
 
 ### Verify the wheel signature (paranoid mode)
 

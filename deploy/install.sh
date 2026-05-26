@@ -210,6 +210,43 @@ with the AppConfig pydantic model.  Please file an issue:
 fi
 
 # ---------------------------------------------------------------------------
+# Step 7.6 — Enable Bluetooth (best-effort)
+# ---------------------------------------------------------------------------
+# Raspberry Pi OS Bookworm ships with Bluetooth rfkill-soft-blocked by default.
+# systemd-rfkill restores that "blocked" state on every boot, so even after
+# `rfkill unblock bluetooth` the device flips back on the next reboot.
+#
+# We do two things to neutralise that, both safe and idempotent:
+#
+#   1. `rfkill unblock bluetooth` — clears the live soft-block.  The next
+#      clean shutdown will let systemd-rfkill save the unblocked state to
+#      /var/lib/systemd/rfkill/, so subsequent boots come up unblocked.
+#
+#   2. Set `BluetoothEnabled=true` in NetworkManager.state.  Newer
+#      NetworkManager (1.42+) manages a per-radio enabled flag and will
+#      push a fresh rfkill block on startup if this is unset / false.
+#      Older NM ignores the line entirely — it's a no-op there.
+#
+# On non-Pi / non-NM hosts the file simply won't exist; the block is skipped.
+log "Unblocking Bluetooth rfkill + nudging NetworkManager to leave it on…"
+
+if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock bluetooth 2>/dev/null || true
+fi
+
+nm_state="/var/lib/NetworkManager/NetworkManager.state"
+if [[ -f "$nm_state" ]]; then
+    if grep -q '^BluetoothEnabled=' "$nm_state"; then
+        sed -i 's/^BluetoothEnabled=.*/BluetoothEnabled=true/' "$nm_state"
+    else
+        echo 'BluetoothEnabled=true' >>"$nm_state"
+    fi
+    # Reload NM so the change is picked up immediately (best-effort).
+    systemctl reload-or-restart NetworkManager 2>/dev/null || true
+fi
+ok "Bluetooth rfkill cleared (idempotent)"
+
+# ---------------------------------------------------------------------------
 # Step 8 — systemd unit
 # ---------------------------------------------------------------------------
 unit_src=""

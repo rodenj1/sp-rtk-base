@@ -2,6 +2,51 @@
 
 ## Recent Changes
 
+### 2026-05-20 — v0.2.0 published to PyPI (first real release) 🚀
+First end-to-end publish of `sp-rtk-base` succeeded.
+
+- **PyPI**: <https://pypi.org/project/sp-rtk-base/0.2.0/>
+  (Trusted Publisher, OIDC — no API tokens stored anywhere).
+- **GitHub Release**: <https://github.com/rodenj1/sp-rtk-base/releases/tag/v0.2.0>
+  with sdist, wheel, and sigstore `.sigstore.json` attestations attached.
+- **Release run**: `26206746030` — all 9 jobs green
+  (verify-version → lint → 4×test → build → publish-pypi → sign).
+
+Workflow validated the full pipeline:
+`verify-version` ↔ `pyproject.toml` ↔ `__init__.py` ↔ `uv.lock` ↔
+git tag ↔ wheel filename ↔ PyPI metadata ↔ sigstore bundle.
+
+Three workflow-discovered fixes landed during the release:
+1. **CI → CODECOV_TOKEN** — switched from OIDC tokenless to the
+   universal token-based path because Codecov requires explicit repo
+   activation before OIDC works (we got "Repository not found"
+   responses; switching to the token unblocked uploads and badge
+   rendering).  See `docs/ci-setup.md` for the migration recipe in
+   either direction.
+2. **`.gitleaks.toml`** — allowlisted `CHANGELOG.md`; `cz bump`
+   regenerates that file from git history and can legitimately
+   surface old scrub strings from historical commit subjects.
+3. **`tests/unit/test_main.py::test_version_importable`** — replaced
+   hardcoded `"0.1.0"` assertion with a SemVer regex so future `cz
+   bump` runs don't break the pre-push test suite.
+
+Operator setup performed once:
+- Created GitHub environment `pypi` (id `15617363293`, no protection
+  rules) via `gh api -X PUT /repos/rodenj1/sp-rtk-base/environments/pypi`.
+- Registered Pending Trusted Publisher on PyPI with
+  project=`sp-rtk-base`, owner=`rodenj1`, repo=`sp-rtk-base`,
+  workflow=`release.yml`, environment=`pypi`.
+- Added repository secret `CODECOV_TOKEN`.
+
+Per-release recipe (next time):
+
+```bash
+uv run cz bump          # bumps version + regenerates CHANGELOG + tags
+git push origin main
+git push origin --tags
+gh release create vX.Y.Z --generate-notes
+```
+
 ### 2026-05-20 — CI / Release Pipeline + Pre-commit + Conventional Commits
 Added the full publish-grade tooling stack adapted from `sp-rtk-base-relay`:
 

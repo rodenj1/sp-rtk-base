@@ -15,8 +15,9 @@ human user account:
 | `/usr/local/bin/sp-rtk-base-gps-audit` | u-blox config audit CLI (symlink) | `root:root` |
 
 The service runs as the dedicated **`sp-rtk-base`** system user (no
-shell, no home directory) added to the `dialout` and `bluetooth` groups
-so it can talk to the GPS receiver.
+shell, no home directory) added to the `dialout`, `bluetooth`, and
+`plugdev` groups so it can talk to the GPS receiver (USB-serial
+adapters land in `plugdev` on Raspberry Pi OS Bookworm).
 
 ---
 
@@ -45,8 +46,9 @@ That single command will:
 
 1. `apt install` the few OS packages we need (`python3-venv`,
    `libdbus-1-dev`, `bluez`, …).
-2. Create the system user `sp-rtk-base` and add it to `dialout` +
-   `bluetooth`.
+2. Create the system user `sp-rtk-base` and add it to `dialout`,
+   `bluetooth`, and `plugdev` (so it can read FTDI / CP210x USB-serial
+   adapters under Raspberry Pi OS Bookworm's udev rules).
 3. Lay out `/opt/sp-rtk-base/`, `/etc/sp-rtk-base/`, `/var/lib/sp-rtk-base/`
    with the correct ownership and modes.
 4. Build a Python venv at `/opt/sp-rtk-base/venv/`.
@@ -91,7 +93,7 @@ for the canonical version:
 [Service]
 User=sp-rtk-base
 Group=sp-rtk-base
-SupplementaryGroups=dialout bluetooth
+SupplementaryGroups=dialout bluetooth plugdev
 WorkingDirectory=/var/lib/sp-rtk-base
 Environment=SP_RTK_BASE_CONFIG=/etc/sp-rtk-base/config.yaml
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base
@@ -288,7 +290,7 @@ Common causes:
 
 | Symptom | Fix |
 |---|---|
-| `permission denied: /dev/ttyUSB0` | `sudo usermod -aG dialout sp-rtk-base && sudo systemctl restart sp-rtk-base` |
+| `permission denied: /dev/ttyUSB0` (or `[Errno 13]` from pyserial) | The udev rule on your distro probably owns the device as `root:plugdev` (Pi OS Bookworm + FTDI / CP210x / CH340 adapters) rather than `root:dialout`.  Run `ls -l /dev/ttyUSB0` to confirm the owning group, then: `sudo usermod -aG dialout,plugdev sp-rtk-base && sudo systemctl restart sp-rtk-base`.  Recent installer versions (≥ post-v0.2.0) add `plugdev` automatically. |
 | `org.bluez.NotFound` on Bluetooth pair | `sudo systemctl restart bluetooth && sudo systemctl restart sp-rtk-base` |
 | `org.bluez.Error.NotReady` on Bluetooth scan, or no devices found | See **"Bluetooth scan finds nothing"** below. |
 | `OSError: [Errno 98] Address already in use` | Another service is on port 8080.  Change either port. |

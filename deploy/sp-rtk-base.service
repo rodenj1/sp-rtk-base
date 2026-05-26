@@ -8,7 +8,10 @@ Wants=network-online.target
 Type=simple
 User=sp-rtk-base
 Group=sp-rtk-base
-SupplementaryGroups=dialout bluetooth
+# dialout = legacy USB/RS-232 serial (/dev/ttyUSB*, /dev/ttyACM*) on most distros
+# bluetooth = BlueZ D-Bus access for the BT input source
+# plugdev = Raspberry Pi OS Bookworm + udev assign FTDI / CP210x adapters here
+SupplementaryGroups=dialout bluetooth plugdev
 WorkingDirectory=/var/lib/sp-rtk-base
 Environment=SP_RTK_BASE_CONFIG=/etc/sp-rtk-base/config.yaml
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base

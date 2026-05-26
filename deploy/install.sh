@@ -96,14 +96,20 @@ else
 fi
 
 # Make sure the service user can talk to serial + Bluetooth.
-for grp in dialout bluetooth; do
+# - dialout  : legacy /dev/ttyUSB*, /dev/ttyACM* on most distros
+# - bluetooth: BlueZ D-Bus access for the BT input source
+# - plugdev  : Raspberry Pi OS Bookworm + recent udev rules assign FTDI /
+#              CP210x / CH340 USB-serial adapters to plugdev rather than
+#              dialout, so a service that's only in dialout still gets EACCES
+#              on /dev/ttyUSB0.  Belt-and-braces: be in both.
+for grp in dialout bluetooth plugdev; do
     if getent group "$grp" >/dev/null 2>&1; then
         usermod -aG "$grp" "$SERVICE_USER"
     else
         warn "Group '${grp}' not found; skipping (Bluetooth / serial access may need manual setup)"
     fi
 done
-ok "Service user added to dialout + bluetooth groups"
+ok "Service user added to dialout + bluetooth + plugdev groups"
 
 # ---------------------------------------------------------------------------
 # Step 3 — Filesystem layout

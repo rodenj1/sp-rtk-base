@@ -2,7 +2,18 @@
 
 ## Recent Changes
 
+### 2026-05-27 — v0.3.0 published to PyPI
+
+Released today via the standard cz-bump + GitHub-Release + OIDC flow:
+
+- Commits: `b327421` `fix(deploy): heal config-yaml ownership for service user writes` and `2c23634` `feat(survey): add Cancel button, progress visibility, ETA/% readouts`.
+- `uv run cz bump` auto-selected **MINOR** (0.2.2 → 0.3.0) because of the `feat:`. As noted in the v0.2.2 entry, the cz-bump commit does **not** refresh `uv.lock`'s own-project entry; I amended `uv lock` (which printed `Updated sp-rtk-base v0.2.2 -> v0.3.0`) into the release commit and force-recreated the `v0.3.0` tag before pushing. Worth keeping that step in the release-process playbook.
+- CI green: 582 unit + 41 e2e on `ece3436`. Release workflow green (build → twine validate → PyPI OIDC publish → sigstore sign + attach).
+- Live: <https://pypi.org/project/sp-rtk-base/0.3.0/> (uploaded 2026-05-27T23:30:03 UTC) and <https://github.com/rodenj1/sp-rtk-base/releases/tag/v0.3.0>.
+- The top-level `/pypi/sp-rtk-base/json` endpoint stayed CDN-cached at 0.2.2 for several minutes after publish — to verify a fresh release, hit `/pypi/sp-rtk-base/<version>/json` instead. Adding this to release-process notes next pass.
+
 ### 2026-05-27 — Survey-In Progress Visibility + Cancel Button
+
 
 Operator could not tell if survey-in was actually running on `/survey` — the progress card stayed hidden until `configure_survey_in()` returned, and once a survey was running there was no way to abort apart from disconnecting the GPS. Root cause turned out to be deeper: the ZED-F9P's TMODE state machine is edge-triggered, so a back-to-back `TMODE=1` write (with new `SVIN_MIN_DUR`/`SVIN_ACC_LIMIT`) on a receiver that was already in TMODE=1 or 2 silently ACKs without restarting the survey clock. Result: the receiver looked dead, the UI looked frozen, and the only "fix" was a power cycle.
 

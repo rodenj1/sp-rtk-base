@@ -191,6 +191,51 @@ class TestConfigServiceBasePositions:
         assert result is not None
         assert result.latitude == 47.5
 
+    def test_save_screenshot_values_persists_to_disk(self, svc: ConfigService) -> None:
+        """Regression: exact values from the 2026-05-26 Save Position bug report.
+
+        The survey UI's Save Position dialog was silently failing for these
+        values.  The root cause was an ``async`` handler nested inside a
+        ``with ui.row():`` slot context manager that swallowed all
+        exceptions.  This test pins the data-model + persistence path so
+        any future regression in the YAML side is caught at the unit level.
+        """
+        pos = BaseStationPosition(
+            name="test",
+            latitude=32.7329015,
+            longitude=-117.2362788,
+            altitude_m=27.940,
+            accuracy_mm=47308.0,
+            source="survey_in",
+        )
+        svc.save_base_position(pos)
+
+        # In-memory list reflects the save
+        positions = svc.get_base_positions()
+        assert len(positions) == 1
+        assert positions[0].name == "test"
+        assert positions[0].latitude == 32.7329015
+        assert positions[0].longitude == -117.2362788
+        assert positions[0].altitude_m == 27.940
+        assert positions[0].accuracy_mm == 47308.0
+        assert positions[0].source == "survey_in"
+
+        # YAML file actually exists on disk
+        assert svc.config_path.exists()
+        raw = svc.config_path.read_text(encoding="utf-8")
+        assert "test" in raw
+        assert "32.7329015" in raw
+        assert "-117.2362788" in raw
+
+        # Fresh ConfigService instance reads it back identically
+        svc2 = ConfigService(config_path=svc.config_path)
+        roundtrip = svc2.get_base_position("test")
+        assert roundtrip is not None
+        assert roundtrip.latitude == 32.7329015
+        assert roundtrip.longitude == -117.2362788
+        assert roundtrip.altitude_m == 27.940
+        assert roundtrip.accuracy_mm == 47308.0
+
 
 # ---------------------------------------------------------------------------
 # API: promote-survey-in

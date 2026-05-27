@@ -30,8 +30,65 @@ dev = [
     "pytest>=9.0.0",             # Testing framework (latest: 9.0.2)
     "pytest-asyncio>=1.3.0",     # Async test support (latest: 1.3.0)
     "pytest-cov>=7.1.0",         # Coverage plugin (latest: 7.1.0)
+    "pytest-playwright>=0.8.0",  # End-to-end browser-driven tests
+    "playwright>=1.50",          # Headless Chromium / Firefox / WebKit
+    "httpx>=0.28",               # Direct REST calls from e2e fixtures
 ]
 ```
+
+### End-to-End Test Stack (added 2026-05-26)
+- **pytest-playwright** + **playwright** drive a real headless Chromium
+  against the live FastAPI + NiceGUI server.
+- Server runs as a `subprocess.Popen([sys.executable, "-m",
+  "sp_rtk_base.main"])` in a session-scoped fixture, bound to a
+  random free port with an isolated `tmp_path` `$HOME`.
+- Browser binaries are cached at `~/.cache/ms-playwright`; CI keys
+  the cache on `uv.lock`.
+- Tests live in `tests/e2e/` and are excluded from default pytest
+  discovery via `norecursedirs` so `pytest tests/unit -q` stays
+  fast.  Opt in with `pytest tests/e2e --no-cov` or
+  `pytest -m e2e --no-cov`.
+- Two NiceGUI-specific gotchas (documented in
+  `tests/e2e/conftest.py`):
+  1. `nicegui.helpers.is_pytest()` sniffs `PYTEST_CURRENT_TEST` —
+     strip `PYTEST_*` from the subprocess env or NiceGUI flips into
+     screen-test mode and crashes.
+  2. Never use `subprocess.PIPE` for the server's stdout without an
+     active reader — the OS pipe buffer fills and deadlocks
+     uvicorn.  Redirect to a log file instead.
+- See `docs/e2e-testing.md` for the full architecture, runbook, and
+  roadmap.
+
+### FakeGpsDriver (env-gated test double, added 2026-05-26)
+- **Location**: `src/sp_rtk_base/services/drivers/fake.py`.
+- **Activation**: registered under vendor key `"fake"` **only** when
+  the environment variable `SP_RTK_BASE_FAKE_GPS == "1"` is set.
+  Production binaries with the var unset behave identically to
+  pre-change.
+- **Interface**: implements every abstract method on
+  `GpsReceiverDriver` (17 methods) with realistic fixture data —
+  RTK-fixed solution at `32.7329015 °N / -117.2362788 °W / 27.940 m`,
+  6 GNSS constellations, full capability set (`SURVEY_IN`,
+  `FIXED_BASE`, `SAVE_TO_FLASH`, `POSITION_STREAM`, …).
+- **Survey-In**: in-process state machine (`IDLE → IN_PROGRESS →
+  COMPLETE`) so the e2e suite can drive the whole convergence path
+  including ECharts updates.
+- **Wiring**: `tests/e2e/conftest.py` exports
+  `SP_RTK_BASE_FAKE_GPS=1` into the subprocess; the `connected_gps`
+  function-scoped fixture POSTs `/api/device/connect` with
+  `{vendor: "fake", port: "FAKE", baud_rate: 115200}` and tears
+  down with `/api/device/disconnect`.  REST-only e2e tests get
+  hardware-free GPS coverage; the Playwright tests get to exercise
+  the real button-click paths.
+- **Coverage**: `tests/unit/test_fake_driver.py` (45 tests, 100 %).
+
+### MCP Servers (developer convenience, not used in CI)
+- **`@playwright/mcp`** (`@playwright/mcp@latest` via `npx`) — wired
+  into Cline at
+  `~/.vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`.
+  Lets the AI assistant drive a real Chromium during interactive
+  development.  Pytest and CI use the in-process Playwright Python
+  API, not this MCP server.
 
 ### Future Dependencies (Phase 2+)
 ```

@@ -7,6 +7,8 @@ a new driver module and a registry entry.
 
 from __future__ import annotations
 
+import os
+
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
@@ -17,6 +19,25 @@ from sp_rtk_base.services.drivers.ublox import UbloxDriver
 _DRIVER_REGISTRY: dict[str, type[GpsReceiverDriver]] = {
     "ublox": UbloxDriver,
 }
+
+
+# ---------------------------------------------------------------------------
+# Optional fake driver — only registered when SP_RTK_BASE_FAKE_GPS=1.
+#
+# The fake driver is for the Playwright e2e suite and dev-mode UI
+# exploration without hardware.  Gating on an env var keeps production
+# builds free of any test-helper code paths.  See
+# ``services/drivers/fake.py`` and ``docs/e2e-testing.md`` for details.
+# ---------------------------------------------------------------------------
+
+if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
+    # Import lazily inside the guard so that the fake module is not
+    # even loaded when the env var is unset.  This keeps production
+    # imports identical to what they were before the fake driver
+    # existed.
+    from sp_rtk_base.services.drivers.fake import FakeGpsDriver
+
+    _DRIVER_REGISTRY["fake"] = FakeGpsDriver
 
 
 def register_driver(vendor_key: str, driver_class: type[GpsReceiverDriver]) -> None:

@@ -672,7 +672,7 @@ def survey_page() -> None:
 
         # ---- Save Position ----
 
-        async def _save_position_dialog() -> None:
+        def _save_position_dialog() -> None:
             from sp_rtk_base.models.config_models import BaseStationPosition
 
             with (
@@ -689,10 +689,16 @@ def survey_page() -> None:
                     f"Alt: {_fb_alt:.3f}m  Acc: {_fb_acc:.0f}mm"
                 ).classes("text-grey-4 q-mt-sm text-caption")
 
-                with ui.row().classes("gap-2 q-mt-md justify-end"):
-                    ui.button("Cancel", on_click=dlg.close).props("flat")
+                def _do_save() -> None:
+                    """Persist the named position profile.
 
-                    async def _do_save() -> None:
+                    Defined at the dialog scope (not nested inside a slot
+                    context manager) so the closure over ``dlg`` and
+                    ``name_input`` survives the synchronous handler path.
+                    Any exception is surfaced to the operator instead of
+                    being silently swallowed by the UI event loop.
+                    """
+                    try:
                         name = str(name_input.value or "").strip()
                         if not name:
                             ui.notify("Enter a profile name", type="warning")
@@ -710,13 +716,18 @@ def survey_page() -> None:
                         ui.notify(f"Position '{name}' saved ✓", type="positive")
                         dlg.close()
                         _refresh_saved_positions()
+                    except Exception as exc:
+                        logger.exception("Save position failed")
+                        ui.notify(f"Save failed: {exc}", type="negative")
 
+                with ui.row().classes("gap-2 q-mt-md justify-end"):
+                    ui.button("Cancel", on_click=dlg.close).props("flat")
                     ui.button("Save", on_click=_do_save).props("color=primary")
             dlg.open()
 
         # ---- Load Saved Position ----
 
-        async def _load_saved_dialog() -> None:
+        def _load_saved_dialog() -> None:
             positions = config_svc.get_base_positions()
             if not positions:
                 ui.notify("No saved positions", type="warning")

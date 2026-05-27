@@ -62,7 +62,14 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-norecursedirs = ["integration", "manual"]
+# Exclude e2e + integration from default `pytest` runs so the pre-push
+# hook and CI's unit-test job stay fast and don't require a Chromium
+# install.  Run e2e explicitly with:
+#     uv run pytest tests/e2e --no-cov
+norecursedirs = ["integration", "manual", "e2e"]
+markers = [
+    "e2e: end-to-end browser tests driven by Playwright (slow, require Chromium)",
+]
 
 [tool.coverage.run]
 source = ["src"]
@@ -75,6 +82,11 @@ omit = [
     "*/ui/layout.py",
     "*/ui/components/*",
     "*/cli/config_audit.py",
+    # End-to-end tests drive the live UI through Playwright and do not
+    # contribute meaningful unit-coverage lines — keep them out of the
+    # measurement so `--cov-fail-under=90` continues to gate on real
+    # unit-test coverage only.
+    "tests/e2e/*",
 ]
 
 [tool.coverage.report]
@@ -222,6 +234,8 @@ dev = [
     "pre-commit>=3.0.0",
     "commitizen>=4.0.0",
     "types-PyYAML",
+    "pytest-playwright>=0.8.0",
+    "playwright>=1.60.0",
 ]
 
 # Commitizen — enforces Conventional Commits 1.0.0 on commit messages

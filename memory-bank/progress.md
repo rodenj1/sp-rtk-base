@@ -2,6 +2,81 @@
 
 ## Recent Changes
 
+### 2026-05-27 — Button-Click E2E Tests Across Every Page 🆕
+Added four new e2e test files driving every actionable button on the Outputs, Survey, Advanced-GPS, and Input pages through the real browser, lifting the e2e suite from 27 → **39 tests** (still green, ~35 s wall-clock).  Every test asserts the Quasar toast in the browser **and** verifies the side-effect via REST so a UI change that wires the click to the wrong handler can never quietly slip through.
+
+- `tests/e2e/test_outputs_buttons.py` (3) — Add-Destination success/validation, Delete dialog.
+- `tests/e2e/test_survey_buttons.py` (4) — Start-Survey confirm/cancel, Fixed-Base Edit/Commit/Cancel.
+- `tests/e2e/test_gps_config_buttons.py` (4) — Disconnect, Save-to-Flash, Load-GNSS, Apply-GNSS.
+- `tests/e2e/test_input_buttons.py` (1) — TCP host/port Save → YAML round-trip.
+- `docs/e2e-testing.md` table refreshed (39 tests / ~35 s, per-file column).
+
+Gotchas resolved (the kind that bite you if you don't read the source first):
+- Page button "Start Survey-In" vs dialog button "Start Survey" — disambiguate with `role + exact=True`.
+- Endpoints don't always match UI nouns: GNSS read is `/api/device/gnss`, base-config read is `/api/device/base-config`, survey-in status is `/api/device/survey-in`.
+- `DeviceStatus` serialises `state` ("disconnected"/"connected") — there is no `connected: bool`.
+- Quasar `q-toggle` clicks don't always flip the underlying `v-model` from Playwright.  When that bites a side-effect assertion, switch from "did the toggle flip" to "did the Apply write differ from a seeded baseline" — equally meaningful, more robust.
+
+Verification: `pytest tests/e2e --no-cov` → **39 passed in 35 s** · unit suite unchanged at 530 / 92.17 %.
+
+### 2026-05-26 — FakeGpsDriver + Device-Driven E2E Coverage
+Added an in-memory `FakeGpsDriver` (vendor key `"fake"`, env-gated on `SP_RTK_BASE_FAKE_GPS=1`) and 16 new e2e tests that exercise the device-dependent UI/REST paths end-to-end without real hardware.
+
+- **Why**: the initial Playwright harness covered navigation, REST CRUD, and settings — but every device-driven path (Survey-In, Advanced GPS, GNSS config, position polling, save-to-flash) was either skipped or REST-mocked, and the Survey-Save dialog regression test was still a placeholder.  We needed a synthetic driver that exposes the full `GpsReceiverDriver` interface so the entire `DeviceService` → API → UI stack runs unchanged.
+- **What landed**:
+  - `src/sp_rtk_base/services/drivers/fake.py` (new, **100 %** unit coverage): implements all 17 abstract methods on `GpsReceiverDriver` with realistic fixture data — RTK-fixed solution at the bug-report coordinates `32.7329015 °N / -117.2362788 °W / 27.940 m`, 6 GNSS constellations (GPS/GLONASS/Galileo/BeiDou/QZSS/SBAS), full capability set, in-process survey-in state machine.
+  - `src/sp_rtk_base/services/drivers/__init__.py`: env-gated auto-registration under vendor key `"fake"`.  Activates only when `SP_RTK_BASE_FAKE_GPS == "1"`; production binaries with the var unset are bit-for-bit identical.  Registry can be reset for tests (idempotent re-import supported).
+  - `tests/unit/test_fake_driver.py` (45 tests): fixture-value invariants, capability set, GNSS round-trip, survey-in state-machine transitions, base-config transitions, registry env gating, auto-registration toggle.
+  - `tests/e2e/conftest.py`: subprocess fixture now exports `SP_RTK_BASE_FAKE_GPS=1`; added `connected_gps` function-scoped fixture that POSTs `/api/device/connect` with `{vendor: "fake", port: "FAKE", baud_rate: 115200}` and disconnects on teardown.
+  - **New e2e files**:
+    - `tests/e2e/test_survey_save_position.py` (2 tests) — full browser-driven regression for the Save-Position dialog bug (click → toast → dialog-close → REST-verify persisted lat/lon/alt against FakeGpsDriver fixture).  Replaces the earlier placeholder.
+    - `tests/e2e/test_device_connection.py` (6 tests) — REST-only connect/disconnect lifecycle, double-connect 409, idempotent disconnect, unknown-vendor 400, capability set.
+    - `tests/e2e/test_gps_data_flow.py` (7 tests) — position fixture, GNSS GET/PUT round-trip (disable Galileo), base-config DISABLED → FIXED transition, save-to-flash, Advanced GPS page render with Save-to-Flash button visible.
+- **Gotchas resolved**:
+  1. `PUT` not `POST` for GNSS config — the write endpoint is `PUT /api/device/gnss`; the older `/configure/gnss` shape silently no-op'd in the first test draft.
+  2. `/api/device/ports` returns the live serial scan, not driver-registered ports — FakeGpsDriver doesn't surface there.  Test relaxed to "endpoint returns a well-formed list"; connect accepts the port string verbatim.
+  3. `DeviceService.is_available` means "a driver is loaded", not "a connection is open".  After the first connect, `disconnect()` is idempotent (200, not 409) on every subsequent call — pinned with a regression test.
+  4. Pyright + `pytest.approx` — strict mode flags `approx()` as partially-unknown because pytest doesn't ship strict stubs.  Left as Pylance warnings (mypy is happy); switching to manual `abs(a-b) < ε` would have hurt readability.
+- **Verification**: `pytest tests/e2e --no-cov` → **27 passed in 14 s** (was 11) · `pytest tests/unit/` → **530 passed, 92.17 % coverage** (gate 90 %; was 485 / 91.76 %) — `fake.py` at 100 % · mypy clean (0 issues across all new files) · ruff/format clean.
+- **Patterns to reuse**:
+  - **Env-gated test drivers** — register synthetic implementations behind one env var; the rest of the production code can't see them.
+  - **Mocked-at-the-boundary, not mocked-at-the-API** — the fake driver implements the *driver* interface, so `DeviceService` + API + UI all run unchanged.  This is what let the Save-Position regression test catch the original `async def` closure bug, which lived above the driver boundary where any API-level mock would have hidden it.
+  - **Hybrid REST + UI tests** — REST-only tests are ~10× faster than browser tests; reserve Playwright for actual UI click paths.  `connected_gps` makes the REST-connect a one-liner.
+
+### 2026-05-26 — Playwright E2E Test Harness
+Stood up a real-browser end-to-end test suite that boots the live SP-Base server in a subprocess and drives the NiceGUI front-end with headless Chromium.
+
+- **Why**: unit tests cover REST endpoints + services exhaustively but cannot detect NiceGUI page-mount regressions, button-handler wiring failures, WebSocket hydration breakage, or Quasar→backend round-trip bugs. The 2026-05-26 survey-save dialog bug (silent `async def`-in-`ui.row()` failure) was exactly this class of regression and would not have been caught by `tests/unit`.
+- **What landed**:
+  - New `tests/e2e/` package (4 files, 11 tests): subprocess-server `conftest.py` fixture, navigation smoke tests for all 6 pages + `/api/health`, destinations REST CRUD lifecycle with UI verification, and a real-button-click "Save Settings" toast assertion.
+  - Dev deps `pytest-playwright`, `playwright`, `httpx` added; chromium installed into `~/.cache/ms-playwright`.
+  - `pyproject.toml`: `e2e` pytest marker; `tests/e2e` excluded from coverage and from default test discovery so `pytest tests/unit -q` stays fast.
+  - `.github/workflows/ci.yml`: new `e2e` job after the unit-test matrix, with `~/.cache/ms-playwright` cached on `uv.lock`. `build` job now depends on `[test, e2e]`.
+  - `docs/e2e-testing.md`: architecture diagram, gotchas, local-run instructions, selector best-practices, and a prioritised roadmap (data-testids on dialog inputs, visual regression, `--tracing=retain-on-failure`, cross-browser).
+  - Cline MCP `~/.vscode-server/.../cline_mcp_settings.json`: installed `@playwright/mcp` server for ad-hoc dev-time browser driving (not used by pytest or CI).
+- **Two gotchas resolved** (documented in `tests/e2e/conftest.py`):
+  1. **NiceGUI's pytest sniff** — `helpers.is_pytest()` checks `PYTEST_CURRENT_TEST`; inherited from the parent process it flipped `ui.run()` into screen-test mode and crashed on `KeyError: 'NICEGUI_SCREEN_TEST_PORT'`. Fixture now `env.pop`s `PYTEST_CURRENT_TEST`, `PYTEST_VERSION`, `PYTEST_XDIST_WORKER`, `NICEGUI_USER_SIMULATION` before `Popen`.
+  2. **Pipe-buffer deadlock** — first iteration used `subprocess.PIPE` for stdout without an active reader; the uvicorn worker eventually blocked on writes. Fixture now redirects combined stdout+stderr to a log file in the session tmp dir; the tail is embedded in the `TimeoutError` raised by the health-check helper so CI failures aren't blind.
+- **Verification**: `pytest tests/e2e --no-cov -ra` → **11 passed in 7.4 s** · `pytest tests/unit -q` → **485 passed, 91.76 % coverage** · ruff/pyright clean · mypy clean (1 documented `# type: ignore[redundant-cast]`).
+- **Patterns to reuse**:
+  - Subprocess the app, don't import it — NiceGUI's module-level state isn't safe to tear down inside one pytest process.
+  - Strip `PYTEST_*` env vars from any subprocess that imports NiceGUI.
+  - Log subprocess stdout/stderr to a file, never to an unread `PIPE`.
+  - Prefer `get_by_role()` > `data-testid` > `text=` selectors.
+  - Mark e2e tests with `@pytest.mark.e2e`; honour the `norecursedirs` exclusion so unit-test runs stay sub-15-second.
+- **Roadmap items deferred**: `data-testid` props on dialog inputs in `outputs.py`/`survey.py`/`gps_config.py` (would let us drive the full create-destination dialog through Playwright instead of REST+UI hybrid); Playwright tracing in `pyproject.toml`; visual regression with `to_have_screenshot()`; Survey-In save-position workflow e2e (needs mocked GPS service); Firefox + WebKit in CI matrix.
+
+### 2026-05-26 — Survey Save-Position Dialog Bug Fix
+Fixed silent failure on the **Save Position Profile** dialog (Survey-In page).
+
+- **Symptom**: clicking **Save** in the dialog did nothing — no notify, no log entry, no persistence, no dialog close. Cancel button worked.
+- **Root cause**: in `src/sp_rtk_base/ui/pages/survey.py` the original `_save_position_dialog()` was `async def` with a nested `async def _do_save()` defined inside a `with ui.row():` slot context manager. NiceGUI 3.x silently drops exceptions raised in this exact closure shape. `_load_saved_dialog` had the same outer-async-for-no-reason shape.
+- **Fix**: `_save_position_dialog` and `_load_saved_dialog` converted from `async def` → `def`; `_do_save` lifted out of the nested `ui.row()` slot into dialog-function scope as a plain `def`; its body wrapped in `try/except Exception` with `logger.exception(...)` + `ui.notify(..., type="negative")` so any future failure is loud, not silent. (`_load_saved_dialog`'s inner `_pick` legitimately stays `async` for `_commit_fixed_base`.)
+- **Regression test**: `test_save_screenshot_values_persists_to_disk` added to `TestConfigServiceBasePositions` in `tests/unit/test_base_positions.py` — uses the exact values from the bug report (`lat=32.7329015, lon=-117.2362788, alt=27.940, accuracy_mm=47308.0`) against a real `ConfigService` + `tmp_path` YAML, asserting in-memory state, on-disk YAML content, and roundtrip via a fresh service instance.
+- **Lesson learned**: in NiceGUI 3.x, never define `async def` handler closures inside slot context managers (`with ui.row():`, `with ui.card():`, etc.) nested under another already-running async handler. Lift them to the enclosing function scope and always wrap UI handler bodies in `try/except` with `logger.exception` + `ui.notify(..., type="negative")` to keep silent failures impossible.
+- **Verified**: `ruff check` ✅ / `ruff format --check` ✅ / `pyright src/sp_rtk_base` 0 errors (1 unrelated pre-existing `contextmanager` deprecation warning) / `pytest tests/unit -q` **483 passed, 91.73 % coverage** (up from 480).
+- **Files**: `src/sp_rtk_base/ui/pages/survey.py`, `tests/unit/test_base_positions.py`.
+
 ### 2026-05-20 — v0.2.0 published to PyPI (first real release) 🚀
 First end-to-end publish of `sp-rtk-base` succeeded.
 
@@ -304,14 +379,16 @@ The embedded relay-engine package was renamed; all sp-base references updated:
   - 480 unit tests passing, 0 pyright errors
 
 ## Current Metrics
-- **Unit tests**: 480 passed
+- **Unit tests**: 530 passed (was 485)
+- **E2E tests**: 39 passed (was 27) — Playwright Chromium, FakeGpsDriver-backed
 - **Integration tests**: 20+ (end-to-end + destination management + NTRIP)
-- **Coverage**: 92.28% (UI/CLI excluded from measurement — NiceGUI can't be unit tested)
-- **Pyright**: 0 errors, 0 warnings (strict mode)
+- **Coverage**: 92.17 % (`fake.py` at 100 %; UI/CLI excluded — NiceGUI can't be unit tested)
+- **Pyright / mypy**: 0 errors (strict mode)
 - **Python**: 3.10+ compatible
 - **API endpoints**: 35 (health, relay, destinations, settings, events, metrics, config, device×19)
 - **CLI tools**: `sp-rtk-base` (web app), `sp-rtk-base-gps-audit` (config audit)
 - **UI pages**: 6 (Dashboard, Input, Outputs, Survey-In, Settings, Advanced GPS)
+- **GPS drivers**: 2 (`ublox` always, `fake` only when `SP_RTK_BASE_FAKE_GPS=1`)
 
 ## What's Left to Build
 

@@ -2,7 +2,29 @@
 
 ## Recent Changes
 
-### 2026-05-27 — Bug A Fixed & Published: `sp-rtk-base-relay` 2.1.2 🆕
+### 2026-05-27 — `sp-rtk-base` 0.2.2 Published to PyPI 🚢
+
+The full Bluetooth-lifecycle fix is now end-to-end on PyPI: Bug B/C/D
+landed in `main` via PR #4 (merge commit `8d1b770`), version bumped
+0.2.1 → 0.2.2 (release commit `9403bad`), tagged `v0.2.2`, GitHub
+Release published, and the OIDC Trusted-Publisher workflow uploaded
+the wheel to PyPI (run `26536819238`, all 9 jobs green incl. Publish
+to PyPI ✅ and Sign & attach to Release ✅).
+
+- **PyPI** — <https://pypi.org/project/sp-rtk-base/0.2.2/>
+  (`sp_rtk_base-0.2.2-py3-none-any.whl`, uploaded
+  `2026-05-27T20:29:55Z`).
+- **GitHub Release** —
+  <https://github.com/rodenj1/sp-rtk-base/releases/tag/v0.2.2>.
+- **Gotcha hit** — first `release.yml` run failed at
+  `uv sync --locked --all-extras` because `cz bump` did not refresh
+  `uv.lock` (project's own `version` field).  Fixed by `uv lock`,
+  amended the release commit to include the lockfile bump, retagged
+  `v0.2.2`, force-pushed branch + tag.  Second run succeeded in
+  2m35s.  Same pattern as the relay package — worth wiring into the
+  `cz bump` hook for next time.
+
+### 2026-05-27 — Bug A Fixed & Published: `sp-rtk-base-relay` 2.1.2
 
 Bug A from the May 27 lifecycle pass shipped end-to-end the same day:
 fixed in the `sp-rtk-base-relay` package (branch

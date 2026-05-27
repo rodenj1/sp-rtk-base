@@ -206,6 +206,13 @@ class DestinationProfile(BaseModel):
 # Input source profile
 # ---------------------------------------------------------------------------
 
+# Default Bluetooth discovery scan duration in seconds, applied at relay
+# startup when the persisted Bluetooth input config didn't pin its own
+# ``scan_timeout``. The upstream ``sp-rtk-base-relay`` default is 10 s
+# which is too short for some GPS receivers (advertising on 1-2 s
+# intervals can easily be missed); 20 s comfortably covers them.
+DEFAULT_BT_SCAN_TIMEOUT_SECONDS: int = 20
+
 
 class InputProfile(BaseModel):
     """Input source configuration for persistence."""
@@ -216,10 +223,19 @@ class InputProfile(BaseModel):
     def to_relay_config(self) -> InputConfig:
         """Convert to sp-rtk-base-relay InputConfig dataclass.
 
+        For Bluetooth inputs, injects a longer default ``scan_timeout``
+        (:data:`DEFAULT_BT_SCAN_TIMEOUT_SECONDS`) when the persisted
+        config didn't supply one — without this, slow-advertising
+        receivers can miss the upstream's 10 s discovery window and
+        cause auto-start to fail at boot.
+
         Returns:
             InputConfig instance.
         """
-        return InputConfig(source=self.source, config=dict(self.config))
+        config_dict = dict(self.config)
+        if self.source == "bluetooth" and "scan_timeout" not in config_dict:
+            config_dict["scan_timeout"] = DEFAULT_BT_SCAN_TIMEOUT_SECONDS
+        return InputConfig(source=self.source, config=config_dict)
 
 
 # ---------------------------------------------------------------------------

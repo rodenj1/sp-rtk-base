@@ -39,6 +39,14 @@ SOURCE_TYPES = ["tcp", "serial", "bluetooth"]
 BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 DEFAULT_BAUD = 115200
 
+# Bluetooth discovery scan durations (seconds).
+# Some GPS receivers advertise on long intervals (1.2-2.0 s) and can miss
+# a short scan window; offer the operator a few presets and default to a
+# duration that comfortably covers the slowest realistic advertiser.
+BT_SCAN_DURATIONS_SECONDS: list[int] = [20, 30, 45, 60]
+DEFAULT_BT_SCAN_DURATION_SECONDS: int = 20
+
+
 # TCP-only field definitions (serial and bluetooth have custom UI)
 TCP_FIELDS: list[FieldDef] = [
     ("host", "Host", "127.0.0.1", required("Host")),
@@ -229,6 +237,21 @@ def input_page() -> None:
                             scan_btn = ui.button(
                                 "Scan for Devices", icon="bluetooth_searching"
                             ).props("color=info outline")
+                            scan_duration_select = (
+                                ui.select(
+                                    options={
+                                        d: f"{d} s" for d in BT_SCAN_DURATIONS_SECONDS
+                                    },
+                                    value=DEFAULT_BT_SCAN_DURATION_SECONDS,
+                                    label="Scan duration",
+                                )
+                                .props("dense outlined")
+                                .style("min-width: 110px")
+                                .tooltip(
+                                    "How long to scan. Increase for slow-"
+                                    "advertising devices (default 20 s)."
+                                )
+                            )
                             scan_spinner = ui.spinner(size="sm")
                             scan_spinner.set_visibility(False)
                             scan_status = ui.label("").classes(
@@ -242,9 +265,22 @@ def input_page() -> None:
 
                         async def _scan_bluetooth() -> None:
                             """Scan for Bluetooth devices using BluetoothManager."""
+                            # Resolve scan duration from the dropdown (fall back
+                            # to the default if the widget is somehow unset).
+                            try:
+                                scan_seconds = int(
+                                    scan_duration_select.value
+                                    or DEFAULT_BT_SCAN_DURATION_SECONDS
+                                )
+                            except (TypeError, ValueError):
+                                scan_seconds = DEFAULT_BT_SCAN_DURATION_SECONDS
+                            if scan_seconds <= 0:
+                                scan_seconds = DEFAULT_BT_SCAN_DURATION_SECONDS
+
                             scan_btn.disable()
+                            scan_duration_select.disable()
                             scan_spinner.set_visibility(True)
-                            scan_status.text = "Scanning (10s)..."
+                            scan_status.text = f"Scanning ({scan_seconds}s)..."
                             scan_results_container.clear()
                             bt_state["scan_results"] = []
 
@@ -256,7 +292,9 @@ def input_page() -> None:
 
                                 # Get managed objects to list known/discovered devices
                                 devices = await asyncio.to_thread(
-                                    _discover_bluetooth_devices, mgr
+                                    _discover_bluetooth_devices,
+                                    mgr,
+                                    scan_seconds,
                                 )
 
                                 bt_state["scan_results"] = devices
@@ -550,6 +588,7 @@ def input_page() -> None:
 
 def _discover_bluetooth_devices(
     mgr: Any,
+    scan_seconds: int = DEFAULT_BT_SCAN_DURATION_SECONDS,
 ) -> list[dict[str, str]]:
     """Discover Bluetooth devices using BluetoothManager.
 
@@ -558,11 +597,19 @@ def _discover_bluetooth_devices(
 
     Args:
         mgr: A BluetoothManager instance.
+        scan_seconds: How long to actively scan for advertisements before
+            collecting results. Slow-advertising devices may need 30-60 s;
+            defaults to :data:`DEFAULT_BT_SCAN_DURATION_SECONDS` (20).
 
     Returns:
         List of dicts with 'name', 'mac', 'paired' keys.
     """
     import asyncio as _asyncio
+
+    # Clamp to a sane positive duration so a misconfigured caller can't
+    # turn the scan into a no-op or hang the page forever.
+    if scan_seconds <= 0:
+        scan_seconds = DEFAULT_BT_SCAN_DURATION_SECONDS
 
     devices: list[dict[str, str]] = []
 
@@ -582,7 +629,7 @@ def _discover_bluetooth_devices(
                 if mgr._adapter is not None:
                     try:
                         await mgr._adapter.call_start_discovery()  # type: ignore[attr-defined]
-                        await _asyncio.sleep(8)  # scan for 8 seconds
+                        await _asyncio.sleep(scan_seconds)
                     except Exception:
                         pass  # May fail if already scanning
                     try:

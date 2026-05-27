@@ -14,6 +14,7 @@ from sp_rtk_base_relay.config import (
 )
 
 from sp_rtk_base.models.config_models import (
+    DEFAULT_BT_SCAN_TIMEOUT_SECONDS,
     AppConfig,
     AppSettings,
     DestinationProfile,
@@ -313,9 +314,55 @@ class TestInputProfile:
         assert cfg.config["host"] == "127.0.0.1"
         assert cfg.config["port"] == 5015
 
+    def test_to_relay_config_bluetooth_injects_default_scan_timeout(self) -> None:
+        """Bluetooth source gets DEFAULT_BT_SCAN_TIMEOUT_SECONDS when not set.
+
+        The upstream relay package defaults ``scan_timeout`` to 10 s which
+        is too short for slow-advertising GPS receivers; the InputProfile
+        bumps it to 20 s on conversion when the user didn't pin it.
+        """
+        ip = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA:BB:CC:DD:EE:FF"},
+        )
+        cfg = ip.to_relay_config()
+        assert cfg.source == "bluetooth"
+        assert cfg.config["mac_address"] == "AA:BB:CC:DD:EE:FF"
+        assert cfg.config["scan_timeout"] == DEFAULT_BT_SCAN_TIMEOUT_SECONDS
+        assert DEFAULT_BT_SCAN_TIMEOUT_SECONDS >= 20  # operator-visible floor
+
+    def test_to_relay_config_bluetooth_respects_explicit_scan_timeout(self) -> None:
+        """An explicit scan_timeout on a bluetooth profile is preserved."""
+        ip = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA:BB:CC:DD:EE:FF", "scan_timeout": 45},
+        )
+        cfg = ip.to_relay_config()
+        assert cfg.config["scan_timeout"] == 45
+
+    def test_to_relay_config_does_not_mutate_original(self) -> None:
+        """to_relay_config must not mutate the profile's config dict."""
+        original_config: dict[str, Any] = {"mac_address": "AA:BB:CC:DD:EE:FF"}
+        ip = InputProfile(source="bluetooth", config=original_config)
+        ip.to_relay_config()
+        assert "scan_timeout" not in ip.config  # original untouched
+
+    def test_to_relay_config_non_bluetooth_no_scan_timeout_injection(self) -> None:
+        """Non-bluetooth sources never get scan_timeout injected."""
+        ip = InputProfile(
+            source="serial",
+            # relay engine validates the serial config and requires
+            # 'baudrate' (no underscore) — keep this test honest by
+            # matching that contract.
+            config={"port": "/dev/ttyACM0", "baudrate": 115200},
+        )
+        cfg = ip.to_relay_config()
+        assert "scan_timeout" not in cfg.config
+
 
 # ---------------------------------------------------------------------------
 # AppSettings
+
 # ---------------------------------------------------------------------------
 
 

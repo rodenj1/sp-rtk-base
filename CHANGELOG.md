@@ -11,6 +11,59 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.3.0 (2026-05-27)
+
+
+- feat(survey): add Cancel button, progress visibility, ETA/% readouts
+- Operators reported the Survey-In page froze with no feedback after
+- clicking Start. Two root causes:
+- 1. UI: the progress card was hidden until the configure RPC returned,
+-    so the page looked dead while the receiver was actually surveying.
+- 2. Driver: u-blox TMODE state machine is edge-triggered. Writing
+-    TMODE_MODE=1 with new SVIN params on a receiver already in TMODE=1
+-    silently ACKs without restarting the survey clock — re-runs of
+-    Start would appear to do nothing.
+- Fix (three layers):
+- - Driver: new GpsReceiverDriver.disable_base_mode() abstract method;
+-   UbloxDriver writes CFG_TMODE_MODE=0; configure_survey_in() now sends
+-   disable-first-then-enable so the survey clock always restarts;
+-   FakeGpsDriver.disable_base_mode() resets the state machine for tests.
+- - Service + API: DeviceService.cancel_survey_in() (async, relay-guard,
+-   state-restore on failure) + POST /api/device/cancel-survey-in
+-   returning 200/409.
+- - UI (/survey): progress card now reveals synchronously the moment
+-   Start is confirmed; in-card red error banner replaces toast-only
+-   failure surface; new Cancel Survey button + 'Cancel Survey-In?'
+-   confirmation dialog (Keep Surveying / Cancel Survey); two new live
+-   readouts — % to target accuracy (clamped geometric ratio) and ETA
+-   (linear slope over rolling 30 s window, '—' until slope is
+-   meaningfully negative).
+- Deliberately NOT save-to-flash on cancel: preserves any prior
+- fixed-base position across power cycles.
+- Tests: 12 new unit tests in test_cancel_survey_in.py + 2 new Playwright
+- tests in test_survey_cancel.py (progress-card-visible-immediately
+- regression + full Start → Cancel flow). 582 unit + 41 e2e all green;
+- ruff clean.
+- fix(deploy): heal config-yaml ownership for service user writes
+- The v0.2.x installer created /etc/sp-rtk-base/ as root:sp-rtk-base 0750
+- and config.yaml as root:sp-rtk-base 0640 (group-readable only). The
+- service runs as sp-rtk-base, so atomic-rename saves of config.yaml from
+- the web UI (Bluetooth, input settings, destinations, etc.) failed with
+-   PermissionError: [Errno 13] Permission denied:
+-     '/etc/sp-rtk-base/config.yaml'
+- Fix:
+- - Create CONFIG_DIR owned by SERVICE_USER:SERVICE_USER from the start.
+- - Always re-apply chown SERVICE_USER:SERVICE_USER + chmod 0640 on the
+-   default config (even when contents are left untouched) so a re-run
+-   of the installer heals pre-existing root-owned installs without
+-   requiring operators to hand-chown the file.
+- Operators on a broken Pi can also heal in place with:
+-   sudo chown sp-rtk-base:sp-rtk-base /etc/sp-rtk-base /etc/sp-rtk-base/config.yaml
+-   sudo chmod 0750 /etc/sp-rtk-base && sudo chmod 0640 /etc/sp-rtk-base/config.yaml
+-   sudo systemctl restart sp-rtk-base
+- Regression test added in test_install_default_config.py.
+- docs(memory-bank): record v0.2.2 PyPI publish + uv.lock-on-cz-bump gotcha
+
 ## v0.2.2 (2026-05-27)
 
 

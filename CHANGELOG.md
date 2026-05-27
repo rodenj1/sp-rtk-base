@@ -11,6 +11,20 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.2.2 (2026-05-27)
+
+
+- Merge pull request #4 from rodenj1/fix/bluetooth-lifecycle-and-scan-duration
+- fix(bluetooth): tighten lifecycle (shutdown, SIGHUP, startup recovery) + scan tuning
+- fix(bluetooth): tighten lifecycle (shutdown disconnect, SIGHUP, startup recovery) + scan tuning
+- Closes the four-bug audit triggered by the May 27 'system still holding the Bluetooth GPS' report.
+- Bug B - DeviceService.disconnect() in shutdown: app.py promotes _shutdown to module-level shutdown_services(); order is device -> event bridge -> relay; device wrapped in asyncio.wait_for(timeout=10s).
+- Bug C - SIGHUP handler in main.py: _install_sighup_handler() forwards SIGHUP -> SIGTERM via os.kill so systemctl reload uses the same teardown as SIGINT/SIGTERM. No-op on Windows.
+- Bug D - Startup pre-disconnect: services/__init__.py _release_stale_bluetooth_handle(mac) calls BluetoothManager.disconnect_device(mac) off-loop (5s budget), invoked before start_relay() when source==bluetooth. Lazy import keeps CI/macOS happy.
+- Bug A - Already shipped upstream as sp-rtk-base-relay 2.1.2 (PR rodenj1/sp-rtk-base-relay#7). Pin bumped: sp_rtk_base_relay>=2.1.1 -> >=2.1.2; uv.lock regenerated.
+- BT scan duration UX: input.py exposes 20/30/45/60s dropdown (default 20s); config_models.py injects scan_timeout=20 into relay config when not pinned by the profile.
+- Tests: 25 new (4 new files + 4 InputProfile cases). Full suite: 566/566 passing, 92.91% coverage. ruff + pyright strict clean.
+
 ## v0.2.1 (2026-05-27)
 
 

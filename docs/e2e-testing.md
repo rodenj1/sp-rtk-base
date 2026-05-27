@@ -118,7 +118,9 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
 
-Total: **39 tests, ≈35 s wall-clock** on a Pi-class developer box.
+Total: **41 tests, ≈40 s wall-clock** on a Pi-class developer box.
+(+2 from `tests/e2e/test_survey_cancel.py` — progress-card-visible-immediately regression and the full Start → Cancel-Survey-In flow.)
+
 
 All tests that require an active device session use the
 `connected_gps` fixture, which transparently swaps the ublox driver

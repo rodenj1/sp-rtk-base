@@ -79,6 +79,9 @@ class StubDriver(GpsReceiverDriver):
     def save_to_flash(self) -> None:
         pass
 
+    def disable_base_mode(self) -> None:
+        pass
+
     def get_position(self) -> GpsPosition:
         return GpsPosition()
 

@@ -169,13 +169,18 @@ def survey_page() -> None:
                     step=1000,
                 ).classes("col-grow")
 
-            svin_start_btn = (
-                ui.button("Start Survey-In", icon="play_arrow")
-                .props("color=primary")
-                .classes("q-mt-sm")
-            )
+            with ui.row().classes("gap-2 q-mt-sm items-center"):
+                svin_start_btn = ui.button("Start Survey-In", icon="play_arrow").props(
+                    "color=primary"
+                )
+                svin_cancel_btn = ui.button("Cancel Survey", icon="stop").props(
+                    "color=negative outline"
+                )
+                svin_cancel_btn.set_visibility(False)
 
-            # Progress section (hidden until survey starts)
+            # Progress section — shown as soon as Start is pressed and kept
+            # visible across the whole survey lifecycle (success, failure, or
+            # cancel) so the operator always has a status surface.
             svin_progress_card = (
                 ui.card()
                 .classes("w-full q-pa-sm q-mt-md")
@@ -188,6 +193,12 @@ def survey_page() -> None:
                     ui.label("Survey-In Progress").classes("text-subtitle2 text-grey-4")
                     svin_target_label = ui.label("").classes("text-caption text-grey-5")
                 svin_status_label = ui.label("Idle").classes("text-white")
+                # In-card error banner — replaces toast-only feedback so a
+                # config-write failure stays visible after the toast fades.
+                svin_error_label = ui.label("").classes(
+                    "text-negative text-caption q-mt-xs"
+                )
+                svin_error_label.set_visibility(False)
                 svin_progress_bar = ui.linear_progress(
                     value=0, show_value=False
                 ).classes("q-mt-xs")
@@ -196,6 +207,10 @@ def survey_page() -> None:
                     svin_dur_label = ui.label("Duration: 0s").classes("text-grey-3")
                     svin_acc_label = ui.label("Accuracy: 0mm").classes("text-grey-3")
                     svin_obs_label = ui.label("Observations: 0").classes("text-grey-3")
+
+                with ui.row().classes("w-full gap-4 q-mt-xs sp-metric-row"):
+                    svin_pct_label = ui.label("% to target: —").classes("text-grey-3")
+                    svin_eta_label = ui.label("ETA: —").classes("text-grey-3")
 
                 # Convergence chart
                 svin_chart = (
@@ -420,6 +435,12 @@ def survey_page() -> None:
         _svin_chart_times: list[str] = []
         _svin_chart_acc: list[float] = []
         _svin_chart_obs: list[int] = []
+        # Rolling samples used for ETA extrapolation.  Each entry is
+        # (elapsed_seconds, accuracy_mm).  We use the most recent
+        # window (~30 s) to estimate the convergence slope and project
+        # how long until accuracy crosses the target threshold.
+        _svin_eta_samples: list[tuple[int, float]] = []
+        _ETA_WINDOW_SECONDS: int = 30
 
         # Current fixed base position (from device read-back)
         _fb_lat: float = 0.0
@@ -880,31 +901,117 @@ def survey_page() -> None:
 
             dur = int(svin_duration.value or 120)
             acc = int(svin_accuracy.value or 50000)
+
+            # Reveal the progress card *immediately* — before the
+            # configure call returns — so the operator gets feedback
+            # even if the device write hangs or fails.  Previously the
+            # card was hidden until after ``configure_survey_in`` had
+            # both completed AND notified via toast — that path made
+            # the page look frozen for the 2-5s configure round-trip
+            # and lost the error entirely if the toast was dismissed.
+            svin_progress_card.set_visibility(True)
+            svin_error_label.set_visibility(False)
+            svin_error_label.text = ""
+            svin_status_label.text = "Configuring receiver..."
+            svin_status_label.classes(replace="text-warning")
+            svin_target_label.text = f"Target: {acc:,} mm"
+            svin_dur_label.text = "Duration: 0s"
+            svin_acc_label.text = "Accuracy: —"
+            svin_obs_label.text = "Observations: 0"
+            svin_pct_label.text = "% to target: —"
+            svin_eta_label.text = "ETA: —"
+            svin_progress_bar.value = 0.0
+            svin_start_btn.set_visibility(False)
+            svin_cancel_btn.set_visibility(True)
+
+            _svin_chart_times.clear()
+            _svin_chart_acc.clear()
+            _svin_chart_obs.clear()
+            _svin_eta_samples.clear()
+
+            opts = svin_chart.options
+            opts["xAxis"]["data"] = []
+            opts["series"][0]["data"] = []
+            opts["series"][1]["data"] = []
+            opts["series"][0]["markLine"]["data"] = [{"yAxis": acc}]
+            svin_chart.update()
+
             try:
                 await svc.configure_survey_in(
                     SurveyInConfig(min_duration_seconds=dur, accuracy_limit_mm=acc)
                 )
-                ui.notify("Survey-in started", type="positive")
-                svin_progress_card.set_visibility(True)
-                svin_start_btn.set_visibility(False)
-
-                _svin_chart_times.clear()
-                _svin_chart_acc.clear()
-                _svin_chart_obs.clear()
-
-                svin_target_label.text = f"Target: {acc:,} mm"
-                opts = svin_chart.options
-                opts["xAxis"]["data"] = []
-                opts["series"][0]["data"] = []
-                opts["series"][1]["data"] = []
-                opts["series"][0]["markLine"]["data"] = [{"yAxis": acc}]
-                svin_chart.update()
-
-                if svin_timer is not None:
-                    svin_timer.active = False
-                svin_timer = ui.timer(2.0, _poll_survey_in)
             except Exception as exc:
-                ui.notify(f"Survey-in failed: {exc}", type="negative")
+                # Surface the error *in the card itself* so it persists.
+                # The toast is still emitted for consistency with the
+                # rest of the app, but the in-card banner is the
+                # primary signal — toasts fade in ~6 seconds.
+                err_msg = f"Failed to configure survey-in: {exc}"
+                svin_error_label.text = err_msg
+                svin_error_label.set_visibility(True)
+                svin_status_label.text = "⚠ Configuration failed"
+                svin_status_label.classes(replace="text-negative")
+                svin_cancel_btn.set_visibility(False)
+                svin_start_btn.set_visibility(True)
+                ui.notify(err_msg, type="negative")
+                logger.exception("configure_survey_in failed")
+                return
+
+            ui.notify("Survey-in started", type="positive")
+            svin_status_label.text = "Active — collecting..."
+            svin_status_label.classes(replace="text-warning")
+
+            if svin_timer is not None:
+                svin_timer.active = False
+            svin_timer = ui.timer(2.0, _poll_survey_in)
+
+        async def _confirm_cancel_survey() -> None:
+            """Show confirmation dialog before cancelling survey-in."""
+            with ui.dialog() as dlg, ui.card().classes("q-pa-md"):
+                ui.label("Cancel Survey-In?").classes("text-h6 text-white")
+                ui.separator()
+                ui.label(
+                    "This will abort the survey and clear the receiver's "
+                    "TMODE configuration.  Any progress will be lost.  "
+                    "The current fixed-base position (if saved to flash) "
+                    "is unaffected until power-cycle."
+                ).classes("text-grey-4 q-mt-sm")
+
+                with ui.row().classes("gap-2 q-mt-md justify-end"):
+                    ui.button("Keep Surveying", on_click=dlg.close).props("flat")
+
+                    async def _confirmed() -> None:
+                        dlg.close()
+                        await _cancel_survey_in()
+
+                    ui.button("Cancel Survey", on_click=_confirmed).props(
+                        "color=negative"
+                    )
+            dlg.open()
+
+        async def _cancel_survey_in() -> None:
+            """Stop the polling timer and send TMODE=0 to the receiver."""
+            nonlocal svin_timer
+            if svin_timer is not None:
+                svin_timer.active = False
+                svin_timer = None
+            try:
+                await svc.cancel_survey_in()
+            except Exception as exc:
+                err_msg = f"Cancel failed: {exc}"
+                svin_error_label.text = err_msg
+                svin_error_label.set_visibility(True)
+                ui.notify(err_msg, type="negative")
+                logger.exception("cancel_survey_in failed")
+                svin_cancel_btn.set_visibility(False)
+                svin_start_btn.set_visibility(True)
+                return
+
+            svin_status_label.text = "Cancelled by operator"
+            svin_status_label.classes(replace="text-grey-3")
+            svin_progress_bar.value = 0.0
+            svin_cancel_btn.set_visibility(False)
+            svin_start_btn.set_visibility(True)
+            ui.notify("Survey-in cancelled", type="info")
 
         async def _poll_survey_in() -> None:
             nonlocal svin_timer
@@ -933,8 +1040,87 @@ def survey_page() -> None:
                 svin_obs_label.text = f"Observations: {progress.observations}"
 
                 dur_target = int(svin_duration.value or 120)
-                pct = min(progress.duration_seconds / max(dur_target, 1), 1.0)
-                svin_progress_bar.value = pct
+                acc_target = float(svin_accuracy.value or 50000)
+                cur_acc = float(progress.mean_accuracy_mm)
+                elapsed = int(progress.duration_seconds)
+
+                # Duration-based progress bar (primary completion gate is
+                # min_duration_seconds — survey only finishes once BOTH
+                # the min duration AND the accuracy limit are met).
+                pct_dur = min(elapsed / max(dur_target, 1), 1.0)
+                svin_progress_bar.value = pct_dur
+
+                # "% to target accuracy" — how close are we to the
+                # configured limit?  Uses log-style ratio because the
+                # convergence curve is roughly geometric.
+                # 0% = accuracy ≥ start (large), 100% = accuracy ≤ target.
+                if cur_acc <= 0:
+                    pct_acc_str = "—"
+                elif cur_acc <= acc_target:
+                    pct_acc_str = "100% (target reached)"
+                else:
+                    # Geometric progress: assume the first observed
+                    # accuracy is the starting point and we're heading
+                    # towards ``acc_target``.  Clamp to [0, 99] before
+                    # the duration gate completes the survey.
+                    start_acc = _svin_chart_acc[0] if _svin_chart_acc else cur_acc
+                    if start_acc <= acc_target:
+                        pct_acc = 100.0
+                    else:
+                        import math
+
+                        # log(start/cur) / log(start/target)
+                        num = math.log(max(start_acc, 1.0) / max(cur_acc, 1.0))
+                        den = math.log(max(start_acc, 1.0) / max(acc_target, 1.0))
+                        pct_acc = max(
+                            0.0, min(99.0, (num / den) * 100.0 if den > 0 else 0.0)
+                        )
+                    pct_acc_str = f"{pct_acc:.0f}%"
+                svin_pct_label.text = f"% to target: {pct_acc_str}"
+
+                # ETA: linear extrapolation from the last
+                # ``_ETA_WINDOW_SECONDS`` of samples.  We need at least
+                # two samples and a meaningfully-negative slope.
+                _svin_eta_samples.append((elapsed, cur_acc))
+                # Drop samples older than the window
+                while (
+                    _svin_eta_samples
+                    and _svin_eta_samples[0][0] < elapsed - _ETA_WINDOW_SECONDS
+                ):
+                    _svin_eta_samples.pop(0)
+
+                eta_str = "—"
+                if cur_acc <= acc_target and elapsed >= dur_target:
+                    eta_str = "complete"
+                elif len(_svin_eta_samples) >= 2:
+                    t0, a0 = _svin_eta_samples[0]
+                    t1, a1 = _svin_eta_samples[-1]
+                    dt = t1 - t0
+                    da = a1 - a0  # negative when converging
+                    if dt > 0 and da < -0.1 and cur_acc > acc_target:
+                        # Linear projection: when does acc reach target?
+                        slope = da / dt  # mm per second (negative)
+                        seconds_to_target = int((acc_target - cur_acc) / slope)
+                        # Also need min_duration to elapse
+                        seconds_to_min_dur = max(0, dur_target - elapsed)
+                        eta_seconds = max(seconds_to_target, seconds_to_min_dur)
+                        if eta_seconds < 60:
+                            eta_str = f"~{eta_seconds}s"
+                        elif eta_seconds < 3600:
+                            eta_str = f"~{eta_seconds // 60}m {eta_seconds % 60}s"
+                        else:
+                            eta_str = (
+                                f"~{eta_seconds // 3600}h {(eta_seconds % 3600) // 60}m"
+                            )
+                    elif cur_acc <= acc_target:
+                        # Accuracy already met — only waiting on min duration
+                        seconds_to_min_dur = max(0, dur_target - elapsed)
+                        eta_str = (
+                            f"~{seconds_to_min_dur}s (duration)"
+                            if seconds_to_min_dur > 0
+                            else "any moment"
+                        )
+                svin_eta_label.text = f"ETA: {eta_str}"
 
                 # Update chart
                 acc_val = max(progress.mean_accuracy_mm, 1.0)
@@ -1063,6 +1249,8 @@ def survey_page() -> None:
         refresh_btn.on_click(lambda: _refresh_ports())
         reload_device_btn.on_click(_reload_device_data)
         svin_start_btn.on_click(_confirm_start_survey)
+        svin_cancel_btn.on_click(_confirm_cancel_survey)
+
         fb_edit_btn.on_click(lambda: _enter_edit_mode())
         fb_cancel_btn.on_click(lambda: _cancel_edit_mode())
         fb_commit_btn.on_click(_commit_edit)

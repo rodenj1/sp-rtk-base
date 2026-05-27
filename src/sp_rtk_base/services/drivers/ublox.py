@@ -220,10 +220,20 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     def configure_survey_in(self, config: SurveyInConfig) -> None:
+        # Step 1: disable TMODE first.  Without this, if the receiver
+        # was previously flashed with TMODE=1 (survey-in) or TMODE=2
+        # (fixed) the new survey parameters are accepted but the
+        # survey never restarts — the receiver silently keeps using
+        # the *previous* survey state (or fixed-base coordinates) and
+        # NAV-SVIN never reports active=True.  This was the root cause
+        # of the "Start survey-in does nothing" bug — see
+        # memory-bank/progress.md 2026-05-27 entry.
+        self._send_cfg_valset([("CFG_TMODE_MODE", 0)], layer=1)
+        # Step 2: write the new survey-in parameters and enable mode.
         cfg_data = [
-            ("CFG_TMODE_MODE", 1),  # Survey-in mode
             ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
             ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm),
+            ("CFG_TMODE_MODE", 1),  # Survey-in mode (last so params land first)
         ]
         self._send_cfg_valset(cfg_data, layer=1)  # RAM only
         logger.info(
@@ -232,7 +242,18 @@ class UbloxDriver(GpsReceiverDriver):
             config.accuracy_limit_mm,
         )
 
+    def disable_base_mode(self) -> None:
+        """Disable TMODE on the receiver (CFG_TMODE_MODE=0).
+
+        Used to cancel an in-progress survey-in or clear a fixed-base
+        configuration.  Applied to RAM only — call ``save_to_flash()``
+        afterwards if the change should persist.
+        """
+        self._send_cfg_valset([("CFG_TMODE_MODE", 0)], layer=1)
+        logger.info("Base mode disabled (TMODE=0)")
+
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
+
         # u-blox uses degrees * 1e-7 for lat/lon in integer form
         lat_hp = int(config.latitude * 1e7)
         lon_hp = int(config.longitude * 1e7)

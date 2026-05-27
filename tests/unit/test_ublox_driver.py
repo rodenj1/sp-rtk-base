@@ -290,10 +290,13 @@ class TestUbloxDriverConfiguration:
         mock_serial_cls.return_value = ser
 
         reader = MagicMock()
-        # First call: MON-VER, then ACK for config
+        # configure_survey_in sends TWO CFG-VALSET messages now (first
+        # to disable TMODE, then to set the new params + enable) so we
+        # need ACKs for both.
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),
+            (b"", _make_ack_response()),  # ACK for disable TMODE
+            (b"", _make_ack_response()),  # ACK for survey-in params
         ]
         mock_reader_cls.return_value = reader
 
@@ -307,14 +310,20 @@ class TestUbloxDriverConfiguration:
         config = SurveyInConfig(min_duration_seconds=300, accuracy_limit_mm=40000)
         driver.configure_survey_in(config)
 
-        mock_ubx_msg.config_set.assert_called_once()
-        call_args = mock_ubx_msg.config_set.call_args
-        cfg_data = call_args[0][2]
-        # Verify the keys are in the config
-        keys = [k for k, _ in cfg_data]
+        # Two CFG-VALSET calls: disable first, then enable survey-in.
+        assert mock_ubx_msg.config_set.call_count == 2
+        first_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
+        second_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
+        # First call must be the disable step
+        assert first_cfg == [("CFG_TMODE_MODE", 0)]
+        # Second call must contain the new params and re-enable
+        keys = [k for k, _ in second_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys
         assert "CFG_TMODE_SVIN_ACC_LIMIT" in keys
+        # TMODE_MODE must be set to 1 (survey-in) in the second message
+        mode_vals = [v for k, v in second_cfg if k == "CFG_TMODE_MODE"]
+        assert mode_vals == [1]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

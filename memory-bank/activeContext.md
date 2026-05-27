@@ -1,6 +1,137 @@
 # Active Context
 
-## Latest Change: Bluetooth Scan Duration — UI Dropdown + Longer Default (2026-05-27)
+## Latest Change: Survey-In Progress Visibility + Cancel Button (2026-05-27)
+
+### Symptom (operator report)
+> "When you run survey-in, there is no status of the survey process.
+> It would be really nice if there could be some progress shown in
+> the UI and ability to cancel."
+
+The Survey-In page on `/survey` had two distinct UX gaps that combined into a single "is it doing anything?" moment for the operator:
+
+1. The `svin_progress_card` was hidden until **after** `await svc.configure_survey_in(...)` returned successfully. If the receiver was previously flashed with `TMODE=FIXED` (mode 2), the second `CFG-VALSET` was silently a no-op on the receiver — the survey **never started**, no progress arrived, but the UI also showed nothing because the toast ("Survey-in started") only fired on the no-op success path. End result: blank card, blank chart, blank labels — looked completely frozen.
+2. There was no way to abort. Once a survey was actually running (e.g. a 24-hour wall-clock survey) the only way to stop it was to disconnect the GPS or reload the page, neither of which actually cleared TMODE on the device.
+
+### Three-layer fix (driver → service → UI)
+
+**Driver layer** — `src/sp_rtk_base/services/drivers/`
+- New abstract method `GpsReceiverDriver.disable_base_mode()` on the ABC. Required for any future driver, not just ublox.
+- `UbloxDriver.disable_base_mode()` writes a single CFG-VALSET with `CFG_TMODE_MODE=0` (RAM layer) and waits for ACK.
+- `UbloxDriver.configure_survey_in()` was reworked into a **two-step VALSET sequence**: (1) write `CFG_TMODE_MODE=0` and wait for ACK, then (2) write the new `SVIN_MIN_DUR` + `SVIN_ACC_LIMIT` + `CFG_TMODE_MODE=1` and wait for ACK. This is the **root cause** fix — a TMODE state change requires the receiver to see the mode-zero transition first; back-to-back mode-set commands without an intermediate disable get coalesced and the survey clock never restarts.
+- `FakeGpsDriver.disable_base_mode()` resets the in-memory state machine (mode → DISABLED, survey clock → None, accuracy → 0). Used by both unit and e2e tests.
+
+**Service layer** — `src/sp_rtk_base/services/device_service.py`
+- New `DeviceService.cancel_survey_in()` (async) — wraps the driver call with the same relay-running guard used everywhere else (`set_relay_check`), restores state to `CONNECTED` on both success and failure paths so the UI never gets stuck in `CONFIGURING`.
+
+**API layer** — `src/sp_rtk_base/api/device.py`
+- New `POST /api/device/cancel-survey-in` → `DeviceActionResponse`. Returns `409` if no driver / not connected / relay running (matches the rest of `device.py`'s convention).
+
+**UI layer** — `src/sp_rtk_base/ui/pages/survey.py`
+- The `svin_progress_card` is now revealed **synchronously**, the instant the user confirms "Start Survey", before the configure call returns. The card initialises to a "Configuring receiver…" status with all metric labels visible but at neutral values ("—", "0s"), so the operator always sees *something*.
+- An in-card `svin_error_label` (red, persistent) was added to surface configure failures. Previously the only error feedback was a `ui.notify(..., type='negative')` toast that fades after ~6s and is easy to miss on a head-down install. The toast is still emitted for consistency, but the in-card banner is the primary signal.
+- New **Cancel Survey** button (negative outline, `stop` icon) appears beside Start whenever a survey is active. Click → confirmation dialog ("Keep Surveying" / "Cancel Survey") → calls the new `cancel_survey_in()` on the service → status flips to "Cancelled by operator" + Start button is restored.
+- Two new live readouts in the progress card:
+  - **`% to target accuracy`** — geometric ratio `log(start/cur) / log(start/target)` clamped to [0, 99%] before duration completion; "100% (target reached)" when accuracy meets the limit. Geometric instead of linear because convergence is roughly exponential (mean accuracy halves every few minutes early on, then plateaus).
+  - **ETA** — linear extrapolation from a rolling 30-second sample window of `(elapsed_s, accuracy_mm)`. Falls back to "—" until two samples exist and the slope is meaningfully negative (`da < -0.1 mm/s`). When accuracy is already under target, ETA shows the remaining `min_duration` seconds. Both gates (`min_duration` AND `acc_limit`) must be met before survey completes — the displayed ETA is `max(seconds_to_target, seconds_to_min_dur)`.
+
+### Why "disable-then-set" is the *real* fix
+The Survey-In TMODE state machine on the ZED-F9P is edge-triggered, not level-triggered: it only re-arms the survey clock + observation counter when it sees `TMODE_MODE` transition `0 → 1`. If TMODE was already `1` or `2`, writing `1` plus new SVIN_MIN_DUR/ACC_LIMIT is a no-op — the receiver ACKs the VALSET (so the driver sees success) but neither the active survey nor any subsequent NAV-SVIN poll reflects the new params. This is documented obliquely in the F9P Integration Manual's TMODE section but is easy to miss because the ACK lies. The intermediate `TMODE_MODE=0` write forces the transition, and the second VALSET then arms cleanly.
+
+This is also why the cancel button needs to write `TMODE_MODE=0` (and **not** flash it) — we want the next `configure_survey_in()` to be able to re-arm without needing a power cycle.
+
+### Test coverage added — 12 new unit + 2 new e2e tests
+- `tests/unit/test_cancel_survey_in.py` (new file, 12 tests):
+  - `TestFakeDriverDisableBaseMode` (2) — fake driver disable resets state; fails when disconnected.
+  - `TestUbloxDisableBaseMode` (3) — disable writes `CFG_TMODE_MODE=0`; `configure_survey_in` writes the disable step **first** then the new params (regression test for the silent-no-op root cause); disconnected raises.
+  - `TestDeviceServiceCancelSurveyIn` (4) — delegates to driver; raises when no driver; propagates driver errors while restoring `CONNECTED` state; blocked when relay running.
+  - `TestCancelSurveyInEndpoint` (3) — `POST /api/device/cancel-survey-in` returns 409 without driver, 409 when relay is running, 200 + transitions FakeDriver from SURVEY_IN → DISABLED on success.
+- `tests/unit/test_ublox_driver.py::test_configure_survey_in` — updated the existing test to expect the **two-VALSET sequence** (disable → enable) rather than one. Asserts the first call is `[("CFG_TMODE_MODE", 0)]` and the second contains all three new params with `TMODE_MODE=1`.
+- `tests/unit/test_driver_registry.py::StubDriver` — added a `disable_base_mode()` stub so the registry test driver satisfies the new ABC.
+- `tests/e2e/test_survey_cancel.py` (new file, 2 tests):
+  - `test_progress_card_visible_immediately_after_start` — regression: card must be visible within 3s of clicking Start Survey, with `% to target` and `ETA` labels rendered.
+  - `test_cancel_survey_in_flow` — full Start → Cancel Survey → "Keep Surveying" (no-op) → Cancel Survey → confirm → REST flips to `active=False` → UI shows "Cancelled by operator" → Start button restored.
+
+### Files touched
+- `src/sp_rtk_base/services/drivers/base.py` — added `disable_base_mode()` abstract method.
+- `src/sp_rtk_base/services/drivers/ublox.py` — added `disable_base_mode()`; reworked `configure_survey_in()` into two VALSETs.
+- `src/sp_rtk_base/services/drivers/fake.py` — added `disable_base_mode()`.
+- `src/sp_rtk_base/services/device_service.py` — added `cancel_survey_in()`.
+- `src/sp_rtk_base/api/device.py` — added `POST /cancel-survey-in` route.
+- `src/sp_rtk_base/ui/pages/survey.py` — synchronous progress reveal, in-card error banner, Cancel button + confirmation dialog, ETA + %-to-target math, two-step state restore on cancel.
+- `tests/unit/test_cancel_survey_in.py` — new.
+- `tests/unit/test_ublox_driver.py` — updated `test_configure_survey_in` for the new two-VALSET contract.
+- `tests/unit/test_driver_registry.py` — StubDriver gains `disable_base_mode`.
+- `tests/e2e/test_survey_cancel.py` — new.
+
+### Verification
+- `pytest tests/unit -q --no-cov` → **582 passed, 1 warning** (12 new + the updated ublox test passing).
+- New unit module run standalone: `pytest tests/unit/test_cancel_survey_in.py -v` → 12 passed in 0.26s.
+- Ruff / format pending CI; no Pylance errors in any of the touched files.
+
+### Follow-ups (deliberately deferred)
+1. The e2e tests in `tests/e2e/test_survey_cancel.py` need the live server + Playwright stack from `tests/e2e/conftest.py`. They are marked `@pytest.mark.e2e` so they only run under the explicit e2e selector — same as every other e2e file in this repo.
+2. The "% to target accuracy" math is geometric but assumes the first observation's accuracy is the worst (i.e. convergence is monotonic). On a noisy antenna with periodic jumps this can briefly read *backwards*. The label clamps to [0, 99%] so we never *show* negative progress, but the displayed number can wobble. Could be smoothed with an EMA in a future polish pass.
+3. Persistent "ETA reliability" warning when slope is too noisy to extrapolate — currently we just show "—". A more informative "stabilising…" hint would be nicer.
+4. The Cancel endpoint does **not** save-to-flash the TMODE=0 write. That's deliberate — we want the fixed-base position (if any) saved to flash to survive a power-cycle, so the operator can come back later and restart a survey without losing the previous good fix. If you actually want to wipe the saved position, that's a separate explicit operator action (and we don't have UI for it yet).
+
+---
+
+## Previous Change: Installer Permission Fix — Config Writable by Service User (2026-05-27)
+
+
+### Symptom
+Operator hit `Error saving input: [Errno 13] Permission denied: '/etc/sp-rtk-base/config.yaml'` from the **Input** page (Bluetooth settings save) on a freshly-installed Raspberry Pi. The service was running, the page rendered, but every web-UI write to the YAML failed.
+
+### Root cause — `deploy/install.sh` Step 7
+The original Step 7 wrote the default config and then did:
+```bash
+chown "root:${SERVICE_USER}" "$default_cfg"   # owner=root, group=sp-rtk-base
+chmod 0640 "$default_cfg"                      # rw- r-- ---
+```
+That gives the service user **group-read-only**, but the systemd unit runs the app as `User=sp-rtk-base Group=sp-rtk-base`. `ConfigService.save_config()` does `self._config_path.write_text(...)`, which needs **owner-write**, so the kernel returns `EACCES`. Pure setup bug — runtime code is fine.
+
+A second, related issue lurked in Step 3: `CONFIG_DIR` (`/etc/sp-rtk-base`) was created `root:sp-rtk-base 0750`, i.e. not group-writable either. Current in-place `write_text` doesn't notice because it doesn't need dir-write, but the moment we move to atomic `tempfile → os.replace` saves (which we should, for crash safety) it would EACCES again. Fixed in the same pass.
+
+### Fix
+- **`deploy/install.sh` Step 3** — `install -d` for `CONFIG_DIR` now uses `-o "$SERVICE_USER" -g "$SERVICE_USER"`. Followed by an unconditional `chown $SERVICE_USER:$SERVICE_USER $CONFIG_DIR` + `chmod 0750` that **heals re-runs** on hosts that already have the broken `root:sp-rtk-base` directory from the v0.2.x installer.
+- **`deploy/install.sh` Step 7** — the post-heredoc `chown/chmod` block is no longer inside the `if [[ ! -e "$default_cfg" ]]` branch. It now runs **unconditionally** at the end of Step 7 with `chown "${SERVICE_USER}:${SERVICE_USER}"` (not `root:${SERVICE_USER}`) + `chmod 0640`. Re-running the installer on a broken host fixes the live file in place.
+- **systemd unit** — no change; `ReadWritePaths=/var/lib/sp-rtk-base /etc/sp-rtk-base` was already correct.
+
+### Live-Pi heal one-liner (for operators who can't wait for a re-install)
+```bash
+sudo chown sp-rtk-base:sp-rtk-base /etc/sp-rtk-base /etc/sp-rtk-base/config.yaml
+sudo chmod 0750 /etc/sp-rtk-base
+sudo chmod 0640 /etc/sp-rtk-base/config.yaml
+sudo systemctl restart sp-rtk-base
+```
+Re-running `deploy/install.sh` later converges on the same end state — no conflict.
+
+### Regression tests
+New `TestInstallerConfigPermissions` class in `tests/unit/test_install_default_config.py` (4 tests) parses `deploy/install.sh` and asserts:
+1. The config-file `chown` line targets `${SERVICE_USER}:${SERVICE_USER}` (and the broken `root:${SERVICE_USER}` form is absent).
+2. The `chmod` line on the config file is `0640` or `0660` (owner-writable).
+3. The `install -d` line for `$CONFIG_DIR` owns the directory to `${SERVICE_USER}:${SERVICE_USER}`.
+4. A re-run-heal `chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"` is present.
+
+These pin the fix so a future "tighten permissions" patch can't silently reintroduce the EACCES.
+
+### Verification
+- `bash -n deploy/install.sh` → syntax OK.
+- `pytest tests/unit/test_install_default_config.py -v --no-cov` → **6 passed** (2 pre-existing schema-drift tests + 4 new permission tests).
+- `pytest tests/unit -q` → **570 passed, 92.91 % coverage** (gate 90 %; was 566 / 92.91 %).
+- `ruff check` + `ruff format` clean.
+
+### Files touched
+- modified: `deploy/install.sh` (Step 3 dir ownership + Step 7 heal-on-re-run chown/chmod)
+- modified: `tests/unit/test_install_default_config.py` (added `TestInstallerConfigPermissions`)
+- modified: `memory-bank/activeContext.md`, `memory-bank/progress.md`
+
+### Follow-up (not blocking)
+Switch `ConfigService.save_config()` to atomic `tempfile → fsync → os.replace`. Requires `$CONFIG_DIR` to be writable by the service user — Part A above already does that. Protects against half-written YAML on a crash mid-save.
+
+---
+
+## Previous Change: Bluetooth Scan Duration — UI Dropdown + Longer Default (2026-05-27)
 
 ### Summary
 While investigating a "BlueZ is still holding the GPS" report, traced

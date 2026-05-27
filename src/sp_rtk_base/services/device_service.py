@@ -259,6 +259,27 @@ class DeviceService:
             self._last_error = str(exc)
             raise
 
+    async def cancel_survey_in(self) -> None:
+        """Cancel an in-progress survey-in by disabling TMODE.
+
+        Sends ``CFG_TMODE_MODE=0`` to the receiver via the driver.
+        Safe to call when no survey is running — the receiver will
+        simply remain in disabled mode.
+
+        Raises:
+            RuntimeError: If not connected or relay is running.
+        """
+        driver = self._require_connected()
+        self._state = DeviceConnectionState.CONFIGURING
+        try:
+            await asyncio.to_thread(driver.disable_base_mode)
+            self._state = DeviceConnectionState.CONNECTED
+            logger.info("Survey-in cancelled (TMODE disabled)")
+        except Exception as exc:
+            self._state = DeviceConnectionState.CONNECTED
+            self._last_error = str(exc)
+            raise
+
     async def configure_fixed_base(self, config: FixedBaseConfig) -> None:
         """Configure the receiver for fixed-position mode.
 

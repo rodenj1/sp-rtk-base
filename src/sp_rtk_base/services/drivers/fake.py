@@ -291,6 +291,23 @@ class FakeGpsDriver(GpsReceiverDriver):
             accuracy_mm=config.accuracy_mm,
         )
 
+    def disable_base_mode(self) -> None:
+        """Disable base mode (e.g. cancel an in-progress survey-in).
+
+        Resets state to ``BaseMode.DISABLED`` and clears the
+        survey-in clock so subsequent ``get_survey_in_status()`` calls
+        report ``active=False, valid=False``.
+        """
+        self._ensure_connected()
+        self._survey_started_at = None
+        self._base_config = CurrentBaseConfig(
+            mode=BaseMode.DISABLED,
+            latitude=0.0,
+            longitude=0.0,
+            altitude_m=0.0,
+            accuracy_mm=0,
+        )
+
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
         """Store the simple RTCM message config in memory."""
         self._ensure_connected()

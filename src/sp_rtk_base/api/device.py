@@ -149,6 +149,25 @@ async def configure_survey_in(
     )
 
 
+@router.post("/cancel-survey-in", response_model=DeviceActionResponse)
+async def cancel_survey_in(
+    svc: DeviceService = Depends(get_device_service),
+) -> DeviceActionResponse:
+    """Cancel an in-progress survey-in by disabling TMODE.
+
+    Sends ``CFG_TMODE_MODE=0`` to the receiver.  Safe to call even
+    when no survey is running (the receiver stays in disabled mode).
+
+    Returns 409 if not connected or the relay is running.
+    """
+    try:
+        await svc.cancel_survey_in()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return DeviceActionResponse(status="ok", message="Survey-in cancelled")
+
+
 @router.post("/configure/fixed-base", response_model=DeviceActionResponse)
 async def configure_fixed_base(
     config: FixedBaseConfig,

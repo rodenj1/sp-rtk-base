@@ -115,6 +115,18 @@ class GpsReceiverDriver(abc.ABC):
         """
 
     @abc.abstractmethod
+    def disable_base_mode(self) -> None:
+        """Disable base station mode (TMODE → disabled).
+
+        Used to abort an in-progress survey-in or to clear a fixed-base
+        configuration.  Equivalent to ``CFG_TMODE_MODE=0`` on u-blox.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If configuration fails.
+        """
+
+    @abc.abstractmethod
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
         """Enable/disable RTCM message outputs on the receiver.
 

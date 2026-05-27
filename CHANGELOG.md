@@ -11,6 +11,56 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.2.1 (2026-05-27)
+
+
+- feat(e2e): add Playwright button-click tests for every page
+- Add FakeGpsDriver (env-gated on SP_RTK_BASE_FAKE_GPS=1) plus
+four new e2e test files driving every actionable button on the
+Outputs, Survey, Advanced-GPS, and Input pages.  Tests assert
+the Quasar toast in the real browser AND verify the side-effect
+via REST so UI handler-wiring regressions cannot silently slip
+through.
+- - src/sp_rtk_base/services/drivers/fake.py: in-memory driver
+  implementing all 17 GpsReceiverDriver methods with realistic
+  RTK-fixed fixture data (100% unit coverage, 45 new tests).
+- tests/e2e/: 12 new tests across 4 files (outputs/survey/gps-
+  config/input button click flows), plus connect/disconnect
+  lifecycle + GPS data-flow REST suites.  E2E suite: 27 -> 39.
+- docs/e2e-testing.md: architecture + gotchas + per-file
+  coverage table.
+- Unit: 530 passed, 92.17% coverage.  E2E: 39 passed in ~35s.
+- fix(deploy): add plugdev to service supplementary groups for USB-serial
+- Raspberry Pi OS Bookworm + recent udev rules assign FTDI / CP210x / CH340 USB-serial adapters to root:plugdev rather than root:dialout.  A service that was only in dialout therefore got EACCES on /dev/ttyUSB0 even though the historic 'add user to dialout' fix was correctly applied:
+-   crw-rw----+ 1 root plugdev 188, 0 /dev/ttyUSB0
+- Reported in the field as 'Connection failed: Failed to open /dev/ttyUSB0: [Errno 13] Permission denied' when selecting a u-blox receiver on the Input page.
+- * deploy/sp-rtk-base.service - add plugdev to SupplementaryGroups (plus inline comments explaining what each group is for)
+- * deploy/install.sh - add plugdev to the usermod -aG loop and update the success log line
+- * docs/deployment-pi.md - update the symptom table entry, the systemd-unit snippet, the 'what gets configured' bullet, and the top-of-doc paragraph to all mention plugdev
+- Live-Pi recovery: sudo usermod -aG plugdev sp-rtk-base && sudo systemctl restart sp-rtk-base
+- feat(deploy): enable Bluetooth at install time + troubleshooting docs
+- Raspberry Pi OS Bookworm ships with Bluetooth rfkill-soft-blocked.  Combined with systemd-rfkill restoring state across reboots and (on NM 1.42+) NetworkManager re-asserting an rfkill block from its own state file, a fresh Pi will silently refuse Bluetooth scans even though bluez and the hci0 adapter look healthy.  The Input -> Bluetooth scan in sp-rtk-base then fails with org.bluez.Error.NotReady.
+- * deploy/install.sh - new Step 7.6 runs rfkill unblock bluetooth || true and sets BluetoothEnabled=true in /var/lib/NetworkManager/NetworkManager.state (creating the key if missing), then reloads NetworkManager.  Both are best-effort and a no-op when rfkill / NetworkManager aren't present, so the installer still works on non-Pi Debian hosts.
+- * docs/deployment-pi.md - new four-step 'Bluetooth scan finds nothing' troubleshooting entry covering: rfkill + saved-state diagnosis, the unblock + NetworkManager.state fix the installer applies, an rfkill-bluetooth=ignore NetworkManager drop-in (fleet-bulletproof fallback documented at networkmanager.dev/docs/rfkill/), and the rfkill.default_state=1 kernel-cmdline last resort.  Also added a row to the existing symptom table that points at the new section.
+- Verified live on larson-base (Pi 4): scan returns SetDiscoveryFilter success, rfkill list bluetooth shows Soft blocked: no, and /var/lib/systemd/rfkill/*bluetooth* contains no :1 entries after a full reboot cycle.
+- fix(deploy): correct installer default config schema + add drift guard
+- Production crash on 2026-05-26: deploy/install.sh wrote a default config with the wrong field names (input.source_type / tcp_host / tcp_port) which failed AppConfig validation and prevented the service from starting.
+- * deploy/install.sh - heredoc now emits a schema-correct, minimal default (settings.metrics_enabled, destinations: [], base_positions: []).  No input: block — the operator picks one from the Input page on first launch and the YAML is rewritten then.
+- * deploy/install.sh - new Step 7.5 runs ConfigService().load_config() as the service user with SP_RTK_BASE_CONFIG pointed at the default file and dies with a clear error if validation fails, so future schema drift is caught at install time.
+- * tests/unit/test_install_default_config.py - new regression test extracts the heredoc body from deploy/install.sh with a regex, parses it as YAML, and round-trips it through AppConfig.model_validate(...).  Asserts metrics_enabled is true, destinations + base_positions are empty, and input is None.  Catches drift in CI on any future PR that touches either the installer or the model.
+- * docs/deployment-pi.md - Default-config snippet updated to match the new installer output; added a note explaining why there is intentionally no input: block.
+- feat(deploy): add Raspberry Pi systemd installer + runbook
+- Production deployment kit for Pi / Debian targets:
+- * deploy/install.sh - idempotent installer.  Creates sp-rtk-base system user (dialout + bluetooth groups, no shell), /opt/sp-rtk-base/venv/, /etc/sp-rtk-base/config.yaml (0640, root:sp-rtk-base), /var/lib/sp-rtk-base/ (0750), pip-installs from PyPI, symlinks console scripts into /usr/local/bin/, drops the systemd unit, enables + starts.  Re-running upgrades in place; existing config is never overwritten.
+- * deploy/sp-rtk-base.service - hardened systemd unit with NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp, ReadWritePaths scoped to /etc + /var/lib.  Reads SP_RTK_BASE_CONFIG from /etc/sp-rtk-base/config.yaml.
+- * deploy/upgrade.sh - one-line pip install -U + systemctl restart, prints old/new version.
+- * deploy/uninstall.sh - interactive (or --purge / --keep-data) removal of service + venv + symlinks, optionally config + state + user.
+- * docs/deployment-pi.md - full runbook: filesystem layout, day-2 ops, backup/restore tar recipe, nginx reverse-proxy snippet, ufw rule, sigstore wheel verification, troubleshooting table, fleet management notes.
+- * README.md - Quick Start rewritten.  Production install (Pi systemd) is now the lead path; pipx / uv tool covers single-user workstations; from-source moved to a developer note.
+- docs(memory-bank): record v0.2.0 PyPI release milestone
+- First successful end-to-end release: tag -> verify -> lint -> test matrix -> build -> publish (Trusted Publisher OIDC) -> sigstore -> GitHub Release assets.
+- Also documents three workflow-discovered fixes that landed during the release (CODECOV_TOKEN switch, CHANGELOG.md gitleaks allowlist, SemVer-regex version test) and captures the per-release recipe for future bumps.
+
 ## v0.2.0 (2026-05-20)
 
 

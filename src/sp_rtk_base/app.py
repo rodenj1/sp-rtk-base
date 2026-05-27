@@ -2,6 +2,13 @@
 
 Creates the shared ASGI application with both REST API endpoints
 and NiceGUI browser UI pages on the same server.
+
+This module also owns the application's **lifecycle hooks**:
+``startup_services()`` and ``shutdown_services()``.  These are
+exposed at module scope (rather than nested closures inside
+:func:`init_app`) so the application's lifecycle can be exercised
+by unit tests and reused by signal handlers in :mod:`sp_rtk_base.main`
+without going through NiceGUI's ``app.on_shutdown`` machinery.
 """
 
 # pyright: reportUnknownMemberType=false
@@ -9,6 +16,8 @@ and NiceGUI browser UI pages on the same server.
 # Starlette's handler signature. This is a third-party library limitation.
 
 from __future__ import annotations
+
+import logging
 
 from fastapi import FastAPI
 
@@ -21,6 +30,13 @@ from sp_rtk_base.api.health import router as health_router
 from sp_rtk_base.api.metrics import router as metrics_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
+
+logger = logging.getLogger(__name__)
+
+# Per-driver disconnect budget on shutdown.  Bluetooth's BlueZ teardown
+# can take a few seconds on a healthy bus and ~ten on a flaky one; we
+# don't want a stuck driver to hold up the rest of shutdown.
+DEVICE_DISCONNECT_TIMEOUT_SECONDS: float = 10.0
 
 
 def create_api_app() -> FastAPI:
@@ -43,6 +59,82 @@ def create_api_app() -> FastAPI:
     api.include_router(config_router)
     api.include_router(device_router)
     return api
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle hooks (module-scope so they can be unit-tested directly)
+# ---------------------------------------------------------------------------
+
+
+async def startup_services() -> None:
+    """Initialize services on application startup.
+
+    Thin wrapper around :func:`sp_rtk_base.services.init_services` that
+    is registered as NiceGUI's startup hook.  Kept at module scope so
+    tests can call it without spinning up NiceGUI.
+    """
+    from sp_rtk_base.services import init_services
+
+    await init_services()
+
+
+async def shutdown_services() -> None:
+    """Gracefully stop the GPS device, relay engine, and event bridge.
+
+    Order of operations matters:
+
+    1. **Device first** — release the serial / Bluetooth handle while
+       the event loop is still healthy.  If we wait until the relay
+       and event bridge are already torn down, the relay engine may
+       still hold the same serial port (Bug D scenario) and the
+       driver's ``disconnect()`` will race the kernel reclaiming the
+       fd.
+    2. **Event bridge** — stop forwarding before the relay shuts down
+       so no events fan out into a half-stopped subscriber.
+    3. **Relay engine** — last, so any in-flight RTCM chunk finishes
+       being distributed to destinations before the destination
+       writers are cancelled.
+
+    Each step is wrapped in its own ``try/except`` so a failure in one
+    cannot prevent the others from running.  The device disconnect is
+    also wrapped in :func:`asyncio.wait_for` with a per-driver budget
+    (:data:`DEVICE_DISCONNECT_TIMEOUT_SECONDS`) so a stuck Bluetooth
+    teardown can never hold up service shutdown indefinitely.
+    """
+    import asyncio
+
+    from sp_rtk_base.services import device_service, event_bridge, relay_service
+
+    logger.info("Application shutting down — stopping services…")
+
+    # 1. Device first — release the GPS handle (Bug B).
+    if device_service.is_available and device_service.is_connected:
+        try:
+            await asyncio.wait_for(
+                device_service.disconnect(),
+                timeout=DEVICE_DISCONNECT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Device disconnect exceeded %.1fs budget; proceeding with shutdown",
+                DEVICE_DISCONNECT_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("Error during device disconnect")
+
+    # 2. Event bridge.
+    try:
+        event_bridge.stop()
+    except Exception:
+        logger.exception("Error stopping event bridge")
+
+    # 3. Relay engine.
+    try:
+        await relay_service.stop_relay()
+    except Exception:
+        logger.exception("Error stopping relay engine")
+
+    logger.info("Services stopped")
 
 
 def init_app() -> None:
@@ -72,32 +164,5 @@ def init_app() -> None:
     # Reference the modules to prevent "unused import" removal
     _ = (_dashboard, _gps_config, _input, _outputs, _settings, _survey)
 
-    # Schedule service initialization on startup
-    async def _startup() -> None:
-        from sp_rtk_base.services import init_services
-
-        await init_services()
-
-    async def _shutdown() -> None:
-        """Gracefully stop relay engine and event bridge on server shutdown."""
-        import logging
-
-        from sp_rtk_base.services import event_bridge, relay_service
-
-        _logger = logging.getLogger(__name__)
-        _logger.info("Application shutting down — stopping services…")
-
-        try:
-            event_bridge.stop()
-        except Exception:
-            _logger.exception("Error stopping event bridge")
-
-        try:
-            await relay_service.stop_relay()
-        except Exception:
-            _logger.exception("Error stopping relay engine")
-
-        _logger.info("Services stopped")
-
-    app.on_startup(_startup)
-    app.on_shutdown(_shutdown)
+    app.on_startup(startup_services)
+    app.on_shutdown(shutdown_services)

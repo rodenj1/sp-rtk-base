@@ -29,7 +29,8 @@ dependencies = [
     "pyserial>=3.5",
     "pyubx2>=1.2.43",
     "pyyaml>=6.0.3",
-    "sp_rtk_base_relay>=2.1.1",
+    "sp_rtk_base_relay>=2.1.2",
+
     "uvicorn>=0.42.0",
 ]
 

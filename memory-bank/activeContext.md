@@ -1,6 +1,97 @@
 # Active Context
 
-## Latest Change: Button-Click E2E Tests for Every Page (2026-05-27)
+## Latest Change: Bluetooth Scan Duration — UI Dropdown + Longer Default (2026-05-27)
+
+### Summary
+While investigating a "BlueZ is still holding the GPS" report, traced
+the failure mode to a **too-short discovery window** rather than a
+stuck-connection bug. The Input page hard-coded an 8-second scan and
+the relay's `BluetoothConfig.scan_timeout` defaulted to 10 s — both
+shorter than the typical 1-2 s advertising interval of the operator's
+ZED-F9P (`RTK_BASE_DAE5`, `00:06:66:B9:DA:E5`). Field probes confirmed
+BlueZ had **zero** paired/known devices, no `rfcomm`/`l2cap` sockets
+were open, and a fresh scan finds the receiver immediately; the
+process simply wasn't scanning long enough.
+
+This change bumps the default scan to **20 s**, exposes a dropdown
+with **20 / 30 / 45 / 60 s** presets, and pushes the same default
+into the persisted `InputConfig.scan_timeout` so the relay engine
+gets the longer window on auto-start as well.
+
+### What landed
+- **`src/sp_rtk_base/ui/pages/input.py`** — new module constants
+  `DEFAULT_BT_SCAN_DURATION_SECONDS = 20` and
+  `BT_SCAN_DURATIONS_SECONDS = [20, 30, 45, 60]`. The "Scan for
+  Devices" row now has a "Scan duration" combobox that defaults to
+  20 s and is read on every click; the value is forwarded to
+  `_discover_bluetooth_devices(mgr, scan_seconds)` (new param,
+  defaulted + clamped to positive). Status label now interpolates
+  the chosen duration (`Scanning (Xs)...`).
+- **`src/sp_rtk_base/models/config_models.py`** — new module
+  constant `DEFAULT_BT_SCAN_TIMEOUT_SECONDS = 20` and
+  `InputProfile.to_relay_config()` now injects `scan_timeout = 20`
+  into the relay-side config dict when `source == "bluetooth"` and
+  the persisted profile didn't pin its own value. The original
+  `self.config` is **not** mutated (test enforces this).
+- **`tests/unit/test_config_models.py`** — 4 new tests on
+  `TestInputProfile` covering injection, explicit-override
+  preservation, no-mutation, and non-bluetooth no-op.
+- **`tests/unit/test_input_page_bt_scan.py`** — new file with 7
+  tests guarding the dropdown constants (default ≥ 20, default
+  is in the option list, sorted ascending, all positive ints,
+  30/45/60 presets all present) and the helper signature/clamp.
+
+### Why this is the right fix (and not a "disconnect bug")
+1. Live `bluetoothctl` showed no paired devices and no active
+   connections — there was nothing to disconnect from.
+2. `dbus-send` to `org.bluez.Manager.GetManagedObjects` returned
+   only the adapter — no `org.bluez.Device1` children, so BlueZ
+   itself wasn't holding the GPS.
+3. A direct `hcitool lescan` / `bluetoothctl scan on` found
+   `RTK_BASE_DAE5` within ~6 s on a quiet bus, ~18 s on a busy
+   one — exactly the window the old 8 s scan could miss.
+
+### Deferred (separate PRs, captured in progress.md "Known Issues")
+- **Bug A (relay-engine pkg, v2.1.2)** — `BluetoothInputSource.disconnect()`
+  closes the RFCOMM socket before unregistering the BlueZ
+  `org.bluez.Device1` proxy, which can leave the device in a
+  half-paired state if the process is `SIGKILL`-ed during the
+  window. Belongs in `sp-rtk-base-relay`, not this repo.
+- **Bug B** — `DeviceService` teardown doesn't currently get a
+  chance to call `driver.disconnect()` on `app._shutdown` because
+  the shutdown hook fires after the lifespan context has already
+  cancelled background tasks.
+- **Bug C** — `main.py` installs no `SIGTERM` / `SIGINT` / `SIGHUP`
+  handlers; on `systemctl stop` the relay's TaskGroup is cancelled
+  but the driver's cleanup coroutines don't complete before exit.
+- **Bug D** — `init_services()` doesn't pre-disconnect any
+  lingering serial/BT handles on startup. If a previous instance
+  exited uncleanly and the kernel hasn't released `/dev/rfcommN`
+  yet, the new instance will fail to open the source even though
+  the GPS itself is idle. A startup probe + force-release would
+  paper over both bugs above.
+
+### Test counts
+| Suite        | Tests | Time   |
+|--------------|-------|--------|
+| `tests/unit` | **541** (was 530) | ≈14 s |
+| `tests/e2e`  | 39   | ≈35 s  |
+
+Coverage of `src/sp_rtk_base/models/config_models.py` is **100 %**;
+total unit-suite coverage holds at **92.19 %** (well over the 90 %
+gate).
+
+### Files touched
+- modified: `src/sp_rtk_base/ui/pages/input.py`
+- modified: `src/sp_rtk_base/models/config_models.py`
+- modified: `tests/unit/test_config_models.py`
+- new: `tests/unit/test_input_page_bt_scan.py`
+- modified: `memory-bank/activeContext.md`, `memory-bank/progress.md`
+
+---
+
+## Previous Change: Button-Click E2E Tests for Every Page (2026-05-27)
+
 
 ### Summary
 Built on top of the FakeGpsDriver landed yesterday to add four new

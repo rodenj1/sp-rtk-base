@@ -2,7 +2,172 @@
 
 ## Recent Changes
 
-### 2026-05-27 — Button-Click E2E Tests Across Every Page 🆕
+### 2026-05-27 — Bug A Fixed & Published: `sp-rtk-base-relay` 2.1.2 🆕
+
+Bug A from the May 27 lifecycle pass shipped end-to-end the same day:
+fixed in the `sp-rtk-base-relay` package (branch
+`fix/bluetooth-disconnect-ordering`, merged via PR #7 as merge-commit
+`9dd0d7d`), tagged `v2.1.2` at relay-package commit `944b2f0`,
+published to PyPI via the OIDC Trusted-Publisher workflow on
+release `v2.1.2`.  This repo's pin was bumped from
+`sp_rtk_base_relay>=2.1.1` → `>=2.1.2` and `uv.lock` regenerated
+(now resolves `sp-rtk-base-relay==2.1.2`).
+
+
+- **Root cause** — `BluetoothInputSource.disconnect()` was closing the
+  local RFCOMM socket *first* and only then asking BlueZ to
+  disconnect (`org.bluez.Device1.Disconnect`).  If the process was
+  `SIGKILL`-ed between those two steps, the kernel released our fd
+  but BlueZ still held `Connected=true` on the device, so the next
+  startup either failed to bind the RFCOMM channel or had to scan +
+  re-pair to recover.  This is the residual cause of "the system is
+  still holding the Bluetooth connection" symptoms after an unclean
+  exit that the in-repo Bug B/C/D work could not address.
+
+- **Fix** — reorder `disconnect()` to:
+  1. Ask BlueZ to disconnect via `BluetoothManager.disconnect_device(mac)`
+  2. Close the local RFCOMM socket
+  3. Close the BluetoothManager (background event loop + D-Bus)
+
+  Each step is wrapped in its own `try/except`, so a failure in any
+  one cannot short-circuit the rest of the cleanup.
+
+- **Tests** — two new regression tests in
+  `packages/sp-rtk-base-relay/tests/unit/test_bluetooth_input.py`:
+  - `test_disconnect_calls_bluez_before_closing_socket` — pins the
+    interleaving via a shared event log across the manager + socket
+    mocks (`["bluez_disconnect", "socket_close", "manager_close"]`).
+  - `test_disconnect_proceeds_even_if_bluez_disconnect_raises` —
+    defence-in-depth: a BlueZ disconnect failure must NOT skip the
+    local-socket close.
+
+  Full relay-package suite: **1 145 / 1 145 passing, 89.69 % cov**
+  (up from 1 143 / 89.69 %).
+
+- **Upstream sanity check** — first as editable
+  (`uv pip install --refresh -e ./packages/sp-rtk-base-relay`),
+  then after PyPI publish as a registry install
+  (`uv lock --upgrade-package sp-rtk-base-relay && uv sync`).
+  Both paths: this repo's unit suite green at **566 / 566, 92.91 %
+  coverage** — no regressions.
+
+- **Release pipeline** — PR #7 merged via `--merge` (commit
+  `9dd0d7d`) so the tagged commit SHA `944b2f0` stays valid in
+  `main`'s history.  GitHub release `v2.1.2` triggered the
+  `release.yml` OIDC workflow which published the wheel + sdist
+  to PyPI and attached sigstore attestations to the GitHub
+  Release.  See <https://pypi.org/project/sp-rtk-base-relay/2.1.2/>.
+
+
+### 2026-05-27 — Bluetooth Lifecycle: Shutdown Disconnect + SIGHUP + Startup Recovery
+
+
+Closed the lifecycle gaps captured in the previous entry's "Known Issues"
+list (B, C, D) — bug A still needs work in the relay package and is
+tracked separately.  The root cause that prompted this work: when the
+process exits uncleanly, BlueZ can keep the RFCOMM channel leased to a
+ghost owner, so the next startup either fails outright or hangs waiting
+for a channel that's no longer being held by anything real.
+
+- **Bug B — `shutdown_services()` releases the GPS device first**
+  (`src/sp_rtk_base/app.py`).  Promoted the previously-nested
+  `_shutdown` closure to a module-level `shutdown_services()` so the
+  shutdown path is unit-testable without spinning up NiceGUI.  New
+  order: **device → event bridge → relay** (each in its own
+  `try/except`).  The device step is wrapped in
+  `asyncio.wait_for(..., timeout=DEVICE_DISCONNECT_TIMEOUT_SECONDS)`
+  (10 s) so a wedged BlueZ teardown can no longer block the rest of
+  shutdown.  `startup_services()` was extracted the same way.
+
+- **Bug C — SIGHUP joins the orderly-shutdown party**
+  (`src/sp_rtk_base/main.py`).  uvicorn already handles SIGINT/SIGTERM
+  (which calls our shutdown hook), so we only had to add SIGHUP.  The
+  new `_install_sighup_handler()` forwards SIGHUP into SIGTERM via
+  `os.kill(os.getpid(), signal.SIGTERM)`, so `systemctl reload` and
+  controlling-terminal hangups exercise the exact same teardown path
+  as `systemctl stop`.  No-op on Windows (no `SIGHUP`).
+
+- **Bug D — startup pre-disconnects a stale Bluetooth handle**
+  (`src/sp_rtk_base/services/__init__.py`).  New best-effort helper
+  `_release_stale_bluetooth_handle(mac)` instantiates BlueZ's
+  `BluetoothManager`, calls `disconnect_device(mac)` off-loop with a
+  5 s budget, and closes the manager — all errors swallowed and
+  logged.  `init_services()` invokes it before the relay's
+  `start_relay()` call when `source == "bluetooth"` and either
+  `mac_address` or legacy `address` is set.  The lazy import keeps
+  dev environments without `dbus-fast` (CI containers, macOS) from
+  paying any import cost.
+
+- **Tests**: three new files, **25 new tests**, all 566 unit tests
+  green at **92.91 % coverage** (was 541 / 92.19 %).
+  - `tests/unit/test_app_lifecycle.py` (12) — shutdown ordering
+    (device → event-bridge → relay), resilience (failure in any one
+    doesn't block the others), the 10 s timeout actually bounds a
+    hung disconnect, skips disconnect when no driver is available
+    or the device is already disconnected, and the timeout constant
+    is set to a defensible value.
+  - `tests/unit/test_main_signals.py` (3) — SIGHUP handler is
+    actually installed on POSIX, it forwards to SIGTERM via
+    `os.kill`, and `main()` calls the installer before `ui.run`.
+  - `tests/unit/test_init_services_bt_recovery.py` (10) — helper
+    happy path, swallowed disconnect / close errors, hung-disconnect
+    is bounded by `asyncio.wait_for`, silent skip when the relay
+    package isn't importable, and `init_services` calls (or
+    correctly skips) the helper across the matrix of input
+    source × auto_start × mac-key shapes (modern `mac_address`,
+    legacy `address`, missing).
+
+Verification: `pytest tests/unit -q` → **566 passed, 92.91 % coverage**
+· `ruff check` clean · `pyright` over the touched files → 0 errors
+(one unrelated pre-existing `reportDeprecated` warning in
+`ui/layout.py` for `@contextmanager` typing).
+
+Remaining: Bug A (`BluetoothInputSource.disconnect()` ordering in
+`sp-rtk-base-relay`) — that lives in the separate relay package and
+will ship as `sp-rtk-base-relay` 2.1.2.
+
+### 2026-05-27 — Bluetooth Scan Duration: UI Dropdown + Longer Default
+
+Triaged a "system still holding the Bluetooth GPS" report and traced it
+to a **too-short discovery window**, not a stuck connection.  Live BlueZ
+showed zero paired devices and no open RFCOMM/L2CAP sockets; a manual
+`bluetoothctl scan on` found the receiver (`RTK_BASE_DAE5`,
+`00:06:66:B9:DA:E5`) almost immediately.  The UI was hard-coded to 8 s
+and the relay defaulted to 10 s — easy to miss on a 1–2 s advertising
+interval.
+
+- **UI** (`src/sp_rtk_base/ui/pages/input.py`): introduced module
+  constants `DEFAULT_BT_SCAN_DURATION_SECONDS = 20` and
+  `BT_SCAN_DURATIONS_SECONDS = [20, 30, 45, 60]`.  Added a "Scan
+  duration" dropdown next to **Scan for Devices**, read on every
+  click and passed into `_discover_bluetooth_devices(mgr, scan_seconds)`
+  (new param, defaulted + clamped to positive).  The status label now
+  interpolates the chosen value (`Scanning (Xs)...`).
+- **Persisted config** (`src/sp_rtk_base/models/config_models.py`): new
+  `DEFAULT_BT_SCAN_TIMEOUT_SECONDS = 20`.  `InputProfile.to_relay_config()`
+  now injects `scan_timeout = 20` into the relay-side config dict when
+  `source == "bluetooth"` and the profile didn't pin its own value, so
+  the relay engine gets the longer window on auto-start.  The original
+  `self.config` is **not** mutated (test enforces this).
+- **Tests**: 4 new `TestInputProfile` cases (default injection, explicit
+  override preserved, no-mutation, non-bluetooth no-op) in
+  `tests/unit/test_config_models.py`; new `tests/unit/test_input_page_bt_scan.py`
+  (7 tests) guards the dropdown constants (default ≥ 20, default is in
+  the option list, sorted ascending, all positive ints, 30/45/60 presets
+  all present) and the helper's signature/clamp behaviour.
+
+Verification: `pytest tests/unit -q` → **541 passed, 92.19 % coverage**
+(was 530 / 92.17 %).  `config_models.py` is at **100 %** coverage.
+
+Deferred BT lifecycle bugs (see [Known Issues](#known-issues)): A
+(relay-pkg `BluetoothInputSource.disconnect()` ordering), B (no
+`DeviceService.disconnect()` in `app._shutdown`), C (no SIGTERM/SIGINT
+handlers in `main.py`), D (no startup pre-disconnect of stale serial/BT
+handles in `init_services()`).  None are blocking this PR; they will
+land separately so each gets focused tests and a clean changelog entry.
+
+### 2026-05-27 — Button-Click E2E Tests Across Every Page
+
 Added four new e2e test files driving every actionable button on the Outputs, Survey, Advanced-GPS, and Input pages through the real browser, lifting the e2e suite from 27 → **39 tests** (still green, ~35 s wall-clock).  Every test asserts the Quasar toast in the browser **and** verifies the side-effect via REST so a UI change that wires the click to the wrong handler can never quietly slip through.
 
 - `tests/e2e/test_outputs_buttons.py` (3) — Add-Destination success/validation, Delete dialog.
@@ -416,9 +581,41 @@ The embedded relay-engine package was renamed; all sp-base references updated:
 - [ ] Authentication/authorization
 
 ## Known Issues
+
+### General
 - UI pages contribute significant uncovered lines (NiceGUI can't be unit tested)
 - Integration tests require actual TCP ports — may conflict in CI
 - WebSocket event timeout path (30s) not testable in fast unit tests
+
+### Remaining Bluetooth Lifecycle Work (triaged 2026-05-27)
+
+The "system still holding the Bluetooth GPS" investigation turned up
+four robustness gaps in the connect/shutdown path.  **B, C, and D are
+resolved as of this date** (see the lifecycle entry under Recent
+Changes).  Only Bug A is still open, and it lives in a separate
+package.
+
+- **Bug A — `BluetoothInputSource.disconnect()` ordering (relay-engine pkg)** ✅
+  fixed upstream 2026-05-27 on branch
+  `fix/bluetooth-disconnect-ordering`, tag `v2.1.2`.  See the Recent
+  Changes entry "Bug A Fixed Upstream" for the root cause +
+  regression-test details.  This repo still pins
+  `sp-rtk-base-relay==2.1.1`; once the PR is merged and PyPI
+  publishes 2.1.2, bump `pyproject.toml` and refresh `uv.lock`.
+  Bug D's startup pre-disconnect already papers over the
+  operator-visible pain in the interim.
+
+- **Bug B — `DeviceService.disconnect()` in shutdown** ✅ resolved
+  2026-05-27 (see Recent Changes — promoted `_shutdown` to module-scope
+  `shutdown_services()`, device released first with a 10 s timeout).
+- **Bug C — SIGHUP handler in `main.py`** ✅ resolved 2026-05-27
+  (`_install_sighup_handler` forwards SIGHUP → SIGTERM; uvicorn already
+  handles SIGINT/SIGTERM).
+- **Bug D — Startup pre-disconnect of stale Bluetooth handles** ✅
+  resolved 2026-05-27 (`_release_stale_bluetooth_handle` runs in
+  `init_services` for BT inputs with auto_start=True).
+
+
 
 ## Resolved Issues
 - **~~Bluetooth auto-start crash~~** (fixed 2026-04-17): Stale D-Bus introspection cache caused `InterfaceNotFoundError: org.bluez.Device1` after device disconnect/power-cycle. Fixed with 3-layer defense: (1) cache invalidation before pair/trust introspection, (2) recovery scan + retry in `ensure_device_ready()`, (3) proper `BluetoothManager.close()` on disconnect to prevent stale cache reuse. 11 new tests added; relay package: 55 tests passing.

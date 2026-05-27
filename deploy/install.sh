@@ -115,9 +115,14 @@ ok "Service user added to dialout + bluetooth + plugdev groups"
 # Step 3 — Filesystem layout
 # ---------------------------------------------------------------------------
 log "Creating directories…"
-install -d -m 0755 -o root          -g root          "$INSTALL_PREFIX"
-install -d -m 0750 -o root          -g "$SERVICE_USER" "$CONFIG_DIR"
+install -d -m 0755 -o root            -g root            "$INSTALL_PREFIX"
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_DIR"
+# Heal pre-existing installs whose CONFIG_DIR was created root:sp-rtk-base
+# (the original v0.2.x installer) — the service user needs ownership so
+# atomic-rename saves and write_text() on config.yaml both succeed.
+chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
+chmod 0750 "$CONFIG_DIR"
 ok "Directories created"
 
 # ---------------------------------------------------------------------------
@@ -187,12 +192,20 @@ settings:
 destinations: []
 base_positions: []
 YAML
-    chown "root:${SERVICE_USER}" "$default_cfg"
-    chmod 0640 "$default_cfg"
-    ok "Wrote default config (group-readable by ${SERVICE_USER})"
+    ok "Wrote default config"
 else
-    ok "Config already present at ${default_cfg} (left untouched)"
+    ok "Config already present at ${default_cfg} (contents left untouched)"
 fi
+
+# Always (re)apply ownership + mode so a re-run of the installer heals
+# pre-existing installs whose config was created root-owned and ended up
+# read-only for the service user — that's the EACCES "[Errno 13]
+# Permission denied: '/etc/sp-rtk-base/config.yaml'" failure mode when
+# the web UI tries to save Bluetooth / input settings.  The service runs
+# as ${SERVICE_USER}, so the file must be writable by that user.
+chown "${SERVICE_USER}:${SERVICE_USER}" "$default_cfg"
+chmod 0640 "$default_cfg"
+ok "Config ownership normalised to ${SERVICE_USER}:${SERVICE_USER} (mode 0640)"
 
 # ---------------------------------------------------------------------------
 # Step 7.5 — Validate config can be loaded by the package

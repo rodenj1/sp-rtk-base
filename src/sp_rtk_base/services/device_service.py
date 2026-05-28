@@ -264,13 +264,18 @@ class DeviceService:
         reset_mode: int,
         wait_seconds: float,
         bbr_bits: dict[str, int],
-    ) -> tuple[SurveyInProgress, SurveyInProgress, bytes]:
+        read_after_state: bool = True,
+    ) -> tuple[SurveyInProgress, SurveyInProgress | None, bytes]:
         """Send an arbitrary UBX-CFG-RST and capture before/after state.
 
         Thin async wrapper around ``UbloxDriver.send_cfg_rst_diagnostic``
         for the ``POST /api/device/debug/cfg-rst`` endpoint.  Only
         works on real u-blox drivers; the fake driver does not expose
         this method.
+
+        ``read_after_state=False`` skips the post-write NAV-SVIN poll
+        — required for hardware resets (``resetMode=0`` / ``4``) that
+        re-enumerate the USB port.
 
         Raises:
             RuntimeError: If not connected or the active driver does
@@ -287,6 +292,7 @@ class DeviceService:
             reset_mode,
             wait_seconds,
             bbr_bits,
+            read_after_state,
         )
 
     async def cancel_survey_in(self) -> None:

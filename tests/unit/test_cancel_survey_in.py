@@ -694,13 +694,37 @@ class TestCfgRstDiagnosticEndpoint:
         svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
 
         client = self._make_client(svc)
-        # 0x00 = hardware reset — rejected because it drops the USB.
+        # 0x03 is not in the allowed set {0, 1, 2, 4, 8, 9}.
         resp = client.post(
             "/api/device/debug/cfg-rst",
-            json={"reset_mode": 0, "bbr_bits": ["pos"]},
+            json={"reset_mode": 3, "bbr_bits": ["pos"]},
         )
         assert resp.status_code == 400
         assert "reset_mode" in resp.json()["detail"].lower()
+
+    def test_endpoint_rejects_hardware_reset_with_after_read(self) -> None:
+        """resetMode 0/4 drop the USB; insisting on read_after_state=true
+        would hang the after-poll forever, so the endpoint refuses the
+        combination up front."""
+        svc = DeviceService()
+        fake = FakeGpsDriver()
+        fake.connect("FAKE")
+        svc.set_driver(fake)
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={
+                "reset_mode": 0,
+                "bbr_bits": ["pos"],
+                "read_after_state": True,
+            },
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"].lower()
+        assert "hardware reset" in detail
+        assert "read_after_state" in detail
 
     def test_endpoint_rejects_unknown_bbr_bit(self) -> None:
         svc = DeviceService()
@@ -767,7 +791,46 @@ class TestCfgRstDiagnosticEndpoint:
         assert body["wait_seconds"] == 1.5
         assert body["ubx_sent_hex"] == "b56206040400"
 
-        # And the driver was called with the right kwargs.
+        # And the driver was called with the right kwargs.  The 4th
+        # positional is ``read_after_state``, defaults to True.
         drv.send_cfg_rst_diagnostic.assert_called_once_with(  # type: ignore[attr-defined]
-            2, 1.5, {"pos": 1, "eph": 1}
+            2, 1.5, {"pos": 1, "eph": 1}, True
+        )
+
+    def test_endpoint_fire_and_forget_hardware_reset(self) -> None:
+        """resetMode=0 with read_after_state=false must skip the
+        after-poll and return ``after: null`` — the only safe shape
+        for a hardware reset that drops the USB."""
+        from sp_rtk_base.models.device_models import SurveyInProgress
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        drv = UbloxDriver()
+        drv._connected = True  # type: ignore[attr-defined]
+        before_state = SurveyInProgress(duration_seconds=65000, observations=40000)
+        # Driver returns None for ``after`` when read_after_state=False.
+        drv.send_cfg_rst_diagnostic = MagicMock(  # type: ignore[method-assign]
+            return_value=(before_state, None, b"\xb5\x62\x06\x04\x04\x00")
+        )
+
+        svc = DeviceService()
+        svc._driver = drv  # type: ignore[attr-defined]
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={
+                "reset_mode": 0,
+                "bbr_bits": ["pos"],
+                "read_after_state": False,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["before"]["duration_seconds"] == 65000
+        assert body["after"] is None
+        assert body["wait_seconds"] == 0.0
+        # Driver must be called with read_after_state=False propagated.
+        drv.send_cfg_rst_diagnostic.assert_called_once_with(  # type: ignore[attr-defined]
+            0, 3.0, {"pos": 1}, False
         )

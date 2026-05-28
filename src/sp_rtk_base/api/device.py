@@ -318,10 +318,14 @@ async def get_survey_in_progress(
 # kept under /debug/ to make that obvious.
 # ---------------------------------------------------------------------------
 
-# Subset of resetMode values that don't drop the USB serial port.
-# 0x00 / 0x04 (hardware resets) are rejected because they cause a
-# device re-enumeration that would require the operator to reconnect.
-_ALLOWED_RESET_MODES = {1, 2, 8, 9}
+# Allowed resetMode values.
+# - 1, 2, 8, 9 are software resets — USB stays connected.
+# - 0 (hardware reset immediate) and 4 (hardware reset after delay)
+#   cause a USB re-enumeration and require ``read_after_state=False``
+#   in the request, otherwise the after-state read hangs on the
+#   disconnected serial port.  The endpoint enforces that pairing.
+_ALLOWED_RESET_MODES = {0, 1, 2, 4, 8, 9}
+_HARDWARE_RESET_MODES = {0, 4}
 
 # pyubx2's named bitfield keys on CFG-RST.navBbrMask.  Anything else
 # would either silently fail or raise inside pyubx2's payload builder.
@@ -345,10 +349,12 @@ class CfgRstRequest(BaseModel):
     reset_mode: int = Field(
         ...,
         description=(
-            "UBX CFG-RST resetMode byte. Allowed: 1=controlled SW reset, "
-            "2=controlled GNSS-only reset, 8=controlled GNSS stop, "
-            "9=controlled GNSS start. Hardware resets (0x00 / 0x04) "
-            "are rejected to avoid dropping the USB serial port."
+            "UBX CFG-RST resetMode byte. Allowed: "
+            "0=hardware reset immediate, 1=controlled SW reset, "
+            "2=controlled GNSS-only reset, 4=hardware reset after delay, "
+            "8=controlled GNSS stop, 9=controlled GNSS start. "
+            "Hardware resets (0x00 / 0x04) require "
+            "``read_after_state=false`` since they drop the USB."
         ),
     )
     bbr_bits: list[str] = Field(
@@ -363,7 +369,21 @@ class CfgRstRequest(BaseModel):
         3.0,
         ge=0.0,
         le=30.0,
-        description="Sleep between the write and the after-state read.",
+        description=(
+            "Sleep between the write and the after-state read. "
+            "Ignored when read_after_state=false."
+        ),
+    )
+    read_after_state: bool = Field(
+        True,
+        description=(
+            "When false, skip the post-write sleep and the NAV-SVIN "
+            "after-poll.  Required for hardware resets "
+            "(reset_mode 0 or 4) because the USB re-enumerates and "
+            "the after-poll would hang on a stale serial handle.  "
+            "Operator must reconnect the device via "
+            "/api/device/connect after the response returns."
+        ),
     )
 
 
@@ -371,7 +391,13 @@ class CfgRstResponse(BaseModel):
     """Diagnostic snapshot of the CFG-RST round trip."""
 
     before: SurveyInProgress
-    after: SurveyInProgress
+    after: SurveyInProgress | None = Field(
+        None,
+        description=(
+            "Post-write NAV-SVIN read, or null when "
+            "read_after_state=false (e.g. after a hardware reset)."
+        ),
+    )
     wait_seconds: float
     ubx_sent_hex: str = Field(
         ..., description="Hex of the serialised UBX frame actually written."
@@ -394,8 +420,19 @@ async def debug_cfg_rst(
             status_code=400,
             detail=(
                 f"reset_mode={body.reset_mode} not allowed. "
-                f"Allowed: {sorted(_ALLOWED_RESET_MODES)}. Hardware "
-                "resets (0x00, 0x04) are rejected to avoid USB drop."
+                f"Allowed: {sorted(_ALLOWED_RESET_MODES)}."
+            ),
+        )
+
+    if body.reset_mode in _HARDWARE_RESET_MODES and body.read_after_state:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"reset_mode={body.reset_mode} is a hardware reset that "
+                "drops the USB serial connection.  The after-state read "
+                "would hang on a stale handle.  Set "
+                "read_after_state=false and reconnect via "
+                "/api/device/connect after this request returns."
             ),
         )
 
@@ -412,7 +449,10 @@ async def debug_cfg_rst(
 
     try:
         before, after, wire_bytes = await svc.send_cfg_rst_diagnostic(
-            body.reset_mode, body.wait_seconds, bbr_kwargs
+            body.reset_mode,
+            body.wait_seconds,
+            bbr_kwargs,
+            body.read_after_state,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -420,7 +460,7 @@ async def debug_cfg_rst(
     return CfgRstResponse(
         before=before,
         after=after,
-        wait_seconds=body.wait_seconds,
+        wait_seconds=body.wait_seconds if body.read_after_state else 0.0,
         ubx_sent_hex=wire_bytes.hex(),
     )
 

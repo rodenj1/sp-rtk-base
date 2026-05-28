@@ -900,7 +900,8 @@ class UbloxDriver(GpsReceiverDriver):
         reset_mode: int,
         wait_seconds: float,
         bbr_bits: dict[str, int],
-    ) -> tuple[SurveyInProgress, SurveyInProgress, bytes]:
+        read_after_state: bool = True,
+    ) -> tuple[SurveyInProgress, SurveyInProgress | None, bytes]:
         """Send an arbitrary UBX-CFG-RST and capture before/after state.
 
         Diagnostic-only entry point — exposed by the
@@ -914,15 +915,23 @@ class UbloxDriver(GpsReceiverDriver):
             reset_mode: UBX ``resetMode`` byte.  Validate at the
                 caller — this method does not gate values.
             wait_seconds: How long to sleep after the write before
-                reading the after-state.
+                reading the after-state.  Ignored when
+                ``read_after_state=False``.
             bbr_bits: Named BBR-clear bits, e.g. ``{"pos": 1,
                 "eph": 0}``.  Passed straight to the ``UBXMessage``
                 constructor.  Unknown keys raise.
+            read_after_state: When ``False``, skip the post-write
+                sleep AND the NAV-SVIN after-poll.  Required for
+                ``resetMode=0`` / ``resetMode=4`` (hardware resets)
+                because the receiver re-enumerates on the USB bus
+                during the reset and the after-poll would hang on
+                a disconnected serial port.
 
         Returns:
-            Tuple of ``(before, after, ubx_bytes_sent)`` — both
-            ``before`` and ``after`` are ``SurveyInProgress`` reads of
-            NAV-SVIN; ``ubx_bytes_sent`` is the serialised UBX frame
+            Tuple of ``(before, after, ubx_bytes_sent)``.  When
+            ``read_after_state=False`` ``after`` is ``None``;
+            otherwise both are ``SurveyInProgress`` reads of
+            NAV-SVIN.  ``ubx_bytes_sent`` is the serialised UBX frame
             for hex display in the diagnostic UI.
         """
         with self._lock:
@@ -944,18 +953,30 @@ class UbloxDriver(GpsReceiverDriver):
             wire_bytes: bytes = msg.serialize()  # type: ignore[union-attr]
             ser.reset_input_buffer()
             ser.write(wire_bytes)
-            time.sleep(wait_seconds)
-            after = self._get_survey_in_locked()
-        logger.info(
-            "Diagnostic CFG-RST sent: resetMode=0x%02x bits=%s; "
-            "dur %d -> %d, obs %d -> %d",
-            reset_mode,
-            bbr_bits,
-            before.duration_seconds,
-            after.duration_seconds,
-            before.observations,
-            after.observations,
-        )
+            after: SurveyInProgress | None = None
+            if read_after_state:
+                time.sleep(wait_seconds)
+                after = self._get_survey_in_locked()
+        if after is not None:
+            logger.info(
+                "Diagnostic CFG-RST sent: resetMode=0x%02x bits=%s; "
+                "dur %d -> %d, obs %d -> %d",
+                reset_mode,
+                bbr_bits,
+                before.duration_seconds,
+                after.duration_seconds,
+                before.observations,
+                after.observations,
+            )
+        else:
+            logger.info(
+                "Diagnostic CFG-RST sent (fire-and-forget): "
+                "resetMode=0x%02x bits=%s; before dur=%d obs=%d",
+                reset_mode,
+                bbr_bits,
+                before.duration_seconds,
+                before.observations,
+            )
         return before, after, wire_bytes
 
     def _get_survey_in_locked(self) -> SurveyInProgress:

@@ -215,7 +215,9 @@ class TestUbloxDisableBaseMode:
         keys = {k: v for k, v in enable[0][2]}
         assert keys.get("CFG_TMODE_MODE") == 1
         assert keys.get("CFG_TMODE_SVIN_MIN_DUR") == 120
-        assert keys.get("CFG_TMODE_SVIN_ACC_LIMIT") == 50000
+        # accuracy_limit_mm=50000 should be sent as 500000 on the wire
+        # (CFG_TMODE_SVIN_ACC_LIMIT is in 0.1 mm units per u-blox spec).
+        assert keys.get("CFG_TMODE_SVIN_ACC_LIMIT") == 500000
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

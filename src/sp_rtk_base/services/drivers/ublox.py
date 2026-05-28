@@ -384,9 +384,21 @@ class UbloxDriver(GpsReceiverDriver):
             # start.txt", survey-in is intentionally NOT persisted to
             # flash — only the completed fixed-base coordinates from
             # ``save_to_flash`` are persisted.
+            # CFG_TMODE_SVIN_ACC_LIMIT is in 0.1 mm units on the
+            # wire (u-blox spec: "1 m = 10000, 3.2598 m = 32598").
+            # The Python API uses mm, so multiply by 10 here.  Same
+            # convention applies to ``CFG_TMODE_FIXED_POS_ACC`` in
+            # ``configure_fixed_base``.  Mismatch was responsible
+            # for the v0.3.8-and-earlier "survey never completes
+            # even though displayed accuracy < target" symptom: we
+            # were sending 50000 raw thinking it meant 50000 mm,
+            # but the receiver read it as 5000 mm and held the
+            # survey open until NAV-SVIN.meanAcc dropped below
+            # 5000 mm (which it wasn't reaching at the bad-antenna
+            # location).
             cfg_data = [
                 ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
-                ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm),
+                ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm * 10),
                 # Survey-in mode (last so params land first)
                 ("CFG_TMODE_MODE", 1),
             ]
@@ -508,7 +520,10 @@ class UbloxDriver(GpsReceiverDriver):
             ("CFG_TMODE_LAT", lat_hp),
             ("CFG_TMODE_LON", lon_hp),
             ("CFG_TMODE_HEIGHT", alt_cm),
-            ("CFG_TMODE_FIXED_POS_ACC", config.accuracy_mm),
+            # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm units on the
+            # wire (same convention as CFG_TMODE_SVIN_ACC_LIMIT).
+            # The Python API uses mm, so multiply by 10 here.
+            ("CFG_TMODE_FIXED_POS_ACC", config.accuracy_mm * 10),
         ]
         with self._lock:
             # Pre-disable TMODE before writing the new fixed-base
@@ -1189,7 +1204,11 @@ class UbloxDriver(GpsReceiverDriver):
         mode = _MODE_MAP.get(mode_raw, BaseMode.DISABLED)
 
         pos_type_raw = int(getattr(parsed, "CFG_TMODE_POS_TYPE", 1))
+        # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm units on the wire —
+        # divide by 10 to surface mm at the Python API boundary
+        # (matches CurrentBaseConfig.accuracy_mm units).
         acc_raw = int(getattr(parsed, "CFG_TMODE_FIXED_POS_ACC", 0))
+        acc_mm = acc_raw // 10
 
         if pos_type_raw == 0:
             # ECEF mode — convert to LLH for display
@@ -1223,7 +1242,7 @@ class UbloxDriver(GpsReceiverDriver):
             latitude=lat,
             longitude=lon,
             altitude_m=alt_m,
-            accuracy_mm=acc_raw,
+            accuracy_mm=acc_mm,
         )
 
     # ------------------------------------------------------------------

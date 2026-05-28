@@ -161,13 +161,28 @@ def survey_page() -> None:
                     max=86400,
                     step=60,
                 ).classes("col-grow")
-                svin_accuracy = ui.number(
-                    "Accuracy Limit (mm)",
-                    value=50000,
-                    min=1000,
-                    max=500000,
-                    step=1000,
-                ).classes("col-grow")
+                with ui.column().classes("col-grow gap-0"):
+                    svin_accuracy = ui.number(
+                        "Accuracy Limit (mm)",
+                        value=50000,
+                        min=1000,
+                        max=500000,
+                        step=1000,
+                    ).classes("w-full")
+                    # Humanized display next to the mm input — updates
+                    # live as the operator types/spins.  50000 mm = 50.0 m.
+                    svin_accuracy_hint = ui.label("= 50.000 m").classes(
+                        "text-caption text-grey-5"
+                    )
+
+            def _update_acc_hint() -> None:
+                try:
+                    mm = float(svin_accuracy.value or 0)
+                    svin_accuracy_hint.text = f"= {mm / 1000.0:.3f} m"
+                except (TypeError, ValueError):
+                    svin_accuracy_hint.text = "= — m"
+
+            svin_accuracy.on("update:model-value", _update_acc_hint)
 
             with ui.row().classes("gap-2 q-mt-sm items-center"):
                 svin_start_btn = ui.button("Start Survey-In", icon="play_arrow").props(

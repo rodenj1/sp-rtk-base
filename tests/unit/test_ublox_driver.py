@@ -336,6 +336,14 @@ class TestUbloxDriverConfiguration:
         assert "CFG_TMODE_SVIN_ACC_LIMIT" in keys
         mode_vals = [v for k, v in enable_cfg if k == "CFG_TMODE_MODE"]
         assert mode_vals == [1]
+        # CFG_TMODE_SVIN_ACC_LIMIT is in 0.1 mm wire units; the
+        # Python API takes mm so we multiply by 10 when sending.
+        # accuracy_limit_mm=40000 -> 400000 on the wire.
+        acc_vals = [v for k, v in enable_cfg if k == "CFG_TMODE_SVIN_ACC_LIMIT"]
+        assert acc_vals == [400000]
+        # MIN_DUR is in seconds (no unit conversion).
+        dur_vals = [v for k, v in enable_cfg if k == "CFG_TMODE_SVIN_MIN_DUR"]
+        assert dur_vals == [300]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -401,6 +409,11 @@ class TestUbloxDriverConfiguration:
         # TMODE=2 (fixed) in the second call
         mode_vals = [v for k, v in fixed_cfg if k == "CFG_TMODE_MODE"]
         assert mode_vals == [2]
+        # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm wire units; the
+        # Python API takes mm so we multiply by 10 when sending.
+        # accuracy_mm=500 -> 5000 on the wire.
+        acc_vals = [v for k, v in fixed_cfg if k == "CFG_TMODE_FIXED_POS_ACC"]
+        assert acc_vals == [5000]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -898,7 +911,7 @@ class TestParseCfgTmode:
             CFG_TMODE_ECEF_X_HP=0,
             CFG_TMODE_ECEF_Y_HP=0,
             CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=5000,
+            CFG_TMODE_FIXED_POS_ACC=5000,  # 0.1 mm units = 500 mm
         )
         result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "fixed"
@@ -906,7 +919,8 @@ class TestParseCfgTmode:
         assert abs(result.latitude - 47.3977) < 0.0001
         assert abs(result.longitude - 8.5456) < 0.0001
         assert abs(result.altitude_m - 408.0) < 0.1
-        assert result.accuracy_mm == 5000
+        # 5000 in 0.1 mm units = 500 mm
+        assert result.accuracy_mm == 500
 
     def test_parse_ecef_pos_type(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """POS_TYPE=0 (ECEF) reads ECEF_X/Y/Z and converts to LLH."""
@@ -923,7 +937,7 @@ class TestParseCfgTmode:
             CFG_TMODE_ECEF_X_HP=0,
             CFG_TMODE_ECEF_Y_HP=0,
             CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=47308,
+            CFG_TMODE_FIXED_POS_ACC=47308,  # 0.1 mm units = 4730 mm
         )
         result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "fixed"
@@ -935,7 +949,8 @@ class TestParseCfgTmode:
         # Rough check — should be in North America
         assert 30.0 < result.latitude < 55.0
         assert -130.0 < result.longitude < -60.0
-        assert result.accuracy_mm == 47308
+        # 47308 in 0.1 mm units = 4730 mm (∼4.73 m)
+        assert result.accuracy_mm == 4730
 
     def test_parse_ecef_disabled_mode(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """DISABLED mode with ECEF pos_type still parses."""

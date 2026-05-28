@@ -345,6 +345,28 @@ class UbloxDriver(GpsReceiverDriver):
     _SVIN_DUR_FLOOR_S: int = 30
 
     def configure_survey_in(self, config: SurveyInConfig) -> None:
+        # Pre-reset check: the BBR-backed NAV-SVIN.dur accumulator
+        # is NOT cleared by CFG-VALSET writes — only a CFG-RST=0
+        # hardware reset clears it.  After a successful survey-in,
+        # dur sits at >= 120s (the min-duration value at completion);
+        # a fresh Start would fail our verify floor.  Detect that
+        # case here and auto-reset transparently so the operator
+        # doesn't see "stale accumulator" errors on the rerun path.
+        #
+        # The reset takes ~5-8s; we deliberately do not gate this on
+        # a lock — ``reset_and_reconnect`` acquires its own lock
+        # internally for the write phase and releases it for the
+        # sleep-then-reconnect tail.
+        with self._lock:
+            baseline = self._get_survey_in_locked()
+        if baseline.duration_seconds >= self._SVIN_DUR_FLOOR_S:
+            logger.info(
+                "Pre-survey reset: NAV-SVIN.dur=%ds in BBR from prior "
+                "session — issuing hardware reset before fresh start",
+                baseline.duration_seconds,
+            )
+            self.reset_and_reconnect()
+
         # All CFG-VALSET writers must hold self._lock so they cannot
         # interleave on the wire with a concurrent NAV/CFG/MON poll
         # from the same driver instance (e.g. the 2 s survey-in UI
@@ -539,7 +561,17 @@ class UbloxDriver(GpsReceiverDriver):
                 [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
             )
             time.sleep(self._TMODE_RESTART_DELAY_S)
-            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
+            # Write to RAM+Flash (layer=5) directly via CFG-VALSET.
+            # The legacy ``save_to_flash`` path (CFG-CFG saveMask) does
+            # NOT reliably persist key/value-based TMODE config on
+            # Gen9+ receivers (ZED-F9P) — observed symptom: after a
+            # successful survey + auto-commit, a subsequent CFG-RST
+            # hardware reset reverted to the *prior* flashed config
+            # (e.g. an older ECEF Orig Survey) instead of the
+            # just-committed LLH coordinates.  Writing directly to
+            # layer=5 ensures Flash holds the new TMODE config
+            # immediately, before any subsequent reset can wipe RAM.
+            self._send_cfg_valset_locked(cfg_data, layer=5)  # RAM + Flash
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm",
             config.latitude,

@@ -984,7 +984,32 @@ def survey_page() -> None:
             svin_error_label.text = ""
             svin_warning_label.set_visibility(False)
             svin_warning_label.text = ""
-            svin_status_label.text = "Configuring receiver..."
+
+            # Peek at the receiver's NAV-SVIN state to detect stale
+            # BBR accumulator from a prior session.  If dur >= 30s
+            # the driver will auto-reset before starting (~5-8s
+            # added to the start latency); surface that as a toast
+            # so the operator knows why the start is slower.
+            needs_reset = False
+            try:
+                pre_status = await svc.get_survey_in_status()
+                if pre_status.duration_seconds >= 30:
+                    needs_reset = True
+            except Exception:
+                # Status query failure isn't fatal — the driver
+                # will still attempt the start; we just won't have
+                # foreknowledge of whether a reset is needed.
+                pass
+
+            if needs_reset:
+                ui.notify(
+                    "Stale survey state detected — resetting GPS "
+                    "before starting (~5-8s)...",
+                    type="info",
+                )
+                svin_status_label.text = "Resetting GPS, then starting..."
+            else:
+                svin_status_label.text = "Configuring receiver..."
             svin_status_label.classes(replace="text-warning")
             svin_target_label.text = f"Target: {acc:,} mm"
             svin_dur_label.text = "Duration: 0s"
@@ -1446,6 +1471,25 @@ def survey_page() -> None:
                         try:
                             await svc.reset_receiver()
                             ui.notify("GPS reset complete", type="positive")
+                            # Clear any stale error/status banners
+                            # from a previous failed attempt — the
+                            # device is now in a clean state and the
+                            # UI should reflect that.
+                            error_label.text = ""
+                            error_label.set_visibility(False)
+                            svin_error_label.text = ""
+                            svin_error_label.set_visibility(False)
+                            svin_warning_label.text = ""
+                            svin_warning_label.set_visibility(False)
+                            # If the survey progress card is still
+                            # showing "Configuration failed" or
+                            # similar, hide it — the receiver is
+                            # in TMODE=disabled (rover) after reset.
+                            svin_progress_card.set_visibility(False)
+                            svin_status_label.text = "Idle"
+                            svin_status_label.classes(replace="text-grey-3")
+                            svin_start_btn.set_visibility(True)
+                            svin_cancel_btn.set_visibility(False)
                             await _read_fixed_base()
                         except Exception as exc:
                             ui.notify(f"Reset failed: {exc}", type="negative")

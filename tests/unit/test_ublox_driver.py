@@ -291,6 +291,7 @@ class TestUbloxDriverConfiguration:
 
         reader = MagicMock()
         # configure_survey_in now performs:
+        #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
         #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
         #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
         #   3. NAV-SVIN poll                                -> dur=0
@@ -298,6 +299,7 @@ class TestUbloxDriverConfiguration:
         #   5. NAV-SVIN poll                                -> dur=3 (incremented)
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
+            (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),  # baseline
             (b"", _make_ack_response()),  # full-layer disable
             (b"", _make_ack_response()),  # enable
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
@@ -400,7 +402,10 @@ class TestUbloxDriverConfiguration:
 
         assert disable_layer == 7
         assert disable_cfg == [("CFG_TMODE_MODE", 0)]
-        assert fixed_layer == 1
+        # configure_fixed_base writes the new TMODE config to RAM+Flash
+        # (layer=5) directly, bypassing CFG-CFG which doesn't reliably
+        # persist key/value TMODE config on Gen9+ receivers.
+        assert fixed_layer == 5
         keys = [k for k, _ in fixed_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_LAT" in keys

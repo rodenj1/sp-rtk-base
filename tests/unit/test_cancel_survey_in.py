@@ -155,6 +155,7 @@ class TestUbloxDisableBaseMode:
 
         reader = MagicMock()
         # configure_survey_in now performs:
+        #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
         #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
         #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
         #   3. NAV-SVIN poll                                -> dur=0
@@ -162,6 +163,17 @@ class TestUbloxDisableBaseMode:
         #   5. NAV-SVIN poll                                -> dur=2 (incremented)
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
+            (
+                b"",
+                SimpleNamespace(  # baseline read (no pre-reset needed)
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=0,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
             (b"", _make_ack()),  # full-layer disable
             (b"", _make_ack()),  # enable
             (
@@ -249,10 +261,11 @@ class TestUbloxDisableBaseMode:
             obs=0,
         )
         reader = MagicMock()
-        # disable ACK → enable ACK → NAV-SVIN(dur=0) → NAV-SVIN(dur=0)
-        # → rollback disable ACK
+        # baseline (dur=0, no pre-reset) → disable ACK → enable ACK
+        # → NAV-SVIN(dur=0) → NAV-SVIN(dur=0) → rollback disable ACK
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
+            (b"", nav_svin_idle),  # baseline (no pre-reset)
             (b"", _make_ack()),  # full-layer disable
             (b"", _make_ack()),  # enable
             (b"", nav_svin_idle),  # before-snapshot
@@ -289,28 +302,26 @@ class TestUbloxDisableBaseMode:
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
     @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
-    def test_configure_survey_in_raises_when_dur_floor_exceeded(
+    def test_configure_survey_in_auto_resets_when_dur_stale(
         self,
         mock_serial_cls: MagicMock,
         mock_reader_cls: MagicMock,
         mock_ubx_msg: MagicMock,
     ) -> None:
-        """If the first NAV-SVIN poll reports dur >= 30 s, the CFG-RST
-        didn't actually clear the BBR-backed accumulator and we are
-        not running a fresh survey.  configure_survey_in must surface
-        a clear actionable error mentioning the physical power-cycle
-        workaround (the symptom we observed on larson-base before
-        v0.3.5)."""
+        """v0.3.11: when the baseline NAV-SVIN read shows dur >=
+        SVIN_DUR_FLOOR_S (30s), configure_survey_in must auto-call
+        reset_and_reconnect to clear the BBR accumulator before
+        attempting the start.  Without this, the verify floor would
+        fire and the survey would fail — the v0.3.10 symptom on
+        a "second survey after a successful first survey" attempt.
+        """
         ser = MagicMock()
         ser.is_open = True
         mock_serial_cls.return_value = ser
 
-        # First poll already reports 17 hours of accumulator — same
-        # number we saw on the real device.  Second poll is +2 s
-        # later, so dur is still increasing (would pass the
-        # progression-only check from v0.3.4) but the floor catches
-        # it.
-        nav_svin_stale_before = SimpleNamespace(
+        # Baseline read shows stale 17h accumulator from prior session.
+        # After the pre-reset (mocked), reads proceed as a fresh start.
+        nav_svin_stale = SimpleNamespace(
             identity="NAV-SVIN",
             valid=0,
             active=0,
@@ -318,22 +329,30 @@ class TestUbloxDisableBaseMode:
             meanAcc=6622,
             obs=45805,
         )
-        nav_svin_stale_after = SimpleNamespace(
+        nav_svin_fresh_before = SimpleNamespace(
             identity="NAV-SVIN",
             valid=0,
             active=0,
-            dur=61957,
-            meanAcc=6622,
-            obs=45806,
+            dur=0,
+            meanAcc=0,
+            obs=0,
+        )
+        nav_svin_fresh_after = SimpleNamespace(
+            identity="NAV-SVIN",
+            valid=0,
+            active=0,
+            dur=3,
+            meanAcc=99999,
+            obs=2,
         )
         reader = MagicMock()
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # layer=7 disable
-            (b"", _make_ack()),  # enable
-            (b"", nav_svin_stale_before),
-            (b"", nav_svin_stale_after),
-            (b"", _make_ack()),  # rollback layer=7
+            (b"", nav_svin_stale),  # baseline -> triggers pre-reset
+            (b"", _make_ack()),  # layer=7 disable (after reset)
+            (b"", _make_ack()),  # enable (RAM)
+            (b"", nav_svin_fresh_before),  # before-snapshot
+            (b"", nav_svin_fresh_after),  # after-snapshot
         ]
         mock_reader_cls.return_value = reader
 
@@ -343,21 +362,23 @@ class TestUbloxDisableBaseMode:
 
         drv = UbloxDriver()
         drv.connect("/dev/ttyUSB0")
-        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
-            with pytest.raises(
-                RuntimeError, match="stale survey-in accumulator"
-            ) as exc_info:
+        # Mock reset_and_reconnect to verify it's called when stale.
+        # Returning silently simulates a successful reset.
+        with patch.object(drv, "reset_and_reconnect") as mock_reset:
+            with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
                 drv.configure_survey_in(
                     SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
                 )
-        # Error message must include the operator-actionable bit
-        # (the Reset GPS button) so the UI surfaces it directly.
-        assert "reset gps" in str(exc_info.value).lower()
-        # Rollback must still fire — receiver was just put into
-        # TMODE=1 by the enable VALSET, even if dur shows stale.
-        assert mock_ubx_msg.config_set.call_count == 3
+            # Pre-reset must have fired exactly once.
+            mock_reset.assert_called_once()
+
+        # No rollback path triggered — the pre-reset cleared the
+        # stale state, and the post-write verify saw a fresh
+        # (dur=0 -> dur=3) progression.  Only 2 CFG-VALSETs fire:
+        # layer=7 disable, layer=1 enable.
+        assert mock_ubx_msg.config_set.call_count == 2
         layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
-        assert layers == [7, 1, 7]
+        assert layers == [7, 1]
 
     def test_disable_base_mode_when_disconnected(self) -> None:
         drv = UbloxDriver()

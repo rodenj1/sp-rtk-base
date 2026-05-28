@@ -11,6 +11,42 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.3.1 (2026-05-27)
+
+
+- fix(survey): cancel-survey actually cancels (lock + RX-drain + verify-retry)
+- The new Cancel Survey-In button silently lied to the operator —
+the receiver kept surveying while the UI showed a success toast.
+Two independent bugs:
+- 1. Concurrent-poll race: disable_base_mode() and the 2s NAV-SVIN
+   poll shared one serial.Serial without holding self._lock, so a
+   poll firing during Cancel could interleave bytes with the
+   CFG-VALSET write. Receiver dropped the corrupted frame; ACK
+   either matched a stale write or never arrived.
+- 2. Buried ACK: a healthy ZED-F9P in base mode streams RTCM3 +
+   NAV-PVT continuously. _wait_for_ack's 50-iteration cap couldn't
+   reach the real ACK once it was buried behind backlogged RTCM
+   frames in the FTDI RX buffer, raising spurious
+   'No ACK/NAK response for CFG-VALSET' on writes that actually
+   succeeded.
+- Fix:
+- Every CFG-VALSET writer (configure_survey_in, disable_base_mode,
+  configure_fixed_base, configure_rtcm_messages,
+  configure_rtcm_ports, configure_gnss, save_to_flash) now grabs
+  self._lock directly and calls a new _send_cfg_valset_locked().
+- _send_cfg_valset_locked() calls ser.reset_input_buffer() before
+  each write to evict backlogged streaming traffic.
+- disable_base_mode() verifies via NAV-SVIN under the same lock;
+  on active=True it retries once, then raises a clear
+  'Cancel did not take effect' RuntimeError.
+- UI keeps Cancel visible + red banner on failure (no more
+  optimistic flip to Start) and restarts the 2s poll so live
+  state stays visible to the operator.
+- Tests: +3 unit (RX-drain, retry-success, retry-fail) in
+test_cancel_survey_in.py; patched test_rtcm_port_config.py to
+target _send_cfg_valset_locked. 585 unit tests pass (was 582).
+- docs(memory-bank): record v0.3.0 PyPI publish + CDN-cache gotcha
+
 ## v0.3.0 (2026-05-27)
 
 

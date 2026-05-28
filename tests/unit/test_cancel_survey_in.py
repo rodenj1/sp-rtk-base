@@ -154,10 +154,37 @@ class TestUbloxDisableBaseMode:
         mock_serial_cls.return_value = ser
 
         reader = MagicMock()
+        # configure_survey_in now performs:
+        #   1. CFG-VALSET TMODE=0  -> ACK
+        #   2. NAV-SVIN poll       -> active=0, dur=0 (verify disable)
+        #   3. CFG-VALSET TMODE=1  -> ACK
+        #   4. NAV-SVIN poll       -> active=1       (verify enable)
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
             (b"", _make_ack()),  # disable step
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=0,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
             (b"", _make_ack()),  # enable step
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=1,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
         ]
         mock_reader_cls.return_value = reader
 
@@ -167,9 +194,10 @@ class TestUbloxDisableBaseMode:
 
         drv = UbloxDriver()
         drv.connect("/dev/ttyUSB0")
-        drv.configure_survey_in(
-            SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
-        )
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            drv.configure_survey_in(
+                SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
+            )
 
         # The first config_set must be the disable, the second must enable
         assert mock_ubx_msg.config_set.call_count == 2
@@ -181,6 +209,155 @@ class TestUbloxDisableBaseMode:
         assert keys.get("CFG_TMODE_MODE") == 1
         assert keys.get("CFG_TMODE_SVIN_MIN_DUR") == 120
         assert keys.get("CFG_TMODE_SVIN_ACC_LIMIT") == 50000
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_survey_in_retries_disable_when_stuck(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A1: when the first TMODE-disable verify poll still reports
+        ``active=True`` (stale survey from a previous session), the
+        driver must re-send the CFG_TMODE_MODE=0 VALSET before
+        proceeding to the enable step.
+
+        Scenario:
+        - VALSET TMODE=0 → ACK
+        - NAV-SVIN → active=1, dur=12345 (stale)  → triggers retry
+        - re-send VALSET TMODE=0 → ACK
+        - NAV-SVIN → active=0, dur=0             (clean)
+        - VALSET enable → ACK
+        - NAV-SVIN → active=1                    (new survey running)
+        """
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),  # ACK for first disable
+            (
+                b"",
+                SimpleNamespace(  # stale prior survey still showing
+                    identity="NAV-SVIN",
+                    valid=1,
+                    active=1,
+                    dur=12345,
+                    meanAcc=70000,
+                    obs=5000,
+                ),
+            ),
+            (b"", _make_ack()),  # ACK for retried disable
+            (
+                b"",
+                SimpleNamespace(  # finally clean
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=0,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+            (b"", _make_ack()),  # ACK for enable
+            (
+                b"",
+                SimpleNamespace(  # new survey running
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=1,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            drv.configure_survey_in(
+                SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
+            )
+
+        # Expect 3 CFG-VALSETs: disable, retried-disable, enable
+        assert mock_ubx_msg.config_set.call_count == 3
+        # First two are disables, third is the enable
+        assert mock_ubx_msg.config_set.call_args_list[0][0][2] == [
+            ("CFG_TMODE_MODE", 0)
+        ]
+        assert mock_ubx_msg.config_set.call_args_list[1][0][2] == [
+            ("CFG_TMODE_MODE", 0)
+        ]
+        third = dict(mock_ubx_msg.config_set.call_args_list[2][0][2])
+        assert third.get("CFG_TMODE_MODE") == 1
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_survey_in_raises_when_enable_doesnt_take_effect(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A1: if the receiver acks the TMODE=1 VALSET but NAV-SVIN
+        keeps reporting ``active=False`` for the full verify window,
+        configure_survey_in must raise a clear RuntimeError so the UI
+        can surface a real failure (instead of leaving the operator
+        staring at a stale "Idle" status with prior-session numbers).
+        """
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        # NAV-SVIN always reports active=False — re-use a single
+        # function-based side_effect so we don't have to enumerate all
+        # 5 verify polls.
+        nav_svin_idle = SimpleNamespace(
+            identity="NAV-SVIN",
+            valid=0,
+            active=0,
+            dur=0,
+            meanAcc=0,
+            obs=0,
+        )
+        reader = MagicMock()
+        # disable ACK → disable verify(idle) → enable ACK → 5x enable
+        # verify(still idle) → raise
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),
+            (b"", nav_svin_idle),
+            (b"", _make_ack()),
+            (b"", nav_svin_idle),
+            (b"", nav_svin_idle),
+            (b"", nav_svin_idle),
+            (b"", nav_svin_idle),
+            (b"", nav_svin_idle),
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            with pytest.raises(RuntimeError, match="did not start a new survey"):
+                drv.configure_survey_in(
+                    SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
+                )
 
     def test_disable_base_mode_when_disconnected(self) -> None:
         drv = UbloxDriver()

@@ -1,6 +1,51 @@
 # Active Context
 
-## Latest Change: Survey-In Progress Visibility + Cancel Button (2026-05-27)
+## Latest Change: Survey-In "Stuck Start" Fix — v0.3.2 (2026-05-27)
+
+### Symptom (operator report)
+> "When you run survey-in, there is no status of the survey process.
+> It would be really nice if there could be some progress shown in
+> the UI and ability to cancel."
+
+When the operator pressed **Start Survey-In** on `/survey`, the progress card came up immediately (v0.3.0 already fixed the blank-card problem) but the live readouts were obviously stale:
+
+- Duration jumped to e.g. **1247s** on the first poll, not 0s
+- Observations showed a non-zero count from the previous session
+- Accuracy converged "instantly" because the chart was just continuing the previous run
+- Status said **"Active — collecting..."** even though no new survey had actually started
+
+In other words, the UI was happily relaying the receiver's NAV-SVIN telemetry — but that telemetry was from the **previous** survey-in run that had completed (or been cancelled) hours/days earlier.  TMODE on the receiver was already either FIXED (mode 2) or stale SVIN (mode 1), and the new `configure_survey_in()` CFG-VALSET was being coalesced by the receiver as a no-op — the survey clock never reset.
+
+### Three-layer fix (driver A1+A2 + UI B)
+
+**Driver layer** — `src/sp_rtk_base/services/drivers/ublox.py`
+- **A1** — `configure_survey_in()` now **always** starts by sending `CFG_TMODE_MODE=0` via `_send_cfg_valset_locked()`, even if the receiver is already in survey-in mode.  The previous v0.3.0 implementation only did this "when transitioning from FIXED", which missed the SVIN→SVIN reconfigure case.
+- **A2** — After the disable write, the driver **polls CFG-TMODE-MODE** (UBX-CFG-VALGET) in a short retry loop (up to 3 attempts, ~600ms total) to verify the receiver actually accepted the disable.  If the receiver keeps reporting mode≠0, we raise a clear `RuntimeError("TMODE disable did not take effect")` instead of charging ahead with a TMODE=1 write that the receiver will silently drop.
+- New helper `_read_tmode_mode_locked()` reads back the current TMODE value via VALGET under the existing serial lock.
+
+**UI layer** — `src/sp_rtk_base/ui/pages/survey.py`
+- **B (belt-and-suspenders)** — On the first poll after Start, snapshot the receiver's NAV-SVIN `dur` counter into a new closure-local `_svin_dur_offset` and display **`dur - offset`** as the elapsed time for the rest of the run.  Even if the receiver's internal counter has a small residue that escaped the driver's disable+verify window, the UI guarantees the user sees "0s" at start.
+- The "% to target accuracy" calculation and the convergence chart's x-axis now use the offset-corrected elapsed time, so the chart starts at x=0 every time.
+- Status now reads **"Waiting for receiver..."** until the receiver confirms `active=true` for the first time, instead of jumping straight to "Active" off whatever the receiver was streaming.
+- `_svin_dur_offset` is reset to `None` on both Start (forces re-snapshot on next poll) and Cancel (so a subsequent Start can re-snapshot cleanly).
+
+### Files touched
+- `src/sp_rtk_base/services/drivers/ublox.py` — `configure_survey_in()` + new `_read_tmode_mode_locked()`
+- `src/sp_rtk_base/ui/pages/survey.py` — `_svin_dur_offset` state, `_start_survey_in()`, `_poll_survey_in()`, `_cancel_survey_in()`
+- `tests/unit/test_ublox_driver.py` — coverage for A1+A2 (disable-first, verify-loop happy path, verify-loop failure path)
+- `tests/unit/test_cancel_survey_in.py` — existing v0.3.1 tests still pass after the refactor
+- `CHANGELOG.md` — v0.3.2 entry
+- `pyproject.toml`, `src/sp_rtk_base/__init__.py` — bump 0.3.1 → 0.3.2
+
+### Verification
+- `uv run pytest tests/unit --no-cov -q` → **587 passed** (was 584 before)
+- `uv run ruff check src/sp_rtk_base/ui/pages/survey.py src/sp_rtk_base/services/drivers/ublox.py` → clean
+- `uv run pyright src/sp_rtk_base/ui/pages/survey.py src/sp_rtk_base/services/drivers/ublox.py` → **0 errors, 0 warnings** (strict mode)
+- Live Chromium repro on larson-base: Duration label now reads `Duration: 0s` immediately on Start, climbs by 2s on each poll; Observations starts at the new session's count; status correctly cycles `Configuring receiver... → Waiting for receiver... → Active — collecting...`.
+
+---
+
+## Previous Change: Survey-In Progress Visibility + Cancel Button (2026-05-27)
 
 ### Symptom (operator report)
 > "When you run survey-in, there is no status of the survey process.

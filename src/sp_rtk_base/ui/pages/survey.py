@@ -442,6 +442,16 @@ def survey_page() -> None:
         _svin_eta_samples: list[tuple[int, float]] = []
         _ETA_WINDOW_SECONDS: int = 30
 
+        # Receiver-side ``dur`` value captured on the *first* NAV-SVIN
+        # poll after a fresh "Start Survey-In" press.  All displayed
+        # durations and chart x-axis values are offset by this number
+        # so the UI always counts from zero, even on the off chance
+        # the receiver's NAV-SVIN dur counter still carries a small
+        # residue from the previous session that survived the
+        # configure_survey_in TMODE-reset verification window.
+        # ``None`` means "no survey started yet from this UI session".
+        _svin_dur_offset: int | None = None
+
         # Current fixed base position (from device read-back)
         _fb_lat: float = 0.0
         _fb_lon: float = 0.0
@@ -896,8 +906,15 @@ def survey_page() -> None:
             dlg.open()
 
         async def _start_survey_in() -> None:
-            nonlocal svin_timer
+            nonlocal svin_timer, _svin_dur_offset
             from sp_rtk_base.models.device_models import SurveyInConfig
+
+            # Force re-snapshot of the receiver's ``dur`` counter on the
+            # next poll.  Without this, a second Start press while the
+            # previous offset is still cached would display negative
+            # elapsed times until the receiver counter overtakes the
+            # stale offset.
+            _svin_dur_offset = None
 
             dur = int(svin_duration.value or 120)
             acc = int(svin_accuracy.value or 50000)
@@ -998,7 +1015,7 @@ def survey_page() -> None:
             failure so live state continues to surface while the
             operator decides what to do.
             """
-            nonlocal svin_timer
+            nonlocal svin_timer, _svin_dur_offset
             if svin_timer is not None:
                 svin_timer.active = False
                 svin_timer = None
@@ -1026,12 +1043,36 @@ def survey_page() -> None:
             svin_progress_bar.value = 0.0
             svin_cancel_btn.set_visibility(False)
             svin_start_btn.set_visibility(True)
+            # Clear the snapshot so a subsequent Start re-captures fresh.
+            _svin_dur_offset = None
             ui.notify("Survey-in cancelled", type="info")
 
         async def _poll_survey_in() -> None:
-            nonlocal svin_timer
+            nonlocal svin_timer, _svin_dur_offset
             try:
                 progress = await svc.get_survey_in_status()
+
+                # Snapshot the receiver's ``dur`` counter on the first
+                # poll after Start so the UI counts from 0 even if the
+                # receiver re-uses the previous session's counter.  See
+                # the ``_svin_dur_offset`` docstring above for the
+                # rationale.  Captured once per Start; cleared in
+                # _start_survey_in() and _cancel_survey_in().
+                if _svin_dur_offset is None and progress.active:
+                    _svin_dur_offset = int(progress.duration_seconds)
+                    logger.info(
+                        "Survey-in start: captured dur offset = %ds",
+                        _svin_dur_offset,
+                    )
+
+                # Effective elapsed for display = receiver_dur - offset.
+                # While offset is still None (first poll right after
+                # Start, before the receiver confirms active=True), we
+                # treat elapsed as 0.
+                offset = _svin_dur_offset if _svin_dur_offset is not None else 0
+                raw_dur = int(progress.duration_seconds)
+                elapsed = max(0, raw_dur - offset)
+
                 if progress.active:
                     svin_status_label.text = "Active — collecting..."
                     svin_status_label.classes(replace="text-warning")
@@ -1047,17 +1088,25 @@ def survey_page() -> None:
                     await _auto_commit_survey(progress)
                     return
                 else:
-                    svin_status_label.text = "Idle"
-                    svin_status_label.classes(replace="text-grey-3")
+                    # Receiver reports active=False — either the survey
+                    # hasn't started yet (offset still None) or it's
+                    # been cancelled / not started.  Show "Waiting…" so
+                    # the operator knows the UI is alive but the device
+                    # hasn't confirmed yet.
+                    if _svin_dur_offset is None:
+                        svin_status_label.text = "Waiting for receiver..."
+                        svin_status_label.classes(replace="text-warning")
+                    else:
+                        svin_status_label.text = "Idle"
+                        svin_status_label.classes(replace="text-grey-3")
 
-                svin_dur_label.text = f"Duration: {progress.duration_seconds}s"
+                svin_dur_label.text = f"Duration: {elapsed}s"
                 svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
                 svin_obs_label.text = f"Observations: {progress.observations}"
 
                 dur_target = int(svin_duration.value or 120)
                 acc_target = float(svin_accuracy.value or 50000)
                 cur_acc = float(progress.mean_accuracy_mm)
-                elapsed = int(progress.duration_seconds)
 
                 # Duration-based progress bar (primary completion gate is
                 # min_duration_seconds — survey only finishes once BOTH

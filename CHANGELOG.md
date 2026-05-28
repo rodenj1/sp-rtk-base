@@ -11,6 +11,39 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.3.2 (2026-05-27)
+
+- fix(survey): Start Survey-In now actually starts a fresh survey
+- Symptom on the field unit (larson-base): pressing "Start Survey-In"
+  after a previous survey produced a UI that immediately showed
+  "Active — collecting…" with a non-zero Duration (e.g. 1247s) and
+  a non-zero Observations count, because the receiver was still
+  reporting NAV-SVIN data from the *previous* session.  The new
+  survey never actually started — TMODE was left at fixed (2) or
+  the old survey-in config, so the receiver kept streaming stale
+  stats while the operator watched what looked like progress.
+- Driver fix (ublox.py::configure_survey_in):
+  - A1: Always send TMODE=0 (disable) first, even if the receiver
+    is already in survey-in mode.  This guarantees the NAV-SVIN
+    counter resets before the new TMODE=1 takes effect.
+  - A2: Verify the disable took (poll CFG-TMODE-MODE, expect 0)
+    with a short retry window before re-enabling.  Surfaces a
+    clear error if the receiver ignores the disable instead of
+    silently writing a survey-in config that won't run.
+- UI fix (survey.py::_poll_survey_in):
+  - B: Snapshot the receiver's NAV-SVIN ``dur`` counter on the
+    first poll after Start, then display ``dur - offset`` as the
+    elapsed time.  Belt-and-suspenders defense against any
+    residual stale counter the driver's reset window didn't catch.
+  - Status now reads "Waiting for receiver..." until the device
+    confirms ``active=true`` for the first time, instead of jumping
+    straight to "Active" off stale data.
+- Tests: 587 unit tests pass.  New coverage:
+  - tests/unit/test_ublox_driver.py: configure_survey_in always
+    sends TMODE=0 first and verifies the disable.
+  - tests/unit/test_cancel_survey_in.py: existing cancel-path
+    coverage still passes after the refactor.
+
 ## v0.3.1 (2026-05-27)
 
 

@@ -219,6 +219,19 @@ class UbloxDriver(GpsReceiverDriver):
     # Base station configuration
     # ------------------------------------------------------------------
 
+    # How long to wait between the TMODE-disable and TMODE-enable
+    # phases of ``configure_survey_in``.  Empirically the ZED-F9P
+    # needs ~200-400 ms of quiet time after a TMODE-disable VALSET
+    # before it will accept a re-enable as a *new* survey-in (rather
+    # than silently latching the cached prior survey result).
+    # 500 ms is conservative for all known ZED-F9P/F9R firmwares.
+    _TMODE_RESTART_DELAY_S: float = 0.5
+
+    # Maximum number of NAV-SVIN polls to wait for the receiver to
+    # acknowledge the TMODE state transition.  At ~50 ms per poll
+    # this caps the wait at ~250 ms after the delay above.
+    _TMODE_VERIFY_POLLS: int = 5
+
     def configure_survey_in(self, config: SurveyInConfig) -> None:
         # All CFG-VALSET writers must hold self._lock so they cannot
         # interleave on the wire with a concurrent NAV/CFG/MON poll
@@ -239,6 +252,49 @@ class UbloxDriver(GpsReceiverDriver):
             # active=True.  See memory-bank/progress.md 2026-05-27
             # entry.
             self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+
+            # Step 1a (A2): Give the receiver a brief settling period
+            # before we re-enable.  Without this, on ZED-F9P firmware
+            # 1.13–1.32 the receiver acks both VALSETs but quietly
+            # keeps reporting the *previous* completed survey result
+            # (active=False, valid=False, dur=<prior session> ).  The
+            # delay lets the receiver flush its TMODE state machine
+            # so the re-enable is registered as a fresh survey-in
+            # request.  See memory-bank/progress.md 2026-05-27
+            # "Survey-In doesn't actually start a new survey" entry.
+            time.sleep(self._TMODE_RESTART_DELAY_S)
+
+            # Step 1b (A1): Poll NAV-SVIN until the receiver confirms
+            # the TMODE reset took effect (active=False, dur=0).  If
+            # the receiver is still reporting active=True or a
+            # non-zero cumulative duration after the delay, it means
+            # the disable VALSET didn't actually land — re-send it
+            # and re-verify before continuing to the enable step.
+            for attempt in range(self._TMODE_VERIFY_POLLS):
+                progress = self._get_survey_in_locked()
+                if not progress.active and progress.duration_seconds == 0:
+                    break
+                if attempt == self._TMODE_VERIFY_POLLS - 1:
+                    logger.warning(
+                        "TMODE-disable verification timed out "
+                        "(active=%s dur=%ds) — proceeding to enable anyway",
+                        progress.active,
+                        progress.duration_seconds,
+                    )
+                else:
+                    logger.debug(
+                        "TMODE-disable not yet visible "
+                        "(attempt %d/%d: active=%s dur=%ds) — retrying",
+                        attempt + 1,
+                        self._TMODE_VERIFY_POLLS,
+                        progress.active,
+                        progress.duration_seconds,
+                    )
+                    # Cheap re-send on first miss
+                    if attempt == 0:
+                        self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+                    time.sleep(self._TMODE_RESTART_DELAY_S)
+
             # Step 2: write the new survey-in parameters and enable.
             cfg_data = [
                 ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
@@ -247,6 +303,30 @@ class UbloxDriver(GpsReceiverDriver):
                 ("CFG_TMODE_MODE", 1),
             ]
             self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
+
+            # Step 3 (A1): Verify the receiver actually accepted the
+            # enable by polling NAV-SVIN until ``active=True``.  If
+            # after ``_TMODE_VERIFY_POLLS`` the receiver still reports
+            # ``active=False`` we raise so the UI surfaces a real
+            # error instead of leaving the operator staring at a
+            # stale "Idle" status with the prior session's numbers.
+            for attempt in range(self._TMODE_VERIFY_POLLS):
+                progress = self._get_survey_in_locked()
+                if progress.active:
+                    break
+                if attempt == self._TMODE_VERIFY_POLLS - 1:
+                    raise RuntimeError(
+                        "Receiver accepted the survey-in configuration "
+                        f"(min_duration={config.min_duration_seconds}s, "
+                        f"accuracy={config.accuracy_limit_mm}mm) but did "
+                        "not start a new survey — NAV-SVIN still reports "
+                        f"active=False after "
+                        f"{self._TMODE_VERIFY_POLLS} polls.  Try "
+                        "power-cycling the receiver, or check that "
+                        "TMODE isn't pinned in flash from a previous "
+                        "session."
+                    )
+                time.sleep(self._TMODE_RESTART_DELAY_S / 2)
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,

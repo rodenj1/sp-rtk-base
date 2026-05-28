@@ -290,13 +290,18 @@ class TestUbloxDriverConfiguration:
         mock_serial_cls.return_value = ser
 
         reader = MagicMock()
-        # configure_survey_in sends TWO CFG-VALSET messages now (first
-        # to disable TMODE, then to set the new params + enable) so we
-        # need ACKs for both.
+        # configure_survey_in now performs:
+        #   1. CFG-VALSET TMODE=0  -> ACK
+        #   2. NAV-SVIN poll       -> active=0, dur=0  (verify disable)
+        #   3. CFG-VALSET TMODE=1  -> ACK
+        #   4. NAV-SVIN poll       -> active=1        (verify enable)
+        # We need to supply matching replies in order.
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_ack_response()),  # ACK for disable TMODE
+            (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
             (b"", _make_ack_response()),  # ACK for survey-in params
+            (b"", _make_nav_svin_response(active=1, valid=0, dur=0, obs=0)),
         ]
         mock_reader_cls.return_value = reader
 
@@ -308,7 +313,8 @@ class TestUbloxDriverConfiguration:
         driver.connect("/dev/ttyUSB0")
 
         config = SurveyInConfig(min_duration_seconds=300, accuracy_limit_mm=40000)
-        driver.configure_survey_in(config)
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            driver.configure_survey_in(config)
 
         # Two CFG-VALSET calls: disable first, then enable survey-in.
         assert mock_ubx_msg.config_set.call_count == 2

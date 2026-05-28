@@ -155,13 +155,15 @@ class TestUbloxDisableBaseMode:
 
         reader = MagicMock()
         # configure_survey_in now performs:
-        #   1. CFG-VALSET TMODE=0  -> ACK
-        #   2. NAV-SVIN poll       -> active=0, dur=0 (verify disable)
-        #   3. CFG-VALSET TMODE=1  -> ACK
-        #   4. NAV-SVIN poll       -> active=1       (verify enable)
+        #   1. CFG-VALSET TMODE=0 (RAM)    -> ACK
+        #   2. CFG-VALSET TMODE=0 (FLASH)  -> ACK
+        #   3. NAV-SVIN poll               -> active=0 (verify disable)
+        #   4. CFG-VALSET TMODE=1 (RAM)    -> ACK
+        #   5. NAV-SVIN poll               -> active=1 (verify enable)
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # disable step
+            (b"", _make_ack()),  # RAM disable
+            (b"", _make_ack()),  # FLASH disable
             (
                 b"",
                 SimpleNamespace(
@@ -199,13 +201,17 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
             )
 
-        # The first config_set must be the disable, the second must enable
-        assert mock_ubx_msg.config_set.call_count == 2
-        first = mock_ubx_msg.config_set.call_args_list[0][0][2]
-        second = mock_ubx_msg.config_set.call_args_list[1][0][2]
-        assert first == [("CFG_TMODE_MODE", 0)]
-        # The second call sets the new survey params + re-enables TMODE
-        keys = {k: v for k, v in second}
+        # Three config_sets: RAM disable, FLASH disable, enable.
+        assert mock_ubx_msg.config_set.call_count == 3
+        ram_disable = mock_ubx_msg.config_set.call_args_list[0]
+        flash_disable = mock_ubx_msg.config_set.call_args_list[1]
+        enable = mock_ubx_msg.config_set.call_args_list[2]
+        assert ram_disable[0][2] == [("CFG_TMODE_MODE", 0)]
+        assert ram_disable[0][0] == 1  # layer=RAM
+        assert flash_disable[0][2] == [("CFG_TMODE_MODE", 0)]
+        assert flash_disable[0][0] == 4  # layer=FLASH
+        # The enable call sets the new survey params + re-enables TMODE
+        keys = {k: v for k, v in enable[0][2]}
         assert keys.get("CFG_TMODE_MODE") == 1
         assert keys.get("CFG_TMODE_SVIN_MIN_DUR") == 120
         assert keys.get("CFG_TMODE_SVIN_ACC_LIMIT") == 50000
@@ -225,10 +231,11 @@ class TestUbloxDisableBaseMode:
         proceeding to the enable step.
 
         Scenario:
-        - VALSET TMODE=0 → ACK
+        - VALSET TMODE=0 (RAM)   → ACK
+        - VALSET TMODE=0 (FLASH) → ACK
         - NAV-SVIN → active=1, dur=12345 (stale)  → triggers retry
-        - re-send VALSET TMODE=0 → ACK
-        - NAV-SVIN → active=0, dur=0             (clean)
+        - re-send VALSET TMODE=0 (RAM) → ACK
+        - NAV-SVIN → active=0                    (clean)
         - VALSET enable → ACK
         - NAV-SVIN → active=1                    (new survey running)
         """
@@ -239,7 +246,8 @@ class TestUbloxDisableBaseMode:
         reader = MagicMock()
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # ACK for first disable
+            (b"", _make_ack()),  # ACK for RAM disable
+            (b"", _make_ack()),  # ACK for FLASH disable
             (
                 b"",
                 SimpleNamespace(  # stale prior survey still showing
@@ -251,7 +259,7 @@ class TestUbloxDisableBaseMode:
                     obs=5000,
                 ),
             ),
-            (b"", _make_ack()),  # ACK for retried disable
+            (b"", _make_ack()),  # ACK for retried RAM disable
             (
                 b"",
                 SimpleNamespace(  # finally clean
@@ -289,17 +297,16 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
             )
 
-        # Expect 3 CFG-VALSETs: disable, retried-disable, enable
-        assert mock_ubx_msg.config_set.call_count == 3
-        # First two are disables, third is the enable
-        assert mock_ubx_msg.config_set.call_args_list[0][0][2] == [
-            ("CFG_TMODE_MODE", 0)
-        ]
-        assert mock_ubx_msg.config_set.call_args_list[1][0][2] == [
-            ("CFG_TMODE_MODE", 0)
-        ]
-        third = dict(mock_ubx_msg.config_set.call_args_list[2][0][2])
-        assert third.get("CFG_TMODE_MODE") == 1
+        # Expect 4 CFG-VALSETs: RAM disable, FLASH disable, retried RAM
+        # disable, enable.
+        assert mock_ubx_msg.config_set.call_count == 4
+        layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
+        payloads = [c[0][2] for c in mock_ubx_msg.config_set.call_args_list]
+        assert layers == [1, 4, 1, 1]
+        assert payloads[0] == [("CFG_TMODE_MODE", 0)]
+        assert payloads[1] == [("CFG_TMODE_MODE", 0)]
+        assert payloads[2] == [("CFG_TMODE_MODE", 0)]
+        assert dict(payloads[3]).get("CFG_TMODE_MODE") == 1
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -332,13 +339,14 @@ class TestUbloxDisableBaseMode:
             obs=0,
         )
         reader = MagicMock()
-        # disable ACK → disable verify(idle) → enable ACK → 5x enable
-        # verify(still idle) → raise
+        # RAM disable ACK → FLASH disable ACK → disable verify(idle)
+        # → enable ACK → 5x enable verify(still idle) → raise
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),
+            (b"", _make_ack()),  # RAM disable
+            (b"", _make_ack()),  # FLASH disable
             (b"", nav_svin_idle),
-            (b"", _make_ack()),
+            (b"", _make_ack()),  # enable
             (b"", nav_svin_idle),
             (b"", nav_svin_idle),
             (b"", nav_svin_idle),

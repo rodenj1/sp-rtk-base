@@ -33,16 +33,17 @@ from sp_rtk_base.services.drivers.ublox import UbloxDriver
 def _make_nav_pvt(
     fix_type: int = 3,
     carr_soln: int = 0,
-    lat: int = 476062000,  # 47.6062° * 1e7
-    lon: int = -1223321000,  # -122.3321° * 1e7
-    height: int = 100500,  # 100.5m in mm
+    # pyubx2 >=1.3.0 returns lat/lon/pDOP/headMot pre-scaled to floats
+    lat: float = 47.6062,
+    lon: float = -122.3321,
+    height: int = 100500,  # 100.5m in mm (raw int from pyubx2)
     h_msl: int = 95200,  # 95.2m in mm
     h_acc: int = 1500,  # 1.5m in mm
     v_acc: int = 2500,  # 2.5m in mm
     num_sv: int = 18,
-    g_speed: int = 500,  # 0.5 m/s in mm/s
-    head_mot: int = 18000000,  # 180.0° * 1e5
-    p_dop: int = 150,  # 1.50 * 100
+    g_speed: int = 500,  # 0.5 m/s in mm/s (raw int from pyubx2)
+    head_mot: float = 180.0,  # pre-scaled degrees
+    p_dop: float = 1.50,  # pre-scaled
     year: int = 2026,
     month: int = 4,
     day: int = 14,
@@ -196,7 +197,7 @@ class TestUbloxGetPosition:
         assert pos.rtk_status == "float"
 
     def test_get_position_no_fix(self, connected_driver: UbloxDriver) -> None:
-        nav_pvt = _make_nav_pvt(fix_type=0, num_sv=0, lat=0, lon=0, height=0)
+        nav_pvt = _make_nav_pvt(fix_type=0, num_sv=0, lat=0.0, lon=0.0, height=0)
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
 
         pos = connected_driver.get_position()
@@ -219,7 +220,7 @@ class TestUbloxGetPosition:
         assert abs(pos.vertical_accuracy_m - 2.5) < 0.01
 
     def test_get_position_speed_heading(self, connected_driver: UbloxDriver) -> None:
-        nav_pvt = _make_nav_pvt(g_speed=1500, head_mot=9000000)
+        nav_pvt = _make_nav_pvt(g_speed=1500, head_mot=90.0)
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
 
         pos = connected_driver.get_position()
@@ -227,7 +228,7 @@ class TestUbloxGetPosition:
         assert abs(pos.heading_deg - 90.0) < 0.01
 
     def test_get_position_pdop(self, connected_driver: UbloxDriver) -> None:
-        nav_pvt = _make_nav_pvt(p_dop=250)
+        nav_pvt = _make_nav_pvt(p_dop=2.50)
         connected_driver._reader.read.return_value = (b"raw", nav_pvt)  # type: ignore[union-attr]
 
         pos = connected_driver.get_position()

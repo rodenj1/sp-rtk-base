@@ -253,6 +253,22 @@ class UbloxDriver(GpsReceiverDriver):
             # entry.
             self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
 
+            # Also clear TMODE in flash.  Without this, a survey that
+            # was interrupted before its auto-commit ran (network
+            # drop, operator disconnect, crash) leaves flash pinned
+            # at TMODE=1 with a stale NAV-SVIN ``dur`` counter; that
+            # state survives the next power cycle and re-asserts
+            # itself into RAM at boot, putting the receiver back into
+            # a phantom survey-in.  Writing TMODE=0 to flash here
+            # ensures the only persistent base states are "none"
+            # (TMODE=0) or "completed fixed base" (TMODE=2, written by
+            # the post-survey ``save_to_flash``).  Only the MODE key
+            # is touched — any flashed ECEF/LLH coordinates from a
+            # prior completed survey persist so they remain available
+            # if the operator decides to switch back to fixed-base
+            # mode manually.
+            self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=4)
+
             # Step 1a (A2): Give the receiver a brief settling period
             # before we re-enable.  Without this, on ZED-F9P firmware
             # 1.13–1.32 the receiver acks both VALSETs but quietly
@@ -265,14 +281,14 @@ class UbloxDriver(GpsReceiverDriver):
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
             # Step 1b (A1): Poll NAV-SVIN until the receiver confirms
-            # the TMODE reset took effect (active=False, dur=0).  If
-            # the receiver is still reporting active=True or a
-            # non-zero cumulative duration after the delay, it means
-            # the disable VALSET didn't actually land — re-send it
-            # and re-verify before continuing to the enable step.
+            # the TMODE reset took effect (active=False).  NAV-SVIN
+            # only zeroes ``dur`` when a *new* survey starts — disabling
+            # TMODE leaves the prior session's accumulated duration
+            # intact, so we cannot use ``dur == 0`` as a precondition
+            # here.  ``active=False`` alone is the correct signal.
             for attempt in range(self._TMODE_VERIFY_POLLS):
                 progress = self._get_survey_in_locked()
-                if not progress.active and progress.duration_seconds == 0:
+                if not progress.active:
                     break
                 if attempt == self._TMODE_VERIFY_POLLS - 1:
                     logger.warning(
@@ -727,9 +743,15 @@ class UbloxDriver(GpsReceiverDriver):
         rtk_map = {0: "none", 1: "float", 2: "fixed"}
         rtk_status = rtk_map.get(carr_soln, "none")
 
-        # Position: NAV-PVT gives lat/lon in degrees * 1e-7
-        lat = float(getattr(parsed, "lat", 0)) * 1e-7
-        lon = float(getattr(parsed, "lon", 0)) * 1e-7
+        # NAV-PVT scaling: pyubx2 >=1.3.0 pre-scales fields whose
+        # payload spec declares a scale factor (lat/lon: 1e-7,
+        # pDOP: 0.01, headMot/headAcc: 1e-5).  Applying those factors
+        # again here would double-scale (e.g. lat ≈ 3.27e-6° instead
+        # of 32.7°).  The mm-valued integer fields below have no
+        # spec scale factor and still need the /1000.0 to convert to
+        # metres.  See pyubx2.UBX_PAYLOADS_GET['NAV-PVT'].
+        lat = float(getattr(parsed, "lat", 0.0))
+        lon = float(getattr(parsed, "lon", 0.0))
         # Height above ellipsoid in mm → m
         h_ell = float(getattr(parsed, "height", 0)) / 1000.0
         # Height above MSL in mm → m
@@ -745,11 +767,11 @@ class UbloxDriver(GpsReceiverDriver):
         # Speed in mm/s → m/s
         g_speed = float(getattr(parsed, "gSpeed", 0)) / 1000.0
 
-        # Heading in degrees * 1e-5
-        head_mot = float(getattr(parsed, "headMot", 0)) * 1e-5
+        # Heading (pre-scaled to degrees by pyubx2)
+        head_mot = float(getattr(parsed, "headMot", 0.0))
 
-        # pDOP (scaled by 0.01 in NAV-PVT)
-        pdop = float(getattr(parsed, "pDOP", 9990)) * 0.01
+        # pDOP (pre-scaled by pyubx2; 99.9 sentinel when missing)
+        pdop = float(getattr(parsed, "pDOP", 99.9))
 
         # Timestamp from NAV-PVT fields
         ts: datetime | None = None

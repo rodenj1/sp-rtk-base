@@ -291,14 +291,15 @@ class TestUbloxDriverConfiguration:
 
         reader = MagicMock()
         # configure_survey_in now performs:
-        #   1. CFG-VALSET TMODE=0  -> ACK
-        #   2. NAV-SVIN poll       -> active=0, dur=0  (verify disable)
-        #   3. CFG-VALSET TMODE=1  -> ACK
-        #   4. NAV-SVIN poll       -> active=1        (verify enable)
-        # We need to supply matching replies in order.
+        #   1. CFG-VALSET TMODE=0 (RAM)    -> ACK
+        #   2. CFG-VALSET TMODE=0 (FLASH)  -> ACK
+        #   3. NAV-SVIN poll               -> active=0, dur=0  (verify disable)
+        #   4. CFG-VALSET TMODE=1 (RAM)    -> ACK
+        #   5. NAV-SVIN poll               -> active=1        (verify enable)
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),  # ACK for disable TMODE
+            (b"", _make_ack_response()),  # ACK for disable TMODE (RAM)
+            (b"", _make_ack_response()),  # ACK for disable TMODE (FLASH)
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
             (b"", _make_ack_response()),  # ACK for survey-in params
             (b"", _make_nav_svin_response(active=1, valid=0, dur=0, obs=0)),
@@ -316,19 +317,23 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_survey_in(config)
 
-        # Two CFG-VALSET calls: disable first, then enable survey-in.
-        assert mock_ubx_msg.config_set.call_count == 2
-        first_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
-        second_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
-        # First call must be the disable step
-        assert first_cfg == [("CFG_TMODE_MODE", 0)]
-        # Second call must contain the new params and re-enable
-        keys = [k for k, _ in second_cfg]
+        # Three CFG-VALSET calls: RAM disable, FLASH disable, then enable.
+        assert mock_ubx_msg.config_set.call_count == 3
+        ram_disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
+        flash_disable_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
+        flash_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
+        enable_cfg = mock_ubx_msg.config_set.call_args_list[2][0][2]
+        assert ram_disable_cfg == [("CFG_TMODE_MODE", 0)]
+        assert flash_disable_cfg == [("CFG_TMODE_MODE", 0)]
+        # Flash write must target layer=4 so a power-cycle can't reassert
+        # a stale TMODE=1 from a previous interrupted survey.
+        assert flash_layer == 4
+        # Enable call must contain the new params and re-enable
+        keys = [k for k, _ in enable_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys
         assert "CFG_TMODE_SVIN_ACC_LIMIT" in keys
-        # TMODE_MODE must be set to 1 (survey-in) in the second message
-        mode_vals = [v for k, v in second_cfg if k == "CFG_TMODE_MODE"]
+        mode_vals = [v for k, v in enable_cfg if k == "CFG_TMODE_MODE"]
         assert mode_vals == [1]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")

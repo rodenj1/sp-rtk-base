@@ -63,6 +63,15 @@ def dashboard_page() -> None:
                     stop_btn = ui.button(
                         "Stop", icon="stop", on_click=lambda: _stop_relay()
                     ).props("color=red")
+            # Persistent error banner for Start failures.  The toast
+            # alone fades in ~3 s; operators reported missing the
+            # error context and ending up confused about why the
+            # relay wasn't running.  Hidden by default, populated by
+            # _start_relay's except branch, cleared on next click.
+            start_error_label = ui.label("").classes(
+                "text-negative text-caption q-mt-sm"
+            )
+            start_error_label.set_visibility(False)
 
         # --- Metrics cards ---
         with ui.row().classes("w-full gap-4 q-mt-md sp-metric-row"):
@@ -368,6 +377,9 @@ def dashboard_page() -> None:
 
         async def _start_relay() -> None:
             """Start the relay engine using saved config."""
+            # Clear any previous start-failure banner before retrying.
+            start_error_label.text = ""
+            start_error_label.set_visibility(False)
             try:
                 config = config_svc.get_config()
                 if config.input is None:
@@ -389,7 +401,34 @@ def dashboard_page() -> None:
                 await _refresh_status()
             except Exception as exc:
                 logger.exception("Failed to start relay")
-                ui.notify(f"Failed to start relay: {exc}", type="negative")
+                # Map common ConfigurationError patterns to friendly
+                # messages.  Without this the operator sees the raw
+                # exception path (e.g. "input.config.port must be an
+                # integer between 1 and 65535 | Key: input.config.port")
+                # which leaks the internal config tree shape.
+                exc_text = str(exc)
+                if (
+                    "port must be an integer" in exc_text
+                    or "input.config.port" in exc_text
+                ):
+                    friendly = (
+                        "Failed to start: TCP input port is not a number. "
+                        "Re-save the Input config (Input page) and try again."
+                    )
+                elif "input.config" in exc_text or "destinations" in exc_text:
+                    friendly = (
+                        "Failed to start: configuration error.  Check the "
+                        "Input and Outputs pages for fields that need "
+                        "valid values, then re-save."
+                    )
+                else:
+                    friendly = f"Failed to start relay: {exc}"
+                # Persistent banner stays visible until the next
+                # Start click — the toast still fires for
+                # consistency but the banner is the primary signal.
+                start_error_label.text = friendly
+                start_error_label.set_visibility(True)
+                ui.notify(friendly, type="negative")
 
         async def _stop_relay() -> None:
             """Stop the relay engine."""

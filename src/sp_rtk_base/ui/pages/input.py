@@ -535,7 +535,27 @@ def input_page() -> None:
                                 type="warning",
                             )
                             return
-                    config = {k: v.value for k, v in tcp_inputs.items() if v.value}
+                    # NiceGUI ui.input() returns strings.  The TCP port
+                    # must be an integer for the relay's InputConfig
+                    # validation to accept it — coerce here.  Without
+                    # this, the saved config has port="5015" and
+                    # ``relay.start()`` fails with "port must be an
+                    # integer between 1 and 65535" forever after.
+                    config = {}
+                    for k, v in tcp_inputs.items():
+                        if not v.value:
+                            continue
+                        if k == "port":
+                            try:
+                                config[k] = int(v.value)
+                            except (TypeError, ValueError):
+                                ui.notify(
+                                    "Port must be a whole number (1-65535)",
+                                    type="warning",
+                                )
+                                return
+                        else:
+                            config[k] = v.value
 
                 elif src == "serial":
                     port_widget = serial_port_select.get("widget")

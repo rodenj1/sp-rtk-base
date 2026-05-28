@@ -332,6 +332,16 @@ def outputs_page() -> None:
             ):
                 ui.label(f"Edit: {dest.name}").classes("text-h6 text-white")
 
+                # Name field — lets the operator rename without
+                # delete + re-add.  If the new name conflicts with
+                # another destination, _save_edit catches it and
+                # surfaces a clear error.
+                name_input = ui.input(
+                    "Name",
+                    value=dest.name,
+                    validation={"Name is required": lambda v: bool(v and v.strip())},
+                ).classes("w-full")
+
                 config_inputs: dict[str, ui.input | ui.select] = {}
                 for fname, flabel, _fdefault, fvalidation in TYPE_FIELDS.get(
                     dest.type, []
@@ -371,12 +381,15 @@ def outputs_page() -> None:
                     ui.button("Cancel", on_click=dialog.close).props("flat")
                     ui.button(
                         "Save",
-                        on_click=lambda: _save_edit(dest, config_inputs, dialog),
+                        on_click=lambda: _save_edit(
+                            dest, name_input, config_inputs, dialog
+                        ),
                     ).props("color=primary")
             dialog.open()
 
         def _save_edit(
             dest: DestinationProfile,
+            name_input: ui.input,
             config_inputs: dict[str, ui.input | ui.select],
             dialog: ui.dialog,
         ) -> None:
@@ -386,12 +399,29 @@ def outputs_page() -> None:
                 if inp.error:
                     ui.notify("Fix validation errors before saving", type="warning")
                     return
+            new_name = (name_input.value or "").strip()
+            if not new_name:
+                ui.notify("Name is required", type="warning")
+                return
+            # Rename collision check — only fires when name changed.
+            if new_name != dest.name:
+                existing = {d.name for d in config_svc.get_config().destinations}
+                if new_name in existing:
+                    ui.notify(
+                        f"A destination named '{new_name}' already exists",
+                        type="warning",
+                    )
+                    return
 
             config = {k: v.value for k, v in config_inputs.items() if v.value}
             try:
-                updated = dest.model_copy(update={"config": config})
+                updated = dest.model_copy(update={"name": new_name, "config": config})
+                # If the name changed, remove the old entry first so
+                # save_destination doesn't end up with both names.
+                if new_name != dest.name:
+                    config_svc.remove_destination(dest.name)
                 config_svc.save_destination(updated)
-                ui.notify(f"Updated '{dest.name}'", type="positive")
+                ui.notify(f"Updated '{new_name}'", type="positive")
                 dialog.close()
                 _refresh_list()
             except Exception as exc:

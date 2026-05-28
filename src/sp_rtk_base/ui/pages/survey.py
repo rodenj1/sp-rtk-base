@@ -1160,6 +1160,17 @@ def survey_page() -> None:
                 if progress.valid:
                     svin_status_label.text = "✓ Complete — committing..."
                     svin_status_label.classes(replace="text-positive")
+                    # Clear in-progress labels so the operator doesn't
+                    # see contradictory state.  Without this the
+                    # "% to target: 100% — waiting on min duration"
+                    # and "ETA: ~Xs (waiting on min duration)" lines
+                    # remained on screen alongside "Survey complete",
+                    # which the e2e tester correctly flagged as
+                    # misleading.
+                    svin_pct_label.text = "% to target: 100% (target reached)"
+                    svin_eta_label.text = "ETA: complete"
+                    svin_progress_bar.value = 1.0
+                    svin_warning_label.set_visibility(False)
 
                     if svin_timer is not None:
                         svin_timer.active = False
@@ -1407,11 +1418,55 @@ def survey_page() -> None:
                                     al: float = _alt,
                                     ac: int = _acc,
                                 ) -> None:
-                                    ui.notify(f"Restoring '{n}'...", type="info")
-                                    ok = await _commit_fixed_base(la, lo, al, ac)
-                                    if ok:
-                                        ui.notify(f"'{n}' restored ✓", type="positive")
-                                        await _read_fixed_base()
+                                    # Restore overwrites the device's
+                                    # active TMODE config — confirm
+                                    # before clobbering whatever is
+                                    # currently in fixed-base mode
+                                    # (matches the pattern used by
+                                    # Start Survey, Cancel Survey,
+                                    # and Reset GPS).
+                                    with (
+                                        ui.dialog() as dlg,
+                                        ui.card().classes("q-pa-md"),
+                                    ):
+                                        ui.label(f"Restore '{n}'?").classes(
+                                            "text-h6 text-white"
+                                        )
+                                        ui.separator()
+                                        ui.label(
+                                            f"This will overwrite the receiver's "
+                                            f"current fixed-base position with the "
+                                            f"saved coordinates "
+                                            f"({la:.7f}°, {lo:.7f}°, {al:.3f}m, "
+                                            f"±{ac}mm) and save to flash."
+                                        ).classes("text-grey-4 q-mt-sm")
+                                        with ui.row().classes(
+                                            "gap-2 q-mt-md justify-end"
+                                        ):
+                                            ui.button(
+                                                "Cancel", on_click=dlg.close
+                                            ).props("flat")
+
+                                            async def _confirmed() -> None:
+                                                dlg.close()
+                                                ui.notify(
+                                                    f"Restoring '{n}'...",
+                                                    type="info",
+                                                )
+                                                ok = await _commit_fixed_base(
+                                                    la, lo, al, ac
+                                                )
+                                                if ok:
+                                                    ui.notify(
+                                                        f"'{n}' restored ✓",
+                                                        type="positive",
+                                                    )
+                                                    await _read_fixed_base()
+
+                                            ui.button(
+                                                "Restore", on_click=_confirmed
+                                            ).props("color=positive")
+                                    dlg.open()
 
                                 async def _delete(n: str = _name) -> None:
                                     if config_svc.delete_base_position(n):

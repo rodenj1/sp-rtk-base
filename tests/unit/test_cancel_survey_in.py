@@ -670,3 +670,104 @@ class TestCancelSurveyInEndpoint:
         assert "cancel" in body["message"].lower()
         # The fake driver should now be in DISABLED mode
         assert fake.get_base_config().mode == BaseMode.DISABLED
+
+
+class TestCfgRstDiagnosticEndpoint:
+    """Smoke tests for POST /api/device/debug/cfg-rst.
+
+    Uses an in-memory stub driver that records the args without
+    talking to a real receiver — the endpoint's value is in the
+    request validation + before/after capture, both of which we can
+    exercise without UBX traffic.
+    """
+
+    def _make_client(self, svc: DeviceService) -> TestClient:
+        app = create_api_app()
+        app.dependency_overrides[get_device_service] = lambda: svc
+        return TestClient(app)
+
+    def test_endpoint_rejects_disallowed_reset_mode(self) -> None:
+        svc = DeviceService()
+        fake = FakeGpsDriver()
+        fake.connect("FAKE")
+        svc.set_driver(fake)
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        # 0x00 = hardware reset — rejected because it drops the USB.
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={"reset_mode": 0, "bbr_bits": ["pos"]},
+        )
+        assert resp.status_code == 400
+        assert "reset_mode" in resp.json()["detail"].lower()
+
+    def test_endpoint_rejects_unknown_bbr_bit(self) -> None:
+        svc = DeviceService()
+        fake = FakeGpsDriver()
+        fake.connect("FAKE")
+        svc.set_driver(fake)
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={"reset_mode": 2, "bbr_bits": ["nonsense"]},
+        )
+        assert resp.status_code == 400
+        assert "nonsense" in resp.json()["detail"]
+
+    def test_endpoint_rejects_non_ublox_driver(self) -> None:
+        """Fake driver doesn't expose send_cfg_rst_diagnostic — the
+        service must surface a clear 409 rather than crash."""
+        svc = DeviceService()
+        fake = FakeGpsDriver()
+        fake.connect("FAKE")
+        svc.set_driver(fake)
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={"reset_mode": 2, "bbr_bits": ["pos"], "wait_seconds": 0.0},
+        )
+        assert resp.status_code == 409
+        assert "u-blox" in resp.json()["detail"].lower()
+
+    def test_endpoint_returns_before_and_after_on_ublox(self) -> None:
+        """When a u-blox driver is present, the endpoint must call
+        through and return both NAV-SVIN snapshots plus the UBX hex."""
+        from sp_rtk_base.models.device_models import SurveyInProgress
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        # Build a UbloxDriver instance with send_cfg_rst_diagnostic
+        # mocked so we don't open serial.
+        drv = UbloxDriver()
+        # Mark connected so _require_connected() passes.
+        drv._connected = True  # type: ignore[attr-defined]
+        before_state = SurveyInProgress(duration_seconds=65000, observations=40000)
+        after_state = SurveyInProgress(duration_seconds=0, observations=0)
+        drv.send_cfg_rst_diagnostic = MagicMock(  # type: ignore[method-assign]
+            return_value=(before_state, after_state, b"\xb5\x62\x06\x04\x04\x00")
+        )
+
+        svc = DeviceService()
+        svc._driver = drv  # type: ignore[attr-defined]
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post(
+            "/api/device/debug/cfg-rst",
+            json={"reset_mode": 2, "bbr_bits": ["pos", "eph"], "wait_seconds": 1.5},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["before"]["duration_seconds"] == 65000
+        assert body["after"]["duration_seconds"] == 0
+        assert body["wait_seconds"] == 1.5
+        assert body["ubx_sent_hex"] == "b56206040400"
+
+        # And the driver was called with the right kwargs.
+        drv.send_cfg_rst_diagnostic.assert_called_once_with(  # type: ignore[attr-defined]
+            2, 1.5, {"pos": 1, "eph": 1}
+        )

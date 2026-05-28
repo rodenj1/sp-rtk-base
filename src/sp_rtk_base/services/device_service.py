@@ -259,6 +259,36 @@ class DeviceService:
             self._last_error = str(exc)
             raise
 
+    async def send_cfg_rst_diagnostic(
+        self,
+        reset_mode: int,
+        wait_seconds: float,
+        bbr_bits: dict[str, int],
+    ) -> tuple[SurveyInProgress, SurveyInProgress, bytes]:
+        """Send an arbitrary UBX-CFG-RST and capture before/after state.
+
+        Thin async wrapper around ``UbloxDriver.send_cfg_rst_diagnostic``
+        for the ``POST /api/device/debug/cfg-rst`` endpoint.  Only
+        works on real u-blox drivers; the fake driver does not expose
+        this method.
+
+        Raises:
+            RuntimeError: If not connected or the active driver does
+                not support CFG-RST diagnostics.
+        """
+        driver = self._require_connected()
+        if not hasattr(driver, "send_cfg_rst_diagnostic"):
+            raise RuntimeError(
+                "Active driver does not support CFG-RST diagnostics "
+                "(only u-blox drivers do)."
+            )
+        return await asyncio.to_thread(
+            driver.send_cfg_rst_diagnostic,  # type: ignore[attr-defined]
+            reset_mode,
+            wait_seconds,
+            bbr_bits,
+        )
+
     async def cancel_survey_in(self) -> None:
         """Cancel an in-progress survey-in by disabling TMODE.
 

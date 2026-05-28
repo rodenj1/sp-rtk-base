@@ -895,6 +895,69 @@ class UbloxDriver(GpsReceiverDriver):
             "survey accumulator cleared; receiver re-acquiring GNSS"
         )
 
+    def send_cfg_rst_diagnostic(
+        self,
+        reset_mode: int,
+        wait_seconds: float,
+        bbr_bits: dict[str, int],
+    ) -> tuple[SurveyInProgress, SurveyInProgress, bytes]:
+        """Send an arbitrary UBX-CFG-RST and capture before/after state.
+
+        Diagnostic-only entry point — exposed by the
+        ``POST /api/device/debug/cfg-rst`` endpoint so the canonical
+        reset variant for clearing the HPG 1.12 NAV-SVIN accumulator
+        can be discovered empirically.  Holds ``self._lock`` for the
+        full before-write-wait-after cycle so a concurrent NAV poll
+        cannot interleave and corrupt the timing.
+
+        Args:
+            reset_mode: UBX ``resetMode`` byte.  Validate at the
+                caller — this method does not gate values.
+            wait_seconds: How long to sleep after the write before
+                reading the after-state.
+            bbr_bits: Named BBR-clear bits, e.g. ``{"pos": 1,
+                "eph": 0}``.  Passed straight to the ``UBXMessage``
+                constructor.  Unknown keys raise.
+
+        Returns:
+            Tuple of ``(before, after, ubx_bytes_sent)`` — both
+            ``before`` and ``after`` are ``SurveyInProgress`` reads of
+            NAV-SVIN; ``ubx_bytes_sent`` is the serialised UBX frame
+            for hex display in the diagnostic UI.
+        """
+        with self._lock:
+            before = self._get_survey_in_locked()
+            ser, _ = self._require_connection()
+            # pyubx2's UBXMessage __init__ declares ``parsebitfield``
+            # as Literal[0,1,2] — passing ``**bbr_bits: dict[str, int]``
+            # widens the kwargs type and trips strict mode.  The
+            # endpoint validates ``bbr_bits`` against a known
+            # allowlist before reaching this method, so the widened
+            # type is safe in practice.
+            msg = UBXMessage(
+                "CFG",
+                "CFG-RST",
+                SET,
+                resetMode=reset_mode,
+                **bbr_bits,  # type: ignore[arg-type]
+            )
+            wire_bytes: bytes = msg.serialize()  # type: ignore[union-attr]
+            ser.reset_input_buffer()
+            ser.write(wire_bytes)
+            time.sleep(wait_seconds)
+            after = self._get_survey_in_locked()
+        logger.info(
+            "Diagnostic CFG-RST sent: resetMode=0x%02x bits=%s; "
+            "dur %d -> %d, obs %d -> %d",
+            reset_mode,
+            bbr_bits,
+            before.duration_seconds,
+            after.duration_seconds,
+            before.observations,
+            after.observations,
+        )
+        return before, after, wire_bytes
+
     def _get_survey_in_locked(self) -> SurveyInProgress:
         """Poll NAV-SVIN (must hold self._lock)."""
         ser, reader = self._require_connection()

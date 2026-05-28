@@ -8,6 +8,7 @@ survey-in progress.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from sp_rtk_base.models.api_models import DeviceActionResponse, DeviceConnectRequest
 from sp_rtk_base.models.config_models import (
@@ -305,6 +306,123 @@ async def get_survey_in_progress(
         return await svc.get_survey_in_status()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic — UBX-CFG-RST experimentation
+#
+# Exposed to find the canonical reset variant that clears the
+# HPG 1.12 NAV-SVIN.dur accumulator (a BBR-backed counter that the
+# CFG_TMODE_MODE=0 layer=7 VALSET and the resetMode=0x09+pos CFG-RST
+# both leave intact).  Not part of the normal operational surface —
+# kept under /debug/ to make that obvious.
+# ---------------------------------------------------------------------------
+
+# Subset of resetMode values that don't drop the USB serial port.
+# 0x00 / 0x04 (hardware resets) are rejected because they cause a
+# device re-enumeration that would require the operator to reconnect.
+_ALLOWED_RESET_MODES = {1, 2, 8, 9}
+
+# pyubx2's named bitfield keys on CFG-RST.navBbrMask.  Anything else
+# would either silently fail or raise inside pyubx2's payload builder.
+_ALLOWED_BBR_BITS = {
+    "eph",
+    "alm",
+    "health",
+    "klob",
+    "pos",
+    "clkd",
+    "osc",
+    "utc",
+    "rtc",
+    "aop",
+}
+
+
+class CfgRstRequest(BaseModel):
+    """Body for ``POST /api/device/debug/cfg-rst``."""
+
+    reset_mode: int = Field(
+        ...,
+        description=(
+            "UBX CFG-RST resetMode byte. Allowed: 1=controlled SW reset, "
+            "2=controlled GNSS-only reset, 8=controlled GNSS stop, "
+            "9=controlled GNSS start. Hardware resets (0x00 / 0x04) "
+            "are rejected to avoid dropping the USB serial port."
+        ),
+    )
+    bbr_bits: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Named navBbrMask bits to set. Valid: eph, alm, health, "
+            "klob, pos, clkd, osc, utc, rtc, aop. An empty list means "
+            "navBbrMask=0 (no BBR sections cleared)."
+        ),
+    )
+    wait_seconds: float = Field(
+        3.0,
+        ge=0.0,
+        le=30.0,
+        description="Sleep between the write and the after-state read.",
+    )
+
+
+class CfgRstResponse(BaseModel):
+    """Diagnostic snapshot of the CFG-RST round trip."""
+
+    before: SurveyInProgress
+    after: SurveyInProgress
+    wait_seconds: float
+    ubx_sent_hex: str = Field(
+        ..., description="Hex of the serialised UBX frame actually written."
+    )
+
+
+@router.post("/debug/cfg-rst", response_model=CfgRstResponse)
+async def debug_cfg_rst(
+    body: CfgRstRequest,
+    svc: DeviceService = Depends(get_device_service),
+) -> CfgRstResponse:
+    """Send an arbitrary UBX-CFG-RST and report before/after NAV-SVIN.
+
+    Diagnostic-only: used to discover which ``resetMode`` + BBR-bit
+    combination actually clears the NAV-SVIN ``dur`` accumulator on
+    a given ZED-F9P firmware revision.
+    """
+    if body.reset_mode not in _ALLOWED_RESET_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"reset_mode={body.reset_mode} not allowed. "
+                f"Allowed: {sorted(_ALLOWED_RESET_MODES)}. Hardware "
+                "resets (0x00, 0x04) are rejected to avoid USB drop."
+            ),
+        )
+
+    invalid = [b for b in body.bbr_bits if b not in _ALLOWED_BBR_BITS]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown bbr_bits: {invalid}. Allowed: {sorted(_ALLOWED_BBR_BITS)}."
+            ),
+        )
+
+    bbr_kwargs = {bit: 1 for bit in body.bbr_bits}
+
+    try:
+        before, after, wire_bytes = await svc.send_cfg_rst_diagnostic(
+            body.reset_mode, body.wait_seconds, bbr_kwargs
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return CfgRstResponse(
+        before=before,
+        after=after,
+        wait_seconds=body.wait_seconds,
+        ubx_sent_hex=wire_bytes.hex(),
+    )
 
 
 # ---------------------------------------------------------------------------

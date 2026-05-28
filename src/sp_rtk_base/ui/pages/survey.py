@@ -364,6 +364,14 @@ def survey_page() -> None:
                         ui.label("Accuracy").classes("text-caption text-grey-5")
                         fb_acc_label = ui.label("—").classes("text-white")
 
+                # Soft hint under the mode badge.  Shown when the
+                # receiver is in survey_in mode so the operator knows
+                # Reset GPS is the right next action if the survey
+                # has stalled (e.g. poor antenna placement).  Hidden
+                # for disabled / fixed modes.
+                fb_mode_hint = ui.label("").classes("text-caption text-warning q-mt-xs")
+                fb_mode_hint.set_visibility(False)
+
                 with ui.row().classes("gap-2 q-mt-md"):
                     fb_edit_btn = ui.button("Edit", icon="edit").props(
                         "color=primary outline"
@@ -372,6 +380,12 @@ def survey_page() -> None:
                         "color=primary outline"
                     )
                     fb_load_btn = ui.button("Load Saved", icon="folder_open").props(
+                        "color=primary outline"
+                    )
+                    # Hardware-reset the receiver to clear stale
+                    # BBR-backed survey state (NAV-SVIN.dur).  Becomes
+                    # amber when mode=survey_in to draw attention.
+                    fb_reset_btn = ui.button("Reset GPS", icon="restart_alt").props(
                         "color=primary outline"
                     )
 
@@ -637,6 +651,22 @@ def survey_page() -> None:
                 }
                 fb_mode_badge.text = bc.mode.value.replace("_", " ").title()
                 fb_mode_badge.props(f"color={_MODE_COLORS.get(bc.mode, 'grey')}")
+
+                # Hint + Reset-button styling per mode.  Survey-In is
+                # the only "stuck-able" state — we draw the operator's
+                # eye to Reset GPS when the receiver is in that mode.
+                if bc.mode == BaseMode.SURVEY_IN:
+                    fb_mode_hint.text = (
+                        "Receiver in Survey-In mode.  If the survey "
+                        "has stalled (poor antenna placement, divergent "
+                        "accuracy), click Reset GPS for a clean start."
+                    )
+                    fb_mode_hint.set_visibility(True)
+                    fb_reset_btn.props("color=warning outline")
+                else:
+                    fb_mode_hint.text = ""
+                    fb_mode_hint.set_visibility(False)
+                    fb_reset_btn.props("color=primary outline")
 
                 _fb_lat = bc.latitude
                 _fb_lon = bc.longitude
@@ -1355,6 +1385,49 @@ def survey_page() -> None:
         fb_commit_btn.on_click(_commit_edit)
         fb_save_btn.on_click(_save_position_dialog)
         fb_load_btn.on_click(_load_saved_dialog)
+
+        async def _reset_receiver() -> None:
+            """Hardware-reset the receiver and refresh UI state.
+
+            Issues UBX-CFG-RST resetMode=0 via the new
+            POST /api/device/reset endpoint.  Takes ~5-8 s end-to-end
+            (chip reset + USB re-enumeration + reconnect).
+            """
+            with ui.dialog() as dlg, ui.card().classes("q-pa-md"):
+                ui.label("Reset GPS Receiver?").classes("text-h6 text-white")
+                ui.separator()
+                ui.label(
+                    "Issues a hardware reset to the GPS receiver.  This is "
+                    "the only way to clear the BBR-backed survey-in "
+                    "accumulator on ZED-F9P (HPG 1.12) firmware.  Saved "
+                    "fixed-base coordinates in flash are preserved — only "
+                    "the survey state is cleared.  Takes ~5-8 seconds."
+                ).classes("text-grey-4 q-mt-sm")
+
+                with ui.row().classes("gap-2 q-mt-md justify-end"):
+                    ui.button("Cancel", on_click=dlg.close).props("flat")
+
+                    async def _confirmed() -> None:
+                        dlg.close()
+                        fb_reset_btn.set_enabled(False)
+                        ui.notify(
+                            "Resetting GPS (this takes ~5-8 seconds)...",
+                            type="info",
+                        )
+                        try:
+                            await svc.reset_receiver()
+                            ui.notify("GPS reset complete", type="positive")
+                            await _read_fixed_base()
+                        except Exception as exc:
+                            ui.notify(f"Reset failed: {exc}", type="negative")
+                            logger.exception("reset_receiver failed")
+                        finally:
+                            fb_reset_btn.set_enabled(True)
+
+                    ui.button("Reset GPS", on_click=_confirmed).props("color=warning")
+            dlg.open()
+
+        fb_reset_btn.on_click(_reset_receiver)
 
         # ---- Auto-load if already connected ----
         async def _on_page_load() -> None:

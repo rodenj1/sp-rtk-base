@@ -150,6 +150,38 @@ async def configure_survey_in(
     )
 
 
+@router.post("/reset", response_model=DeviceActionResponse)
+async def reset_receiver(
+    svc: DeviceService = Depends(get_device_service),
+) -> DeviceActionResponse:
+    """Hardware-reset the GPS receiver and reconnect.
+
+    Writes ``CFG_TMODE_MODE=0`` to RAM+BBR+Flash, then issues a UBX
+    CFG-RST resetMode=0 (immediate hardware reset).  The receiver
+    drops off USB, the chip resets, and the host driver reopens the
+    serial port on the same path/baud.  Total ~5-8 s.
+
+    On ZED-F9P firmware HPG 1.12 this is the only software-issuable
+    way to clear the BBR-backed ``NAV-SVIN.dur`` accumulator that
+    accumulates across survey sessions.  After the reset the receiver
+    boots into rover mode (TMODE=0); saved fixed-base coordinates in
+    Flash remain intact and can be re-applied via Restore.
+
+    Returns 409 if not connected or the relay is running.
+    """
+    try:
+        info = await svc.reset_receiver()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ConnectionError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return DeviceActionResponse(
+        status="ok",
+        message=f"Receiver reset and reconnected ({info.model} FW {info.firmware_version})",
+    )
+
+
 @router.post("/cancel-survey-in", response_model=DeviceActionResponse)
 async def cancel_survey_in(
     svc: DeviceService = Depends(get_device_service),

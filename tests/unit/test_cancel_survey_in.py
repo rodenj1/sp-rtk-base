@@ -343,14 +343,14 @@ class TestUbloxDisableBaseMode:
         drv.connect("/dev/ttyUSB0")
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             with pytest.raises(
-                RuntimeError, match="accumulator did not reset"
+                RuntimeError, match="stale survey-in accumulator"
             ) as exc_info:
                 drv.configure_survey_in(
                     SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
                 )
         # Error message must include the operator-actionable bit
-        # (physical power cycle) so the UI surfaces it directly.
-        assert "power cycle" in str(exc_info.value).lower()
+        # (the Reset GPS button) so the UI surfaces it directly.
+        assert "reset gps" in str(exc_info.value).lower()
         # Rollback must still fire — receiver was just put into
         # TMODE=1 by the enable VALSET, even if dur shows stale.
         assert mock_ubx_msg.config_set.call_count == 3
@@ -834,3 +834,83 @@ class TestCfgRstDiagnosticEndpoint:
         drv.send_cfg_rst_diagnostic.assert_called_once_with(  # type: ignore[attr-defined]
             0, 3.0, {"pos": 1}, False
         )
+
+
+class TestResetReceiverEndpoint:
+    """Smoke tests for POST /api/device/reset (hardware reset + reconnect)."""
+
+    def _make_client(self, svc: DeviceService) -> TestClient:
+        app = create_api_app()
+        app.dependency_overrides[get_device_service] = lambda: svc
+        return TestClient(app)
+
+    def test_endpoint_returns_409_when_no_driver(self) -> None:
+        svc = DeviceService()
+        client = self._make_client(svc)
+        resp = client.post("/api/device/reset")
+        assert resp.status_code == 409
+
+    def test_endpoint_returns_409_when_driver_doesnt_support_reset(self) -> None:
+        """Fake driver doesn't expose reset_and_reconnect — must 409."""
+        svc = DeviceService()
+        fake = FakeGpsDriver()
+        fake.connect("FAKE")
+        svc.set_driver(fake)
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post("/api/device/reset")
+        assert resp.status_code == 409
+        assert "u-blox" in resp.json()["detail"].lower()
+
+    def test_endpoint_returns_ok_on_ublox_success(self) -> None:
+        """When the driver succeeds, the endpoint returns 200 with the
+        refreshed device-info string."""
+        from sp_rtk_base.models.device_models import DeviceInfo
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        drv = UbloxDriver()
+        drv._connected = True  # type: ignore[attr-defined]
+        # reset_and_reconnect returns DeviceInfo on success.
+        drv.reset_and_reconnect = MagicMock(  # type: ignore[method-assign]
+            return_value=DeviceInfo(
+                vendor="u-blox",
+                model="ZED-F9P",
+                firmware_version="HPG 1.12",
+                protocol_version="27.11",
+                hardware_version="00190000",
+            )
+        )
+
+        svc = DeviceService()
+        svc._driver = drv  # type: ignore[attr-defined]
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post("/api/device/reset")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert "ZED-F9P" in body["message"]
+        assert "HPG 1.12" in body["message"]
+        drv.reset_and_reconnect.assert_called_once()  # type: ignore[attr-defined]
+
+    def test_endpoint_surfaces_502_on_connection_failure(self) -> None:
+        """If reset fires but reconnect fails (chip didn't come back),
+        the endpoint returns 502 with the underlying error."""
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        drv = UbloxDriver()
+        drv._connected = True  # type: ignore[attr-defined]
+        drv.reset_and_reconnect = MagicMock(  # type: ignore[method-assign]
+            side_effect=ConnectionError("Receiver did not come back after reset")
+        )
+
+        svc = DeviceService()
+        svc._driver = drv  # type: ignore[attr-defined]
+        svc._state = DeviceConnectionState.CONNECTED  # type: ignore[attr-defined]
+
+        client = self._make_client(svc)
+        resp = client.post("/api/device/reset")
+        assert resp.status_code == 502
+        assert "did not come back" in resp.json()["detail"].lower()

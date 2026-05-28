@@ -238,6 +238,12 @@ class DeviceService:
     async def configure_survey_in(self, config: SurveyInConfig) -> None:
         """Configure the receiver for survey-in mode.
 
+        On any failure, automatically hardware-resets and reconnects
+        the receiver so the next Start attempt sees a clean state.
+        The original exception is re-raised after the reset attempt
+        (and the reset error is logged but not propagated, so the
+        operator sees the actionable original error).
+
         Args:
             config: Survey-in parameters.
 
@@ -257,6 +263,20 @@ class DeviceService:
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
+            # Auto-reset on failure so the next Start sees a clean
+            # receiver state.  Surface the original error (it
+            # explains what went wrong); log a reset failure
+            # separately if one occurs.
+            if hasattr(driver, "reset_and_reconnect"):
+                try:
+                    await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+                    logger.info("Auto-reset receiver after configure_survey_in failure")
+                except Exception:
+                    logger.exception(
+                        "Auto-reset after configure_survey_in failure "
+                        "also failed — receiver may be in inconsistent "
+                        "state; click Reset GPS manually"
+                    )
             raise
 
     async def send_cfg_rst_diagnostic(
@@ -298,9 +318,11 @@ class DeviceService:
     async def cancel_survey_in(self) -> None:
         """Cancel an in-progress survey-in by disabling TMODE.
 
-        Sends ``CFG_TMODE_MODE=0`` to the receiver via the driver.
-        Safe to call when no survey is running — the receiver will
-        simply remain in disabled mode.
+        Sends ``CFG_TMODE_MODE=0`` then issues a hardware reset +
+        reconnect so the receiver's BBR-backed survey accumulator
+        is wiped.  Without the reset, the next Start would inherit
+        the cancelled session's ``dur`` counter and the receiver
+        would treat it as a continuation rather than a fresh start.
 
         Raises:
             RuntimeError: If not connected or relay is running.
@@ -309,10 +331,54 @@ class DeviceService:
         self._state = DeviceConnectionState.CONFIGURING
         try:
             await asyncio.to_thread(driver.disable_base_mode)
+            # Reset to clear the BBR survey accumulator so the next
+            # Start sees a clean dur=0.  Without this, dur carries
+            # over from the cancelled session and the receiver
+            # treats subsequent surveys as continuations.
+            if hasattr(driver, "reset_and_reconnect"):
+                try:
+                    await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+                    logger.info("Survey-in cancelled and receiver reset")
+                except Exception:
+                    logger.exception(
+                        "TMODE was disabled but the post-cancel reset "
+                        "failed — receiver may carry stale state into "
+                        "the next survey"
+                    )
+            else:
+                logger.info("Survey-in cancelled (TMODE disabled)")
             self._state = DeviceConnectionState.CONNECTED
-            logger.info("Survey-in cancelled (TMODE disabled)")
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
+            self._last_error = str(exc)
+            raise
+
+    async def reset_receiver(self) -> DeviceInfo:
+        """Hardware-reset the receiver and reconnect on the same port.
+
+        Wraps ``UbloxDriver.reset_and_reconnect`` (only u-blox drivers
+        support this — see the docstring there for the full sequence
+        and the rationale for hardware reset over software variants).
+
+        Raises:
+            RuntimeError: If not connected, no relay-mutex conflict,
+                or the active driver doesn't support hardware reset.
+        """
+        driver = self._require_connected()
+        if not hasattr(driver, "reset_and_reconnect"):
+            raise RuntimeError(
+                "Active driver does not support hardware reset "
+                "(only u-blox drivers do)."
+            )
+        self._state = DeviceConnectionState.CONFIGURING
+        try:
+            info = await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+            self._state = DeviceConnectionState.CONNECTED
+            self._last_error = None
+            logger.info("Receiver hardware-reset and reconnected")
+            return info  # type: ignore[no-any-return]
+        except Exception as exc:
+            self._state = DeviceConnectionState.DISCONNECTED
             self._last_error = str(exc)
             raise
 

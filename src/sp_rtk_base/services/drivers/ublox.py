@@ -103,6 +103,11 @@ class UbloxDriver(GpsReceiverDriver):
         self._device_info: DeviceInfo | None = None
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
+        # Last-known port/baud — captured on connect so
+        # ``reset_and_reconnect()`` can reopen the same port after
+        # the hardware reset re-enumerates the USB.
+        self._port: str | None = None
+        self._baud_rate: int | None = None
 
     # ------------------------------------------------------------------
     # Identity
@@ -173,6 +178,9 @@ class UbloxDriver(GpsReceiverDriver):
             # Read device identity via MON-VER
             info = self._poll_mon_ver()
             self._device_info = info
+            # Remember for reset_and_reconnect().
+            self._port = port
+            self._baud_rate = baud_rate
             logger.info(
                 "Connected to u-blox %s (FW %s) on %s @ %d",
                 info.model,
@@ -193,6 +201,86 @@ class UbloxDriver(GpsReceiverDriver):
         self._cleanup()
         self._device_info = None
         logger.info("u-blox disconnected")
+
+    def reset_and_reconnect(self) -> DeviceInfo:
+        """Hardware-reset the receiver and reconnect on the same port.
+
+        This is the only software-issuable way to clear the
+        BBR-backed NAV-SVIN ``dur`` accumulator on ZED-F9P firmware
+        HPG 1.12.  Six controlled-software-reset variants
+        (resetMode 1, 2, 8, 9 with various BBR-bit masks including
+        a full coldstart-equivalent) were verified empirically to
+        leave ``dur`` unchanged; only ``resetMode=0`` (hardware
+        reset immediate) actually resets it.
+
+        Sequence:
+          1. Write ``CFG_TMODE_MODE=0`` to layer=7 (RAM+BBR+Flash)
+             so the post-reset boot lands in rover mode regardless
+             of what state was last persisted.  Saved fixed-base
+             coordinates (LAT/LON/HEIGHT/ECEF keys) remain in Flash
+             — only the MODE key is touched, so the operator can
+             still Restore back to a fixed base from the UI.
+          2. Send UBX-CFG-RST with ``resetMode=0x00`` and the
+             ``pos`` BBR bit set.  This triggers an immediate chip
+             reset and causes the USB serial port to re-enumerate.
+          3. Close the now-stale serial handle.
+          4. Sleep ``_HARDWARE_RESET_SETTLE_S`` for the chip and
+             host's USB stack to settle.
+          5. Reopen the serial port on the same path/baud and
+             redo the MON-VER handshake.
+
+        Returns:
+            Refreshed ``DeviceInfo`` from the reconnected receiver.
+
+        Raises:
+            RuntimeError: If the driver was never connected (no
+                saved port/baud).
+            ConnectionError: If the receiver fails to come back
+                within ``CONNECT_TIMEOUT`` after the reset.
+        """
+        if self._port is None or self._baud_rate is None:
+            raise RuntimeError(
+                "Cannot reset — driver was never connected "
+                "(no saved port/baud to reopen)."
+            )
+        port = self._port
+        baud_rate = self._baud_rate
+
+        with self._lock:
+            # 1. Pin Flash to TMODE_MODE=0 so the post-reset boot
+            # is rover mode regardless of prior state.
+            self._send_cfg_valset_locked(
+                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
+            )
+            # 2. Hardware reset (drops USB).
+            ser, _ = self._require_connection()
+            msg = UBXMessage(  # type: ignore[misc]
+                "CFG",
+                "CFG-RST",
+                SET,
+                pos=1,
+                resetMode=0x00,
+            )
+            ser.reset_input_buffer()
+            ser.write(msg.serialize())  # type: ignore[union-attr]
+            # 3. Close our handle — the OS will mark it disconnected
+            # within ~100ms but we want to free it ASAP so the
+            # post-reset reopen succeeds cleanly.
+            self._cleanup()
+
+        # 4. Wait for chip re-enumeration outside the lock so
+        # concurrent poll calls fail fast (with "Not connected")
+        # instead of blocking for the full settle window.
+        time.sleep(self._HARDWARE_RESET_SETTLE_S)
+
+        # 5. Reopen on the same port/baud and redo MON-VER.
+        info = self.connect(port, baud_rate)
+        logger.info(
+            "Hardware reset + reconnect complete on %s @ %d",
+            port,
+            baud_rate,
+        )
+        return info
 
     @property
     def is_connected(self) -> bool:
@@ -241,11 +329,12 @@ class UbloxDriver(GpsReceiverDriver):
     # BBR pinned at TMODE=1 across host restarts.
     _TMODE_DISABLE_ALL_LAYERS: int = 7
 
-    # How long to wait after a UBX-CFG-RST controlled-GNSS-start for
-    # the receiver's GNSS subsystem to come back up before issuing
-    # further commands.  Empirically ~1-3 s on ZED-F9P.  3 s gives
-    # margin without making the survey-start UX noticeably slower.
-    _CFG_RST_SETTLE_S: float = 3.0
+    # How long to wait after a UBX-CFG-RST resetMode=0 (hardware
+    # reset) for the chip to re-enumerate on USB and be ready to
+    # accept a fresh serial connection.  Empirically ~2-3 s.  5 s
+    # gives margin; the host's USB stack and pyserial settle in
+    # this window.
+    _HARDWARE_RESET_SETTLE_S: float = 5.0
 
     # Maximum ``NAV-SVIN.dur`` allowed at the first verify poll for
     # a survey-in start to be considered "fresh".  ``dur`` is a
@@ -266,17 +355,7 @@ class UbloxDriver(GpsReceiverDriver):
         # while having no effect.  See memory-bank/progress.md
         # 2026-05-27 "Cancel Survey-In doesn't cancel" entry.
         with self._lock:
-            # Step 1: clear the BBR-backed survey-in accumulator.
-            # CFG-VALSET writes alone (even to layer=7) do NOT reset
-            # NAV-SVIN.dur on HPG 1.12 — we verified empirically that
-            # ``dur`` ticks continuously across host restarts and
-            # every TMODE_MODE=0 write we tried.  Only UBX-CFG-RST
-            # (controlled GNSS start, position BBR bit) actually
-            # zeroes the accumulator.  See ``reset_survey_state``.
-            self._reset_survey_state_locked()
-
-            # Step 2: full-layer TMODE disable.  Belt-and-suspenders
-            # alongside the CFG-RST above: per u-blox's own C099
+            # Step 1: full-layer TMODE disable.  Per u-blox's own C099
             # "F9P Base Survey in disable.txt" script, the canonical
             # disable writes to all three layers (1|2|4 = 7) so any
             # TMODE config from a prior session is wiped consistently.
@@ -284,17 +363,23 @@ class UbloxDriver(GpsReceiverDriver):
             # survey persist — only the MODE key is touched, so the
             # operator can still switch back to a known fixed-base
             # position manually via Restore.
+            #
+            # Note: this does NOT reset the BBR-backed NAV-SVIN.dur
+            # accumulator.  On HPG 1.12 only a hardware reset
+            # (``reset_and_reconnect``) clears that counter.  The
+            # dur-floor check below catches stale state and tells
+            # the operator to use Reset GPS.
             self._send_cfg_valset_locked(
                 [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
             )
 
-            # Step 3: settle.  The ZED-F9P needs a brief quiet period
+            # Step 2: settle.  The ZED-F9P needs a brief quiet period
             # between TMODE-disable and TMODE-enable VALSETs so the
             # 0 -> 1 edge is registered as a fresh survey-in request
             # rather than coalesced with the previous state.
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
-            # Step 4: write the new survey-in parameters and enable
+            # Step 3: write the new survey-in parameters and enable
             # to RAM only.  Per u-blox C099 "F9P Base Survey in
             # start.txt", survey-in is intentionally NOT persisted to
             # flash — only the completed fixed-base coordinates from
@@ -346,15 +431,16 @@ class UbloxDriver(GpsReceiverDriver):
 
                 if stale_accumulator:
                     raise RuntimeError(
-                        "Survey-in start failed: the receiver's "
-                        "NAV-SVIN duration accumulator did not reset "
-                        f"(reported {before.duration_seconds}s at "
-                        f"start, expected < {self._SVIN_DUR_FLOOR_S}s "
-                        "after CFG-RST).  This typically means the "
-                        "receiver firmware (HPG 1.12) requires a "
-                        "physical power cycle to clear stuck state.  "
-                        "Unplug and replug the GPS USB cable, then "
-                        "try again.  TMODE has been reset to 0."
+                        "Survey-in start failed: the receiver has a "
+                        f"stale survey-in accumulator (dur={before.duration_seconds}s, "
+                        f"expected < {self._SVIN_DUR_FLOOR_S}s).  This "
+                        "is the BBR-backed NAV-SVIN counter from a "
+                        "previous session — CFG-VALSET cannot clear "
+                        "it on ZED-F9P firmware HPG 1.12.  Click "
+                        "'Reset GPS' to issue a hardware reset (the "
+                        "only software-issuable way to clear this "
+                        "state), then try Start Survey-In again.  "
+                        "TMODE has been reset to 0."
                     )
                 raise RuntimeError(
                     "Survey-in start failed: NAV-SVIN.dur did not "
@@ -434,7 +520,6 @@ class UbloxDriver(GpsReceiverDriver):
             # "Restore Past Survey" appears to succeed (200 OK, ACK
             # received) but ``NAV-SVIN.dur`` keeps ticking and
             # ``base-config.mode`` stays ``survey_in``.
-            self._reset_survey_state_locked()
             self._send_cfg_valset_locked(
                 [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
             )
@@ -847,53 +932,6 @@ class UbloxDriver(GpsReceiverDriver):
     def get_survey_in_status(self) -> SurveyInProgress:
         with self._lock:
             return self._get_survey_in_locked()
-
-    def reset_survey_state(self) -> None:
-        """Reset the receiver's BBR-backed survey-in accumulator.
-
-        Sends UBX-CFG-RST with ``resetMode=0x09`` (controlled GNSS
-        start) and the ``pos`` BBR bit set.  This causes the receiver
-        to clear its last-position estimate AND the survey-in state
-        machine (``NAV-SVIN.dur`` / ``obs``).  Ephemeris and almanac
-        are preserved so GPS re-acquires within ~5-30 s (warmstart
-        equivalent — not a full coldstart).
-
-        Why this exists: on ZED-F9P firmware HPG 1.12 the survey-in
-        ``dur`` accumulator is BBR-backed and is NOT cleared by any
-        CFG-VALSET write, including ``CFG_TMODE_MODE=0`` to layer=7
-        (RAM+BBR+Flash).  Verified empirically on larson-base:
-        ``dur`` accumulated to ~62000 s (~17 h) across multiple
-        host restarts and TMODE writes.  Only CFG-RST resets it.
-
-        Persisted base-station coordinates in Flash are untouched —
-        Flash is separate from BBR.
-        """
-        with self._lock:
-            self._reset_survey_state_locked()
-
-    def _reset_survey_state_locked(self) -> None:
-        """CFG-RST helper (must hold self._lock).
-
-        Does NOT wait for ACK — the receiver may reset before it can
-        send one, depending on ``resetMode``.  Instead we sleep for
-        ``_CFG_RST_SETTLE_S`` to give the GNSS subsystem time to
-        come back up.
-        """
-        ser, _ = self._require_connection()
-        msg = UBXMessage(  # type: ignore[misc]
-            "CFG",
-            "CFG-RST",
-            SET,
-            pos=1,
-            resetMode=0x09,
-        )
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-        time.sleep(self._CFG_RST_SETTLE_S)
-        logger.info(
-            "Sent UBX-CFG-RST (controlled GNSS start, pos bit) — "
-            "survey accumulator cleared; receiver re-acquiring GNSS"
-        )
 
     def send_cfg_rst_diagnostic(
         self,

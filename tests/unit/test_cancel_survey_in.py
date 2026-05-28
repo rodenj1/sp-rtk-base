@@ -187,6 +187,192 @@ class TestUbloxDisableBaseMode:
         with pytest.raises(ConnectionError, match="Not connected"):
             drv.disable_base_mode()
 
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_disable_base_mode_drains_rx_buffer(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """The driver must drain the serial RX buffer before writing
+        CFG-VALSET so the ACK isn't buried behind RTCM/NAV-PVT traffic
+        that a busy base station receiver continuously streams.
+
+        Regression: without this drain, ``_wait_for_ack`` could exhaust
+        its 50-iteration cap before the ACK arrived, raising
+        ``RuntimeError("No ACK/NAK response …")`` while the receiver
+        had actually applied the config.  See memory-bank/progress.md
+        2026-05-27 "Cancel Survey-In doesn't cancel" entry.
+        """
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        # MON-VER then ACK then NAV-SVIN(active=False, valid=False)
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=0,
+                    dur=0,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        # Reset counters so we only see calls from disable_base_mode
+        ser.reset_input_buffer.reset_mock()
+        ser.write.reset_mock()
+
+        drv.disable_base_mode()
+
+        # reset_input_buffer must be called at least once *before* the
+        # CFG-VALSET write, and again before the NAV-SVIN verify poll.
+        assert ser.reset_input_buffer.call_count >= 1
+        assert ser.write.call_count >= 1
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_disable_base_mode_retries_when_still_active(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """If the first CFG-VALSET ACK is acknowledged but the receiver
+        is still reporting ``active=True`` on NAV-SVIN, the driver must
+        retry the VALSET once.  Second attempt succeeds → no error.
+        """
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        # Sequence:
+        #   MON-VER → connect
+        #   ACK     → first VALSET
+        #   NAV-SVIN active=True → trigger retry
+        #   ACK     → second VALSET
+        #   NAV-SVIN active=False → success
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=1,
+                    dur=5,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+            (b"", _make_ack()),
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=0,
+                    dur=5,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        drv.disable_base_mode()  # should not raise
+
+        # Two CFG-VALSET writes (initial + retry)
+        assert mock_ubx_msg.config_set.call_count == 2
+        for call in mock_ubx_msg.config_set.call_args_list:
+            assert call[0][2] == [("CFG_TMODE_MODE", 0)]
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_disable_base_mode_raises_when_retry_also_fails(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """If both VALSET attempts ACK but NAV-SVIN still reports
+        ``active=True``, the driver must raise so the UI can keep the
+        Cancel button visible and surface a clear error to the
+        operator instead of silently leaving the survey running.
+        """
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        # NAV-SVIN always reports active=True even after the second ACK
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=1,
+                    dur=10,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+            (b"", _make_ack()),
+            (
+                b"",
+                SimpleNamespace(
+                    identity="NAV-SVIN",
+                    valid=0,
+                    active=1,
+                    dur=12,
+                    meanAcc=0,
+                    obs=0,
+                ),
+            ),
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        with pytest.raises(RuntimeError, match="Cancel did not take effect"):
+            drv.disable_base_mode()
+
+        # Both attempts were made before giving up
+        assert mock_ubx_msg.config_set.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # DeviceService.cancel_survey_in

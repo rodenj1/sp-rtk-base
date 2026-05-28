@@ -210,7 +210,10 @@ class TestConfigureRtcmPorts:
             }
         )
 
-        with patch.object(driver, "_send_cfg_valset") as mock_valset:
+        # Patch the *locked* variant — that's what writers call now that
+        # all CFG-VALSET callers acquire ``self._lock`` directly to make
+        # multi-step writes atomic against concurrent polls.
+        with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
             driver.configure_rtcm_ports(config)
 
             mock_valset.assert_called_once()
@@ -233,7 +236,7 @@ class TestConfigureRtcmPorts:
 
         config = RtcmPortConfig(messages={})
 
-        with patch.object(driver, "_send_cfg_valset") as mock_valset:
+        with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
             driver.configure_rtcm_ports(config)
             # Should NOT call valset since there are no keys
             mock_valset.assert_not_called()
@@ -252,7 +255,7 @@ class TestConfigureRtcmPorts:
             }
         )
 
-        with patch.object(driver, "_send_cfg_valset") as mock_valset:
+        with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
             driver.configure_rtcm_ports(config)
             mock_valset.assert_not_called()
 

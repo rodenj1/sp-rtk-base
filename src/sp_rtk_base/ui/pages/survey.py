@@ -989,7 +989,15 @@ def survey_page() -> None:
             dlg.open()
 
         async def _cancel_survey_in() -> None:
-            """Stop the polling timer and send TMODE=0 to the receiver."""
+            """Stop the polling timer and send TMODE=0 to the receiver.
+
+            On failure the Cancel button stays visible so the operator
+            can retry — flipping to "Start" would imply the survey is
+            no longer running when in fact the device may still be
+            actively surveying.  The poll timer is restarted on
+            failure so live state continues to surface while the
+            operator decides what to do.
+            """
             nonlocal svin_timer
             if svin_timer is not None:
                 svin_timer.active = False
@@ -1002,8 +1010,15 @@ def survey_page() -> None:
                 svin_error_label.set_visibility(True)
                 ui.notify(err_msg, type="negative")
                 logger.exception("cancel_survey_in failed")
-                svin_cancel_btn.set_visibility(False)
-                svin_start_btn.set_visibility(True)
+                # Keep Cancel button visible so the operator can retry,
+                # and resume polling so they see live device state.
+                svin_cancel_btn.set_visibility(True)
+                svin_start_btn.set_visibility(False)
+                svin_status_label.text = (
+                    "Cancel failed — receiver may still be surveying"
+                )
+                svin_status_label.classes(replace="text-negative")
+                svin_timer = ui.timer(2.0, _poll_survey_in)
                 return
 
             svin_status_label.text = "Cancelled by operator"

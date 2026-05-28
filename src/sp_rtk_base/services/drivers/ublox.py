@@ -220,22 +220,33 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     def configure_survey_in(self, config: SurveyInConfig) -> None:
-        # Step 1: disable TMODE first.  Without this, if the receiver
-        # was previously flashed with TMODE=1 (survey-in) or TMODE=2
-        # (fixed) the new survey parameters are accepted but the
-        # survey never restarts — the receiver silently keeps using
-        # the *previous* survey state (or fixed-base coordinates) and
-        # NAV-SVIN never reports active=True.  This was the root cause
-        # of the "Start survey-in does nothing" bug — see
-        # memory-bank/progress.md 2026-05-27 entry.
-        self._send_cfg_valset([("CFG_TMODE_MODE", 0)], layer=1)
-        # Step 2: write the new survey-in parameters and enable mode.
-        cfg_data = [
-            ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
-            ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm),
-            ("CFG_TMODE_MODE", 1),  # Survey-in mode (last so params land first)
-        ]
-        self._send_cfg_valset(cfg_data, layer=1)  # RAM only
+        # All CFG-VALSET writers must hold self._lock so they cannot
+        # interleave on the wire with a concurrent NAV/CFG/MON poll
+        # from the same driver instance (e.g. the 2 s survey-in UI
+        # poll timer firing the moment Start/Cancel is clicked).  An
+        # interleaved write produces a corrupted UBX frame that the
+        # receiver silently drops — no ACK is ever sent, and the
+        # CFG-VALSET appears to "succeed" from the operator's POV
+        # while having no effect.  See memory-bank/progress.md
+        # 2026-05-27 "Cancel Survey-In doesn't cancel" entry.
+        with self._lock:
+            # Step 1: disable TMODE first.  Without this, if the
+            # receiver was previously flashed with TMODE=1 (survey-in)
+            # or TMODE=2 (fixed) the new survey parameters are
+            # accepted but the survey never restarts — the receiver
+            # silently keeps using the *previous* survey state (or
+            # fixed-base coordinates) and NAV-SVIN never reports
+            # active=True.  See memory-bank/progress.md 2026-05-27
+            # entry.
+            self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+            # Step 2: write the new survey-in parameters and enable.
+            cfg_data = [
+                ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
+                ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm),
+                # Survey-in mode (last so params land first)
+                ("CFG_TMODE_MODE", 1),
+            ]
+            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,
@@ -248,8 +259,35 @@ class UbloxDriver(GpsReceiverDriver):
         Used to cancel an in-progress survey-in or clear a fixed-base
         configuration.  Applied to RAM only — call ``save_to_flash()``
         afterwards if the change should persist.
+
+        Verify-and-retry semantics: after the CFG-VALSET ACK is
+        received, this method polls NAV-SVIN once to confirm
+        ``active=False``.  If the survey is still active (i.e. the
+        ACK was for a frame that the receiver discarded due to wire
+        corruption, or the receiver simply ignored the write), the
+        VALSET is retried once.  If the survey is *still* active
+        after the second attempt, a ``RuntimeError`` is raised so
+        the caller can surface the failure to the operator instead
+        of silently leaving the survey running.
         """
-        self._send_cfg_valset([("CFG_TMODE_MODE", 0)], layer=1)
+        with self._lock:
+            self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+            progress = self._get_survey_in_locked()
+            if progress.active:
+                logger.warning(
+                    "TMODE=0 did not take effect on first attempt "
+                    "(survey still active after %ds) — retrying",
+                    progress.duration_seconds,
+                )
+                self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+                progress = self._get_survey_in_locked()
+                if progress.active:
+                    raise RuntimeError(
+                        "Cancel did not take effect: receiver still "
+                        f"reports survey-in active after {progress.duration_seconds}s. "
+                        "Try disconnecting and reconnecting, or power-cycle "
+                        "the receiver."
+                    )
         logger.info("Base mode disabled (TMODE=0)")
 
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
@@ -267,7 +305,8 @@ class UbloxDriver(GpsReceiverDriver):
             ("CFG_TMODE_HEIGHT", alt_cm),
             ("CFG_TMODE_FIXED_POS_ACC", config.accuracy_mm),
         ]
-        self._send_cfg_valset(cfg_data, layer=1)  # RAM only
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm",
             config.latitude,
@@ -291,7 +330,8 @@ class UbloxDriver(GpsReceiverDriver):
             else:
                 logger.warning("Unknown RTCM message ID %d — skipped", msg_id)
 
-        self._send_cfg_valset(cfg_data, layer=1)  # RAM only
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
         logger.info(
             "RTCM messages configured: %s @ %dHz",
             config.message_ids,
@@ -423,7 +463,8 @@ class UbloxDriver(GpsReceiverDriver):
             logger.warning("No valid RTCM port config to apply")
             return
 
-        self._send_cfg_valset(cfg_data, layer=1)  # RAM only
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
         logger.info("RTCM multi-port config applied (%d keys)", len(cfg_data))
 
     # ------------------------------------------------------------------
@@ -503,8 +544,6 @@ class UbloxDriver(GpsReceiverDriver):
 
     def configure_gnss(self, config: GnssConfig) -> None:
         """Send CFG-GNSS to configure constellation selection."""
-        ser, _ = self._require_connection()
-
         # Build CFG-GNSS SET message
         # We need numTrkChHw, numTrkChUse, numConfigBlocks + per-system data
         num_blocks = len(config.systems)
@@ -529,8 +568,11 @@ class UbloxDriver(GpsReceiverDriver):
             kwargs[f"flags{suffix}"] = flags
 
         msg = UBXMessage("CFG", "CFG-GNSS", SET, **kwargs)  # type: ignore[arg-type]
-        ser.write(msg.serialize())
-        self._wait_for_ack("CFG-GNSS")
+        with self._lock:
+            ser, _ = self._require_connection()
+            ser.reset_input_buffer()
+            ser.write(msg.serialize())
+            self._wait_for_ack("CFG-GNSS")
 
         enabled = config.enabled_constellations()
         logger.info(
@@ -540,8 +582,6 @@ class UbloxDriver(GpsReceiverDriver):
 
     def save_to_flash(self) -> None:
         """Save current RAM config to BBR + Flash (layers 7)."""
-        ser, _ = self._require_connection()
-
         # CFG-CFG: save current config to all non-volatile layers
         msg = UBXMessage(
             "CFG",
@@ -550,8 +590,11 @@ class UbloxDriver(GpsReceiverDriver):
             saveMask=b"\x1f\x1f\x00\x00",  # Save all sections
             deviceMask=b"\x17",  # BBR + Flash + SPI flash
         )
-        ser.write(msg.serialize())
-        self._wait_for_ack("CFG-CFG")
+        with self._lock:
+            ser, _ = self._require_connection()
+            ser.reset_input_buffer()
+            ser.write(msg.serialize())
+            self._wait_for_ack("CFG-CFG")
         logger.info("Configuration saved to flash")
 
     # ------------------------------------------------------------------
@@ -1010,14 +1053,40 @@ class UbloxDriver(GpsReceiverDriver):
     ) -> None:
         """Send a CFG-VALSET message and wait for ACK.
 
+        Public/legacy entrypoint — acquires ``self._lock`` to serialise
+        with concurrent NAV/CFG/MON polls.  Prefer the internal
+        ``_send_cfg_valset_locked`` from contexts that already hold
+        the lock (e.g. ``configure_survey_in`` does two VALSETs as one
+        atomic operation).
+
         Args:
             cfg_data: List of (key_name, value) tuples.
             layer: Configuration layer (1=RAM, 2=BBR, 4=Flash, 7=all).
+        """
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=layer)
+
+    def _send_cfg_valset_locked(
+        self,
+        cfg_data: list[tuple[str, int]],
+        layer: int = 1,
+    ) -> None:
+        """Send a CFG-VALSET message and wait for ACK (must hold lock).
+
+        Drains the serial RX buffer immediately before writing so the
+        ACK isn't buried behind RTCM/NAV-PVT traffic that a busy base
+        station receiver continuously streams.  Without this drain
+        ``_wait_for_ack``'s 50-iteration cap can expire before the
+        ACK is reached, producing spurious ``RuntimeError("No
+        ACK/NAK response …")`` failures while the receiver actually
+        applied the config.  See memory-bank/progress.md 2026-05-27
+        "Cancel Survey-In doesn't cancel" entry.
         """
         ser, _ = self._require_connection()
 
         cfg_data_any: list[tuple[str | int, object]] = list(cfg_data)  # type: ignore[arg-type]
         msg = UBXMessage.config_set(layer, 0, cfg_data_any)
+        ser.reset_input_buffer()
         ser.write(msg.serialize())  # type: ignore[union-attr]
         self._wait_for_ack("CFG-VALSET")
 

@@ -2,7 +2,41 @@
 
 ## Recent Changes
 
+### 2026-05-27 — Cancel Survey-In Doesn't Cancel (Race + Buried-ACK)
+
+Operator reported the new Cancel button on `/survey` "doesn't actually stop the survey" — the UI toast read "Survey-in cancelled" but NAV-SVIN kept reporting `active=True` and RTCM kept streaming.  Two independent bugs, both surfaced by real ZED-F9P traffic that the mocked unit tests didn't reproduce:
+
+1. **Concurrent-poll race** — `UbloxDriver.disable_base_mode()` and the survey-page 2 s poll timer (`get_survey_in_status()`) share **one `serial.Serial`** and one `UBXReader`.  The methods individually were not holding `self._lock`, so a poll firing the exact moment Cancel was clicked could interleave bytes on the wire with the `CFG-VALSET` write.  The receiver drops the corrupted frame silently — no NAK, no ACK — and `_wait_for_ack` either hit a stale ACK from the *previous* operation (so the cancel call returned cleanly to the UI) or timed out.  Either way the operator saw a "success" toast for a write the receiver never applied.
+2. **Buried ACK** — even when no interleaving occurred, a healthy ZED-F9P in base mode continuously streams RTCM3 + NAV-PVT.  `_wait_for_ack` was capped at `_MAX_READ_ATTEMPTS=50`; on a busy receiver the ACK-ACK for our `CFG-VALSET` could sit far enough behind RTCM frames in the FTDI RX buffer to fall off the end of that window, raising spurious `RuntimeError("No ACK/NAK response for CFG-VALSET")`.
+
+Three-part fix in `src/sp_rtk_base/services/drivers/ublox.py`:
+
+- **Hold the lock across whole atomic operations.**  Every `CFG-VALSET` writer (`configure_survey_in`, `disable_base_mode`, `configure_fixed_base`, `configure_rtcm_messages`, `configure_rtcm_ports`, `configure_gnss`, `save_to_flash`) now grabs `self._lock` directly and calls a new private `_send_cfg_valset_locked()` rather than the public `_send_cfg_valset()`.  Critical for `configure_survey_in`'s **two**-step disable→enable sequence: both writes must complete before a poll can sneak in, otherwise the receiver sees `TMODE=0` and the survey just gets disabled with no follow-up.  Public `_send_cfg_valset()` kept as a thin lock-acquiring wrapper for backward compat.
+- **Drain RX before every write.**  `_send_cfg_valset_locked()` calls `ser.reset_input_buffer()` immediately before `ser.write(...)`.  This evicts any backlogged RTCM/NAV/MON traffic so the ACK we're about to wait for lands within the 50-iteration cap.  Same drain added to `configure_gnss` and `save_to_flash` which build their own UBX messages outside `_send_cfg_valset_locked()`.
+- **Verify-and-retry on `disable_base_mode`.**  After the first VALSET ACK, the driver immediately polls NAV-SVIN (`_get_survey_in_locked()`, lock still held).  If `active=True`, it retries the VALSET once.  If `active=True` still, it raises `RuntimeError("Cancel did not take effect: receiver still reports survey-in active after Xs. Try disconnecting and reconnecting, or power-cycle the receiver.")` so the operator gets actionable feedback instead of a silent failure.
+
+UI in `src/sp_rtk_base/ui/pages/survey.py`:
+
+- `_cancel_survey_in()` no longer optimistically flips Cancel→Start on failure — that lied to the operator about device state.  On exception the Cancel button stays visible, the red `svin_error_label` stays populated, the status label flips to "Cancel failed — receiver may still be surveying" (text-negative), and the 2 s poll timer is **restarted** so live NAV-SVIN state continues to surface.  Only on a clean cancel do we flip back to Start.
+
+Test coverage — **3 new unit tests** in `tests/unit/test_cancel_survey_in.py::TestUbloxDisableBaseMode`:
+
+- `test_disable_base_mode_drains_rx_buffer` — asserts `ser.reset_input_buffer` is called at least once during `disable_base_mode` (covers both the VALSET write and the NAV-SVIN verify poll).
+- `test_disable_base_mode_retries_when_still_active` — feeds the mock reader an `ACK` → `NAV-SVIN(active=1)` → `ACK` → `NAV-SVIN(active=0)` sequence and asserts `UBXMessage.config_set` was called **twice** with `[("CFG_TMODE_MODE", 0)]`.
+- `test_disable_base_mode_raises_when_retry_also_fails` — second `NAV-SVIN` still returns `active=1`, asserts `RuntimeError` matching `"Cancel did not take effect"` and that exactly two VALSETs were sent.
+
+Also updated `tests/unit/test_rtcm_port_config.py::TestConfigureRtcmPorts` — the three existing tests patched `_send_cfg_valset`, but now the writers call `_send_cfg_valset_locked` directly, so the patches were no-ops and the real implementation tried to read an ACK from a `MagicMock()` reader.  Switched the patches to `_send_cfg_valset_locked`.
+
+Verification — `pytest tests/unit -q --no-cov` → **585 passed** (was 582; +3 from this change).  `pytest tests/unit/test_cancel_survey_in.py -v` → 15 passed.  Pylance/pyright clean on touched files.
+
+Lesson learned — **single-shared-resource drivers need a serialising lock around *operations*, not individual reads/writes**.  This codebase already had `self._lock` but used it only inside `get_*` and `get_*_locked` paired methods; the `configure_*` paths were silently lock-free.  Anywhere a method calls more than one `ser.write` or pairs a write with an ACK read, the whole sequence must be under the lock, full stop.  Likewise, `_wait_for_ack` on a busy receiver is only safe if the RX buffer is drained immediately before the matching write — otherwise ACKs can rot behind streaming traffic.  Verify-and-retry on safety-critical writes (anything that toggles base mode) is cheap insurance against silent ACK drops.
+
+Files touched — `src/sp_rtk_base/services/drivers/ublox.py` (lock + drain + retry across all CFG-VALSET callers), `src/sp_rtk_base/ui/pages/survey.py` (keep Cancel visible on failure, restart poll), `tests/unit/test_cancel_survey_in.py` (+3 tests), `tests/unit/test_rtcm_port_config.py` (patch target rename).
+
+Follow-ups: surface the retry attempt in the UI ("Receiver didn't acknowledge — retrying…") so the operator can see the driver fight through a stuck cancel before the final failure modal appears; consider promoting the verify-and-retry pattern into `_send_cfg_valset_locked` itself for *all* writes once we have telemetry that confirms it's free of false-positive retries.
+
 ### 2026-05-27 — v0.3.0 published to PyPI
+
 
 Released today via the standard cz-bump + GitHub-Release + OIDC flow:
 

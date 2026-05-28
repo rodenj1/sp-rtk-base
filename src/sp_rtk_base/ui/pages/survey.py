@@ -1177,10 +1177,24 @@ def survey_page() -> None:
                 # configured limit?  Uses log-style ratio because the
                 # convergence curve is roughly geometric.
                 # 0% = accuracy ≥ start (large), 100% = accuracy ≤ target.
+                #
+                # Survey completion requires BOTH the accuracy AND
+                # duration gates to be met.  When accuracy is already
+                # below target but the duration gate hasn't elapsed,
+                # we deliberately do NOT say "target reached" — that
+                # contradicts the ETA label that's correctly saying
+                # we're still waiting on duration.  Show the duration
+                # remaining instead so the two labels agree.
                 if cur_acc <= 0:
                     pct_acc_str = "—"
                 elif cur_acc <= acc_target:
-                    pct_acc_str = "100% (target reached)"
+                    if elapsed >= dur_target:
+                        pct_acc_str = "100% (target reached)"
+                    else:
+                        remaining = dur_target - elapsed
+                        pct_acc_str = (
+                            f"100% — waiting on min duration ({remaining}s left)"
+                        )
                 else:
                     # Geometric progress: assume the first observed
                     # accuracy is the starting point and we're heading
@@ -1239,7 +1253,7 @@ def survey_page() -> None:
                         # Accuracy already met — only waiting on min duration
                         seconds_to_min_dur = max(0, dur_target - elapsed)
                         eta_str = (
-                            f"~{seconds_to_min_dur}s (duration)"
+                            f"~{seconds_to_min_dur}s (waiting on min duration)"
                             if seconds_to_min_dur > 0
                             else "any moment"
                         )

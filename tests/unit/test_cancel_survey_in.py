@@ -155,15 +155,15 @@ class TestUbloxDisableBaseMode:
 
         reader = MagicMock()
         # configure_survey_in now performs:
-        #   1. CFG-VALSET TMODE=0 (RAM)    -> ACK
-        #   2. CFG-VALSET TMODE=0 (FLASH)  -> ACK
-        #   3. NAV-SVIN poll               -> active=0 (verify disable)
-        #   4. CFG-VALSET TMODE=1 (RAM)    -> ACK
-        #   5. NAV-SVIN poll               -> active=1 (verify enable)
+        #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
+        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
+        #   3. NAV-SVIN poll                                -> dur=0
+        #   4. (wait ~2s)
+        #   5. NAV-SVIN poll                                -> dur=2 (incremented)
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # RAM disable
-            (b"", _make_ack()),  # FLASH disable
+            (b"", _make_ack()),  # full-layer disable
+            (b"", _make_ack()),  # enable
             (
                 b"",
                 SimpleNamespace(
@@ -175,16 +175,15 @@ class TestUbloxDisableBaseMode:
                     obs=0,
                 ),
             ),
-            (b"", _make_ack()),  # enable step
             (
                 b"",
                 SimpleNamespace(
                     identity="NAV-SVIN",
                     valid=0,
-                    active=1,
-                    dur=0,
-                    meanAcc=0,
-                    obs=0,
+                    active=0,  # HPG 1.12: stays False even while surveying
+                    dur=2,
+                    meanAcc=99999,
+                    obs=1,
                 ),
             ),
         ]
@@ -201,16 +200,18 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
             )
 
-        # Three config_sets: RAM disable, FLASH disable, enable.
-        assert mock_ubx_msg.config_set.call_count == 3
-        ram_disable = mock_ubx_msg.config_set.call_args_list[0]
-        flash_disable = mock_ubx_msg.config_set.call_args_list[1]
-        enable = mock_ubx_msg.config_set.call_args_list[2]
-        assert ram_disable[0][2] == [("CFG_TMODE_MODE", 0)]
-        assert ram_disable[0][0] == 1  # layer=RAM
-        assert flash_disable[0][2] == [("CFG_TMODE_MODE", 0)]
-        assert flash_disable[0][0] == 4  # layer=FLASH
-        # The enable call sets the new survey params + re-enables TMODE
+        # Two config_sets: full-layer disable, then RAM-only enable.
+        assert mock_ubx_msg.config_set.call_count == 2
+        disable = mock_ubx_msg.config_set.call_args_list[0]
+        enable = mock_ubx_msg.config_set.call_args_list[1]
+        assert disable[0][2] == [("CFG_TMODE_MODE", 0)]
+        # layer=7 = RAM | BBR | Flash, per u-blox C099 reference script.
+        # BBR coverage is the critical bit — RAM+Flash alone leaves
+        # ``dur`` ticking from a stale prior session.
+        assert disable[0][0] == 7
+        # The enable call writes to RAM only (survey-in is intentionally
+        # not persisted) and contains the new survey params.
+        assert enable[0][0] == 1
         keys = {k: v for k, v in enable[0][2]}
         assert keys.get("CFG_TMODE_MODE") == 1
         assert keys.get("CFG_TMODE_SVIN_MIN_DUR") == 120
@@ -219,117 +220,24 @@ class TestUbloxDisableBaseMode:
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
     @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
-    def test_configure_survey_in_retries_disable_when_stuck(
+    def test_configure_survey_in_raises_and_rolls_back_when_dur_doesnt_advance(
         self,
         mock_serial_cls: MagicMock,
         mock_reader_cls: MagicMock,
         mock_ubx_msg: MagicMock,
     ) -> None:
-        """A1: when the first TMODE-disable verify poll still reports
-        ``active=True`` (stale survey from a previous session), the
-        driver must re-send the CFG_TMODE_MODE=0 VALSET before
-        proceeding to the enable step.
-
-        Scenario:
-        - VALSET TMODE=0 (RAM)   → ACK
-        - VALSET TMODE=0 (FLASH) → ACK
-        - NAV-SVIN → active=1, dur=12345 (stale)  → triggers retry
-        - re-send VALSET TMODE=0 (RAM) → ACK
-        - NAV-SVIN → active=0                    (clean)
-        - VALSET enable → ACK
-        - NAV-SVIN → active=1                    (new survey running)
-        """
+        """If NAV-SVIN ``dur`` doesn't increment between the two
+        verify polls, configure_survey_in must raise *and* roll the
+        receiver back to TMODE=0 across all layers so a failed start
+        doesn't leave the receiver pinned in survey-in mode (the
+        v0.3.3 regression observed on larson-base.lan)."""
         ser = MagicMock()
         ser.is_open = True
         mock_serial_cls.return_value = ser
 
-        reader = MagicMock()
-        reader.read.side_effect = [
-            (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # ACK for RAM disable
-            (b"", _make_ack()),  # ACK for FLASH disable
-            (
-                b"",
-                SimpleNamespace(  # stale prior survey still showing
-                    identity="NAV-SVIN",
-                    valid=1,
-                    active=1,
-                    dur=12345,
-                    meanAcc=70000,
-                    obs=5000,
-                ),
-            ),
-            (b"", _make_ack()),  # ACK for retried RAM disable
-            (
-                b"",
-                SimpleNamespace(  # finally clean
-                    identity="NAV-SVIN",
-                    valid=0,
-                    active=0,
-                    dur=0,
-                    meanAcc=0,
-                    obs=0,
-                ),
-            ),
-            (b"", _make_ack()),  # ACK for enable
-            (
-                b"",
-                SimpleNamespace(  # new survey running
-                    identity="NAV-SVIN",
-                    valid=0,
-                    active=1,
-                    dur=0,
-                    meanAcc=0,
-                    obs=0,
-                ),
-            ),
-        ]
-        mock_reader_cls.return_value = reader
-
-        mock_msg = MagicMock()
-        mock_msg.serialize.return_value = b"\x00"
-        mock_ubx_msg.config_set.return_value = mock_msg
-
-        drv = UbloxDriver()
-        drv.connect("/dev/ttyUSB0")
-        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
-            drv.configure_survey_in(
-                SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
-            )
-
-        # Expect 4 CFG-VALSETs: RAM disable, FLASH disable, retried RAM
-        # disable, enable.
-        assert mock_ubx_msg.config_set.call_count == 4
-        layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
-        payloads = [c[0][2] for c in mock_ubx_msg.config_set.call_args_list]
-        assert layers == [1, 4, 1, 1]
-        assert payloads[0] == [("CFG_TMODE_MODE", 0)]
-        assert payloads[1] == [("CFG_TMODE_MODE", 0)]
-        assert payloads[2] == [("CFG_TMODE_MODE", 0)]
-        assert dict(payloads[3]).get("CFG_TMODE_MODE") == 1
-
-    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
-    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
-    def test_configure_survey_in_raises_when_enable_doesnt_take_effect(
-        self,
-        mock_serial_cls: MagicMock,
-        mock_reader_cls: MagicMock,
-        mock_ubx_msg: MagicMock,
-    ) -> None:
-        """A1: if the receiver acks the TMODE=1 VALSET but NAV-SVIN
-        keeps reporting ``active=False`` for the full verify window,
-        configure_survey_in must raise a clear RuntimeError so the UI
-        can surface a real failure (instead of leaving the operator
-        staring at a stale "Idle" status with prior-session numbers).
-        """
-        ser = MagicMock()
-        ser.is_open = True
-        mock_serial_cls.return_value = ser
-
-        # NAV-SVIN always reports active=False — re-use a single
-        # function-based side_effect so we don't have to enumerate all
-        # 5 verify polls.
+        # Both NAV-SVIN polls return the same dur — the survey
+        # didn't actually start, mirroring the HPG 1.12 + stuck-BBR
+        # symptom we hit on the real device.
         nav_svin_idle = SimpleNamespace(
             identity="NAV-SVIN",
             valid=0,
@@ -339,19 +247,15 @@ class TestUbloxDisableBaseMode:
             obs=0,
         )
         reader = MagicMock()
-        # RAM disable ACK → FLASH disable ACK → disable verify(idle)
-        # → enable ACK → 5x enable verify(still idle) → raise
+        # disable ACK → enable ACK → NAV-SVIN(dur=0) → NAV-SVIN(dur=0)
+        # → rollback disable ACK
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
-            (b"", _make_ack()),  # RAM disable
-            (b"", _make_ack()),  # FLASH disable
-            (b"", nav_svin_idle),
+            (b"", _make_ack()),  # full-layer disable
             (b"", _make_ack()),  # enable
-            (b"", nav_svin_idle),
-            (b"", nav_svin_idle),
-            (b"", nav_svin_idle),
-            (b"", nav_svin_idle),
-            (b"", nav_svin_idle),
+            (b"", nav_svin_idle),  # before-snapshot
+            (b"", nav_svin_idle),  # after-snapshot, dur unchanged
+            (b"", _make_ack()),  # rollback layer=7 disable
         ]
         mock_reader_cls.return_value = reader
 
@@ -362,10 +266,23 @@ class TestUbloxDisableBaseMode:
         drv = UbloxDriver()
         drv.connect("/dev/ttyUSB0")
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
-            with pytest.raises(RuntimeError, match="did not start a new survey"):
+            with pytest.raises(RuntimeError, match="dur did not advance"):
                 drv.configure_survey_in(
                     SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
                 )
+
+        # Three CFG-VALSETs: initial layer=7 disable, layer=1 enable,
+        # then layer=7 rollback after dur failed to advance.
+        assert mock_ubx_msg.config_set.call_count == 3
+        layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
+        assert layers == [7, 1, 7]
+        # First and last (rollback) payloads must be the disable key.
+        assert mock_ubx_msg.config_set.call_args_list[0][0][2] == [
+            ("CFG_TMODE_MODE", 0)
+        ]
+        assert mock_ubx_msg.config_set.call_args_list[2][0][2] == [
+            ("CFG_TMODE_MODE", 0)
+        ]
 
     def test_disable_base_mode_when_disconnected(self) -> None:
         drv = UbloxDriver()

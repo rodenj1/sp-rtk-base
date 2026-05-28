@@ -291,18 +291,17 @@ class TestUbloxDriverConfiguration:
 
         reader = MagicMock()
         # configure_survey_in now performs:
-        #   1. CFG-VALSET TMODE=0 (RAM)    -> ACK
-        #   2. CFG-VALSET TMODE=0 (FLASH)  -> ACK
-        #   3. NAV-SVIN poll               -> active=0, dur=0  (verify disable)
-        #   4. CFG-VALSET TMODE=1 (RAM)    -> ACK
-        #   5. NAV-SVIN poll               -> active=1        (verify enable)
+        #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
+        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
+        #   3. NAV-SVIN poll                                -> dur=0
+        #   4. (~2 s gap)
+        #   5. NAV-SVIN poll                                -> dur=3 (incremented)
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),  # ACK for disable TMODE (RAM)
-            (b"", _make_ack_response()),  # ACK for disable TMODE (FLASH)
+            (b"", _make_ack_response()),  # full-layer disable
+            (b"", _make_ack_response()),  # enable
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
-            (b"", _make_ack_response()),  # ACK for survey-in params
-            (b"", _make_nav_svin_response(active=1, valid=0, dur=0, obs=0)),
+            (b"", _make_nav_svin_response(active=0, valid=0, dur=3, obs=1)),
         ]
         mock_reader_cls.return_value = reader
 
@@ -317,18 +316,20 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_survey_in(config)
 
-        # Three CFG-VALSET calls: RAM disable, FLASH disable, then enable.
-        assert mock_ubx_msg.config_set.call_count == 3
-        ram_disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
-        flash_disable_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
-        flash_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
-        enable_cfg = mock_ubx_msg.config_set.call_args_list[2][0][2]
-        assert ram_disable_cfg == [("CFG_TMODE_MODE", 0)]
-        assert flash_disable_cfg == [("CFG_TMODE_MODE", 0)]
-        # Flash write must target layer=4 so a power-cycle can't reassert
-        # a stale TMODE=1 from a previous interrupted survey.
-        assert flash_layer == 4
-        # Enable call must contain the new params and re-enable
+        # Two CFG-VALSET calls: layer=7 disable, layer=1 enable.
+        assert mock_ubx_msg.config_set.call_count == 2
+        disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
+        disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
+        enable_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
+        enable_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
+
+        # Disable must hit RAM|BBR|Flash (7), per u-blox C099 reference
+        # script — RAM-only leaves BBR pinned and the ``dur`` counter
+        # accumulating from prior sessions.
+        assert disable_layer == 7
+        assert disable_cfg == [("CFG_TMODE_MODE", 0)]
+        # Enable is RAM-only — survey-in is intentionally not persisted.
+        assert enable_layer == 1
         keys = [k for k, _ in enable_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys

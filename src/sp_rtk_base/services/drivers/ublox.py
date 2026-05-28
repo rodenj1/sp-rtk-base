@@ -227,10 +227,20 @@ class UbloxDriver(GpsReceiverDriver):
     # 500 ms is conservative for all known ZED-F9P/F9R firmwares.
     _TMODE_RESTART_DELAY_S: float = 0.5
 
-    # Maximum number of NAV-SVIN polls to wait for the receiver to
-    # acknowledge the TMODE state transition.  At ~50 ms per poll
-    # this caps the wait at ~250 ms after the delay above.
-    _TMODE_VERIFY_POLLS: int = 5
+    # Gap between the two NAV-SVIN polls used to confirm the survey
+    # has actually started by observing ``dur`` increment.  Must be
+    # >= ~1 s because NAV-SVIN is emitted at 1 Hz and ``dur`` is a
+    # whole-second counter.  2 s gives a 1-2 tick delta with margin.
+    _SVIN_DUR_VERIFY_GAP_S: float = 2.0
+
+    # CFG-VALSET layer bitmask.  Layer 1=RAM, 2=BBR, 4=Flash.
+    # Per u-blox's own "F9P Base Survey in disable.txt" reference
+    # script in the C099 board package, a clean TMODE-disable writes
+    # to all three layers (1|2|4 = 7) so the BBR-backed ``dur``
+    # accumulator from any prior session is also reset.  Writing only
+    # to RAM leaves BBR pinned at TMODE=1 across host restarts and
+    # the receiver keeps surveying invisibly to NAV-SVIN.active.
+    _TMODE_DISABLE_ALL_LAYERS: int = 7
 
     def configure_survey_in(self, config: SurveyInConfig) -> None:
         # All CFG-VALSET writers must hold self._lock so they cannot
@@ -243,75 +253,34 @@ class UbloxDriver(GpsReceiverDriver):
         # while having no effect.  See memory-bank/progress.md
         # 2026-05-27 "Cancel Survey-In doesn't cancel" entry.
         with self._lock:
-            # Step 1: disable TMODE first.  Without this, if the
-            # receiver was previously flashed with TMODE=1 (survey-in)
-            # or TMODE=2 (fixed) the new survey parameters are
-            # accepted but the survey never restarts — the receiver
-            # silently keeps using the *previous* survey state (or
-            # fixed-base coordinates) and NAV-SVIN never reports
-            # active=True.  See memory-bank/progress.md 2026-05-27
-            # entry.
-            self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
+            # Step 1: full-layer TMODE disable.  Writing layer=7 (RAM
+            # | BBR | Flash) matches u-blox's own C099 board reference
+            # "F9P Base Survey in disable.txt" script and is the only
+            # way to guarantee the BBR-backed NAV-SVIN ``dur`` counter
+            # restarts from 0.  RAM-only disables leave BBR pinned at
+            # TMODE=1 across host restarts; the receiver then keeps
+            # surveying invisibly (NAV-SVIN.active=False on HPG 1.12)
+            # while ``dur`` and ``obs`` continue accumulating from the
+            # prior session.  Flashed ECEF/LLH coordinates from a
+            # completed prior survey persist — only the MODE key is
+            # touched, so the operator can still switch back to a
+            # known fixed-base position manually.
+            self._send_cfg_valset_locked(
+                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
+            )
 
-            # Also clear TMODE in flash.  Without this, a survey that
-            # was interrupted before its auto-commit ran (network
-            # drop, operator disconnect, crash) leaves flash pinned
-            # at TMODE=1 with a stale NAV-SVIN ``dur`` counter; that
-            # state survives the next power cycle and re-asserts
-            # itself into RAM at boot, putting the receiver back into
-            # a phantom survey-in.  Writing TMODE=0 to flash here
-            # ensures the only persistent base states are "none"
-            # (TMODE=0) or "completed fixed base" (TMODE=2, written by
-            # the post-survey ``save_to_flash``).  Only the MODE key
-            # is touched — any flashed ECEF/LLH coordinates from a
-            # prior completed survey persist so they remain available
-            # if the operator decides to switch back to fixed-base
-            # mode manually.
-            self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=4)
-
-            # Step 1a (A2): Give the receiver a brief settling period
-            # before we re-enable.  Without this, on ZED-F9P firmware
-            # 1.13–1.32 the receiver acks both VALSETs but quietly
-            # keeps reporting the *previous* completed survey result
-            # (active=False, valid=False, dur=<prior session> ).  The
-            # delay lets the receiver flush its TMODE state machine
-            # so the re-enable is registered as a fresh survey-in
-            # request.  See memory-bank/progress.md 2026-05-27
-            # "Survey-In doesn't actually start a new survey" entry.
+            # Step 2: settle.  The ZED-F9P needs a brief quiet period
+            # between TMODE-disable and TMODE-enable VALSETs so the
+            # 0 -> 1 edge is registered as a fresh survey-in request
+            # rather than coalesced with the previous state.  500 ms
+            # is conservative for HPG 1.12 - 1.32.
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
-            # Step 1b (A1): Poll NAV-SVIN until the receiver confirms
-            # the TMODE reset took effect (active=False).  NAV-SVIN
-            # only zeroes ``dur`` when a *new* survey starts — disabling
-            # TMODE leaves the prior session's accumulated duration
-            # intact, so we cannot use ``dur == 0`` as a precondition
-            # here.  ``active=False`` alone is the correct signal.
-            for attempt in range(self._TMODE_VERIFY_POLLS):
-                progress = self._get_survey_in_locked()
-                if not progress.active:
-                    break
-                if attempt == self._TMODE_VERIFY_POLLS - 1:
-                    logger.warning(
-                        "TMODE-disable verification timed out "
-                        "(active=%s dur=%ds) — proceeding to enable anyway",
-                        progress.active,
-                        progress.duration_seconds,
-                    )
-                else:
-                    logger.debug(
-                        "TMODE-disable not yet visible "
-                        "(attempt %d/%d: active=%s dur=%ds) — retrying",
-                        attempt + 1,
-                        self._TMODE_VERIFY_POLLS,
-                        progress.active,
-                        progress.duration_seconds,
-                    )
-                    # Cheap re-send on first miss
-                    if attempt == 0:
-                        self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
-                    time.sleep(self._TMODE_RESTART_DELAY_S)
-
-            # Step 2: write the new survey-in parameters and enable.
+            # Step 3: write the new survey-in parameters and enable
+            # to RAM only.  Per u-blox C099 "F9P Base Survey in
+            # start.txt", survey-in is intentionally NOT persisted to
+            # flash — only the completed fixed-base coordinates from
+            # ``save_to_flash`` are persisted.
             cfg_data = [
                 ("CFG_TMODE_SVIN_MIN_DUR", config.min_duration_seconds),
                 ("CFG_TMODE_SVIN_ACC_LIMIT", config.accuracy_limit_mm),
@@ -320,29 +289,50 @@ class UbloxDriver(GpsReceiverDriver):
             ]
             self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
 
-            # Step 3 (A1): Verify the receiver actually accepted the
-            # enable by polling NAV-SVIN until ``active=True``.  If
-            # after ``_TMODE_VERIFY_POLLS`` the receiver still reports
-            # ``active=False`` we raise so the UI surfaces a real
-            # error instead of leaving the operator staring at a
-            # stale "Idle" status with the prior session's numbers.
-            for attempt in range(self._TMODE_VERIFY_POLLS):
-                progress = self._get_survey_in_locked()
-                if progress.active:
-                    break
-                if attempt == self._TMODE_VERIFY_POLLS - 1:
-                    raise RuntimeError(
-                        "Receiver accepted the survey-in configuration "
-                        f"(min_duration={config.min_duration_seconds}s, "
-                        f"accuracy={config.accuracy_limit_mm}mm) but did "
-                        "not start a new survey — NAV-SVIN still reports "
-                        f"active=False after "
-                        f"{self._TMODE_VERIFY_POLLS} polls.  Try "
-                        "power-cycling the receiver, or check that "
-                        "TMODE isn't pinned in flash from a previous "
-                        "session."
+            # Step 4: confirm the survey is actually running by
+            # polling NAV-SVIN twice with a ~2 s gap and checking
+            # that ``dur`` strictly increased.  We deliberately do
+            # NOT check ``NAV-SVIN.active`` — on ZED-F9P firmware
+            # HPG 1.12 that flag stays False even while the receiver
+            # is genuinely surveying (``dur`` and ``obs`` increment
+            # at 1 Hz).  Multiple u-blox forum threads document the
+            # bug; no release notes claim a fix.  ``dur`` is the
+            # authoritative signal: it only ticks while the survey-in
+            # state machine is engaged.
+            before = self._get_survey_in_locked()
+            time.sleep(self._SVIN_DUR_VERIFY_GAP_S)
+            after = self._get_survey_in_locked()
+
+            if not (
+                after.duration_seconds > before.duration_seconds
+                and after.duration_seconds > 0
+                and after.observations > 0
+            ):
+                # Roll back so a failed start doesn't leave the
+                # receiver in TMODE=1 with phantom-survey state
+                # pinned in all layers.
+                try:
+                    self._send_cfg_valset_locked(
+                        [("CFG_TMODE_MODE", 0)],
+                        layer=self._TMODE_DISABLE_ALL_LAYERS,
                     )
-                time.sleep(self._TMODE_RESTART_DELAY_S / 2)
+                except Exception:
+                    logger.exception(
+                        "Failed to roll back TMODE after survey-in start "
+                        "failure — receiver may be in inconsistent state"
+                    )
+                raise RuntimeError(
+                    "Receiver accepted the survey-in configuration "
+                    f"(min_duration={config.min_duration_seconds}s, "
+                    f"accuracy={config.accuracy_limit_mm}mm) but did "
+                    "not start a new survey — NAV-SVIN.dur did not "
+                    f"advance over {self._SVIN_DUR_VERIFY_GAP_S:.0f}s "
+                    f"(before: dur={before.duration_seconds}s "
+                    f"obs={before.observations}; after: "
+                    f"dur={after.duration_seconds}s "
+                    f"obs={after.observations}).  TMODE has been "
+                    "reset to 0 in RAM+BBR+Flash."
+                )
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,

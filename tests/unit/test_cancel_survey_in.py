@@ -284,6 +284,79 @@ class TestUbloxDisableBaseMode:
             ("CFG_TMODE_MODE", 0)
         ]
 
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_survey_in_raises_when_dur_floor_exceeded(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """If the first NAV-SVIN poll reports dur >= 30 s, the CFG-RST
+        didn't actually clear the BBR-backed accumulator and we are
+        not running a fresh survey.  configure_survey_in must surface
+        a clear actionable error mentioning the physical power-cycle
+        workaround (the symptom we observed on larson-base before
+        v0.3.5)."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        # First poll already reports 17 hours of accumulator — same
+        # number we saw on the real device.  Second poll is +2 s
+        # later, so dur is still increasing (would pass the
+        # progression-only check from v0.3.4) but the floor catches
+        # it.
+        nav_svin_stale_before = SimpleNamespace(
+            identity="NAV-SVIN",
+            valid=0,
+            active=0,
+            dur=61955,
+            meanAcc=6622,
+            obs=45805,
+        )
+        nav_svin_stale_after = SimpleNamespace(
+            identity="NAV-SVIN",
+            valid=0,
+            active=0,
+            dur=61957,
+            meanAcc=6622,
+            obs=45806,
+        )
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver()),
+            (b"", _make_ack()),  # layer=7 disable
+            (b"", _make_ack()),  # enable
+            (b"", nav_svin_stale_before),
+            (b"", nav_svin_stale_after),
+            (b"", _make_ack()),  # rollback layer=7
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        drv = UbloxDriver()
+        drv.connect("/dev/ttyUSB0")
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            with pytest.raises(
+                RuntimeError, match="accumulator did not reset"
+            ) as exc_info:
+                drv.configure_survey_in(
+                    SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
+                )
+        # Error message must include the operator-actionable bit
+        # (physical power cycle) so the UI surfaces it directly.
+        assert "power cycle" in str(exc_info.value).lower()
+        # Rollback must still fire — receiver was just put into
+        # TMODE=1 by the enable VALSET, even if dur shows stale.
+        assert mock_ubx_msg.config_set.call_count == 3
+        layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
+        assert layers == [7, 1, 7]
+
     def test_disable_base_mode_when_disconnected(self) -> None:
         drv = UbloxDriver()
         with pytest.raises(ConnectionError, match="Not connected"):

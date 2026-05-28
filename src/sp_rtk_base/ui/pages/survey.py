@@ -199,6 +199,14 @@ def survey_page() -> None:
                     "text-negative text-caption q-mt-xs"
                 )
                 svin_error_label.set_visibility(False)
+                # Softer warning banner for "survey is running but not
+                # converging" (e.g. poor antenna placement).  Hidden
+                # until the convergence heuristic fires; cleared on
+                # Start / Cancel.
+                svin_warning_label = ui.label("").classes(
+                    "text-warning text-caption q-mt-xs"
+                )
+                svin_warning_label.set_visibility(False)
                 svin_progress_bar = ui.linear_progress(
                     value=0, show_value=False
                 ).classes("q-mt-xs")
@@ -929,6 +937,8 @@ def survey_page() -> None:
             svin_progress_card.set_visibility(True)
             svin_error_label.set_visibility(False)
             svin_error_label.text = ""
+            svin_warning_label.set_visibility(False)
+            svin_warning_label.text = ""
             svin_status_label.text = "Configuring receiver..."
             svin_status_label.classes(replace="text-warning")
             svin_target_label.text = f"Target: {acc:,} mm"
@@ -1040,6 +1050,8 @@ def survey_page() -> None:
 
             svin_status_label.text = "Cancelled by operator"
             svin_status_label.classes(replace="text-grey-3")
+            svin_warning_label.set_visibility(False)
+            svin_warning_label.text = ""
             svin_progress_bar.value = 0.0
             svin_cancel_btn.set_visibility(False)
             svin_start_btn.set_visibility(True)
@@ -1053,12 +1065,18 @@ def survey_page() -> None:
                 progress = await svc.get_survey_in_status()
 
                 # Snapshot the receiver's ``dur`` counter on the first
-                # poll after Start so the UI counts from 0 even if the
-                # receiver re-uses the previous session's counter.  See
-                # the ``_svin_dur_offset`` docstring above for the
-                # rationale.  Captured once per Start; cleared in
-                # _start_survey_in() and _cancel_survey_in().
-                if _svin_dur_offset is None and progress.active:
+                # poll after Start so the UI counts from 0 regardless
+                # of what the receiver's accumulator reports.  We
+                # used to gate this on ``progress.active`` but the
+                # ZED-F9P (HPG 1.12) leaves ``active=False`` even
+                # while genuinely surveying, so the gate never fired
+                # and the UI displayed the raw 60000+ s accumulator.
+                # The driver's ``configure_survey_in`` now guarantees
+                # via CFG-RST that ``dur`` is < 30 s by the time it
+                # returns, so capturing the first observed dur as the
+                # offset is correct regardless of ``active``.
+                is_first_poll_after_start = _svin_dur_offset is None
+                if is_first_poll_after_start:
                     _svin_dur_offset = int(progress.duration_seconds)
                     logger.info(
                         "Survey-in start: captured dur offset = %ds",
@@ -1066,17 +1084,10 @@ def survey_page() -> None:
                     )
 
                 # Effective elapsed for display = receiver_dur - offset.
-                # While offset is still None (first poll right after
-                # Start, before the receiver confirms active=True), we
-                # treat elapsed as 0.
-                offset = _svin_dur_offset if _svin_dur_offset is not None else 0
                 raw_dur = int(progress.duration_seconds)
-                elapsed = max(0, raw_dur - offset)
+                elapsed = max(0, raw_dur - (_svin_dur_offset or 0))
 
-                if progress.active:
-                    svin_status_label.text = "Active — collecting..."
-                    svin_status_label.classes(replace="text-warning")
-                elif progress.valid:
+                if progress.valid:
                     svin_status_label.text = "✓ Complete — committing..."
                     svin_status_label.classes(replace="text-positive")
 
@@ -1087,18 +1098,21 @@ def survey_page() -> None:
                     # Auto-pipeline: promote → flash → refresh
                     await _auto_commit_survey(progress)
                     return
+                elif progress.active or elapsed > 0:
+                    # On ZED-F9P HPG 1.12 ``progress.active`` stays
+                    # False even while the receiver is genuinely
+                    # surveying, so ``elapsed > 0`` (dur has ticked
+                    # past the offset we captured at Start) is the
+                    # authoritative signal that the survey is making
+                    # progress.
+                    svin_status_label.text = "Active — collecting..."
+                    svin_status_label.classes(replace="text-warning")
+                elif is_first_poll_after_start:
+                    svin_status_label.text = "Waiting for receiver..."
+                    svin_status_label.classes(replace="text-warning")
                 else:
-                    # Receiver reports active=False — either the survey
-                    # hasn't started yet (offset still None) or it's
-                    # been cancelled / not started.  Show "Waiting…" so
-                    # the operator knows the UI is alive but the device
-                    # hasn't confirmed yet.
-                    if _svin_dur_offset is None:
-                        svin_status_label.text = "Waiting for receiver..."
-                        svin_status_label.classes(replace="text-warning")
-                    else:
-                        svin_status_label.text = "Idle"
-                        svin_status_label.classes(replace="text-grey-3")
+                    svin_status_label.text = "Idle"
+                    svin_status_label.classes(replace="text-grey-3")
 
                 svin_dur_label.text = f"Duration: {elapsed}s"
                 svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
@@ -1185,6 +1199,27 @@ def survey_page() -> None:
                             else "any moment"
                         )
                 svin_eta_label.text = f"ETA: {eta_str}"
+
+                # Not-converging warning: when the survey has been
+                # running 2x the configured minimum duration AND the
+                # current accuracy is still more than 2x the target,
+                # the receiver is almost certainly not going to
+                # converge.  The most common cause is poor antenna
+                # placement (indoor, under foliage, near reflective
+                # surfaces) — surface the diagnostic now rather than
+                # let the operator wait indefinitely.
+                if elapsed > 2 * dur_target and cur_acc > 2 * acc_target:
+                    svin_warning_label.text = (
+                        f"⚠ Survey may not be converging — running "
+                        f"{elapsed}s with accuracy {cur_acc:.0f}mm "
+                        f"(target {acc_target:.0f}mm).  Check antenna "
+                        "placement (sky view, multipath sources) or "
+                        "cancel and try a less ambitious accuracy "
+                        "target."
+                    )
+                    svin_warning_label.set_visibility(True)
+                else:
+                    svin_warning_label.set_visibility(False)
 
                 # Update chart
                 acc_val = max(progress.mean_accuracy_mm, 1.0)

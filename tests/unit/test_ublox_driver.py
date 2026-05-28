@@ -351,9 +351,15 @@ class TestUbloxDriverConfiguration:
         mock_serial_cls.return_value = ser
 
         reader = MagicMock()
+        # configure_fixed_base now performs (mirroring
+        # configure_survey_in's edge-triggered TMODE pattern):
+        #   1. UBX-CFG-RST (no ACK read needed)
+        #   2. CFG-VALSET TMODE=0 (layer=7)  -> ACK
+        #   3. CFG-VALSET TMODE=2 + coords (layer=1) -> ACK
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),
+            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for layer=1 fixed-base write
         ]
         mock_reader_cls.return_value = reader
 
@@ -370,16 +376,31 @@ class TestUbloxDriverConfiguration:
             altitude_m=408.0,
             accuracy_mm=500,
         )
-        driver.configure_fixed_base(config)
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            driver.configure_fixed_base(config)
 
-        mock_ubx_msg.config_set.assert_called_once()
-        call_args = mock_ubx_msg.config_set.call_args
-        cfg_data = call_args[0][2]
-        keys = [k for k, _ in cfg_data]
+        # Two CFG-VALSETs: layer=7 disable then layer=1 fixed-base.
+        # Pre-disable mirrors configure_survey_in — without it, a
+        # receiver currently in TMODE=1 silently coalesces the
+        # TMODE=2 write and stays in survey-in (the Path 2 bug
+        # diagnosed on larson-base before v0.3.5).
+        assert mock_ubx_msg.config_set.call_count == 2
+        disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
+        disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
+        fixed_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
+        fixed_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
+
+        assert disable_layer == 7
+        assert disable_cfg == [("CFG_TMODE_MODE", 0)]
+        assert fixed_layer == 1
+        keys = [k for k, _ in fixed_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_LAT" in keys
         assert "CFG_TMODE_LON" in keys
         assert "CFG_TMODE_HEIGHT" in keys
+        # TMODE=2 (fixed) in the second call
+        mode_vals = [v for k, v in fixed_cfg if k == "CFG_TMODE_MODE"]
+        assert mode_vals == [2]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

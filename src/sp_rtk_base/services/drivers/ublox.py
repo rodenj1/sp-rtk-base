@@ -236,11 +236,24 @@ class UbloxDriver(GpsReceiverDriver):
     # CFG-VALSET layer bitmask.  Layer 1=RAM, 2=BBR, 4=Flash.
     # Per u-blox's own "F9P Base Survey in disable.txt" reference
     # script in the C099 board package, a clean TMODE-disable writes
-    # to all three layers (1|2|4 = 7) so the BBR-backed ``dur``
-    # accumulator from any prior session is also reset.  Writing only
-    # to RAM leaves BBR pinned at TMODE=1 across host restarts and
-    # the receiver keeps surveying invisibly to NAV-SVIN.active.
+    # to all three layers (1|2|4 = 7) so any TMODE-related config
+    # from a prior session is also wiped.  Writing only to RAM leaves
+    # BBR pinned at TMODE=1 across host restarts.
     _TMODE_DISABLE_ALL_LAYERS: int = 7
+
+    # How long to wait after a UBX-CFG-RST controlled-GNSS-start for
+    # the receiver's GNSS subsystem to come back up before issuing
+    # further commands.  Empirically ~1-3 s on ZED-F9P.  3 s gives
+    # margin without making the survey-start UX noticeably slower.
+    _CFG_RST_SETTLE_S: float = 3.0
+
+    # Maximum ``NAV-SVIN.dur`` allowed at the first verify poll for
+    # a survey-in start to be considered "fresh".  ``dur`` is a
+    # BBR-backed accumulator on the ZED-F9P; if the CFG-RST didn't
+    # actually clear it (a hardware-level failure we cannot fix from
+    # software), the floor check fires a clear, actionable error
+    # instead of letting the UI display a stale 17-hour duration.
+    _SVIN_DUR_FLOOR_S: int = 30
 
     def configure_survey_in(self, config: SurveyInConfig) -> None:
         # All CFG-VALSET writers must hold self._lock so they cannot
@@ -253,30 +266,35 @@ class UbloxDriver(GpsReceiverDriver):
         # while having no effect.  See memory-bank/progress.md
         # 2026-05-27 "Cancel Survey-In doesn't cancel" entry.
         with self._lock:
-            # Step 1: full-layer TMODE disable.  Writing layer=7 (RAM
-            # | BBR | Flash) matches u-blox's own C099 board reference
-            # "F9P Base Survey in disable.txt" script and is the only
-            # way to guarantee the BBR-backed NAV-SVIN ``dur`` counter
-            # restarts from 0.  RAM-only disables leave BBR pinned at
-            # TMODE=1 across host restarts; the receiver then keeps
-            # surveying invisibly (NAV-SVIN.active=False on HPG 1.12)
-            # while ``dur`` and ``obs`` continue accumulating from the
-            # prior session.  Flashed ECEF/LLH coordinates from a
-            # completed prior survey persist — only the MODE key is
-            # touched, so the operator can still switch back to a
-            # known fixed-base position manually.
+            # Step 1: clear the BBR-backed survey-in accumulator.
+            # CFG-VALSET writes alone (even to layer=7) do NOT reset
+            # NAV-SVIN.dur on HPG 1.12 — we verified empirically that
+            # ``dur`` ticks continuously across host restarts and
+            # every TMODE_MODE=0 write we tried.  Only UBX-CFG-RST
+            # (controlled GNSS start, position BBR bit) actually
+            # zeroes the accumulator.  See ``reset_survey_state``.
+            self._reset_survey_state_locked()
+
+            # Step 2: full-layer TMODE disable.  Belt-and-suspenders
+            # alongside the CFG-RST above: per u-blox's own C099
+            # "F9P Base Survey in disable.txt" script, the canonical
+            # disable writes to all three layers (1|2|4 = 7) so any
+            # TMODE config from a prior session is wiped consistently.
+            # Flashed ECEF/LLH coordinates from a completed prior
+            # survey persist — only the MODE key is touched, so the
+            # operator can still switch back to a known fixed-base
+            # position manually via Restore.
             self._send_cfg_valset_locked(
                 [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
             )
 
-            # Step 2: settle.  The ZED-F9P needs a brief quiet period
+            # Step 3: settle.  The ZED-F9P needs a brief quiet period
             # between TMODE-disable and TMODE-enable VALSETs so the
             # 0 -> 1 edge is registered as a fresh survey-in request
-            # rather than coalesced with the previous state.  500 ms
-            # is conservative for HPG 1.12 - 1.32.
+            # rather than coalesced with the previous state.
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
-            # Step 3: write the new survey-in parameters and enable
+            # Step 4: write the new survey-in parameters and enable
             # to RAM only.  Per u-blox C099 "F9P Base Survey in
             # start.txt", survey-in is intentionally NOT persisted to
             # flash — only the completed fixed-base coordinates from
@@ -289,28 +307,32 @@ class UbloxDriver(GpsReceiverDriver):
             ]
             self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
 
-            # Step 4: confirm the survey is actually running by
-            # polling NAV-SVIN twice with a ~2 s gap and checking
-            # that ``dur`` strictly increased.  We deliberately do
-            # NOT check ``NAV-SVIN.active`` — on ZED-F9P firmware
-            # HPG 1.12 that flag stays False even while the receiver
-            # is genuinely surveying (``dur`` and ``obs`` increment
-            # at 1 Hz).  Multiple u-blox forum threads document the
-            # bug; no release notes claim a fix.  ``dur`` is the
-            # authoritative signal: it only ticks while the survey-in
-            # state machine is engaged.
+            # Step 5: confirm a *fresh* survey is running.  Two
+            # signals together:
+            #   (a) ``before.duration_seconds < _SVIN_DUR_FLOOR_S``
+            #       proves the CFG-RST actually reset the accumulator
+            #       (a "true pass" — not a stale 17-hour value still
+            #       ticking from a prior session).
+            #   (b) ``after.dur > before.dur`` proves the survey-in
+            #       state machine engaged after our TMODE=1 write.
+            # NAV-SVIN.active is deliberately NOT checked — that flag
+            # stays False on HPG 1.12 even when the receiver is
+            # surveying.  Multiple u-blox forum threads document the
+            # bug; no release notes claim a fix.
             before = self._get_survey_in_locked()
             time.sleep(self._SVIN_DUR_VERIFY_GAP_S)
             after = self._get_survey_in_locked()
 
-            if not (
+            stale_accumulator = before.duration_seconds >= self._SVIN_DUR_FLOOR_S
+            not_progressing = not (
                 after.duration_seconds > before.duration_seconds
                 and after.duration_seconds > 0
                 and after.observations > 0
-            ):
+            )
+
+            if stale_accumulator or not_progressing:
                 # Roll back so a failed start doesn't leave the
-                # receiver in TMODE=1 with phantom-survey state
-                # pinned in all layers.
+                # receiver in TMODE=1 with phantom-survey state.
                 try:
                     self._send_cfg_valset_locked(
                         [("CFG_TMODE_MODE", 0)],
@@ -321,17 +343,29 @@ class UbloxDriver(GpsReceiverDriver):
                         "Failed to roll back TMODE after survey-in start "
                         "failure — receiver may be in inconsistent state"
                     )
+
+                if stale_accumulator:
+                    raise RuntimeError(
+                        "Survey-in start failed: the receiver's "
+                        "NAV-SVIN duration accumulator did not reset "
+                        f"(reported {before.duration_seconds}s at "
+                        f"start, expected < {self._SVIN_DUR_FLOOR_S}s "
+                        "after CFG-RST).  This typically means the "
+                        "receiver firmware (HPG 1.12) requires a "
+                        "physical power cycle to clear stuck state.  "
+                        "Unplug and replug the GPS USB cable, then "
+                        "try again.  TMODE has been reset to 0."
+                    )
                 raise RuntimeError(
-                    "Receiver accepted the survey-in configuration "
-                    f"(min_duration={config.min_duration_seconds}s, "
-                    f"accuracy={config.accuracy_limit_mm}mm) but did "
-                    "not start a new survey — NAV-SVIN.dur did not "
+                    "Survey-in start failed: NAV-SVIN.dur did not "
                     f"advance over {self._SVIN_DUR_VERIFY_GAP_S:.0f}s "
                     f"(before: dur={before.duration_seconds}s "
                     f"obs={before.observations}; after: "
                     f"dur={after.duration_seconds}s "
-                    f"obs={after.observations}).  TMODE has been "
-                    "reset to 0 in RAM+BBR+Flash."
+                    f"obs={after.observations}).  The receiver "
+                    "accepted the configuration but the survey-in "
+                    "state machine did not engage.  TMODE has been "
+                    "reset to 0."
                 )
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
@@ -377,7 +411,6 @@ class UbloxDriver(GpsReceiverDriver):
         logger.info("Base mode disabled (TMODE=0)")
 
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
-
         # u-blox uses degrees * 1e-7 for lat/lon in integer form
         lat_hp = int(config.latitude * 1e7)
         lon_hp = int(config.longitude * 1e7)
@@ -392,6 +425,20 @@ class UbloxDriver(GpsReceiverDriver):
             ("CFG_TMODE_FIXED_POS_ACC", config.accuracy_mm),
         ]
         with self._lock:
+            # Pre-disable TMODE before writing the new fixed-base
+            # config.  Without this, on a receiver currently in
+            # TMODE=1 (survey-in), the single TMODE_MODE=2 VALSET is
+            # silently coalesced and the receiver stays in survey-in
+            # — same edge-triggered semantics documented in
+            # ``configure_survey_in``.  The visible symptom is that
+            # "Restore Past Survey" appears to succeed (200 OK, ACK
+            # received) but ``NAV-SVIN.dur`` keeps ticking and
+            # ``base-config.mode`` stays ``survey_in``.
+            self._reset_survey_state_locked()
+            self._send_cfg_valset_locked(
+                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
+            )
+            time.sleep(self._TMODE_RESTART_DELAY_S)
             self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm",
@@ -800,6 +847,53 @@ class UbloxDriver(GpsReceiverDriver):
     def get_survey_in_status(self) -> SurveyInProgress:
         with self._lock:
             return self._get_survey_in_locked()
+
+    def reset_survey_state(self) -> None:
+        """Reset the receiver's BBR-backed survey-in accumulator.
+
+        Sends UBX-CFG-RST with ``resetMode=0x09`` (controlled GNSS
+        start) and the ``pos`` BBR bit set.  This causes the receiver
+        to clear its last-position estimate AND the survey-in state
+        machine (``NAV-SVIN.dur`` / ``obs``).  Ephemeris and almanac
+        are preserved so GPS re-acquires within ~5-30 s (warmstart
+        equivalent — not a full coldstart).
+
+        Why this exists: on ZED-F9P firmware HPG 1.12 the survey-in
+        ``dur`` accumulator is BBR-backed and is NOT cleared by any
+        CFG-VALSET write, including ``CFG_TMODE_MODE=0`` to layer=7
+        (RAM+BBR+Flash).  Verified empirically on larson-base:
+        ``dur`` accumulated to ~62000 s (~17 h) across multiple
+        host restarts and TMODE writes.  Only CFG-RST resets it.
+
+        Persisted base-station coordinates in Flash are untouched —
+        Flash is separate from BBR.
+        """
+        with self._lock:
+            self._reset_survey_state_locked()
+
+    def _reset_survey_state_locked(self) -> None:
+        """CFG-RST helper (must hold self._lock).
+
+        Does NOT wait for ACK — the receiver may reset before it can
+        send one, depending on ``resetMode``.  Instead we sleep for
+        ``_CFG_RST_SETTLE_S`` to give the GNSS subsystem time to
+        come back up.
+        """
+        ser, _ = self._require_connection()
+        msg = UBXMessage(  # type: ignore[misc]
+            "CFG",
+            "CFG-RST",
+            SET,
+            pos=1,
+            resetMode=0x09,
+        )
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+        time.sleep(self._CFG_RST_SETTLE_S)
+        logger.info(
+            "Sent UBX-CFG-RST (controlled GNSS start, pos bit) — "
+            "survey accumulator cleared; receiver re-acquiring GNSS"
+        )
 
     def _get_survey_in_locked(self) -> SurveyInProgress:
         """Poll NAV-SVIN (must hold self._lock)."""

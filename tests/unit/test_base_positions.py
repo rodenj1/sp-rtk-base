@@ -105,7 +105,7 @@ class TestConfigServiceBasePositions:
 
     def test_save_and_get_base_position(self, svc: ConfigService) -> None:
         pos = BaseStationPosition(
-            name="Office Roof",
+            name="Office_Roof",
             latitude=47.397742,
             longitude=8.545594,
             altitude_m=408.123,
@@ -115,33 +115,33 @@ class TestConfigServiceBasePositions:
 
         positions = svc.get_base_positions()
         assert len(positions) == 1
-        assert positions[0].name == "Office Roof"
+        assert positions[0].name == "Office_Roof"
         assert positions[0].latitude == 47.397742
 
     def test_get_base_position_by_name(self, svc: ConfigService) -> None:
         pos = BaseStationPosition(
-            name="Site A",
+            name="Site_A",
             latitude=46.0,
             longitude=7.0,
             altitude_m=500.0,
         )
         svc.save_base_position(pos)
 
-        result = svc.get_base_position("Site A")
+        result = svc.get_base_position("Site_A")
         assert result is not None
-        assert result.name == "Site A"
+        assert result.name == "Site_A"
 
     def test_get_base_position_not_found(self, svc: ConfigService) -> None:
         assert svc.get_base_position("Nonexistent") is None
 
     def test_save_replaces_existing(self, svc: ConfigService) -> None:
         pos1 = BaseStationPosition(
-            name="Site A", latitude=46.0, longitude=7.0, altitude_m=500.0
+            name="Site_A", latitude=46.0, longitude=7.0, altitude_m=500.0
         )
         svc.save_base_position(pos1)
 
         pos2 = BaseStationPosition(
-            name="Site A", latitude=47.0, longitude=8.0, altitude_m=600.0
+            name="Site_A", latitude=47.0, longitude=8.0, altitude_m=600.0
         )
         svc.save_base_position(pos2)
 
@@ -151,10 +151,10 @@ class TestConfigServiceBasePositions:
 
     def test_delete_base_position(self, svc: ConfigService) -> None:
         pos = BaseStationPosition(
-            name="Delete Me", latitude=46.0, longitude=7.0, altitude_m=100.0
+            name="Delete_Me", latitude=46.0, longitude=7.0, altitude_m=100.0
         )
         svc.save_base_position(pos)
-        assert svc.delete_base_position("Delete Me") is True
+        assert svc.delete_base_position("Delete_Me") is True
         assert svc.get_base_positions() == []
 
     def test_delete_not_found(self, svc: ConfigService) -> None:
@@ -164,19 +164,19 @@ class TestConfigServiceBasePositions:
         for i in range(3):
             svc.save_base_position(
                 BaseStationPosition(
-                    name=f"Site {i}",
+                    name=f"Site_{i}",
                     latitude=46.0 + i,
                     longitude=7.0 + i,
                     altitude_m=100.0 * i,
                 )
             )
         assert len(svc.get_base_positions()) == 3
-        svc.delete_base_position("Site 1")
+        svc.delete_base_position("Site_1")
         assert len(svc.get_base_positions()) == 2
 
     def test_persists_to_yaml(self, svc: ConfigService) -> None:
         pos = BaseStationPosition(
-            name="Persist Test",
+            name="Persist_Test",
             latitude=47.5,
             longitude=8.5,
             altitude_m=400.0,
@@ -187,7 +187,7 @@ class TestConfigServiceBasePositions:
 
         # Create a new instance pointing to the same file
         svc2 = ConfigService(config_path=svc.config_path)
-        result = svc2.get_base_position("Persist Test")
+        result = svc2.get_base_position("Persist_Test")
         assert result is not None
         assert result.latitude == 47.5
 
@@ -403,7 +403,7 @@ class TestBasePositionsApi:
         resp = promote_client.post(
             "/api/device/base-positions",
             json={
-                "name": "New Site",
+                "name": "New_Site",
                 "latitude": 47.5,
                 "longitude": 8.5,
                 "altitude_m": 500.0,
@@ -412,7 +412,7 @@ class TestBasePositionsApi:
             },
         )
         assert resp.status_code == 201
-        assert "New Site" in resp.json()["message"]
+        assert "New_Site" in resp.json()["message"]
         mock_config_service.save_base_position.assert_called_once()
 
     def test_delete_position(

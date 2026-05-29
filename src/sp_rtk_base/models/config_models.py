@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,
@@ -32,6 +32,41 @@ class FilterProfile(BaseModel):
 
     mode: Literal["pass_all", "allowlist", "blocklist"] = "pass_all"
     message_ids: list[int] = Field(default_factory=lambda: list[int]())
+
+    @field_validator("message_ids")
+    @classmethod
+    def _validate_message_ids(cls, v: list[int]) -> list[int]:
+        """Each entry must be a plausible RTCM message ID.
+
+        RTCM 3.x assigns IDs in the 1000-1230 range; outside that
+        window the value is either a typo or a config-import error
+        and the relay engine would silently never match it.  Reject
+        at the model layer so the operator sees the problem at save
+        time (HTTP 422) instead of at relay-start time (formerly 500
+        because the relay engine raises pydantic-style errors that
+        previously escaped the /api/relay/start try/except).
+        """
+        bad = [m for m in v if not (1000 <= m <= 1230)]
+        if bad:
+            raise ValueError(f"Invalid RTCM message IDs {bad}: must be 1000-1230")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_mode_requires_ids(self) -> FilterProfile:
+        """``allowlist`` / ``blocklist`` modes require at least one ID.
+
+        Without this, ``mode='allowlist'`` + empty ``message_ids``
+        passed the API's 201 creation step then exploded with a 500
+        at relay start time (the relay engine has its own check that
+        raises pydantic ValidationError, which used to escape the
+        FastAPI route's try/except).  Catching it here makes the
+        invalid config rejected by HTTP 422 at the point of save.
+        """
+        if self.mode in ("allowlist", "blocklist") and not self.message_ids:
+            raise ValueError(
+                f"filter.message_ids is required when mode is '{self.mode}'"
+            )
+        return self
 
     def to_relay_config(self) -> DestinationFilterConfig:
         """Convert to sp-rtk-base-relay DestinationFilterConfig dataclass.
@@ -282,7 +317,19 @@ class BaseStationPosition(BaseModel):
     revisit.
     """
 
-    name: str = Field(description="User-chosen name (e.g. 'Office Roof')")
+    # Name must satisfy the same alphanumeric/underscore/hyphen
+    # rule the Outputs page uses for destination names — consistent
+    # operator-facing policy AND avoids spaces/slashes that would
+    # break YAML keys or URL path components if a future endpoint
+    # references positions by name.  Pydantic's regex enforcement
+    # makes the constraint apply at every entry point: UI dialog,
+    # direct API POST, config import.
+    name: str = Field(
+        description="User-chosen name (e.g. 'Office_Roof')",
+        pattern=r"^[A-Za-z0-9_-]+$",
+        min_length=1,
+        max_length=64,
+    )
     latitude: float = Field(description="WGS84 latitude (°)", ge=-90.0, le=90.0)
     longitude: float = Field(description="WGS84 longitude (°)", ge=-180.0, le=180.0)
     altitude_m: float = Field(description="Height above ellipsoid (m)")

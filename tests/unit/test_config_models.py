@@ -17,6 +17,7 @@ from sp_rtk_base.models.config_models import (
     DEFAULT_BT_SCAN_TIMEOUT_SECONDS,
     AppConfig,
     AppSettings,
+    BaseStationPosition,
     DestinationProfile,
     FilterProfile,
     InputProfile,
@@ -84,6 +85,43 @@ class TestFilterProfile:
         restored = FilterProfile.from_relay_config(relay_cfg)
         assert restored.mode == original.mode
         assert restored.message_ids == original.message_ids
+
+    def test_allowlist_requires_non_empty_ids(self) -> None:
+        """v0.3.17: ``mode=allowlist`` with empty ``message_ids`` is
+        rejected at the model layer.  Without this, the relay engine
+        would raise pydantic ValidationError at start time and the
+        operator would see an HTTP 500 instead of the proper 422 at
+        save time.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            FilterProfile(mode="allowlist", message_ids=[])
+        assert "required when mode is 'allowlist'" in str(exc_info.value)
+
+    def test_blocklist_requires_non_empty_ids(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            FilterProfile(mode="blocklist", message_ids=[])
+        assert "required when mode is 'blocklist'" in str(exc_info.value)
+
+    def test_pass_all_allows_empty_ids(self) -> None:
+        """``pass_all`` is the only mode where empty ids is meaningful."""
+        f = FilterProfile(mode="pass_all", message_ids=[])
+        assert f.mode == "pass_all"
+
+    def test_invalid_rtcm_id_rejected(self) -> None:
+        """v0.3.17: out-of-range RTCM IDs are rejected at model layer.
+
+        Legal RTCM 3.x IDs are 1000-1230.  Anything else is either a
+        typo or a config-import bug and would silently never match
+        in the relay's allowlist/blocklist logic.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            FilterProfile(mode="allowlist", message_ids=[999999])
+        assert "Invalid RTCM message IDs" in str(exc_info.value)
+        with pytest.raises(ValidationError):
+            FilterProfile(mode="allowlist", message_ids=[-1])
+        with pytest.raises(ValidationError):
+            # Mixed valid + invalid still rejects
+            FilterProfile(mode="allowlist", message_ids=[1077, 5])
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +478,50 @@ class TestAppConfig:
         assert restored.input.source == "tcp"
         assert len(restored.destinations) == 1
         assert restored.destinations[0].name == "test"
+
+
+class TestBaseStationPositionNameRegex:
+    """v0.3.17: ``BaseStationPosition.name`` must satisfy the same
+    ``^[A-Za-z0-9_-]+$`` rule that destination names use, applied at
+    the model layer so the UI, the direct API, and config import
+    all enforce it consistently.
+    """
+
+    def _valid_kwargs(self, name: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "latitude": 47.5,
+            "longitude": 8.5,
+            "altitude_m": 500.0,
+        }
+
+    def test_simple_name_accepted(self) -> None:
+        pos = BaseStationPosition(**self._valid_kwargs("Office_Roof"))  # type: ignore[arg-type]
+        assert pos.name == "Office_Roof"
+
+    def test_hyphen_and_digits_accepted(self) -> None:
+        pos = BaseStationPosition(**self._valid_kwargs("site-1-roof"))  # type: ignore[arg-type]
+        assert pos.name == "site-1-roof"
+
+    def test_space_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaseStationPosition(**self._valid_kwargs("Office Roof"))  # type: ignore[arg-type]
+
+    def test_slash_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaseStationPosition(**self._valid_kwargs("a/b"))  # type: ignore[arg-type]
+
+    def test_special_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaseStationPosition(**self._valid_kwargs("foo!"))  # type: ignore[arg-type]
+
+    def test_empty_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaseStationPosition(**self._valid_kwargs(""))  # type: ignore[arg-type]
+
+    def test_over_length_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaseStationPosition(**self._valid_kwargs("a" * 100))  # type: ignore[arg-type]
 
 
 class TestDestinationProfileUnknownType:

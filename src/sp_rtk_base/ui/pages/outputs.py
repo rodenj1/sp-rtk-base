@@ -45,6 +45,39 @@ def _name_validator(value: str | None) -> bool:
 _NAME_VALIDATION_MSG = "Name must be alphanumeric, '_' or '-' (no spaces, no slashes)"
 
 
+def _run_validators_now(
+    inputs: dict[str, ui.input | ui.select],
+) -> str | None:
+    """Force-run all validators on all inputs and surface the first failure.
+
+    NiceGUI's ``validation`` dict callbacks only fire on user-interaction
+    events (``update:model-value``).  An untouched required field
+    therefore has ``inp.error = None`` even though its value is empty —
+    so the standard ``for inp in inputs.values(): if inp.error: ...``
+    pre-save check silently passes and the empty value flows through
+    to pydantic, which raises an unfriendly ``ValidationError``.
+
+    This helper explicitly walks each ``validation`` dict and runs the
+    callbacks against the current value, setting ``inp.error`` inline
+    for visibility AND returning the first error message so callers
+    can show a toast.
+    """
+    for inp in inputs.values():
+        validation = getattr(inp, "validation", None)
+        if not validation:
+            continue
+        value = inp.value if inp.value is not None else ""
+        for msg, check in validation.items():
+            try:
+                ok = bool(check(value))
+            except Exception:
+                ok = False
+            if not ok:
+                inp.error = msg
+                return msg
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Type-specific config field definitions
 # ---------------------------------------------------------------------------
@@ -151,25 +184,35 @@ def outputs_page() -> None:
                             )
 
                     with ui.row().classes("items-center gap-2"):
-                        # Enable/disable toggle
+                        # Enable/disable toggle.  ``aria-label`` makes
+                        # the switch identifiable to screen readers
+                        # (without it the role=switch element had no
+                        # accessible name).  ``focus-visible`` keeps
+                        # Quasar's default keyboard-focus ring on.
                         ui.switch(
                             value=dest.enabled,
                             on_change=lambda e, n=dest.name: _toggle_enabled(
                                 n, e.value
                             ),
-                        ).props("color=green")
+                        ).props(f'color=green aria-label="Enable {dest.name}"')
 
                         # Edit button
                         ui.button(
                             icon="edit",
                             on_click=lambda _e, d=dest: _show_edit_dialog(d),
-                        ).props("flat round color=blue-4 size=sm")
+                        ).props(
+                            f"flat round color=blue-4 size=sm "
+                            f'aria-label="Edit {dest.name}"'
+                        )
 
                         # Delete button
                         ui.button(
                             icon="delete",
                             on_click=lambda _e, n=dest.name: _confirm_delete(n),
-                        ).props("flat round color=red-4 size=sm")
+                        ).props(
+                            f"flat round color=red-4 size=sm "
+                            f'aria-label="Delete {dest.name}"'
+                        )
 
                 # Show key config values
                 with ui.row().classes("q-mt-sm gap-4"):
@@ -329,24 +372,40 @@ def outputs_page() -> None:
             dialog: ui.dialog,
         ) -> None:
             """Save a new destination from dialog inputs."""
-            name = name_input.value or ""
+            name = (name_input.value or "").strip()
 
-            # Validate name
-            if not name.strip():
+            # Force-run name validators (regex + non-empty).  Without
+            # this, an untouched/cleared name field passes silently
+            # because NiceGUI only marks ``inp.error`` on user-input
+            # events.
+            name_err = _run_validators_now({"name": name_input})
+            if name_err:
+                ui.notify(name_err, type="warning")
+                return
+            if not name:
+                # Defensive: regex validator returns False for empty
+                # but if validation dict was wiped somewhere we'd
+                # still want to reject.
+                name_input.error = "Name is required"
                 ui.notify("Name is required", type="warning")
                 return
-            if name_input.error:
-                ui.notify("Fix name validation errors", type="warning")
-                return
             if config_svc.get_destination(name) is not None:
-                ui.notify(f"'{name}' already exists", type="warning")
+                # Set inline error so the user sees the conflict even
+                # if the toast was missed (fixes the "second tab
+                # silently does nothing" bug).
+                msg = f"'{name}' already exists"
+                name_input.error = msg
+                ui.notify(msg, type="warning")
                 return
 
-            # Validate config fields
-            for inp in config_inputs.values():
-                if inp.error:
-                    ui.notify("Fix validation errors before saving", type="warning")
-                    return
+            # Force-run validators on every config field.  Catches
+            # untouched required fields (e.g. an empty SurePath
+            # Username/Password) that would otherwise slip through
+            # the post-save pydantic check as a raw HTML 500.
+            cfg_err = _run_validators_now(config_inputs)
+            if cfg_err:
+                ui.notify(cfg_err, type="warning")
+                return
 
             config = {k: v.value for k, v in config_inputs.items() if v.value}
             try:
@@ -437,13 +496,21 @@ def outputs_page() -> None:
             dialog: ui.dialog,
         ) -> None:
             """Save edited destination."""
-            # Validate config fields
-            for inp in config_inputs.values():
-                if inp.error:
-                    ui.notify("Fix validation errors before saving", type="warning")
-                    return
+            # Force-run validators on every input (same reasoning as
+            # _save_new — NiceGUI only fires validators on user-input
+            # events, so an untouched required field has no error
+            # even when empty).
+            cfg_err = _run_validators_now(config_inputs)
+            if cfg_err:
+                ui.notify(cfg_err, type="warning")
+                return
             new_name = (name_input.value or "").strip()
+            name_err = _run_validators_now({"name": name_input})
+            if name_err:
+                ui.notify(name_err, type="warning")
+                return
             if not new_name:
+                name_input.error = "Name is required"
                 ui.notify("Name is required", type="warning")
                 return
             # Rename collision check — only fires when name changed.

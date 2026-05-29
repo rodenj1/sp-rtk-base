@@ -88,10 +88,16 @@ async def start_relay(
             },
         )
 
-    input_config = config.input.to_relay_config()
-    dest_configs = [d.to_relay_config() for d in enabled_dests]
-
     try:
+        # ``to_relay_config()`` runs pydantic on each profile and is
+        # the most common source of config-shape errors (e.g. a
+        # SurePath profile saved with empty Username/Password from
+        # a pre-v0.3.15 UI).  Keep this inside the try/except so
+        # the status-code mapping below (422 / 502 / 500) catches
+        # it instead of letting the exception escape as a raw
+        # HTML 500.
+        input_config = config.input.to_relay_config()
+        dest_configs = [d.to_relay_config() for d in enabled_dests]
         await relay.start_relay(input_config, dest_configs)
 
         # Start event bridge for real-time events

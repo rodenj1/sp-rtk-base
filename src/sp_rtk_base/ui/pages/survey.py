@@ -907,7 +907,20 @@ def survey_page() -> None:
                 # The driver already wraps its errors with
                 # "Connection failed: ...".  Don't double-prefix.
                 msg = str(exc)
-                if msg.startswith("Connection failed:"):
+                # The DeviceService raises RuntimeError("Cannot
+                # connect to device while relay is running...") when
+                # the operator clicks Connect with an active relay.
+                # Surface that specifically with a clearer hint
+                # rather than the generic "Connection failed:" wrap,
+                # so the operator knows the next action is "Stop the
+                # relay first" not "fix the device wiring".
+                if "relay is running" in msg.lower():
+                    ui.notify(
+                        f"Cannot connect: {msg}.  Go to Dashboard "
+                        "and Stop the relay first.",
+                        type="warning",
+                    )
+                elif msg.startswith("Connection failed:"):
                     ui.notify(msg, type="negative")
                 else:
                     ui.notify(f"Connection failed: {msg}", type="negative")
@@ -1379,6 +1392,7 @@ def survey_page() -> None:
                         svin_status_label.text = "⚠ Promote failed"
                         svin_status_label.classes(replace="text-negative")
                         svin_start_btn.set_visibility(True)
+                        svin_cancel_btn.set_visibility(False)
                         return
 
                 # Step 2: Save to flash
@@ -1394,11 +1408,17 @@ def survey_page() -> None:
                     "Survey complete — position committed to device ✓",
                     type="positive",
                 )
+                # Flip the buttons back to "ready for another survey".
+                # Without hiding Cancel, both Start and Cancel sat
+                # side-by-side after every successful completion —
+                # incoherent state the operator had to interpret.
                 svin_start_btn.set_visibility(True)
+                svin_cancel_btn.set_visibility(False)
             except Exception as exc:
                 svin_status_label.text = f"⚠ Auto-commit error: {exc}"
                 svin_status_label.classes(replace="text-negative")
                 svin_start_btn.set_visibility(True)
+                svin_cancel_btn.set_visibility(False)
                 logger.exception("Auto-commit survey failed")
 
         # ---- Saved Positions List ----

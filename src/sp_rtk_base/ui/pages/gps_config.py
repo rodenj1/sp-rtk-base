@@ -232,6 +232,14 @@ def gps_config_page() -> None:
                     rtcm_apply_btn = ui.button("Apply RTCM Config", icon="send").props(
                         "color=primary"
                     )
+                # Persistent status label beside the buttons.  The
+                # ``ui.notify`` toast fires on apply but fades in
+                # ~5s; operators in the e2e tour reported "no
+                # feedback" because they checked the page after the
+                # toast had vanished.  This label keeps the last
+                # apply result visible until the next attempt.
+                rtcm_apply_status = ui.label("").classes("text-caption q-mt-xs")
+                rtcm_apply_status.set_visibility(False)
 
         # ================================================================
         # Section C: GNSS Constellations (hidden until connected + capable)
@@ -270,6 +278,8 @@ def gps_config_page() -> None:
                 gnss_apply_btn = ui.button(
                     "Apply GNSS Config", icon="satellite_alt"
                 ).props("color=primary")
+            gnss_apply_status = ui.label("").classes("text-caption q-mt-xs")
+            gnss_apply_status.set_visibility(False)
 
         # ================================================================
         # Section D: Save to Flash (hidden until connected + capable)
@@ -493,8 +503,14 @@ def gps_config_page() -> None:
             try:
                 await svc.configure_rtcm_ports(RtcmPortConfig(messages=messages))
                 ui.notify("RTCM config applied ✓", type="positive")
+                rtcm_apply_status.text = "✓ RTCM config applied"
+                rtcm_apply_status.classes(replace="text-positive text-caption q-mt-xs")
+                rtcm_apply_status.set_visibility(True)
             except Exception as exc:
                 ui.notify(f"RTCM config failed: {exc}", type="negative")
+                rtcm_apply_status.text = f"✗ RTCM config failed: {exc}"
+                rtcm_apply_status.classes(replace="text-negative text-caption q-mt-xs")
+                rtcm_apply_status.set_visibility(True)
 
         async def _load_rtcm_config() -> None:
             """Load current RTCM multi-port config from the device."""
@@ -558,8 +574,14 @@ def gps_config_page() -> None:
                 await svc.configure_gnss(GnssConfig(systems=systems))
                 enabled = [c_val for c_val, sw in gnss_toggles.items() if sw.value]
                 ui.notify(f"GNSS config applied: {enabled}", type="positive")
+                gnss_apply_status.text = f"✓ GNSS config applied: {enabled}"
+                gnss_apply_status.classes(replace="text-positive text-caption q-mt-xs")
+                gnss_apply_status.set_visibility(True)
             except Exception as exc:
                 ui.notify(f"GNSS config failed: {exc}", type="negative")
+                gnss_apply_status.text = f"✗ GNSS config failed: {exc}"
+                gnss_apply_status.classes(replace="text-negative text-caption q-mt-xs")
+                gnss_apply_status.set_visibility(True)
 
         async def _save_flash() -> None:
             """Save configuration to device flash."""

@@ -14,6 +14,7 @@ position, and save/restore position profiles.
 from __future__ import annotations
 
 import logging
+import re
 
 from nicegui import ui
 
@@ -756,6 +757,15 @@ def survey_page() -> None:
 
         # ---- Save Position ----
 
+        # Same name rules the Outputs page uses for destinations —
+        # keep the alphanumeric+underscore+hyphen invariant
+        # consistent so an operator who learns one set of rules
+        # doesn't have to re-learn another.  Saved-position names
+        # may end up in paths / config files later; spaces and
+        # slashes would break both.
+        _POS_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+        _POS_NAME_MSG = "Name must be alphanumeric, '_' or '-' (no spaces, no slashes)"
+
         def _save_position_dialog() -> None:
             from sp_rtk_base.models.config_models import BaseStationPosition
 
@@ -766,12 +776,62 @@ def survey_page() -> None:
                 ui.label("Save Position Profile").classes("text-h6 text-white")
                 ui.separator()
                 name_input = ui.input(
-                    "Profile Name", placeholder="e.g. Office Roof"
+                    "Profile Name",
+                    placeholder="e.g. Office_Roof",
+                    validation={
+                        _POS_NAME_MSG: lambda v: bool(
+                            _POS_NAME_RE.fullmatch((v or "").strip())
+                        )
+                    },
                 ).classes("w-full q-mt-sm")
                 ui.label(
                     f"Lat: {_fb_lat:.7f}°  Lon: {_fb_lon:.7f}°  "
                     f"Alt: {_fb_alt:.3f}m  Acc: {_fb_acc:.0f}mm"
                 ).classes("text-grey-4 q-mt-sm text-caption")
+
+                def _persist(name: str) -> None:
+                    """Actually write the position to config."""
+                    config_svc.save_base_position(
+                        BaseStationPosition(
+                            name=name,
+                            latitude=_fb_lat,
+                            longitude=_fb_lon,
+                            altitude_m=_fb_alt,
+                            accuracy_mm=_fb_acc,
+                            source="survey_in",
+                        )
+                    )
+                    ui.notify(f"Position '{name}' saved ✓", type="positive")
+                    dlg.close()
+                    _refresh_saved_positions()
+
+                def _confirm_overwrite(name: str) -> None:
+                    """Ask the operator before clobbering an existing entry."""
+                    with ui.dialog() as overwrite_dlg, ui.card().classes("q-pa-md"):
+                        ui.label(f"Overwrite '{name}'?").classes("text-h6 text-white")
+                        ui.separator()
+                        ui.label(
+                            f"A saved position named '{name}' already exists.  "
+                            "Saving will replace its coordinates with the "
+                            "current Fixed Base values."
+                        ).classes("text-grey-4 q-mt-sm")
+                        with ui.row().classes("gap-2 q-mt-md justify-end"):
+                            ui.button("Cancel", on_click=overwrite_dlg.close).props(
+                                "flat"
+                            )
+
+                            def _overwrite_confirmed() -> None:
+                                overwrite_dlg.close()
+                                try:
+                                    _persist(name)
+                                except Exception as exc:
+                                    logger.exception("Save position failed")
+                                    ui.notify(f"Save failed: {exc}", type="negative")
+
+                            ui.button("Overwrite", on_click=_overwrite_confirmed).props(
+                                "color=warning"
+                            )
+                    overwrite_dlg.open()
 
                 def _do_save() -> None:
                     """Persist the named position profile.
@@ -785,21 +845,25 @@ def survey_page() -> None:
                     try:
                         name = str(name_input.value or "").strip()
                         if not name:
+                            name_input.error = "Profile name is required"
                             ui.notify("Enter a profile name", type="warning")
                             return
-                        config_svc.save_base_position(
-                            BaseStationPosition(
-                                name=name,
-                                latitude=_fb_lat,
-                                longitude=_fb_lon,
-                                altitude_m=_fb_alt,
-                                accuracy_mm=_fb_acc,
-                                source="survey_in",
-                            )
-                        )
-                        ui.notify(f"Position '{name}' saved ✓", type="positive")
-                        dlg.close()
-                        _refresh_saved_positions()
+                        # Force-run the regex validator (NiceGUI only
+                        # fires it on user-input events; an empty or
+                        # untouched name slips through otherwise).
+                        if not _POS_NAME_RE.fullmatch(name):
+                            name_input.error = _POS_NAME_MSG
+                            ui.notify(_POS_NAME_MSG, type="warning")
+                            return
+                        # Duplicate-name guard: ask before
+                        # overwriting an existing saved position
+                        # (silent overwrite was the round-4 bug —
+                        # operators had no warning when they
+                        # clobbered their own data).
+                        if config_svc.get_base_position(name) is not None:
+                            _confirm_overwrite(name)
+                            return
+                        _persist(name)
                     except Exception as exc:
                         logger.exception("Save position failed")
                         ui.notify(f"Save failed: {exc}", type="negative")

@@ -146,16 +146,30 @@ class DeviceService:
             ConnectionError: If connection fails.
             TimeoutError: If device does not respond.
         """
+        # These early-return paths used to ``raise`` without first
+        # transitioning ``self._state`` away from CONNECTING (the UI
+        # calls ``set_connecting()`` before us).  The Survey page
+        # then sat on "Connecting..." forever because the except
+        # branch below — which DOES set state=ERROR — was never
+        # reached.  Reset state on each early-out so the UI's
+        # ``_update_ui_state`` reflects reality.
         if self._driver is None:
+            self._state = DeviceConnectionState.DISCONNECTED
+            self._last_error = "No GPS driver loaded"
             raise RuntimeError("No GPS driver loaded")
 
         if self._state == DeviceConnectionState.CONNECTED:
+            # Don't clobber the CONNECTED state — the caller's
+            # request was a no-op (or worse, a logic error on their
+            # side).  Just raise.
             raise RuntimeError("Already connected — disconnect first")
 
         if self._relay_running_check is not None and self._relay_running_check():
-            raise RuntimeError(
+            self._state = DeviceConnectionState.ERROR
+            self._last_error = (
                 "Cannot connect to device while relay is running — stop relay first"
             )
+            raise RuntimeError(self._last_error)
 
         self._state = DeviceConnectionState.CONNECTING
         self._last_error = None

@@ -867,13 +867,29 @@ def survey_page() -> None:
         # ---- Connection ----
 
         async def _connect() -> None:
-            nonlocal pos_timer
+            nonlocal pos_timer, svin_timer, _svin_dur_offset
             port = port_select.value
             baud = int(baud_select.value or DEFAULT_BAUD)
             vendor = str(driver_select.value or "ublox")
             if not port:
                 ui.notify("Select a serial port", type="warning")
                 return
+            # Clear any survey-card state left over from a prior
+            # session so a reconnect doesn't surface stale "Cancel
+            # Survey" buttons or progress labels.  Without this the
+            # operator sees both Start and Cancel buttons on a fresh
+            # connect, which is incoherent.
+            svin_progress_card.set_visibility(False)
+            svin_start_btn.set_visibility(True)
+            svin_cancel_btn.set_visibility(False)
+            svin_error_label.set_visibility(False)
+            svin_error_label.text = ""
+            svin_warning_label.set_visibility(False)
+            svin_warning_label.text = ""
+            if svin_timer is not None:
+                svin_timer.active = False
+                svin_timer = None
+            _svin_dur_offset = None
             try:
                 if svc.is_connected:
                     await svc.disconnect()
@@ -888,7 +904,13 @@ def survey_page() -> None:
                     pos_timer.active = False
                 pos_timer = ui.timer(2.0, _poll_position)
             except Exception as exc:
-                ui.notify(f"Connection failed: {exc}", type="negative")
+                # The driver already wraps its errors with
+                # "Connection failed: ...".  Don't double-prefix.
+                msg = str(exc)
+                if msg.startswith("Connection failed:"):
+                    ui.notify(msg, type="negative")
+                else:
+                    ui.notify(f"Connection failed: {msg}", type="negative")
                 logger.exception("Device connect failed")
             _update_ui_state()
             if svc.is_connected:

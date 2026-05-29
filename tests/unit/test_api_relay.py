@@ -188,14 +188,18 @@ class TestStopRelay:
 class TestStartRelayErrorBranches:
     """Additional error branch tests for POST /api/relay/start."""
 
-    def test_start_engine_failure_returns_500(
+    def test_start_engine_failure_network_returns_502(
         self,
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
         mock_event_bridge: MagicMock,
     ) -> None:
-        """Returns 500 when the relay engine fails to start."""
+        """v0.3.14: network-side failures (connection refused, DNS, etc.)
+        map to 502 Bad Gateway rather than 500 — the relay engine is
+        the gateway; if it can't reach an upstream that's an upstream
+        problem, not a server bug.
+        """
         mock_relay_service.is_running = False
         mock_relay_service.start_relay = AsyncMock(
             side_effect=RuntimeError("Connection refused")
@@ -214,5 +218,68 @@ class TestStartRelayErrorBranches:
         )
 
         resp = api_client_with_services.post("/api/relay/start")
-        assert resp.status_code == 500
+        assert resp.status_code == 502
         assert "Connection refused" in resp.json()["message"]
+
+    def test_start_engine_failure_config_returns_422(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+        mock_config_service: ConfigService,
+        mock_event_bridge: MagicMock,
+    ) -> None:
+        """v0.3.14: config-shape failures (pydantic ValidationError,
+        ConfigurationError) map to 422 Unprocessable Entity — the
+        saved config is malformed, not a server bug.
+        """
+        mock_relay_service.is_running = False
+        mock_relay_service.start_relay = AsyncMock(
+            side_effect=RuntimeError(
+                "ConfigurationError: input.config.port must be an integer"
+            )
+        )
+        mock_event_bridge.is_running = False
+
+        mock_config_service.save_input_config(
+            InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
+        )
+        mock_config_service.save_destination(
+            DestinationProfile(
+                name="test-tcp",
+                type="tcp_server",
+                config={"port": 9000},
+            )
+        )
+
+        resp = api_client_with_services.post("/api/relay/start")
+        assert resp.status_code == 422
+        assert "must be an integer" in resp.json()["message"]
+
+    def test_start_engine_failure_unexpected_returns_500(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+        mock_config_service: ConfigService,
+        mock_event_bridge: MagicMock,
+    ) -> None:
+        """v0.3.14: genuine server bugs that don't match network or
+        config patterns still return 500.
+        """
+        mock_relay_service.is_running = False
+        mock_relay_service.start_relay = AsyncMock(side_effect=RuntimeError("kaboom"))
+        mock_event_bridge.is_running = False
+
+        mock_config_service.save_input_config(
+            InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
+        )
+        mock_config_service.save_destination(
+            DestinationProfile(
+                name="test-tcp",
+                type="tcp_server",
+                config={"port": 9000},
+            )
+        )
+
+        resp = api_client_with_services.post("/api/relay/start")
+        assert resp.status_code == 500
+        assert "kaboom" in resp.json()["message"]

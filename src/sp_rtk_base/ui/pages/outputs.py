@@ -11,6 +11,7 @@ and enable/disable controls.
 from __future__ import annotations
 
 import logging
+import re
 
 from nicegui import ui
 
@@ -30,6 +31,19 @@ logger = logging.getLogger(__name__)
 DEST_TYPES = ["surepath", "ntrip", "tcp_server"]
 NTRIP_VERSIONS = ["1.0", "2.0"]
 
+# Destination name must be safe both as a relay-engine identifier
+# AND as a URL path component for DELETE /api/destinations/<name>.
+# Slashes break FastAPI routing; spaces and other special characters
+# trip the relay's ConfigurationError ("must be alphanumeric").
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _name_validator(value: str | None) -> bool:
+    return bool(value and _NAME_RE.fullmatch(value.strip()))
+
+
+_NAME_VALIDATION_MSG = "Name must be alphanumeric, '_' or '-' (no spaces, no slashes)"
+
 
 # ---------------------------------------------------------------------------
 # Type-specific config field definitions
@@ -37,10 +51,15 @@ NTRIP_VERSIONS = ["1.0", "2.0"]
 
 TYPE_FIELDS: dict[str, list[FieldDef]] = {
     "surepath": [
+        # Keys must match ``SurePathProfile`` field names in
+        # ``models/config_models.py`` exactly — the relay's
+        # SurePathDestinationConfig validates against those.  An
+        # earlier version of this map used ``project_id`` / ``token``
+        # which produced a confusing pydantic error at relay start.
         ("host", "Host", "", required("Host")),
-        ("port", "Port", "28001", port_validation()),
-        ("project_id", "Project ID", "", required("Project ID")),
-        ("token", "Auth Token", "", required("Auth Token")),
+        ("port", "Port", "50010", port_validation()),
+        ("username", "Username", "", required("Username")),
+        ("password", "Password", "", required("Password")),
     ],
     "ntrip": [
         ("caster", "Caster Host", "rtk2go.com", required("Caster Host")),
@@ -60,9 +79,9 @@ TYPE_FIELDS: dict[str, list[FieldDef]] = {
 TYPE_DISPLAY_FIELDS: dict[str, list[tuple[str, str, str]]] = {
     "surepath": [
         ("host", "Host", ""),
-        ("port", "Port", "28001"),
-        ("project_id", "Project ID", ""),
-        ("token", "Auth Token", ""),
+        ("port", "Port", "50010"),
+        ("username", "Username", ""),
+        ("password", "Password", ""),
     ],
     "ntrip": [
         ("caster", "Caster Host", "rtk2go.com"),
@@ -182,10 +201,28 @@ def outputs_page() -> None:
                         ui.notify(f"Paused '{name}' in relay engine", type="info")
                 except Exception as exc:
                     logger.exception("Could not toggle destination in engine")
-                    ui.notify(
-                        f"Config saved but engine error: {exc}",
-                        type="warning",
-                    )
+                    exc_text = str(exc)
+                    # The relay engine raises a "Destination not
+                    # found" / "Unknown destination" error when an
+                    # operator tries to enable a destination that
+                    # was added AFTER the relay was started.  The
+                    # config IS saved correctly — the engine just
+                    # doesn't know about the new entry until the
+                    # next start.  Map this to a clearer message
+                    # rather than the raw engine error.
+                    if "not found" in exc_text.lower() or "unknown" in exc_text.lower():
+                        ui.notify(
+                            f"Config saved.  Restart the relay to "
+                            f"activate '{name}' (the running engine "
+                            "doesn't know about destinations added "
+                            "while it's been running).",
+                            type="info",
+                        )
+                    else:
+                        ui.notify(
+                            f"Config saved but engine error: {exc_text}",
+                            type="warning",
+                        )
 
             # Defer refresh so the switch's on_change callback finishes
             # before we destroy the container that holds it
@@ -220,7 +257,10 @@ def outputs_page() -> None:
                 ui.label("Add Destination").classes("text-h6 text-white")
                 name_input = ui.input(
                     "Name",
-                    validation={"Name is required": is_non_empty},
+                    validation={
+                        "Name is required": is_non_empty,
+                        _NAME_VALIDATION_MSG: _name_validator,
+                    },
                 ).classes("w-full")
                 type_select = ui.select(
                     DEST_TYPES, label="Type", value="tcp_server"
@@ -339,7 +379,10 @@ def outputs_page() -> None:
                 name_input = ui.input(
                     "Name",
                     value=dest.name,
-                    validation={"Name is required": lambda v: bool(v and v.strip())},
+                    validation={
+                        "Name is required": lambda v: bool(v and v.strip()),
+                        _NAME_VALIDATION_MSG: _name_validator,
+                    },
                 ).classes("w-full")
 
                 config_inputs: dict[str, ui.input | ui.select] = {}

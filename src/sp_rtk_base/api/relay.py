@@ -101,9 +101,37 @@ async def start_relay(
         return RelayActionResponse(status="ok", message="Relay engine started")
     except Exception as exc:
         logger.exception("Failed to start relay engine")
+        # Map common failure shapes to better status codes:
+        #   - pydantic / config-shape errors → 422 (unprocessable
+        #     entity — the saved config is malformed)
+        #   - network refusals / engine bring-up failures → 502
+        #     (bad gateway — we tried to connect to an external
+        #     service and it failed)
+        #   - everything else → 500 (genuine server bug)
+        exc_text = str(exc)
+        exc_lower = exc_text.lower()
+        if (
+            "validation error" in exc_lower
+            or "field required" in exc_lower
+            or "configurationerror" in exc_lower
+            or "input.config" in exc_lower
+            or exc.__class__.__name__ == "ValidationError"
+        ):
+            status_code = 422
+        elif (
+            "connection refused" in exc_lower
+            or "could not resolve" in exc_lower
+            or "name or service not known" in exc_lower
+            or "no route to host" in exc_lower
+            or "connection timed out" in exc_lower
+            or "engine" in exc_lower
+        ):
+            status_code = 502
+        else:
+            status_code = 500
         return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": str(exc)},
+            status_code=status_code,
+            content={"status": "error", "message": exc_text},
         )
 
 

@@ -1,0 +1,40 @@
+# Traefik IngressRoute exposing ONLY the Prometheus `/api/v1/write`
+# endpoint on a dedicated hostname.  Everything else under this
+# hostname returns 404 because no other route matches — Prom's
+# admin / query / config API is never reachable from outside.
+#
+# Edit before applying:
+#   - Host(...) — your real hostname
+#   - services[0].name — the kube-prometheus-stack Prom Service name
+#     (confirm with `kubectl -n monitoring get svc | grep prometheus`;
+#     typically `prometheus-operated` for the chart's headless service)
+#   - tls block — pick cert-manager (secretName) OR Traefik resolver
+#     (certResolver), not both.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: prom-rw
+  namespace: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # `Path(...)` is exact-match.  Do NOT change to PathPrefix or
+    # you'll expose `/api/v1/query`, `/api/v1/admin/*`, etc.
+    - match: Host(`prom-rw.YOUR-DOMAIN.example`) && Path(`/api/v1/write`)
+      kind: Rule
+      middlewares:
+        - name: prom-rw-basicauth
+      services:
+        - name: prometheus-operated
+          port: 9090
+  tls:
+    # --- Pick ONE of the two TLS strategies below ---
+    #
+    # A) cert-manager (default in most kube-prometheus-stack setups):
+    secretName: prom-rw-tls
+    #
+    # B) Traefik built-in cert resolver: remove `secretName` above
+    #    and uncomment the line below, naming the resolver you
+    #    configured in your Traefik static config.
+    # certResolver: letsencrypt

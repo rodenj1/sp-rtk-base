@@ -1,0 +1,63 @@
+// Grafana Alloy config for shipping sp-rtk-base metrics off-site.
+//
+// Drop into /etc/alloy/config.alloy on larson-base after replacing
+// YOUR-DOMAIN.example with your real hostname.  The Alloy systemd
+// unit (apt-installed) reads this file by default.
+//
+// Companion files:
+//   /etc/alloy/remote-write.pass   (mode 0600, owned by user `alloy`,
+//                                   containing the plaintext password
+//                                   that matches the htpasswd entry
+//                                   on the home cluster side)
+//
+// Full deployment runbook: docs/monitoring/larson-base-deployment.md
+
+// ---------------------------------------------------------------------
+// Scrape the local sp-rtk-base Prometheus endpoint.
+//
+// The endpoint is bound to :8080 (same port as the FastAPI + NiceGUI
+// app) and has no authentication.  That's fine here because the scrape
+// is over loopback only — production firewalls close 8080 to the world.
+// ---------------------------------------------------------------------
+
+prometheus.scrape "sp_rtk_base" {
+  targets = [
+    { __address__ = "127.0.0.1:8080", instance = "larson-base" },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.remote_write.home.receiver]
+}
+
+// ---------------------------------------------------------------------
+// Push to the home cluster's Prometheus via the Traefik-fronted
+// remote-write endpoint.  BasicAuth + HTTPS at the edge.
+//
+// The WAL means a 24h home outage / link flap doesn't lose data —
+// samples buffer on disk and replay when the link comes back.
+// ---------------------------------------------------------------------
+
+prometheus.remote_write "home" {
+  endpoint {
+    url = "https://prom-rw.YOUR-DOMAIN.example/api/v1/write"
+    basic_auth {
+      username      = "larson-base"
+      password_file = "/etc/alloy/remote-write.pass"
+    }
+  }
+
+  wal {
+    truncate_frequency = "2h"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "24h"
+  }
+
+  // External labels land on every series this remote_write block ships
+  // so the home Prom can distinguish per-site data and Grafana panels
+  // can template on $site.
+  external_labels = {
+    site = "larson-base",
+    env  = "production",
+  }
+}

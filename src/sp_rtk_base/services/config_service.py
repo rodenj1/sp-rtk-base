@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
+from pydantic import ValidationError
 
 from sp_rtk_base.models.config_models import (
     AppConfig,
@@ -26,6 +28,52 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sp-rtk-base"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 ENV_CONFIG_PATH = "SP_RTK_BASE_CONFIG"
+
+
+def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop ``base_positions`` entries that fail individual validation.
+
+    v0.3.17 added a regex constraint (``^[A-Za-z0-9_-]+$``) plus length
+    bounds to :class:`BaseStationPosition.name`.  Without this filter,
+    a YAML written by an earlier version with a non-conforming legacy
+    name (spaces, slashes, etc.) makes ``AppConfig.model_validate``
+    raise, which bricks the whole app — every endpoint that calls
+    ``get_config()`` returns HTTP 500.
+
+    Keep the model-layer regex (still rejects bad input at POST time
+    with 422), but be lenient on *load*: drop unparseable entries
+    individually with a warning so the operator sees what was skipped.
+    The on-disk YAML is left untouched — the user keeps their data
+    and can rename via the UI to restore.
+    """
+    raw = data.get("base_positions")
+    if not isinstance(raw, list):
+        return data
+    raw_list = cast(list[Any], raw)
+    kept: list[Any] = []
+    for idx, item in enumerate(raw_list):
+        try:
+            BaseStationPosition.model_validate(item)
+        except ValidationError as exc:
+            name: Any = "<malformed>"
+            if isinstance(item, dict):
+                name = cast(dict[Any, Any], item).get("name", "<unknown>")
+            errs = exc.errors()
+            msg = errs[0].get("msg", "validation error") if errs else "validation error"
+            logger.warning(
+                "Dropping base_positions[%d] name=%r during load — %s. "
+                "Rename or remove it in the YAML (or via the UI) to restore.",
+                idx,
+                name,
+                msg,
+            )
+            continue
+        kept.append(item)
+    if len(kept) == len(raw_list):
+        return data
+    cleaned: dict[str, Any] = dict(data)
+    cleaned["base_positions"] = kept
+    return cleaned
 
 
 def _get_config_path() -> Path:
@@ -97,7 +145,8 @@ class ConfigService:
             self._config = AppConfig()
             return self._config
 
-        self._config = AppConfig.model_validate(data)
+        data_dict = _filter_invalid_base_positions(cast(dict[str, Any], data))
+        self._config = AppConfig.model_validate(data_dict)
         logger.info("Loaded config from %s", self._config_path)
         return self._config
 

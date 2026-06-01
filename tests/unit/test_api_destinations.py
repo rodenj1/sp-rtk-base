@@ -220,6 +220,45 @@ class TestCreateDestinationErrors:
         # or the DestinationProfile validation fails
         assert resp.status_code in (400, 422)
 
+    def test_create_with_empty_allowlist_returns_422(
+        self,
+        api_client_with_services: TestClient,
+    ) -> None:
+        """v0.3.18: model-layer FilterProfile validation maps to 422.
+
+        ``mode='allowlist'`` with empty ``message_ids`` is a client
+        config error (formerly silently accepted then crashed at
+        relay-start with 500).
+        """
+        resp = api_client_with_services.post(
+            "/api/destinations",
+            json={
+                "name": "bad-filter",
+                "type": "tcp_server",
+                "filter": {"mode": "allowlist", "message_ids": []},
+                "config": {"port": 5099},
+            },
+        )
+        assert resp.status_code == 422
+        assert "message_ids" in resp.json()["message"]
+
+    def test_create_with_invalid_rtcm_id_returns_422(
+        self,
+        api_client_with_services: TestClient,
+    ) -> None:
+        """v0.3.18: RTCM IDs outside 1000-1230 are model-layer rejected."""
+        resp = api_client_with_services.post(
+            "/api/destinations",
+            json={
+                "name": "bad-rtcm",
+                "type": "tcp_server",
+                "filter": {"mode": "allowlist", "message_ids": [999, 1230, 9999]},
+                "config": {"port": 5098},
+            },
+        )
+        assert resp.status_code == 422
+        assert "999" in resp.json()["message"]
+
 
 class TestUpdateDestinationErrors:
     """Error branch tests for PUT /api/destinations/{name}."""

@@ -121,7 +121,7 @@ async def start_relay(
             or "field required" in exc_lower
             or "configurationerror" in exc_lower
             or "input.config" in exc_lower
-            or exc.__class__.__name__ == "ValidationError"
+            or exc.__class__.__name__ in ("ValidationError", "ConfigurationError")
         ):
             status_code = 422
         elif (

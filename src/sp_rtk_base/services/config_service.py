@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -46,18 +46,19 @@ def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
     The on-disk YAML is left untouched — the user keeps their data
     and can rename via the UI to restore.
     """
-    raw = data.get("base_positions")
+    raw: Any = data.get("base_positions")
     if not isinstance(raw, list):
         return data
-    raw_list = cast(list[Any], raw)
     kept: list[Any] = []
-    for idx, item in enumerate(raw_list):
+    for idx, item in enumerate(raw):  # type: ignore[arg-type]
         try:
             BaseStationPosition.model_validate(item)
         except ValidationError as exc:
-            name: Any = "<malformed>"
+            name: str = "<malformed>"
             if isinstance(item, dict):
-                name = cast(dict[Any, Any], item).get("name", "<unknown>")
+                raw_name = item.get("name", "<unknown>")  # type: ignore[arg-type]
+                if isinstance(raw_name, str):
+                    name = raw_name
             errs = exc.errors()
             msg = errs[0].get("msg", "validation error") if errs else "validation error"
             logger.warning(
@@ -69,7 +70,7 @@ def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
             )
             continue
         kept.append(item)
-    if len(kept) == len(raw_list):
+    if len(kept) == len(raw):  # type: ignore[arg-type]
         return data
     cleaned: dict[str, Any] = dict(data)
     cleaned["base_positions"] = kept
@@ -145,7 +146,11 @@ class ConfigService:
             self._config = AppConfig()
             return self._config
 
-        data_dict = _filter_invalid_base_positions(cast(dict[str, Any], data))
+        # data is dict[Unknown, Unknown] after the isinstance narrow above;
+        # YAML keys at this layer are always strings (config schema), so
+        # the assignment annotation is sound but pyright can't infer it.
+        data_dict: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
+        data_dict = _filter_invalid_base_positions(data_dict)
         self._config = AppConfig.model_validate(data_dict)
         logger.info("Loaded config from %s", self._config_path)
         return self._config

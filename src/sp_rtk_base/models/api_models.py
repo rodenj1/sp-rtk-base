@@ -6,7 +6,8 @@ They are separate from config_models.py which handles YAML persistence.
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +40,29 @@ class DestinationStatusResponse(BaseModel):
     error: str | None = None
 
 
+class AutoStartStatusModel(BaseModel):
+    """Auto-start lifecycle snapshot for API consumers.
+
+    Mirrors :class:`sp_rtk_base.services.AutoStartStatus`.  Surfaced
+    on :class:`RelayStatusResponse` so the Dashboard and external
+    monitors can render a banner when auto-start is retrying or has
+    failed.
+    """
+
+    state: Literal[
+        "idle",
+        "skipped_no_input",
+        "in_progress",
+        "succeeded",
+        "succeeded_user",
+        "failed_config",
+        "failed_after_retries",
+    ]
+    attempts: int = 0
+    last_error: str | None = None
+    last_updated: datetime | None = None
+
+
 class RelayStatusResponse(BaseModel):
     """Complete relay engine status snapshot."""
 
@@ -53,6 +77,7 @@ class RelayStatusResponse(BaseModel):
     bytes_received: int = 0
     chunks_distributed: int = 0
     frames_parsed: int = 0
+    auto_start: AutoStartStatusModel | None = None
 
 
 # ---------------------------------------------------------------------------

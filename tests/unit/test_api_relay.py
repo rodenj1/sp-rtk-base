@@ -66,6 +66,28 @@ class TestGetRelayStatus:
         assert data["running"] is True
         assert data["bytes_received"] == 5000
 
+    def test_status_includes_auto_start_field(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+    ) -> None:
+        """v0.3.20: status response carries the auto-start lifecycle snapshot."""
+        mock_relay_service.get_status = AsyncMock(return_value=None)
+        resp = api_client_with_services.get("/api/relay/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "auto_start" in data
+        assert data["auto_start"] is not None
+        assert data["auto_start"]["state"] in (
+            "idle",
+            "skipped_no_input",
+            "in_progress",
+            "succeeded",
+            "succeeded_user",
+            "failed_config",
+            "failed_after_retries",
+        )
+
 
 class TestStartRelay:
     """Tests for POST /api/relay/start."""

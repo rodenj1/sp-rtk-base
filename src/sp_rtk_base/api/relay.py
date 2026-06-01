@@ -12,7 +12,9 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from sp_rtk_base import services as services_mod
 from sp_rtk_base.models.api_models import (
+    AutoStartStatusModel,
     RelayActionResponse,
     RelayStartRequest,
     RelayStatusResponse,
@@ -31,6 +33,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/relay", tags=["relay"])
 
 
+def _auto_start_status_model() -> AutoStartStatusModel:
+    """Snapshot the module-level auto-start status as an API model."""
+    snapshot = services_mod.auto_start_status
+    return AutoStartStatusModel(
+        state=snapshot.state,
+        attempts=snapshot.attempts,
+        last_error=snapshot.last_error,
+        last_updated=snapshot.last_updated,
+    )
+
+
 @router.get("/status", response_model=RelayStatusResponse)
 async def get_relay_status(
     relay: RelayService = Depends(get_relay_service),
@@ -38,14 +51,18 @@ async def get_relay_status(
     """Get the current relay engine status.
 
     Returns a complete snapshot of the relay engine state including
-    input connection, all destinations, and throughput metrics.
+    input connection, all destinations, throughput metrics, and the
+    auto-start lifecycle status (so UIs can render a banner if
+    auto-start is retrying or has failed).
     """
+    auto_start = _auto_start_status_model()
     status = await relay.get_status()
     if status is None:
-        return RelayStatusResponse(running=False)
+        return RelayStatusResponse(running=False, auto_start=auto_start)
 
     # Convert the dataclass-based status to our API model
     status_dict: dict[str, Any] = dataclasses.asdict(status)
+    status_dict["auto_start"] = auto_start.model_dump()
     return RelayStatusResponse.model_validate(status_dict)
 
 

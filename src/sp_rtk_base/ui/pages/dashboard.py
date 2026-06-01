@@ -17,6 +17,7 @@ from typing import Any
 
 from nicegui import ui
 
+from sp_rtk_base import services as services_mod
 from sp_rtk_base.services import get_config_service, get_relay_service
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
@@ -81,6 +82,15 @@ def dashboard_page() -> None:
 
         # --- Destination details ---
         dest_details_container = ui.column().classes("w-full gap-2 q-mt-md")
+
+        # --- Auto-start banner (in_progress / failure surface) ---
+        #
+        # Populated by ``_refresh_auto_start_banner`` on each status
+        # tick from the module-level ``auto_start_status`` snapshot
+        # in :mod:`sp_rtk_base.services`.  Dismissible by the user
+        # for the current browser session.
+        auto_start_banner = ui.column().classes("w-full q-mt-md")
+        auto_start_dismissed_states: set[str] = set()
 
         # --- Error banner ---
         error_banner = ui.column().classes("w-full q-mt-md")
@@ -222,6 +232,10 @@ def dashboard_page() -> None:
                         for dest in status.destinations:
                             _render_dest_row(dest)
 
+            # Auto-start lifecycle banner (re-rendered every tick so
+            # transitions in_progress → succeeded / failed are visible).
+            _refresh_auto_start_banner()
+
             # Error banner for critical issues
             error_banner.clear()
             if status:
@@ -249,6 +263,86 @@ def dashboard_page() -> None:
                                 ui.label(f"• {err}").classes(
                                     "text-caption text-red-4 q-ml-sm"
                                 )
+
+        def _refresh_auto_start_banner() -> None:
+            """Render the auto-start lifecycle banner.
+
+            Surfaces transient retry progress (yellow) and terminal
+            failure (red) for the post-power-cycle path where the
+            relay engine couldn't reach its input source on the first
+            attempt.  Dismissible per-state so an operator can ack
+            a stale "failed" banner without it reappearing every
+            polling tick.
+            """
+            auto_start_banner.clear()
+            snapshot = services_mod.auto_start_status
+            state = snapshot.state
+            if state in ("idle", "succeeded", "succeeded_user", "skipped_no_input"):
+                return
+            if state in auto_start_dismissed_states:
+                return
+
+            total = len(services_mod.AUTO_START_BACKOFF_SECONDS)
+
+            def _dismiss(current_state: str = state) -> None:
+                auto_start_dismissed_states.add(current_state)
+                auto_start_banner.clear()
+
+            with auto_start_banner:
+                if state == "in_progress":
+                    with (
+                        ui.card()
+                        .classes("w-full q-pa-sm")
+                        .style(
+                            "background-color: #3d3815; border-left: 4px solid #f5b800"
+                        )
+                    ):
+                        with ui.row().classes("items-center justify-between w-full"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.spinner(size="sm", color="yellow-7")
+                                ui.label(
+                                    f"Auto-starting relay… "
+                                    f"(attempt {snapshot.attempts}/{total})"
+                                ).classes("text-subtitle2 text-yellow-3")
+                            ui.button(icon="close", on_click=_dismiss).props(
+                                "flat dense round"
+                            )
+                        if snapshot.last_error:
+                            ui.label(f"Last error: {snapshot.last_error}").classes(
+                                "text-caption text-yellow-4 q-ml-md"
+                            )
+                elif state in ("failed_after_retries", "failed_config"):
+                    title = (
+                        f"Auto-start failed after {snapshot.attempts} attempts"
+                        if state == "failed_after_retries"
+                        else "Auto-start blocked by config error"
+                    )
+                    hint = (
+                        "Click Start to retry, or check the Input and Outputs "
+                        "pages for misconfiguration."
+                        if state == "failed_after_retries"
+                        else "Fix the config (Input or Outputs page) and restart "
+                        "the service."
+                    )
+                    with (
+                        ui.card()
+                        .classes("w-full q-pa-sm")
+                        .style(
+                            "background-color: #3d1515; border-left: 4px solid #ff4444"
+                        )
+                    ):
+                        with ui.row().classes("items-center justify-between w-full"):
+                            ui.label(f"⚠ {title}").classes("text-subtitle2 text-red-3")
+                            ui.button(icon="close", on_click=_dismiss).props(
+                                "flat dense round"
+                            )
+                        if snapshot.last_error:
+                            ui.label(snapshot.last_error).classes(
+                                "text-caption text-red-4 q-ml-md"
+                            )
+                        ui.label(hint).classes(
+                            "text-caption text-grey-4 q-ml-md q-mt-xs"
+                        )
 
         def _render_dest_row(dest: Any) -> None:
             """Render a single destination status row."""

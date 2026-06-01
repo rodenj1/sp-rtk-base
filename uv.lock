@@ -2710,7 +2710,7 @@ wheels = [
 
 [[package]]
 name = "sp-rtk-base"
-version = "0.3.21"
+version = "0.3.22"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

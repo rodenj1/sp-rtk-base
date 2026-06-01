@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 
 from sp_rtk_base.ui.pages.dashboard import (
+    RelayControlState,
+    _compute_relay_control_state,
     _format_byte_rate,
     _format_bytes,
     _format_count_rate,
@@ -82,6 +84,92 @@ class TestFormatCountRate:
         self, per_second: float, unit: str, expected: str
     ) -> None:
         assert _format_count_rate(per_second, unit) == expected
+
+
+class TestComputeRelayControlState:
+    """Tests for the single-button toggle decision logic.
+
+    The Dashboard used to have two buttons (Start + Stop) with the
+    inactive one greyed out.  v0.3.22 collapses them into one toggle
+    whose text/icon/color depends on the relay's running state, and
+    which is disabled with an explanatory message when stopped-but-
+    preconditions-not-met.
+    """
+
+    def test_running_yields_stop_button(self) -> None:
+        """Running relay → red enabled Stop button, no config message."""
+        s = _compute_relay_control_state(
+            is_running=True, has_input=True, enabled_destination_count=2
+        )
+        assert s == RelayControlState(
+            primary_text="Stop",
+            primary_icon="stop",
+            primary_color="red",
+            primary_enabled=True,
+            config_message=None,
+        )
+
+    def test_running_button_enabled_even_with_empty_config(self) -> None:
+        """A running relay must still be Stop-able even if config drifted.
+
+        Outputs can be deleted while the engine is running; we don't
+        want to strand the operator with no way to stop the engine
+        just because their destination list is empty mid-run.
+        """
+        s = _compute_relay_control_state(
+            is_running=True, has_input=False, enabled_destination_count=0
+        )
+        assert s.primary_text == "Stop"
+        assert s.primary_enabled is True
+        assert s.config_message is None
+
+    def test_stopped_ready_yields_enabled_start(self) -> None:
+        """Stopped relay with full config → green enabled Start button."""
+        s = _compute_relay_control_state(
+            is_running=False, has_input=True, enabled_destination_count=1
+        )
+        assert s == RelayControlState(
+            primary_text="Start",
+            primary_icon="play_arrow",
+            primary_color="green",
+            primary_enabled=True,
+            config_message=None,
+        )
+
+    def test_stopped_no_input_disables_and_points_at_input_page(self) -> None:
+        """No input → button disabled, message routes to Input page."""
+        s = _compute_relay_control_state(
+            is_running=False, has_input=False, enabled_destination_count=0
+        )
+        assert s.primary_text == "Start"
+        assert s.primary_enabled is False
+        assert s.config_message is not None
+        assert "Input page" in s.config_message
+
+    def test_stopped_no_destinations_disables_and_points_at_outputs_page(self) -> None:
+        """Input set but zero enabled destinations → message routes to Outputs."""
+        s = _compute_relay_control_state(
+            is_running=False, has_input=True, enabled_destination_count=0
+        )
+        assert s.primary_text == "Start"
+        assert s.primary_enabled is False
+        assert s.config_message is not None
+        assert "Outputs page" in s.config_message
+
+    def test_no_input_takes_precedence_over_destinations_message(self) -> None:
+        """When both are missing, prioritise the Input message.
+
+        Input must be configured first anyway — telling the operator
+        to fix two pages in one banner is confusing.  Direct them to
+        Input first; the destinations check fires on the next refresh
+        once they've saved an input.
+        """
+        s = _compute_relay_control_state(
+            is_running=False, has_input=False, enabled_destination_count=0
+        )
+        assert s.config_message is not None
+        assert "Input page" in s.config_message
+        assert "Outputs page" not in s.config_message
 
 
 class TestFormatUptime:

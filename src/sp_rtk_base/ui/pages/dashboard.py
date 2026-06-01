@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from nicegui import ui
@@ -24,6 +25,75 @@ from sp_rtk_base.ui.components.status_card import status_indicator, status_metri
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RelayControlState:
+    """How the single Start/Stop button should render this tick.
+
+    Pulled out as a pure data shape so the decision logic can be
+    unit-tested without spinning up NiceGUI.  The page render path
+    just plugs each field into the live ``ui.button`` /
+    ``ui.label`` widgets.
+    """
+
+    primary_text: str
+    primary_icon: str
+    primary_color: str
+    primary_enabled: bool
+    config_message: str | None
+
+
+def _compute_relay_control_state(
+    *, is_running: bool, has_input: bool, enabled_destination_count: int
+) -> RelayControlState:
+    """Decide what the relay-control button should look like.
+
+    When the relay is running, the button is always "Stop" (red) and
+    enabled regardless of config — the operator may need to stop a
+    running engine even with a momentarily-empty destination list.
+
+    When the relay is stopped, the button is "Start" (green) but
+    disabled with an explanatory message if either an input source
+    isn't configured yet or zero destinations are enabled — both are
+    hard preconditions for the relay engine's ``start()`` to succeed.
+    """
+    if is_running:
+        return RelayControlState(
+            primary_text="Stop",
+            primary_icon="stop",
+            primary_color="red",
+            primary_enabled=True,
+            config_message=None,
+        )
+    if not has_input:
+        return RelayControlState(
+            primary_text="Start",
+            primary_icon="play_arrow",
+            primary_color="green",
+            primary_enabled=False,
+            config_message=(
+                "Configure an input source on the Input page before starting."
+            ),
+        )
+    if enabled_destination_count == 0:
+        return RelayControlState(
+            primary_text="Start",
+            primary_icon="play_arrow",
+            primary_color="green",
+            primary_enabled=False,
+            config_message=(
+                "Add at least one enabled destination on the Outputs page "
+                "before starting."
+            ),
+        )
+    return RelayControlState(
+        primary_text="Start",
+        primary_icon="play_arrow",
+        primary_color="green",
+        primary_enabled=True,
+        config_message=None,
+    )
 
 
 def _format_bytes(n: int) -> str:
@@ -107,16 +177,26 @@ def dashboard_page() -> None:
         ui.label("Dashboard").classes("text-h4 text-white q-mb-md")
 
         # --- Relay control bar ---
+        #
+        # A single toggle button whose text/icon/color swap based on
+        # ``relay.is_running``.  When the relay is stopped AND a hard
+        # precondition (input source, at least one enabled
+        # destination) isn't satisfied, the button is disabled and
+        # ``config_status_label`` explains which page to visit.
         with ui.card().classes("w-full q-pa-md"):
             with ui.row().classes("items-center justify-between w-full"):
                 status_container = ui.row().classes("items-center gap-4")
-                with ui.row().classes("gap-2"):
-                    start_btn = ui.button(
-                        "Start", icon="play_arrow", on_click=lambda: _start_relay()
-                    ).props("color=green")
-                    stop_btn = ui.button(
-                        "Stop", icon="stop", on_click=lambda: _stop_relay()
-                    ).props("color=red")
+                primary_btn = ui.button(
+                    "Start", icon="play_arrow", on_click=lambda: _toggle_relay()
+                ).props("color=green")
+            # Shown only when the Start button is greyed out because
+            # the saved config is incomplete (no input source / no
+            # enabled destinations).  Hidden once the precondition is
+            # met or whenever the relay is already running.
+            config_status_label = ui.label("").classes(
+                "text-warning text-caption q-mt-sm"
+            )
+            config_status_label.set_visibility(False)
             # Persistent error banner for Start failures.  The toast
             # alone fades in ~3 s; operators reported missing the
             # error context and ending up confused about why the
@@ -224,9 +304,30 @@ def dashboard_page() -> None:
                 rate_prev.clear()
             last_uptime["value"] = current_uptime
 
-            # Update control buttons
-            start_btn.set_enabled(not running)
-            stop_btn.set_enabled(running)
+            # Update the single toggle button + config-precondition label.
+            try:
+                cfg = config_svc.get_config()
+                has_input = cfg.input is not None
+                enabled_dest_count = sum(1 for d in cfg.destinations if d.enabled)
+            except Exception:
+                logger.exception("Failed to read config for dashboard button state")
+                has_input = False
+                enabled_dest_count = 0
+            control = _compute_relay_control_state(
+                is_running=running,
+                has_input=has_input,
+                enabled_destination_count=enabled_dest_count,
+            )
+            primary_btn.text = control.primary_text
+            primary_btn.props(
+                f"color={control.primary_color} icon={control.primary_icon}"
+            )
+            primary_btn.set_enabled(control.primary_enabled)
+            if control.config_message is not None:
+                config_status_label.text = f"⚠ {control.config_message}"
+                config_status_label.set_visibility(True)
+            else:
+                config_status_label.set_visibility(False)
 
             # Status indicator
             status_container.clear()
@@ -682,6 +783,13 @@ def dashboard_page() -> None:
             except Exception as exc:
                 logger.exception("Failed to stop relay")
                 ui.notify(f"Failed to stop relay: {exc}", type="negative")
+
+        async def _toggle_relay() -> None:
+            """Dispatch to start/stop based on current running state."""
+            if relay.is_running:
+                await _stop_relay()
+            else:
+                await _start_relay()
 
         # Initial refresh + periodic status timer
         ui.timer(

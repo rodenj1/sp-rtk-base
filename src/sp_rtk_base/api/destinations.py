@@ -9,6 +9,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from sp_rtk_base.models.api_models import (
     DestinationCreateRequest,
@@ -95,6 +96,15 @@ async def create_destination(
         config_svc.save_destination(profile)
         logger.info("Created destination: %s", request.name)
         return _profile_to_response(profile)
+    except ValidationError as exc:
+        # Model-layer validation failures (e.g. empty allowlist
+        # message_ids, RTCM IDs outside 1000-1230) are client config
+        # errors — 422 Unprocessable Entity per RFC 4918, matching
+        # FastAPI's own body-validation behaviour.
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": str(exc)},
+        )
     except Exception as exc:
         return JSONResponse(
             status_code=400,
@@ -133,6 +143,11 @@ async def update_destination(
         config_svc.save_destination(updated)
         logger.info("Updated destination: %s", name)
         return _profile_to_response(updated)
+    except ValidationError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": str(exc)},
+        )
     except Exception as exc:
         return JSONResponse(
             status_code=400,

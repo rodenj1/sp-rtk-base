@@ -120,6 +120,89 @@ class TestLoadConfig:
         config = svc.load_config()
         assert config.input is None
 
+    def test_drops_legacy_base_position_with_invalid_name(
+        self,
+        svc: ConfigService,
+        config_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A YAML written before v0.3.17's name regex must still load.
+
+        Without per-entry filtering, ``AppConfig.model_validate`` raises
+        on the first bad name and the whole config refuses to load —
+        every endpoint that calls ``get_config()`` returns HTTP 500.
+        """
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "base_positions": [
+                        {
+                            "name": "valid_one",
+                            "latitude": 1.0,
+                            "longitude": 2.0,
+                            "altitude_m": 3.0,
+                        },
+                        {
+                            "name": "has space",
+                            "latitude": 4.0,
+                            "longitude": 5.0,
+                            "altitude_m": 6.0,
+                        },
+                        {
+                            "name": "a/b",
+                            "latitude": 7.0,
+                            "longitude": 8.0,
+                            "altitude_m": 9.0,
+                        },
+                        {
+                            "name": "also-valid",
+                            "latitude": 10.0,
+                            "longitude": 11.0,
+                            "altitude_m": 12.0,
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            config = svc.load_config()
+
+        names = [p.name for p in config.base_positions]
+        assert names == ["valid_one", "also-valid"]
+        # One warning per dropped entry, identifying which name was skipped.
+        warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("has space" in m for m in warnings)
+        assert any("a/b" in m for m in warnings)
+
+    def test_load_leaves_yaml_on_disk_unchanged(
+        self, svc: ConfigService, config_path: Path
+    ) -> None:
+        """Filtering bad positions on load must NOT rewrite the YAML.
+
+        We drop invalid entries from the in-memory ``AppConfig`` so the
+        app stays usable, but the on-disk file is the user's data —
+        keep it intact so they can rename and recover via the UI.
+        """
+        config_path.parent.mkdir(parents=True)
+        original = yaml.dump(
+            {
+                "base_positions": [
+                    {
+                        "name": "has space",
+                        "latitude": 1.0,
+                        "longitude": 2.0,
+                        "altitude_m": 3.0,
+                    },
+                ]
+            }
+        )
+        config_path.write_text(original, encoding="utf-8")
+        svc.load_config()
+        assert config_path.read_text(encoding="utf-8") == original
+
 
 class TestSaveConfig:
     """Tests for ConfigService.save_config()."""

@@ -255,6 +255,47 @@ class TestStartRelayErrorBranches:
         assert resp.status_code == 422
         assert "must be an integer" in resp.json()["message"]
 
+    def test_start_engine_failure_relay_configuration_error_class_returns_422(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+        mock_config_service: ConfigService,
+        mock_event_bridge: MagicMock,
+    ) -> None:
+        """v0.3.18: the actual ``ConfigurationError`` class from the relay
+        engine maps to 422 even when its message text doesn't contain
+        any of the historic substring keywords ("validation error",
+        "field required", "configurationerror").  Round-6 surfaced a
+        case where the relay's message was
+        ``"filter.message_ids is required when mode is 'allowlist'"``
+        — no keyword match, falling through to 500.  Match on class
+        name instead so any ConfigurationError reliably yields 422.
+        """
+        from sp_rtk_base_relay.exceptions import ConfigurationError
+
+        mock_relay_service.is_running = False
+        mock_relay_service.start_relay = AsyncMock(
+            side_effect=ConfigurationError(
+                "filter.message_ids is required when mode is 'allowlist'"
+            )
+        )
+        mock_event_bridge.is_running = False
+
+        mock_config_service.save_input_config(
+            InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
+        )
+        mock_config_service.save_destination(
+            DestinationProfile(
+                name="test-tcp",
+                type="tcp_server",
+                config={"port": 9000},
+            )
+        )
+
+        resp = api_client_with_services.post("/api/relay/start")
+        assert resp.status_code == 422
+        assert "filter.message_ids" in resp.json()["message"]
+
     def test_start_engine_failure_unexpected_returns_500(
         self,
         api_client_with_services: TestClient,

@@ -13,6 +13,7 @@ Survey-In and Advanced GPS pages.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from nicegui import ui
@@ -31,17 +32,69 @@ def _format_bytes(n: int) -> str:
         return f"{n} B"
     if n < 1024 * 1024:
         return f"{n / 1024:.1f} KB"
-    return f"{n / (1024 * 1024):.1f} MB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _format_byte_rate(per_second: float) -> str:
+    """Format a byte-rate value as '12.3 KB/s' (or B/s, MB/s, GB/s).
+
+    Rate is the primary 'is data flowing right now' signal — totals
+    keep climbing for days and stop being informative once the
+    instance has been up long enough that everything looks like a
+    big number.  0 B/s reads as 'nothing flowing' immediately;
+    a stuck total reads as 'don't know'.
+    """
+    if per_second < 1024:
+        return f"{per_second:.0f} B/s"
+    if per_second < 1024 * 1024:
+        return f"{per_second / 1024:.1f} KB/s"
+    if per_second < 1024 * 1024 * 1024:
+        return f"{per_second / (1024 * 1024):.1f} MB/s"
+    return f"{per_second / (1024 * 1024 * 1024):.2f} GB/s"
+
+
+def _format_count_rate(per_second: float, unit: str = "/s") -> str:
+    """Format a count-per-second value (messages, frames, chunks)."""
+    if per_second >= 100:
+        return f"{per_second:.0f}{unit}"
+    if per_second >= 10:
+        return f"{per_second:.1f}{unit}"
+    return f"{per_second:.2f}{unit}"
 
 
 def _format_uptime(seconds: float | None) -> str:
-    """Format uptime seconds as h:mm:ss."""
+    """Format uptime in days/hours/minutes/seconds.
+
+    Examples (the relay typically runs for days at a time, so the
+    leading unit is whichever is largest):
+
+        12s
+        5m 23s
+        4h 23m
+        12d 4h
+        1y 23d
+    """
     if seconds is None:
         return "--"
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    return f"{h}:{m:02d}:{s:02d}"
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        m, s = divmod(total, 60)
+        return f"{m}m {s:02d}s"
+    if total < 86400:
+        h = total // 3600
+        m = (total % 3600) // 60
+        return f"{h}h {m:02d}m"
+    if total < 86400 * 365:
+        d = total // 86400
+        h = (total % 86400) // 3600
+        return f"{d}d {h:02d}h"
+    y = total // (86400 * 365)
+    d = (total % (86400 * 365)) // 86400
+    return f"{y}y {d:02d}d"
 
 
 @ui.page("/", dark=True)
@@ -105,6 +158,40 @@ def dashboard_page() -> None:
                 .style("max-height: 300px; overflow-y: auto")
             )
 
+        # --- Rate-tracking state (closure-scoped, per browser session) ---
+        #
+        # Stores the previous (counter, timestamp) for each running
+        # total we want to convert into a per-second rate.  Mutated
+        # by _do_refresh_status on each tick.  Reset when the relay
+        # stops or uptime regresses (engine restart) so we don't
+        # report nonsense after a counter discontinuity.
+        rate_prev: dict[str, tuple[float, float]] = {}
+        last_uptime: dict[str, float | None] = {"value": None}
+
+        def _rate(key: str, current: float, now: float) -> float | None:
+            """Compute per-second rate vs the previous sample.
+
+            Returns None on the very first sample (no baseline yet).
+            Caller is responsible for treating None as "0 B/s / no
+            data" — but we don't substitute 0 here because the very
+            first poll genuinely has no baseline and showing 0 would
+            be a lie.
+            """
+            prev = rate_prev.get(key)
+            rate_prev[key] = (current, now)
+            if prev is None:
+                return None
+            prev_value, prev_ts = prev
+            elapsed = now - prev_ts
+            if elapsed <= 0:
+                return None
+            delta = current - prev_value
+            if delta < 0:
+                # Counter went backwards — engine restarted between
+                # ticks.  Drop this delta; next tick re-baselines.
+                return None
+            return delta / elapsed
+
         # --- State update functions ---
         async def _refresh_status() -> None:
             """Poll relay status and update UI."""
@@ -122,6 +209,20 @@ def dashboard_page() -> None:
                 status = None
 
             running = relay.is_running
+            now = time.monotonic()
+
+            # If the engine isn't running, or uptime went backwards
+            # (engine restarted between polls), drop all rate
+            # baselines so we don't show nonsense once it comes back.
+            current_uptime = status.uptime_seconds if status else None
+            prev_uptime = last_uptime["value"]
+            if not running or (
+                prev_uptime is not None
+                and current_uptime is not None
+                and current_uptime < prev_uptime
+            ):
+                rate_prev.clear()
+            last_uptime["value"] = current_uptime
 
             # Update control buttons
             start_btn.set_enabled(not running)
@@ -150,13 +251,34 @@ def dashboard_page() -> None:
                     status_metric(
                         "Source", getattr(inp, "source_type", "unknown"), "input"
                     )
+
+                    # Per-second rate is the primary signal — 0 B/s
+                    # reads as "nothing flowing" immediately, where a
+                    # stuck running total just looks like a big number.
+                    # Total is shown small underneath as context.
+                    bytes_in = int(getattr(inp, "bytes_received", 0))
+                    bytes_rate = _rate("input_bytes", bytes_in, now)
                     status_metric(
                         "Received",
-                        _format_bytes(getattr(inp, "bytes_received", 0)),
+                        (
+                            _format_byte_rate(bytes_rate)
+                            if bytes_rate is not None
+                            else "—"
+                        ),
                         "download",
+                        subvalue=f"total: {_format_bytes(bytes_in)}",
                     )
+                    msgs_in = int(getattr(inp, "messages_received", 0))
+                    msgs_rate = _rate("input_msgs", msgs_in, now)
                     status_metric(
-                        "Messages", str(getattr(inp, "messages_received", 0)), "message"
+                        "Messages",
+                        (
+                            _format_count_rate(msgs_rate, " msg/s")
+                            if msgs_rate is not None
+                            else "—"
+                        ),
+                        "message",
+                        subvalue=f"total: {msgs_in}",
                     )
                     secs = getattr(inp, "seconds_since_last_data", -1.0)
                     if secs >= 0:
@@ -178,14 +300,41 @@ def dashboard_page() -> None:
             with throughput_card:
                 ui.label("Throughput").classes("text-subtitle2 text-grey-4")
                 if status:
+                    bytes_thru = int(status.bytes_received)
+                    bytes_thru_rate = _rate("thru_bytes", bytes_thru, now)
                     status_metric(
-                        "Bytes In", _format_bytes(status.bytes_received), "download"
+                        "Bytes In",
+                        (
+                            _format_byte_rate(bytes_thru_rate)
+                            if bytes_thru_rate is not None
+                            else "—"
+                        ),
+                        "download",
+                        subvalue=f"total: {_format_bytes(bytes_thru)}",
                     )
+                    frames = int(status.frames_parsed)
+                    frames_rate = _rate("frames", frames, now)
                     status_metric(
-                        "Frames Parsed", str(status.frames_parsed), "analytics"
+                        "Frames Parsed",
+                        (
+                            _format_count_rate(frames_rate)
+                            if frames_rate is not None
+                            else "—"
+                        ),
+                        "analytics",
+                        subvalue=f"total: {frames}",
                     )
+                    chunks = int(status.chunks_distributed)
+                    chunks_rate = _rate("chunks", chunks, now)
                     status_metric(
-                        "Chunks Out", str(status.chunks_distributed), "upload"
+                        "Chunks Out",
+                        (
+                            _format_count_rate(chunks_rate)
+                            if chunks_rate is not None
+                            else "—"
+                        ),
+                        "upload",
+                        subvalue=f"total: {chunks}",
                     )
                     if status.no_data_warnings and status.no_data_warnings > 0:
                         ui.label(

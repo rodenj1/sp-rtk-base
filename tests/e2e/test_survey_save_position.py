@@ -130,7 +130,9 @@ def test_save_position_button_persists_profile(
         )
 
         # The dialog's "Profile Name" input has a unique placeholder.
-        name_input = page.get_by_placeholder("e.g. Office Roof")
+        # The example value uses an underscore (not a space) since v0.3.17,
+        # which tightened the name regex to ``^[A-Za-z0-9_-]+$``.
+        name_input = page.get_by_placeholder("e.g. Office_Roof")
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(profile_name)
 

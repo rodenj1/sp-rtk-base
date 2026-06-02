@@ -697,35 +697,35 @@
       "title": "Destination Status",
       "transformations": [
         {
-          "id": "joinByField",
-          "options": {
-            "byField": "destination",
-            "mode": "outer"
-          }
+          "id": "merge",
+          "options": {}
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
               "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true,
-              "Time 4": true,
-              "Time 5": true,
-              "Time 6": true,
               "__name__": true,
               "job": true,
               "instance": true
             },
             "renameByName": {
-              "base 1": "base",
               "Value #connected": "connected",
               "Value #bytes_sent": "bytes_sent",
               "Value #msgs_sent": "messages_sent",
               "Value #dropped": "dropped",
               "Value #errors": "errors",
               "Value #queue_depth": "queue_depth"
+            },
+            "indexByName": {
+              "base": 0,
+              "destination": 1,
+              "connected": 2,
+              "bytes_sent": 3,
+              "messages_sent": 4,
+              "dropped": 5,
+              "errors": 6,
+              "queue_depth": 7
             }
           }
         }

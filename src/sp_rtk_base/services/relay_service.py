@@ -9,14 +9,79 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 from sp_rtk_base_relay import EventSubscription, RelayEngine, RelayEvent, RelayStatus
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
+
+# Labels passed by callers so journal/Loki readers can see who/what
+# initiated each lifecycle transition.  Free-form string accepted at
+# runtime, but these are the conventional values:
+#
+#   "auto-start" — services.init_services on app boot
+#   "api"        — POST /api/relay/start or /stop (manual UI or curl)
+#   "shutdown"   — app.shutdown_services on graceful exit
+#   "handoff"    — device → relay handoff flow (api/device.py)
+#   "unknown"    — fallback for callers that don't pass a value
+RelayTrigger = Literal["auto-start", "api", "shutdown", "handoff", "unknown"]
+
+
+def _format_bytes(n: int) -> str:
+    """Format a byte count for log readability (B / KB / MB / GB)."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _format_uptime(seconds: float) -> str:
+    """Format uptime as a human-readable duration for log output."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        m, s = divmod(total, 60)
+        return f"{m}m {s:02d}s"
+    if total < 86400:
+        h = total // 3600
+        m = (total % 3600) // 60
+        return f"{h}h {m:02d}m"
+    d = total // 86400
+    h = (total % 86400) // 3600
+    return f"{d}d {h:02d}h"
+
+
+def _summarise_input(input_config: InputConfig) -> str:
+    """Render an input source into a one-token-ish summary for logs.
+
+    Examples:
+        bluetooth(28:cd:c1:…)   for Bluetooth input
+        tcp(127.0.0.1:5015)     for TCP input
+        serial(/dev/ttyACM0)    for serial input
+
+    Keeps the log line scannable without dumping the whole config tree.
+    """
+    src = input_config.source
+    cfg: dict[str, Any] = input_config.config or {}
+    if src == "bluetooth":
+        addr = cfg.get("mac_address") or cfg.get("address") or "?"
+        return f"bluetooth({addr})"
+    if src == "tcp":
+        host = cfg.get("host", "?")
+        port = cfg.get("port", "?")
+        return f"tcp({host}:{port})"
+    if src in ("serial", "usb_serial"):
+        port = cfg.get("port", "?")
+        return f"{src}({port})"
+    return str(src)
 
 
 class RelayService:
@@ -33,6 +98,12 @@ class RelayService:
     def __init__(self) -> None:
         self._engine: RelayEngine | None = None
         self._input_config: InputConfig | None = None
+        # Captured at each successful start so the stop log can include
+        # uptime + final throughput totals (the engine's own metrics
+        # are gone after stop()).  Reset in start_relay; consumed in
+        # stop_relay.
+        self._start_monotonic: float | None = None
+        self._start_trigger: str | None = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -58,6 +129,7 @@ class RelayService:
         self,
         input_config: InputConfig,
         destinations: list[DestinationConfig] | None = None,
+        trigger: str = "unknown",
     ) -> None:
         """Start the relay engine.
 
@@ -67,6 +139,10 @@ class RelayService:
         Args:
             input_config: Input source configuration.
             destinations: Optional initial destinations.
+            trigger: Free-form label describing what initiated the
+                start (``"auto-start"``, ``"api"``, ``"handoff"``,
+                etc.) — surfaced on the journal/Loki log line so
+                operators can tell apart who/what kicked off the run.
 
         Raises:
             ServiceError: If the engine is already running.
@@ -82,21 +158,69 @@ class RelayService:
             logger.info("Created new RelayEngine with source=%s", input_config.source)
 
         await asyncio.to_thread(self._engine.start, destinations)
-        logger.info("Relay engine started")
 
-    async def stop_relay(self) -> None:
+        # Record start state so stop_relay can compose the uptime/totals
+        # log line.  Monotonic clock so a wall-clock jump can't poison it.
+        self._start_monotonic = time.monotonic()
+        self._start_trigger = trigger
+
+        dest_names = [d.name for d in (destinations or [])]
+        logger.info(
+            "Relay engine started — trigger=%s input=%s destinations=%s",
+            trigger,
+            _summarise_input(input_config),
+            dest_names if dest_names else "[]",
+        )
+
+    async def stop_relay(self, trigger: str = "unknown") -> None:
         """Stop the relay engine.
 
         Safe to call when already stopped (no-op if engine is None
         or not running).
+
+        Args:
+            trigger: Free-form label describing what initiated the
+                stop (``"api"``, ``"shutdown"``, ``"handoff"``).
+                Logged so operators can tell apart user-initiated
+                stops from shutdown-time cleanup.
         """
         if self._engine is None:
             return
         if not self._engine.is_running:
             return
 
+        # Snapshot final throughput totals BEFORE stopping the engine
+        # so the log line can include them.  After ``stop()`` returns,
+        # ``get_status()`` is None and the counters are gone.
+        bytes_in = 0
+        chunks_out = 0
+        try:
+            status = await asyncio.to_thread(self._engine.get_status)
+            bytes_in = int(getattr(status, "bytes_received", 0) or 0)
+            chunks_out = int(getattr(status, "chunks_distributed", 0) or 0)
+        except Exception:
+            # Status query is best-effort — never block the stop on it.
+            pass
+
         await asyncio.to_thread(self._engine.stop)
-        logger.info("Relay engine stopped")
+
+        # Compute uptime from start_monotonic if we recorded one.
+        uptime_str = "—"
+        if self._start_monotonic is not None:
+            uptime_str = _format_uptime(time.monotonic() - self._start_monotonic)
+        start_trigger = self._start_trigger or "unknown"
+        self._start_monotonic = None
+        self._start_trigger = None
+
+        logger.info(
+            "Relay engine stopped — trigger=%s uptime=%s bytes_in=%s chunks_out=%d "
+            "(started by %s)",
+            trigger,
+            uptime_str,
+            _format_bytes(bytes_in),
+            chunks_out,
+            start_trigger,
+        )
 
     # ------------------------------------------------------------------
     # Status

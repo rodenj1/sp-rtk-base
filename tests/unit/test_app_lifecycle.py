@@ -145,7 +145,9 @@ class TestShutdownServicesOrdering:
         def _eb_stop() -> None:
             order.append("eb")
 
-        async def _relay_stop() -> None:
+        async def _relay_stop(*_args: object, **_kwargs: object) -> None:
+            # Accept the v0.3.30 `trigger=...` kwarg the shutdown path
+            # now passes; we only care about the call ordering.
             order.append("relay")
 
         eb.stop.side_effect = _eb_stop

@@ -268,7 +268,9 @@ async def _auto_start_with_retry(
 
         _set_auto_start_status("in_progress", attempt, last_error)
         try:
-            await relay_service.start_relay(input_config, dest_configs)
+            await relay_service.start_relay(
+                input_config, dest_configs, trigger=f"auto-start (attempt {attempt})"
+            )
         except (ValidationError, ConfigurationError) as exc:
             # Permanent — config is malformed; retrying won't help.
             last_error = str(exc)

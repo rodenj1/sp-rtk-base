@@ -552,7 +552,7 @@ async def handoff_to_relay(
     relay_dests = [d.to_relay_config() for d in cfg.get_destinations() if d.enabled]
 
     try:
-        await relay.start_relay(relay_input, relay_dests)
+        await relay.start_relay(relay_input, relay_dests, trigger="handoff")
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"Relay start failed: {exc}"

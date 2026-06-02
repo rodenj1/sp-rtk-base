@@ -194,6 +194,79 @@ class TestRelayServiceLifecycle:
         mock_engine.stop.assert_not_called()
 
     @pytest.mark.asyncio()
+    async def test_start_log_includes_trigger_input_and_destinations(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """v0.3.30: start log includes trigger + input source + dest names."""
+        svc = RelayService()
+        input_cfg = _make_input_config()
+        dests = [_make_dest_config()]
+
+        with patch.object(_relay_module, "RelayEngine") as mock_cls:
+            mock_engine = MagicMock()
+            mock_engine.is_running = False
+            mock_cls.return_value = mock_engine
+            with caplog.at_level("INFO", logger="sp_rtk_base.services.relay_service"):
+                await svc.start_relay(
+                    input_cfg, dests, trigger="auto-start (attempt 2)"
+                )
+
+        msgs = [r.getMessage() for r in caplog.records if "started" in r.getMessage()]
+        assert any("Relay engine started" in m for m in msgs)
+        line = next(m for m in msgs if "Relay engine started" in m)
+        assert "trigger=auto-start (attempt 2)" in line
+        assert "input=tcp(127.0.0.1:5015)" in line
+        assert "rtk2go" in line  # destination name surfaces
+
+    @pytest.mark.asyncio()
+    async def test_stop_log_includes_trigger_and_uptime(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """v0.3.30: stop log includes trigger, uptime, bytes_in, chunks_out."""
+        svc = RelayService()
+        input_cfg = _make_input_config()
+
+        with patch.object(_relay_module, "RelayEngine") as mock_cls:
+            mock_engine = MagicMock()
+            # First running=False (start ok), then running=True (so stop runs).
+            mock_engine.is_running = False
+            mock_cls.return_value = mock_engine
+            await svc.start_relay(input_cfg, trigger="api")
+
+            # Engine reports throughput via get_status() right before stop.
+            mock_engine.is_running = True
+            mock_engine.get_status.return_value = _MockRelayStatus(
+                bytes_received=2048, chunks_distributed=42
+            )
+
+            with caplog.at_level("INFO", logger="sp_rtk_base.services.relay_service"):
+                await svc.stop_relay(trigger="shutdown")
+
+        msgs = [r.getMessage() for r in caplog.records if "stopped" in r.getMessage()]
+        assert msgs, "expected a 'Relay engine stopped' log line"
+        line = msgs[-1]
+        assert "trigger=shutdown" in line
+        assert "uptime=" in line
+        assert "bytes_in=2.0 KB" in line
+        assert "chunks_out=42" in line
+        assert "(started by api)" in line  # cross-references the start trigger
+
+    @pytest.mark.asyncio()
+    async def test_default_trigger_is_unknown(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Callers that don't pass a trigger still get a sensible default."""
+        svc = RelayService()
+        input_cfg = _make_input_config()
+        with patch.object(_relay_module, "RelayEngine") as mock_cls:
+            mock_engine = MagicMock()
+            mock_engine.is_running = False
+            mock_cls.return_value = mock_engine
+            with caplog.at_level("INFO", logger="sp_rtk_base.services.relay_service"):
+                await svc.start_relay(input_cfg)
+        assert any("trigger=unknown" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio()
     async def test_recreates_engine_on_config_change(self) -> None:
         """start_relay recreates engine if input config changes."""
         svc = RelayService()

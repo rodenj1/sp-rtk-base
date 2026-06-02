@@ -168,7 +168,7 @@ async def shutdown_services() -> None:
     #    burn the rest of systemd's TimeoutStopSec window.
     try:
         await asyncio.wait_for(
-            relay_service.stop_relay(),
+            relay_service.stop_relay(trigger="shutdown"),
             timeout=RELAY_STOP_TIMEOUT_SECONDS,
         )
     except TimeoutError:

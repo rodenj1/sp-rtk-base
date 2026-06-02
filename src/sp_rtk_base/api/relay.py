@@ -115,7 +115,7 @@ async def start_relay(
         # HTML 500.
         input_config = config.input.to_relay_config()
         dest_configs = [d.to_relay_config() for d in enabled_dests]
-        await relay.start_relay(input_config, dest_configs)
+        await relay.start_relay(input_config, dest_configs, trigger="api")
 
         # Start event bridge for real-time events
         if not event_bridge.is_running:
@@ -176,7 +176,7 @@ async def stop_relay(
 
     try:
         event_bridge.stop()
-        await relay.stop_relay()
+        await relay.stop_relay(trigger="api")
         return RelayActionResponse(status="ok", message="Relay engine stopped")
     except Exception as exc:
         logger.exception("Failed to stop relay engine")

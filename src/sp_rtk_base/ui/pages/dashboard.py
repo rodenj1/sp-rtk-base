@@ -740,7 +740,7 @@ def dashboard_page() -> None:
                     return
                 input_cfg = config.input.to_relay_config()
                 dest_cfgs = [d.to_relay_config() for d in enabled]
-                await relay.start_relay(input_cfg, dest_cfgs)
+                await relay.start_relay(input_cfg, dest_cfgs, trigger="ui")
                 ui.notify("Relay started", type="positive")
                 await _refresh_status()
             except Exception as exc:
@@ -777,7 +777,7 @@ def dashboard_page() -> None:
         async def _stop_relay() -> None:
             """Stop the relay engine."""
             try:
-                await relay.stop_relay()
+                await relay.stop_relay(trigger="ui")
                 ui.notify("Relay stopped", type="info")
                 await _refresh_status()
             except Exception as exc:

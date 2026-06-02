@@ -6,9 +6,9 @@
 # it's intended to be scraped over a private LAN / VPN.  See README
 # in this directory for guidance when scraping over the internet.
 #
-# The `site` label is required for the bundled Grafana dashboard's
-# `$site` template variable to be populated.  Pick any short
-# identifier per instance (e.g. `home`, `larson-base`, `field-01`).
+# The `base` label is required for the bundled Grafana dashboard's
+# `$base` template variable to be populated.  Pick any short
+# identifier per base station (e.g. `home`, `larson-base`, `field-01`).
 
 scrape_configs:
   - job_name: sp-rtk-base
@@ -18,11 +18,11 @@ scrape_configs:
       - targets:
           - "rtk-base.lan:8080"           # ← replace with your host:port
         labels:
-          site: home                       # ← pick a unique short label
+          base: home                       # ← pick a unique short label per base station
 
-      # Add more instances by appending another `- targets:` block.
-      # Example for a remote site you also have private LAN reach to:
+      # Add more base stations by appending another `- targets:` block.
+      # Example for a remote base you have private LAN reach to:
       # - targets:
       #     - "field-01.tailnet:8080"
       #   labels:
-      #     site: field-01
+      #     base: field-01

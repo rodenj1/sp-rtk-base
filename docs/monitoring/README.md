@@ -5,14 +5,14 @@ same port as the UI (8080 by default).  This directory contains:
 
 | File | Purpose |
 |---|---|
-| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Unified Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  Templated on a `$site` variable so one dashboard works for one site or many. |
+| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Unified Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  Templated on a `$base` variable so one dashboard works for one base station or many. |
 | [`prometheus-scrape-config.example.yml`](prometheus-scrape-config.example.yml) | Drop-in `scrape_config` snippet — point Prometheus at your sp-rtk-base instance. |
 
 ## Quick start
 
 1. **Tell Prometheus to scrape sp-rtk-base.**  Paste the contents of
    `prometheus-scrape-config.example.yml` into your `prometheus.yml`'s
-   `scrape_configs:` list and adjust the target + `site:` label.
+   `scrape_configs:` list and adjust the target + `base:` label.
    Reload Prometheus.
 
    ```yaml
@@ -22,7 +22,7 @@ same port as the UI (8080 by default).  This directory contains:
        static_configs:
          - targets: ["rtk-base.lan:8080"]
            labels:
-             site: home
+             base: home
    ```
 
 2. **Verify the scrape is succeeding** in Prom's UI:
@@ -31,22 +31,23 @@ same port as the UI (8080 by default).  This directory contains:
 
 3. **Import the dashboard.**  In Grafana: *Dashboards → New →
    Import* → upload `grafana-dashboard-sp-rtk-base.json` → pick your
-   Prom datasource.  The `$site` dropdown at the top populates from
+   Prom datasource.  The **Base** dropdown at the top populates from
    the metric labels and defaults to "All".
 
-## Why the `site` label
+## Why the `base` label
 
-Every panel filters with `{site=~"$site"}`.  This lets one dashboard
+Every panel filters with `{base=~"$base"}`.  This lets one dashboard
 work whether you have:
 
-- **One instance** (`site: home`) — the dropdown shows just that one.
-- **Multiple instances** (`site: home`, `site: field-01`, …) — pick
+- **One base station** (`base: home`) — the dropdown shows just that one.
+- **Multiple base stations** (`base: home`, `base: field-01`, …) — pick
   one to focus on, pick several to compare side-by-side, or leave
-  "All" selected to overlay every site on each panel.
+  "All" selected to overlay every base station on each panel.
 
-If you scrape without setting `site`, the dashboard's variable will
+If you scrape without setting `base`, the dashboard's variable will
 have no values to choose from and the queries will return nothing.
-The label is just a free-text identifier — pick whatever's meaningful.
+The label is just a free-text identifier — pick whatever's meaningful
+per base station (location name, callsign, antenna ID, etc.).
 
 ## What's exposed
 

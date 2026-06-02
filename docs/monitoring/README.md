@@ -71,6 +71,66 @@ These are all gauges that update on each `relay.get_status()` poll.
 You can still use `rate()` on the byte/message counters — they
 increase monotonically until a relay restart.
 
+## Logs (optional)
+
+The bundled dashboard also has a **Logs** panel at the bottom that
+queries a **Loki** datasource.  It's purely additive — if you don't
+have Loki, just delete that panel after importing or ignore it
+(Grafana will render it empty).
+
+To make it light up, ship `sp-rtk-base.service` logs to a Loki instance
+with at least these labels:
+
+| Label | Value | Why |
+|---|---|---|
+| `base` | matches the `base` value you set in your Prom scrape | Lets the dashboard's `$base` dropdown filter the Logs panel together with the metrics panels |
+| `service` | `sp-rtk-base` | Lets the Logs panel pin to just the relay app even if other services share the same `base` |
+
+Any log shipper that talks Loki works.  Two common shapes:
+
+**Grafana Alloy on the host** (recommended if you're already using
+Alloy for metrics — single binary, same config file):
+
+```alloy
+loki.source.journal "sp_rtk_base" {
+  forward_to = [loki.write.target.receiver]
+  matches    = "_SYSTEMD_UNIT=sp-rtk-base.service"
+  labels = {
+    base    = "home",
+    service = "sp-rtk-base",
+  }
+}
+
+loki.write "target" {
+  endpoint { url = "http://loki.your-network.local:3100/loki/api/v1/push" }
+}
+```
+
+**Promtail** (if you're already running Promtail elsewhere):
+
+```yaml
+scrape_configs:
+  - job_name: sp-rtk-base
+    journal:
+      matches: _SYSTEMD_UNIT=sp-rtk-base.service
+      labels:
+        base: home
+        service: sp-rtk-base
+```
+
+Then in Grafana → Connections → Data sources, add a Loki source
+pointed at your Loki, and the dashboard's `$DS_LOKI` dropdown will
+pick it up on next import (or via *Dashboard settings → Variables*).
+
+The Logs panel uses LogQL:
+
+```logql
+{base=~"$base", service="sp-rtk-base"}
+```
+
+so once labels are right you'll see live logs filtered by whichever
+base station the `$base` selector is set to.
+
 ## Disabling /metrics
 
 The endpoint is gated by the `metrics_enabled` setting (Settings page

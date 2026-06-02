@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -20,346 +23,1144 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 100,
       "panels": [],
-      "title": "▶ Service Overview",
+      "title": "\u25b6 Service Overview",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-      "description": "Green when the most recent sample arrived within the last 2 minutes — the canonical 'is the push pipeline still alive' signal.  Goes red whenever the base is offline, the host is down, or the home receiver is broken.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Green when the most recent sample arrived within the last 2 minutes \u2014 the canonical 'is the push pipeline still alive' signal.  Goes red whenever the base is offline, the host is down, or the home receiver is broken.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            {"options": {"0": {"color": "red", "text": "STALE"}}, "type": "value"},
-            {"options": {"1": {"color": "green", "text": "FRESH"}}, "type": "value"}
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "STALE"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "text": "FRESH"
+                }
+              },
+              "type": "value"
+            }
           ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
         }
       },
-      "gridPos": {"h": 4, "w": 5, "x": 0, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 0,
+        "y": 1
+      },
       "id": 1,
-      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name"},
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "(time() - timestamp(sp_rtk_base_relay_uptime_seconds{base=~\"$base\"})) < 120", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(time() - timestamp(sp_rtk_base_relay_uptime_seconds{base=~\"$base\"})) < 120",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Pipeline Freshness",
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "1 = relay engine running, 0 = stopped.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            {"options": {"0": {"color": "red", "text": "STOPPED"}}, "type": "value"},
-            {"options": {"1": {"color": "green", "text": "RUNNING"}}, "type": "value"}
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "STOPPED"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "text": "RUNNING"
+                }
+              },
+              "type": "value"
+            }
           ]
         }
       },
-      "gridPos": {"h": 4, "w": 5, "x": 5, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 5,
+        "y": 1
+      },
       "id": 2,
-      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name"},
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_relay_running{base=~\"$base\"}", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_relay_running{base=~\"$base\"}",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Relay Running",
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "1 = input source connected (TCP/serial/Bluetooth open), 0 = disconnected.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            {"options": {"0": {"color": "red", "text": "DISCONN"}}, "type": "value"},
-            {"options": {"1": {"color": "green", "text": "CONN"}}, "type": "value"}
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "DISCONN"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "text": "CONN"
+                }
+              },
+              "type": "value"
+            }
           ]
         }
       },
-      "gridPos": {"h": 4, "w": 4, "x": 10, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 10,
+        "y": 1
+      },
       "id": 3,
-      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name"},
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_input_connected{base=~\"$base\"}", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_input_connected{base=~\"$base\"}",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Input Source",
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Connected destination count out of total registered.",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 4, "w": 5, "x": 14, "y": 1},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 14,
+        "y": 1
+      },
       "id": 4,
-      "options": {"colorMode": "value", "graphMode": "none"},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none"
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_active_destinations{base=~\"$base\"}", "legendFormat": "active {{base}}", "refId": "A"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_total_destinations{base=~\"$base\"}", "legendFormat": "total {{base}}", "refId": "B"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_active_destinations{base=~\"$base\"}",
+          "legendFormat": "active {{base}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_total_destinations{base=~\"$base\"}",
+          "legendFormat": "total {{base}}",
+          "refId": "B"
+        }
       ],
       "title": "Destinations Active / Total",
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "How long the relay engine has been continuously running.",
-      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}},
-      "gridPos": {"h": 4, "w": 5, "x": 19, "y": 1},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 19,
+        "y": 1
+      },
       "id": 5,
-      "options": {"colorMode": "value", "graphMode": "area"},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_relay_uptime_seconds{base=~\"$base\"}", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_relay_uptime_seconds{base=~\"$base\"}",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Relay Uptime",
       "type": "stat"
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "id": 101,
       "panels": [],
-      "title": "▶ Throughput",
+      "title": "\u25b6 Throughput",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-      "description": "Rate of RTCM bytes arriving from the GPS input source.  Primary 'is data flowing' signal — should be non-zero and stable while the GPS is feeding.",
-      "fieldConfig": {"defaults": {"unit": "Bps"}},
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 6},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Rate of RTCM bytes arriving from the GPS input source.  Primary 'is data flowing' signal \u2014 should be non-zero and stable while the GPS is feeding.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
       "id": 10,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull", "max"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_input_bytes_received{base=~\"$base\"}[$__rate_interval])", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_input_bytes_received{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Input bytes/s (RTCM in)",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Internal hub-processing rates.  Frames Parsed is the RTCM-decoding rate; Chunks Distributed is the per-second hand-off to destinations.  They should track each other closely; a large gap (parsed >> distributed) means destinations aren't keeping up.",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
       "id": 11,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_frames_parsed{base=~\"$base\"}[$__rate_interval])", "legendFormat": "frames parsed — {{base}}", "refId": "A"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_chunks_distributed{base=~\"$base\"}[$__rate_interval])", "legendFormat": "chunks out — {{base}}", "refId": "B"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_frames_parsed{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "frames parsed \u2014 {{base}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_chunks_distributed{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "chunks out \u2014 {{base}}",
+          "refId": "B"
+        }
       ],
       "title": "Hub processing rate (frames + chunks)",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Seconds since the GPS sent its last byte.  Climbs ~1 per second when the GPS goes silent.  Stays under a few seconds during normal operation.",
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 10}, {"color": "red", "value": 30}]},
-          "custom": {"thresholdsStyle": {"mode": "line"}}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
         }
       },
-      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 13},
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
       "id": 12,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["lastNotNull", "max"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_input_seconds_since_last_data{base=~\"$base\"}", "legendFormat": "{{base}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_input_seconds_since_last_data{base=~\"$base\"}",
+          "legendFormat": "{{base}}",
+          "refId": "A"
+        }
       ],
       "title": "Seconds Since Last RTCM",
       "type": "timeseries"
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 20},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
       "id": 102,
       "panels": [],
-      "title": "▶ Per-Destination Health",
+      "title": "\u25b6 Per-Destination Health",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Snapshot per destination across selected base stations.  Connected/Errors/Queue are colour-coded; bytes are formatted human-readable.",
       "fieldConfig": {
-        "defaults": {"custom": {"align": "auto", "filterable": false}},
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": false
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "connected"}, "properties": [
-            {"id": "mappings", "value": [
-              {"type": "value", "options": {"0": {"color": "red", "text": "✗"}}},
-              {"type": "value", "options": {"1": {"color": "green", "text": "✓"}}}
-            ]},
-            {"id": "custom.cellOptions", "value": {"type": "color-text"}}
-          ]},
-          {"matcher": {"id": "byName", "options": "queue_depth"}, "properties": [
-            {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}},
-            {"id": "custom.cellOptions", "value": {"type": "color-text"}}
-          ]},
-          {"matcher": {"id": "byName", "options": "errors"}, "properties": [
-            {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}},
-            {"id": "custom.cellOptions", "value": {"type": "color-text"}}
-          ]},
-          {"matcher": {"id": "byName", "options": "bytes_sent"}, "properties": [{"id": "unit", "value": "decbytes"}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "connected"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "color": "red",
+                        "text": "\u2717"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "color": "green",
+                        "text": "\u2713"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "queue_depth"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errors"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bytes_sent"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          }
         ]
       },
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 21},
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
       "id": 20,
       "options": {
-        "footer": {"reducer": ["sum"], "show": false, "countRows": false, "fields": ""},
+        "footer": {
+          "reducer": [
+            "sum"
+          ],
+          "show": false,
+          "countRows": false,
+          "fields": ""
+        },
         "showHeader": true
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}", "format": "table", "instant": true, "refId": "connected"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_bytes_sent{base=~\"$base\"}", "format": "table", "instant": true, "refId": "bytes_sent"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_messages_sent{base=~\"$base\"}", "format": "table", "instant": true, "refId": "msgs_sent"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_messages_dropped{base=~\"$base\"}", "format": "table", "instant": true, "refId": "dropped"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_errors{base=~\"$base\"}", "format": "table", "instant": true, "refId": "errors"},
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}", "format": "table", "instant": true, "refId": "queue_depth"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "connected"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_bytes_sent{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "bytes_sent"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_messages_sent{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "msgs_sent"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_messages_dropped{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "dropped"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_errors{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "errors"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "queue_depth"
+        }
       ],
       "title": "Destination Status",
       "transformations": [
-        {"id": "joinByField", "options": {"byField": "destination", "mode": "outer"}},
-        {"id": "organize", "options": {
-          "excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "Time 6": true, "__name__": true, "job": true, "instance": true},
-          "renameByName": {
-            "base 1": "base",
-            "Value #connected": "connected",
-            "Value #bytes_sent": "bytes_sent",
-            "Value #msgs_sent": "messages_sent",
-            "Value #dropped": "dropped",
-            "Value #errors": "errors",
-            "Value #queue_depth": "queue_depth"
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "destination",
+            "mode": "outer"
           }
-        }}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Time 6": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "renameByName": {
+              "base 1": "base",
+              "Value #connected": "connected",
+              "Value #bytes_sent": "bytes_sent",
+              "Value #msgs_sent": "messages_sent",
+              "Value #dropped": "dropped",
+              "Value #errors": "errors",
+              "Value #queue_depth": "queue_depth"
+            }
+          }
+        }
       ],
       "type": "table"
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 30},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
       "id": 103,
       "panels": [],
-      "title": "▶ Per-Destination Activity",
+      "title": "\u25b6 Per-Destination Activity",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Bytes/s being sent to each destination.  Tracks input * (active destinations).  Zero on a destination = it's either disconnected or paused.",
-      "fieldConfig": {"defaults": {"unit": "Bps"}},
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 31},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
       "id": 30,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_dest_bytes_sent{base=~\"$base\"}[$__rate_interval])", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_dest_bytes_sent{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Bytes/s per destination",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Messages/s being sent to each destination.  Useful when destinations have different filter policies and bytes/s diverges.",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 31},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
       "id": 31,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_dest_messages_sent{base=~\"$base\"}[$__rate_interval])", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_dest_messages_sent{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Messages/s per destination",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-      "description": "Per-destination drop rate — messages discarded because the destination's outbound queue was full.  Should be 0; sustained non-zero means the destination is consistently slower than the input.",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 38},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Per-destination drop rate \u2014 messages discarded because the destination's outbound queue was full.  Should be 0; sustained non-zero means the destination is consistently slower than the input.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
       "id": 40,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull", "max"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_dest_messages_dropped{base=~\"$base\"}[$__rate_interval])", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_dest_messages_dropped{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Drops/s per destination",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Per-destination queue depth.  Non-zero = momentarily buffered (fine); sustained climb = destination not keeping up.",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 38},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
       "id": 41,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["lastNotNull", "max"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Queue depth per destination",
       "type": "timeseries"
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 45},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
       "id": 104,
       "panels": [],
-      "title": "▶ Reliability",
+      "title": "\u25b6 Reliability",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "1 = connected, 0 = disconnected, per destination over time.  Drops to 0 indicate a flap.",
       "fieldConfig": {
         "defaults": {
-          "min": 0, "max": 1,
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
         }
       },
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 46},
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
       "id": 50,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["lastNotNull"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "lastNotNull"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Destinations connected over time",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Rate of errors per destination.  Spikes indicate an output misbehaving (NTRIP caster down, SurePath auth expired, TCP server saturated).",
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 46},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
       "id": 51,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "values": ["mean", "lastNotNull", "max"]}},
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "mean",
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "rate(sp_rtk_base_dest_errors{base=~\"$base\"}[$__rate_interval])", "legendFormat": "{{base}} / {{destination}}", "refId": "A"}
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(sp_rtk_base_dest_errors{base=~\"$base\"}[$__rate_interval])",
+          "legendFormat": "{{base}} / {{destination}}",
+          "refId": "A"
+        }
       ],
       "title": "Destination errors/s",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 200,
+      "panels": [],
+      "title": "\u25b6 Logs (requires Loki + log shipping)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${DS_LOKI}"
+      },
+      "description": "Live logs from sp-rtk-base.service, filtered by the $base selector at the top.  Requires logs to be shipped to Loki with at least the `base` and `service` labels set \u2014 see the README in this directory for the agent-side recipe.",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 201,
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${DS_LOKI}"
+          },
+          "expr": "{base=~\"$base\", service=\"sp-rtk-base\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs \u00b7 sp-rtk-base.service",
+      "type": "logs"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["sp-rtk-base", "rtk", "gnss"],
+  "tags": [
+    "sp-rtk-base",
+    "rtk",
+    "gnss"
+  ],
   "templating": {
     "list": [
       {
-        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
-        "hide": 0, "includeAll": false, "label": "Datasource", "multi": false,
-        "name": "DS_PROMETHEUS", "options": [], "query": "prometheus",
-        "queryValue": "", "refresh": 1, "regex": "", "skipUrlSync": false,
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
         "type": "datasource"
       },
       {
-        "current": {"selected": false, "text": "All", "value": "$__all"},
-        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "current": {
+          "selected": false,
+          "text": "Loki",
+          "value": "Loki"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Loki Datasource (optional, for Logs panel)",
+        "multi": false,
+        "name": "DS_LOKI",
+        "options": [],
+        "query": "loki",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
         "definition": "label_values(sp_rtk_base_relay_running, base)",
-        "hide": 0, "includeAll": true, "allValue": ".*", "label": "Base", "multi": true,
-        "name": "base", "options": [],
-        "query": {"query": "label_values(sp_rtk_base_relay_running, base)", "refId": "StandardVariableQuery"},
-        "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "Base",
+        "multi": true,
+        "name": "base",
+        "options": [],
+        "query": {
+          "query": "label_values(sp_rtk_base_relay_running, base)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
-  "time": {"from": "now-6h", "to": "now"},
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
-  "title": "SP-Base · Unified Base Station Overview",
+  "title": "SP-Base \u00b7 Unified Base Station Overview",
   "uid": "sp-rtk-base-overview",
   "version": 2,
   "weekStart": ""

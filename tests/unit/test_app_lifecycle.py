@@ -265,6 +265,93 @@ class TestShutdownServicesWithIdleDevice:
 # ---------------------------------------------------------------------------
 
 
+class TestShutdownCancelsAutoStartTask:
+    """v0.3.29: shutdown_services must cancel a running auto-start task.
+
+    Without this, an in-flight ``_auto_start_with_retry`` keeps the
+    relay engine lock and uvicorn waits on the orphaned task —
+    triggering systemd's TimeoutStopSec SIGKILL on the Pi.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_pending_auto_start_task_is_cancelled(
+        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    ) -> None:
+        """A task in asyncio.sleep gets cancelled cleanly during shutdown."""
+
+        async def _long_running() -> None:
+            await asyncio.sleep(60)  # simulates the retry-loop backoff
+
+        task = asyncio.create_task(_long_running())
+        original_task = services_mod.auto_start_task
+        services_mod.auto_start_task = task
+        try:
+            await shutdown_services()
+            assert task.cancelled() or task.done()
+        finally:
+            services_mod.auto_start_task = original_task
+
+    @pytest.mark.asyncio()
+    async def test_completed_auto_start_task_is_left_alone(
+        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    ) -> None:
+        """If the task has already finished, no cancellation is attempted."""
+
+        async def _noop() -> None:
+            return None
+
+        task = asyncio.create_task(_noop())
+        await task  # let it finish
+        original_task = services_mod.auto_start_task
+        services_mod.auto_start_task = task
+        try:
+            await shutdown_services()  # must not raise
+        finally:
+            services_mod.auto_start_task = original_task
+
+    @pytest.mark.asyncio()
+    async def test_no_auto_start_task_is_handled_gracefully(
+        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    ) -> None:
+        """auto_start_task is None when auto_start is disabled / no input."""
+        original_task = services_mod.auto_start_task
+        services_mod.auto_start_task = None
+        try:
+            await shutdown_services()  # must not raise
+        finally:
+            services_mod.auto_start_task = original_task
+
+
+class TestRelayStopTimeoutBudget:
+    """v0.3.29: relay_service.stop_relay() must be bounded.
+
+    A relay engine stuck mid-start (blocking Bluetooth connect) would
+    otherwise burn the rest of systemd's TimeoutStopSec window.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_hanging_stop_relay_is_bounded(
+        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    ) -> None:
+        """A relay.stop_relay() that hangs must not stall shutdown."""
+        _device, _eb, relay = patched_services
+
+        async def _hang() -> None:
+            await asyncio.sleep(60)
+
+        relay.stop_relay.side_effect = _hang
+
+        # Bring the budget way down for test speed.
+        import sp_rtk_base.app as app_mod
+
+        original_budget = app_mod.RELAY_STOP_TIMEOUT_SECONDS
+        app_mod.RELAY_STOP_TIMEOUT_SECONDS = 0.05
+        try:
+            await asyncio.wait_for(shutdown_services(), timeout=2.0)
+        finally:
+            app_mod.RELAY_STOP_TIMEOUT_SECONDS = original_budget
+
+
 class TestDeviceDisconnectTimeoutConstant:
     """The module-scope timeout knob should be set to something defensible."""
 

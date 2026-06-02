@@ -117,3 +117,32 @@ class TestWebSocketEvents:
         with api_client_with_services.websocket_connect("/api/events/ws") as ws:
             data = ws.receive_json()
             assert data["event_type"] == "test.event"
+
+    def test_websocket_handles_client_abandonment_during_keepalive(
+        self,
+        api_client_with_services: TestClient,
+        mock_event_bridge: MagicMock,
+    ) -> None:
+        """v0.3.29: a client that disappears mid-keepalive must not crash.
+
+        Operator-reported bug from larson-base logs: idle WebSocket
+        connections produced RuntimeError tracebacks when the keepalive
+        ping fired after the client was already gone.  The handler now
+        checks ``WebSocketState`` and catches the RuntimeError from
+        ``send_json`` so client departure is a clean exit, not a
+        ``logger.exception()`` payload.
+
+        This test exercises a clean client-disconnect; the regression
+        fix is the explicit (WebSocketDisconnect, RuntimeError) catch
+        around the keepalive send and the WebSocketState gate before
+        each send.
+        """
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        mock_event_bridge.event_queue = queue
+
+        # Connect and immediately disconnect — exercises the path
+        # where the handler tries to interact with a torn-down socket.
+        with api_client_with_services.websocket_connect("/api/events/ws") as ws:
+            ws.close()
+        # No assertion needed beyond "the test didn't raise" — the
+        # handler must absorb the disconnect cleanly.

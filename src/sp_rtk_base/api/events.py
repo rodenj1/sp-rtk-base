@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from sp_rtk_base.models.api_models import EventListResponse, EventResponse
 from sp_rtk_base.services import get_event_bridge, get_relay_service
@@ -53,7 +54,17 @@ async def websocket_events(
 
     try:
         while True:
-            # Wait for next event from the bridge queue
+            # A vanished client (browser tab closed, network drop) shows
+            # up here: the queue.get() blocks for the full timeout, we
+            # come back to send a keepalive ping, and the underlying
+            # ASGI socket has already been closed by uvicorn.  Without
+            # this guard, send_json raises a RuntimeError that we
+            # catch at the outer ``except Exception`` and dump a noisy
+            # multi-frame traceback per orphaned client per heartbeat.
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.debug("WebSocket no longer connected; exiting handler")
+                return
+
             try:
                 event_dict: dict[str, Any] = await asyncio.wait_for(
                     event_bridge.event_queue.get(),
@@ -61,14 +72,21 @@ async def websocket_events(
                 )
                 await websocket.send_json(event_dict)
             except asyncio.TimeoutError:
-                # Send keepalive ping
-                await websocket.send_json({"type": "ping"})
+                # Send keepalive ping — but catch the disconnect race
+                # described above instead of letting it surface as a
+                # logger.exception() at the outer level.
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except (WebSocketDisconnect, RuntimeError) as exc:
+                    logger.debug("WebSocket client gone during keepalive: %s", exc)
+                    return
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception:
         logger.exception("WebSocket error")
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        if websocket.client_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.close()
+            except Exception:
+                pass

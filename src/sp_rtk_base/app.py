@@ -38,6 +38,19 @@ logger = logging.getLogger(__name__)
 # don't want a stuck driver to hold up the rest of shutdown.
 DEVICE_DISCONNECT_TIMEOUT_SECONDS: float = 10.0
 
+# Hard budget for the relay engine's stop().  If the engine is mid-start
+# (blocking Bluetooth connect on an in-flight auto-start attempt) when
+# shutdown arrives, ``stop()`` will wait for the start to finish — which
+# can be tens of seconds.  Cap it so a stuck engine can't blow past
+# systemd's TimeoutStopSec.
+RELAY_STOP_TIMEOUT_SECONDS: float = 15.0
+
+# Time to give a cancelled auto-start task to clean up before moving on.
+# The task is in either asyncio.sleep (cancels instantly) or
+# asyncio.to_thread (the thread won't honour cancellation; we just
+# detach and continue shutting down).
+AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS: float = 2.0
+
 
 def create_api_app() -> FastAPI:
     """Create and configure the FastAPI application.
@@ -83,6 +96,12 @@ async def shutdown_services() -> None:
 
     Order of operations matters:
 
+    0. **Auto-start task** — cancel before anything else.  If the
+       background retry loop is mid-``start_relay`` (blocking
+       Bluetooth / serial / NTRIP connect), every subsequent step
+       will fight it for the engine lock.  Cancel it first so the
+       rest of the shutdown can proceed; the underlying daemon
+       thread may keep trying for a moment but it can't block us.
     1. **Device first** — release the serial / Bluetooth handle while
        the event loop is still healthy.  If we wait until the relay
        and event bridge are already torn down, the relay engine may
@@ -93,19 +112,36 @@ async def shutdown_services() -> None:
        so no events fan out into a half-stopped subscriber.
     3. **Relay engine** — last, so any in-flight RTCM chunk finishes
        being distributed to destinations before the destination
-       writers are cancelled.
+       writers are cancelled.  Bounded by
+       :data:`RELAY_STOP_TIMEOUT_SECONDS` so a stuck engine teardown
+       can't blow past systemd's TimeoutStopSec.
 
     Each step is wrapped in its own ``try/except`` so a failure in one
-    cannot prevent the others from running.  The device disconnect is
-    also wrapped in :func:`asyncio.wait_for` with a per-driver budget
-    (:data:`DEVICE_DISCONNECT_TIMEOUT_SECONDS`) so a stuck Bluetooth
-    teardown can never hold up service shutdown indefinitely.
+    cannot prevent the others from running.  Each blocking step is also
+    wrapped in :func:`asyncio.wait_for` with a budget appropriate to
+    its worst-case latency.
     """
     import asyncio
 
+    from sp_rtk_base import services as services_mod
     from sp_rtk_base.services import device_service, event_bridge, relay_service
 
     logger.info("Application shutting down — stopping services…")
+
+    # 0. Cancel the auto-start retry task (v0.3.29).  If it's in
+    #    asyncio.sleep, cancellation is instant.  If it's mid-attempt
+    #    inside asyncio.to_thread(engine.start), the thread keeps
+    #    running but the task gets detached — uvicorn won't wait on
+    #    it.  Either way we move on after the budget.
+    task = services_mod.auto_start_task
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+        except Exception:
+            logger.exception("Error awaiting cancelled auto-start task")
 
     # 1. Device first — release the GPS handle (Bug B).
     if device_service.is_available and device_service.is_connected:
@@ -128,9 +164,18 @@ async def shutdown_services() -> None:
     except Exception:
         logger.exception("Error stopping event bridge")
 
-    # 3. Relay engine.
+    # 3. Relay engine — bounded so a stuck destination thread can't
+    #    burn the rest of systemd's TimeoutStopSec window.
     try:
-        await relay_service.stop_relay()
+        await asyncio.wait_for(
+            relay_service.stop_relay(),
+            timeout=RELAY_STOP_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Relay engine stop exceeded %.1fs budget; proceeding with shutdown",
+            RELAY_STOP_TIMEOUT_SECONDS,
+        )
     except Exception:
         logger.exception("Error stopping relay engine")
 

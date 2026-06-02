@@ -1,0 +1,28 @@
+# Example Prometheus scrape_config snippet for sp-rtk-base.
+#
+# Drop into the `scrape_configs:` list of your prometheus.yml.  The
+# `/metrics` endpoint is exposed by the sp-rtk-base FastAPI app on the
+# same port as the UI (8080 by default) and requires no authentication —
+# it's intended to be scraped over a private LAN / VPN.  See README
+# in this directory for guidance when scraping over the internet.
+#
+# The `site` label is required for the bundled Grafana dashboard's
+# `$site` template variable to be populated.  Pick any short
+# identifier per instance (e.g. `home`, `larson-base`, `field-01`).
+
+scrape_configs:
+  - job_name: sp-rtk-base
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - "rtk-base.lan:8080"           # ← replace with your host:port
+        labels:
+          site: home                       # ← pick a unique short label
+
+      # Add more instances by appending another `- targets:` block.
+      # Example for a remote site you also have private LAN reach to:
+      # - targets:
+      #     - "field-01.tailnet:8080"
+      #   labels:
+      #     site: field-01

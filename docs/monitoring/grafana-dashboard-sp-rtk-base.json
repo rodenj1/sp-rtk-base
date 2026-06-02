@@ -697,17 +697,41 @@
       "title": "Destination Status",
       "transformations": [
         {
-          "id": "merge",
-          "options": {}
+          "id": "joinByField",
+          "options": {
+            "byField": "destination",
+            "mode": "outer"
+          }
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
               "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "base 1": true,
+              "base 2": true,
+              "base 3": true,
+              "base 4": true,
+              "base 5": true,
               "__name__": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "__name__ 3": true,
+              "__name__ 4": true,
+              "__name__ 5": true,
               "job": true,
-              "instance": true
+              "instance": true,
+              "env": true,
+              "env 1": true,
+              "env 2": true,
+              "env 3": true,
+              "env 4": true,
+              "env 5": true
             },
             "renameByName": {
               "Value #connected": "connected",

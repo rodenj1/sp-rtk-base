@@ -1,6 +1,6 @@
 [project]
 name = "sp-rtk-base"
-version = "0.3.30"
+version = "0.3.31"
 description = "Web UI and API for controlling and monitoring a u-blox GPS RTK base station relay"
 readme = "README.md"
 authors = [

@@ -1,16 +1,18 @@
 # SP-Base
 
-[![CI](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml)
+[![CI](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml/badge.svg)](https://github.com/rodenj1/sp-rtk-base/actions/workflows/ci.yml)
+[![Release](https://github.com/rodenj1/sp-rtk-base/actions/workflows/release.yml/badge.svg)](https://github.com/rodenj1/sp-rtk-base/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/rodenj1/sp-rtk-base/branch/main/graph/badge.svg)](https://codecov.io/gh/rodenj1/sp-rtk-base)
 [![PyPI version](https://img.shields.io/pypi/v/sp-rtk-base.svg)](https://pypi.org/project/sp-rtk-base/)
 [![Python versions](https://img.shields.io/pypi/pyversions/sp-rtk-base.svg)](https://pypi.org/project/sp-rtk-base/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/sp-rtk-base.svg)](https://pypi.org/project/sp-rtk-base/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://www.conventionalcommits.org/en/v1.0.0/)
 
 Web UI and REST API for configuring and monitoring a u-blox GPS RTK base station and its RTCM correction data relay.
 
-SP-Base wraps the [sp-rtk-base-relay](packages/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
+SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
 
 ## Features
 
@@ -118,6 +120,18 @@ docker compose up
 
 See [`docs/local-ntrip-caster.md`](docs/local-ntrip-caster.md) for auth, mountpoint, and protocol details.
 
+## CLI Utilities
+
+In addition to the main `sp-rtk-base` server, the package installs:
+
+- **`sp-rtk-base-gps-audit`** — non-destructive audit tool for ZED-F9P (u-blox Gen9) receivers. Reads the current RAM configuration and the factory defaults via `CFG-VALGET`, then prints every setting that differs from default. Read-only — never writes to the receiver.
+
+  ```bash
+  sp-rtk-base-gps-audit --port /dev/ttyUSB0 --baud 57600
+  # or from a source checkout:
+  uv run sp-rtk-base-gps-audit --port /dev/ttyUSB0
+  ```
+
 ## UI Pages
 
 | Route | Page | Purpose |
@@ -224,15 +238,17 @@ Key metrics include:
 
 ### Run Tests
 
-```bash
-# Unit tests
-uv run pytest tests/unit/
+Default `pytest` runs the unit suite only — integration and e2e suites are excluded via `norecursedirs` in `pyproject.toml` and must be invoked explicitly. The default unit run enforces `--cov-fail-under=90`.
 
-# Integration tests (real relay engine + TCP simulator)
+```bash
+# Unit tests (default — fast, mocked, coverage-gated)
+uv run pytest
+
+# Integration tests — real relay engine + TCP simulator
 uv run pytest tests/integration/ --no-cov
 
-# All tests
-uv run pytest
+# End-to-end tests — Playwright browser suites (requires Chromium)
+uv run pytest tests/e2e --no-cov
 ```
 
 ### Type Checking
@@ -242,9 +258,10 @@ uv run pyright src/
 ```
 
 ### Quality Snapshot
-- **Unit tests**: 480 passing
-- **Integration tests**: 20+ (end-to-end + destination management + NTRIP)
-- **Coverage**: 92.28% on measured code (NiceGUI UI pages excluded — they can't be meaningfully unit-tested)
+- **Unit tests**: 554 passing across 32 test files
+- **Integration tests**: 3 suites (end-to-end + destination management + NTRIP)
+- **E2E tests**: 12 Playwright browser suites
+- **Coverage**: ≥90% gate on measured code (NiceGUI UI pages, shared layout/components, and `cli/config_audit.py` excluded — they can't be meaningfully unit-tested and are covered by e2e instead)
 - **Pyright (strict)**: 0 errors, 0 warnings
 - **Python**: 3.10+ with modern type hints (`dict`, `list`, `X | None`)
 
@@ -280,9 +297,8 @@ sp-rtk-base/
 ├── tests/
 │   ├── unit/             # Fast unit tests with mocks
 │   ├── integration/      # End-to-end tests with real relay
+│   ├── e2e/              # Playwright browser suites
 │   └── fixtures/         # TCP simulators, mock NTRIP caster, test helpers
-├── packages/
-│   └── sp-rtk-base-relay/    # RTCM relay engine (workspace dependency)
 ├── docker/
 │   └── ntrip-caster/     # Local NTRIP caster for dev/testing
 ├── docs/                 # Architecture, planning, device config reference

@@ -108,6 +108,39 @@ class NetworkState(BaseModel):
             "AP window to reconfigure through."
         ),
     )
+    saved_wifi_name: str | None = Field(
+        default=None,
+        description=(
+            "The saved WiFi profile's name, if any — the same name "
+            "saved_wifi_known/saved_wifi_visible describe. Bookkeeping "
+            "only: decide() never reads this field, it exists so a "
+            "caller (issue #25's supervisor) can key its durable "
+            "connect-failure count to *which* network without a second "
+            "nmcli round trip alongside this one."
+        ),
+    )
+    consecutive_connect_failures: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Consecutive failed STOP_AP_AND_CONNECT attempts against the "
+            "currently-saved WiFi profile (issue #25). Reset to 0 by the "
+            "caller the moment a connect succeeds or the saved profile "
+            "changes — a visible-but-unjoinable network (wrong/changed "
+            "password) would otherwise be retried on every rescan forever."
+        ),
+    )
+    seconds_since_last_connect_failure: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "How long ago the last consecutive connect failure happened. "
+            "Only meaningful once consecutive_connect_failures has reached "
+            "the configured threshold; read against the suppression "
+            "window so backoff expires instead of pinning the device in "
+            "AP mode forever over a transient association failure."
+        ),
+    )
 
     @property
     def has_uplink(self) -> bool:
@@ -215,6 +248,27 @@ class NetProvisionConfig(BaseModel):
             "How often the supervisor loop re-reads state and calls "
             "decide(). Must be finer-grained than the other thresholds "
             "or the loop can sleep straight through them."
+        ),
+    )
+    max_connect_failures: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive failed connect attempts against the same saved "
+            "WiFi profile before decide() stops retrying it and holds the "
+            "AP up instead (issue #25) — protects a wrong/changed "
+            "password from being retried, radio-stealing, on every "
+            "rescan forever."
+        ),
+    )
+    failure_suppression_seconds: float = Field(
+        default=300.0,
+        gt=0.0,
+        description=(
+            "How long to hold off retrying a saved WiFi profile once "
+            "max_connect_failures is reached, before trying it again. "
+            "Bounds the backoff so a genuinely transient association "
+            "failure doesn't pin the device in AP mode forever."
         ),
     )
     ap_gateway_ip: str = Field(

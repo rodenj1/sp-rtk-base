@@ -10,6 +10,14 @@ rather than an in-process counter, so a service restart (crash,
 window or the AP's rescan clock. See
 :mod:`sp_rtk_base.services.net_provision.state_store` for why that
 matters.
+
+Issue #25 adds a third durable record on top of those two clocks: a
+consecutive-connect-failure count keyed to whichever WiFi profile
+``NetworkState.saved_wifi_name`` currently names. A failed
+``STOP_AP_AND_CONNECT`` is a *handled* outcome here, not a bug — it's
+caught, recorded, and the tick completes normally, unlike an unexpected
+adapter exception, which still aborts the tick and is left to
+:func:`run_forever`'s catch-all.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from sp_rtk_base.models.net_provision_models import (
     ProvisionAction,
 )
 from sp_rtk_base.services.net_provision.decision import decide
+from sp_rtk_base.services.net_provision.nmcli_adapter import WifiConnectError
 from sp_rtk_base.services.net_provision.state_store import (
     ProvisioningClockState,
     ProvisioningStateStore,
@@ -110,6 +119,13 @@ def tick(
     it's compared to, and avoids a second nmcli read per tick just to
     re-check what ``execute()`` already did.
 
+    A failed ``STOP_AP_AND_CONNECT`` (issue #25) is caught here rather
+    than left to propagate: it's a handled outcome — record it and
+    finish the tick normally — not the "something unexpected broke"
+    case :func:`run_forever`'s catch-all exists for. Letting it escape
+    would skip the very clock persistence needed to remember the
+    failure happened.
+
     Args:
         adapter: Reads nmcli state and executes the chosen action.
         config: Threshold knobs, including ``poll_interval_seconds``.
@@ -145,8 +161,55 @@ def tick(
         seconds_disconnected=seconds_disconnected,
         seconds_in_ap=seconds_in_ap,
     )
+
+    # A failure count only means something against the profile it was
+    # recorded for — if the saved network has changed since (a new
+    # portal submission, issue #10), the old count no longer applies.
+    # ``state.saved_wifi_name`` reuses the nmcli lookup read_state()
+    # already made rather than asking the adapter a second time.
+    connect_ssid = state.saved_wifi_name
+    failures_apply = (
+        connect_ssid is not None and clocks.failed_connect_ssid == connect_ssid
+    )
+    consecutive_connect_failures = (
+        clocks.consecutive_connect_failures if failures_apply else 0
+    )
+    last_connect_failure_at = clocks.last_connect_failure_at if failures_apply else None
+    seconds_since_last_connect_failure = (
+        max(0.0, now - last_connect_failure_at)
+        if last_connect_failure_at is not None
+        else 0.0
+    )
+    state = state.model_copy(
+        update={
+            "consecutive_connect_failures": consecutive_connect_failures,
+            "seconds_since_last_connect_failure": seconds_since_last_connect_failure,
+        }
+    )
     action = decide(state, config)
-    adapter.execute(action)
+
+    new_failed_ssid = connect_ssid if consecutive_connect_failures else None
+    new_consecutive_failures = consecutive_connect_failures
+    new_last_failure_at = last_connect_failure_at
+    if action is ProvisionAction.STOP_AP_AND_CONNECT:
+        try:
+            adapter.execute(action)
+        except WifiConnectError:
+            logger.warning(
+                "Provisioning: connect to saved WiFi %r failed "
+                "(consecutive failure #%d)",
+                connect_ssid,
+                consecutive_connect_failures + 1,
+            )
+            new_failed_ssid = connect_ssid
+            new_consecutive_failures = consecutive_connect_failures + 1
+            new_last_failure_at = now
+        else:
+            new_failed_ssid = None
+            new_consecutive_failures = 0
+            new_last_failure_at = None
+    else:
+        adapter.execute(action)
 
     if on_ap_active is not None:
         on_ap_active(_resulting_ap_active(state, action))
@@ -158,6 +221,9 @@ def tick(
             if state.ap_active
             else None
         ),
+        failed_connect_ssid=new_failed_ssid,
+        consecutive_connect_failures=new_consecutive_failures,
+        last_connect_failure_at=new_last_failure_at,
     )
     if new_clocks != clocks:
         state_store.save(new_clocks)

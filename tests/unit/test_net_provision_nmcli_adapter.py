@@ -106,12 +106,14 @@ def _adapter(fake: FakeNmcli, **config_overrides: Any) -> NmcliAdapter:
     return NmcliAdapter(_config(**config_overrides), runner=fake)
 
 
-def _read_state(adapter: NmcliAdapter) -> NetworkState:
-    return adapter.read_state(
-        seconds_since_boot=1000.0,
-        seconds_disconnected=0.0,
-        seconds_in_ap=0.0,
-    )
+def _read_state(adapter: NmcliAdapter, **overrides: Any) -> NetworkState:
+    values: dict[str, Any] = {
+        "seconds_since_boot": 1000.0,
+        "seconds_disconnected": 0.0,
+        "seconds_in_ap": 0.0,
+    }
+    values.update(overrides)
+    return adapter.read_state(**values)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +209,30 @@ class TestSavedWifiKnown:
         fake.set_response(ALL_CONNECTIONS, stdout="802-3-ethernet:Wired connection 1\n")
         state = _read_state(_adapter(fake))
         assert state.saved_wifi_known is False
+
+    def test_saved_wifi_name_is_the_non_ap_wireless_profile(self) -> None:
+        """issue #25: the supervisor keys its durable failure count to
+        this name — exposed off the same lookup that sets
+        saved_wifi_known, not a second nmcli round trip."""
+        fake = FakeNmcli()
+        fake.set_response(
+            ALL_CONNECTIONS,
+            stdout=f"802-11-wireless:{AP_SSID}\n802-11-wireless:{SAVED_SSID}\n",
+        )
+        state = _read_state(_adapter(fake))
+        assert state.saved_wifi_name == SAVED_SSID
+
+    def test_saved_wifi_name_is_none_when_only_the_ap_profile_exists(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{AP_SSID}\n")
+        state = _read_state(_adapter(fake))
+        assert state.saved_wifi_name is None
+
+    def test_saved_wifi_name_is_none_when_no_wireless_profile_exists(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout="802-3-ethernet:Wired connection 1\n")
+        state = _read_state(_adapter(fake))
+        assert state.saved_wifi_name is None
 
 
 # ---------------------------------------------------------------------------

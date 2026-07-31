@@ -25,12 +25,16 @@ from sp_rtk_base.services.net_provision import decide
 BOOT_WAIT = 45.0
 FALLBACK_WINDOW = 300.0
 RESCAN_INTERVAL = 120.0
+MAX_CONNECT_FAILURES = 3
+FAILURE_SUPPRESSION = 300.0
 
 CONFIG = NetProvisionConfig(
     ap_password="sticker-secret",
     boot_wait_seconds=BOOT_WAIT,
     fallback_window_seconds=FALLBACK_WINDOW,
     rescan_interval_seconds=RESCAN_INTERVAL,
+    max_connect_failures=MAX_CONNECT_FAILURES,
+    failure_suppression_seconds=FAILURE_SUPPRESSION,
 )
 
 
@@ -282,6 +286,119 @@ class TestRescanOutcome:
             seconds_in_ap=999.0,
             saved_wifi_known=True,
             saved_wifi_visible=True,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
+
+
+class TestFailureAwareRetryBackoff:
+    """Stop retrying a visible-but-unjoinable saved network (issue #25).
+
+    Story 12: a site's WiFi password changed, or the device moved. Left
+    unchecked, every rescan sees the same SSID still broadcasting and
+    tries it again forever — this is the decision-core half of the fix;
+    #8 already surfaces the connect failure distinctly, #25 is about
+    consuming that signal here.
+    """
+
+    def test_retries_below_the_failure_threshold(self) -> None:
+        """A couple of failures is not (yet) a pattern — keep trying."""
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES - 1,
+            seconds_since_last_connect_failure=0.0,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
+
+    def test_holds_the_ap_at_the_failure_threshold(self) -> None:
+        """Threshold reached, failure just happened -> stop retrying, hold AP."""
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES,
+            seconds_since_last_connect_failure=0.0,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.IDLE
+
+    def test_suppressed_state_still_rescans_on_schedule(self) -> None:
+        """Suppression blocks the *connect*, not the periodic rescan —
+        rescanning is harmless and keeps saved_wifi_visible fresh for
+        when the suppression window eventually expires."""
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=RESCAN_INTERVAL,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES,
+            seconds_since_last_connect_failure=0.0,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.RESCAN
+
+    def test_suppression_expires_after_the_window(self) -> None:
+        """A genuinely transient failure must not pin the device in AP
+        mode forever — once the window passes, retry again."""
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES,
+            seconds_since_last_connect_failure=FAILURE_SUPPRESSION,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
+
+    def test_just_below_the_suppression_window_still_holds(self) -> None:
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES,
+            seconds_since_last_connect_failure=FAILURE_SUPPRESSION - 0.1,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.IDLE
+
+    def test_failures_past_the_threshold_still_suppress(self) -> None:
+        """The count can overshoot the threshold (e.g. a stale record);
+        suppression is ">= threshold", not "== threshold"."""
+        state = _state(
+            seconds_since_boot=5_000.0,
+            seconds_disconnected=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            saved_wifi_known=True,
+            saved_wifi_visible=True,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES + 5,
+            seconds_since_last_connect_failure=0.0,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.IDLE
+
+    def test_uplink_teardown_is_never_suppressed(self) -> None:
+        """Suppression only guards the saved-network *connect* attempt —
+        dropping the AP because another interface already has an uplink
+        involves no connect attempt at all, so it must never be blocked
+        by a stale failure count."""
+        state = _state(
+            uplink_connectivity=Connectivity.LIMITED,
+            seconds_since_boot=5_000.0,
+            ap_active=True,
+            seconds_in_ap=5.0,
+            consecutive_connect_failures=MAX_CONNECT_FAILURES,
+            seconds_since_last_connect_failure=0.0,
         )
         assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
 

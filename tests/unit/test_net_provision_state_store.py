@@ -29,6 +29,9 @@ class TestFreshState:
         state = store.load()
         assert state.last_uplink_at is None
         assert state.ap_started_at is None
+        assert state.failed_connect_ssid is None
+        assert state.consecutive_connect_failures == 0
+        assert state.last_connect_failure_at is None
 
     def test_missing_file_does_not_raise(self, tmp_path: Path) -> None:
         """Unlike the config loader, this is not the fail-loudly boundary."""
@@ -85,6 +88,26 @@ class TestRoundTrip:
         loaded = store.load()
         assert loaded.last_uplink_at is None
         assert loaded.ap_started_at is None
+
+    def test_round_trip_preserves_connect_failure_bookkeeping(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #25: the failure count/SSID/timestamp must survive a
+        restart the same way the other two clocks already do."""
+        path = tmp_path / "state.json"
+        store = ProvisioningStateStore(path)
+        store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="SiteWiFi",
+                consecutive_connect_failures=2,
+                last_connect_failure_at=333.0,
+            )
+        )
+
+        loaded = store.load()
+        assert loaded.failed_connect_ssid == "SiteWiFi"
+        assert loaded.consecutive_connect_failures == 2
+        assert loaded.last_connect_failure_at == 333.0
 
     def test_save_creates_missing_parent_directories(self, tmp_path: Path) -> None:
         path = tmp_path / "nested" / "dir" / "state.json"

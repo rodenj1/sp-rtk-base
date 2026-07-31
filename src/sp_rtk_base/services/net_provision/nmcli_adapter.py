@@ -107,18 +107,23 @@ class NmcliAdapter:
 
         Returns:
             The assembled state: nmcli-observed fields plus the
-            caller-supplied elapsed times.
+            caller-supplied elapsed times. ``saved_wifi_name`` lets the
+            supervisor key its durable connect-failure count (issue
+            #25) to *which* network without a second nmcli round trip
+            to re-derive the same name this call already resolved.
         """
         active = self._active_connection_names()
         ap_active = self._config.ap_ssid in active
+        saved_wifi_name = self._saved_wifi_connection_name()
         return NetworkState(
             uplink_connectivity=self._read_uplink_connectivity(active),
             seconds_since_boot=seconds_since_boot,
             seconds_disconnected=seconds_disconnected,
             ap_active=ap_active,
             seconds_in_ap=seconds_in_ap,
-            saved_wifi_known=self._saved_wifi_connection_name() is not None,
+            saved_wifi_known=saved_wifi_name is not None,
             saved_wifi_visible=self._saved_wifi_seen,
+            saved_wifi_name=saved_wifi_name,
         )
 
     def _active_connection_names(self) -> set[str]:

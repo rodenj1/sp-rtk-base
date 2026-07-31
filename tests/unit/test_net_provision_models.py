@@ -28,6 +28,7 @@ _THRESHOLDS = [
     "fallback_window_seconds",
     "rescan_interval_seconds",
     "poll_interval_seconds",
+    "failure_suppression_seconds",
 ]
 
 
@@ -72,6 +73,11 @@ class TestNetProvisionConfigDefaults:
         assert config.poll_interval_seconds < config.boot_wait_seconds
         assert config.poll_interval_seconds < config.rescan_interval_seconds
         assert config.poll_interval_seconds < config.fallback_window_seconds
+        assert config.poll_interval_seconds < config.failure_suppression_seconds
+
+    def test_max_connect_failures_default_is_a_small_positive_count(self) -> None:
+        default = NetProvisionConfig(ap_password=_PASSWORD).max_connect_failures
+        assert 1 <= default <= 10
 
 
 class TestNetProvisionConfigValidation:
@@ -126,12 +132,28 @@ class TestNetProvisionConfigValidation:
         values: dict[str, Any] = {"ap_password": _PASSWORD, field: 7.5}
         assert getattr(NetProvisionConfig(**values), field) == 7.5
 
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_max_connect_failures_below_one_is_rejected(self, value: int) -> None:
+        """Zero would suppress retrying on the very first failure ever."""
+        with pytest.raises(ValidationError):
+            NetProvisionConfig(ap_password=_PASSWORD, max_connect_failures=value)
+
+    def test_max_connect_failures_is_overridable(self) -> None:
+        config = NetProvisionConfig(ap_password=_PASSWORD, max_connect_failures=5)
+        assert config.max_connect_failures == 5
+
 
 class TestNetworkStateValidation:
     """The adapter cannot hand the decision core a nonsensical clock."""
 
     @pytest.mark.parametrize(
-        "field", ["seconds_since_boot", "seconds_disconnected", "seconds_in_ap"]
+        "field",
+        [
+            "seconds_since_boot",
+            "seconds_disconnected",
+            "seconds_in_ap",
+            "seconds_since_last_connect_failure",
+        ],
     )
     def test_negative_durations_are_rejected(self, field: str) -> None:
         """Elapsed time never runs backwards."""
@@ -160,6 +182,18 @@ class TestNetworkStateValidation:
         assert state.seconds_in_ap == 0.0
         assert not state.saved_wifi_known
         assert not state.saved_wifi_visible
+        assert state.saved_wifi_name is None
+        assert state.consecutive_connect_failures == 0
+        assert state.seconds_since_last_connect_failure == 0.0
+
+    def test_negative_consecutive_connect_failures_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            NetworkState(
+                uplink_connectivity=Connectivity.NONE,
+                seconds_since_boot=0.0,
+                seconds_disconnected=0.0,
+                consecutive_connect_failures=-1,
+            )
 
 
 class TestPortalConfigDefaults:

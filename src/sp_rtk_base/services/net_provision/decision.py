@@ -16,6 +16,21 @@ from sp_rtk_base.models.net_provision_models import (
 )
 
 
+def _connect_retry_suppressed(state: NetworkState, config: NetProvisionConfig) -> bool:
+    """Whether repeated connect failures should hold the AP up instead of
+    retrying the saved network this tick (issue #25).
+
+    Only guards the actual connect attempt — a caller must not apply
+    this to the "another interface already has an uplink" AP teardown,
+    which never attempts a connect and so can never have failed one.
+    """
+    return (
+        state.consecutive_connect_failures >= config.max_connect_failures
+        and state.seconds_since_last_connect_failure
+        < config.failure_suppression_seconds
+    )
+
+
 def decide(state: NetworkState, config: NetProvisionConfig) -> ProvisionAction:
     """Choose the next provisioning action.
 
@@ -36,8 +51,17 @@ def decide(state: NetworkState, config: NetProvisionConfig) -> ProvisionAction:
         if state.has_uplink:
             return ProvisionAction.STOP_AP_AND_CONNECT
         # The last rescan saw the site network, so stop guessing and go
-        # back to being a client.
-        if state.saved_wifi_known and state.saved_wifi_visible:
+        # back to being a client — unless it's failed to join enough
+        # times in a row recently that it's more likely a stale/changed
+        # password than a transient miss (issue #25). Holding the AP
+        # here still falls through to the rescan/idle logic below, so a
+        # suppressed connect doesn't also suppress the periodic rescan
+        # that would notice the suppression window has expired.
+        if (
+            state.saved_wifi_known
+            and state.saved_wifi_visible
+            and not _connect_retry_suppressed(state, config)
+        ):
             return ProvisionAction.STOP_AP_AND_CONNECT
         # Single radio: the AP has to be let go of before the saved
         # network can even be looked for.

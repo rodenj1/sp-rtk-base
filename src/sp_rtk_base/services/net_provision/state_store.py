@@ -8,11 +8,12 @@ restart the window and never reach the AP, and a service restarting
 more often than ``rescan_interval_seconds`` would never rescan, so the
 AP would never come back down.
 
-This module persists the two timestamps the supervisor derives
-elapsed time from — when an uplink was last seen, and when the current
-AP session started — to a small JSON file under a state directory.
-Nothing here talks to nmcli or drives the loop; see ``supervisor.py``
-for that.
+This module persists the timestamps the supervisor derives elapsed
+time from — when an uplink was last seen, when the current AP session
+started, and (issue #25) the consecutive-connect-failure count/SSID/
+timestamp behind the failure-aware retry backoff — to a small JSON file
+under a state directory. Nothing here talks to nmcli or drives the
+loop; see ``supervisor.py`` for that.
 """
 
 from __future__ import annotations
@@ -30,14 +31,18 @@ DEFAULT_STATE_PATH = Path("/var/lib/sp-rtk-base/net_provision_state.json")
 
 
 class ProvisioningClockState(BaseModel):
-    """The two durable timestamps elapsed-time calculations are built from.
+    """The durable timestamps (and failure bookkeeping) elapsed-time
+    calculations are built from.
 
-    Both are wall-clock (``time.time()``) epoch seconds, or ``None``
-    when the event they mark has never happened.
+    Wall-clock (``time.time()``) epoch seconds, or ``None`` when the
+    event they mark has never happened.
     """
 
     last_uplink_at: float | None = None
     ap_started_at: float | None = None
+    failed_connect_ssid: str | None = None
+    consecutive_connect_failures: int = 0
+    last_connect_failure_at: float | None = None
 
 
 class ProvisioningStateStore:

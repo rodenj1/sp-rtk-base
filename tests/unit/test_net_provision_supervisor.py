@@ -19,6 +19,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetworkState,
     ProvisionAction,
 )
+from sp_rtk_base.services.net_provision.nmcli_adapter import WifiConnectError
 from sp_rtk_base.services.net_provision.state_store import (
     ProvisioningClockState,
     ProvisioningStateStore,
@@ -46,6 +47,16 @@ _DISCONNECTED_CLIENT_STATE = NetworkState(
     seconds_disconnected=999.0,
     ap_active=False,
 )
+_SAVED_WIFI_VISIBLE_STATE = NetworkState(
+    uplink_connectivity=Connectivity.NONE,
+    seconds_since_boot=999.0,
+    seconds_disconnected=999.0,
+    ap_active=True,
+    seconds_in_ap=5.0,
+    saved_wifi_known=True,
+    saved_wifi_visible=True,
+    saved_wifi_name="SiteWiFi",
+)
 
 
 class FakeAdapter:
@@ -56,6 +67,7 @@ class FakeAdapter:
         self.read_state_calls: list[dict[str, float]] = []
         self.executed_actions: list[ProvisionAction] = []
         self.raise_on_execute: Exception | None = None
+        self.fail_connect_with: WifiConnectError | None = None
 
     def read_state(
         self,
@@ -77,6 +89,16 @@ class FakeAdapter:
         self.executed_actions.append(action)
         if self.raise_on_execute is not None:
             raise self.raise_on_execute
+        # Mirrors the real NmcliAdapter: WifiConnectError can only come
+        # out of the connect step of STOP_AP_AND_CONNECT, never IDLE/
+        # START_AP/RESCAN — a fake that raised it unconditionally would
+        # falsely "fail" suppression tests once decide() correctly
+        # switches to IDLE.
+        if (
+            self.fail_connect_with is not None
+            and action is ProvisionAction.STOP_AP_AND_CONNECT
+        ):
+            raise self.fail_connect_with
 
 
 class FakeStopEvent:
@@ -502,6 +524,214 @@ class TestRunForever:
         """
         adapter = FakeAdapter(_CONNECTED_STATE)
         adapter.raise_on_execute = RuntimeError("nmcli boom")
+        stop_event = FakeStopEvent(stop_after=3)
+
+        run_forever(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            stop_event=stop_event,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        assert len(adapter.executed_actions) == 3
+
+
+class TestFailureAwareRetryBackoff:
+    """tick() must track consecutive connect failures durably, keyed to
+    the currently-saved WiFi profile (issue #25).
+    """
+
+    def test_fresh_state_does_not_suppress_the_first_attempt(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        """No persisted failure history -> never suppressed."""
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+        assert action is ProvisionAction.STOP_AP_AND_CONNECT
+
+    def test_a_failed_connect_is_recorded_durably(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        adapter.fail_connect_with = WifiConnectError("SiteWiFi", "wrong password")
+
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        assert action is ProvisionAction.STOP_AP_AND_CONNECT
+        clocks = state_store.load()
+        assert clocks.failed_connect_ssid == "SiteWiFi"
+        assert clocks.consecutive_connect_failures == 1
+        assert clocks.last_connect_failure_at == 1_000.0
+
+    def test_a_failed_connect_does_not_propagate_out_of_tick(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        """Unlike a generic nmcli failure, a failed connect is a handled
+        outcome — it must not abort the rest of the tick's bookkeeping
+        (clock persistence, on_ap_active) the way an unexpected
+        exception does."""
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        adapter.fail_connect_with = WifiConnectError("SiteWiFi", "wrong password")
+        calls: list[bool] = []
+
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+            on_ap_active=calls.append,
+        )  # must not raise
+
+        assert calls == [False]
+
+    def test_consecutive_failures_accumulate_then_suppress(
+        self, state_store: ProvisioningStateStore
+    ) -> None:
+        """The full pipeline in one flow: two failures accumulate, then
+        a third tick — now at the threshold — holds the AP instead of
+        attempting again."""
+        config = NetProvisionConfig(ap_password=_PASSWORD, max_connect_failures=2)
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        adapter.fail_connect_with = WifiConnectError("SiteWiFi", "wrong password")
+
+        first = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+        second = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_010.0,
+            uptime_fn=lambda: 510.0,
+        )
+        third = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_020.0,
+            uptime_fn=lambda: 520.0,
+        )
+
+        assert first is ProvisionAction.STOP_AP_AND_CONNECT
+        assert second is ProvisionAction.STOP_AP_AND_CONNECT
+        assert third is ProvisionAction.IDLE  # 2 failures reached the threshold
+
+        clocks = state_store.load()
+        assert clocks.consecutive_connect_failures == 2
+        assert clocks.last_connect_failure_at == 1_010.0
+
+    def test_a_successful_connect_clears_the_failure_record(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        state_store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="SiteWiFi",
+                consecutive_connect_failures=2,
+                last_connect_failure_at=990.0,
+            )
+        )
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        # raise_on_execute stays None: this attempt succeeds.
+
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        clocks = state_store.load()
+        assert clocks.failed_connect_ssid is None
+        assert clocks.consecutive_connect_failures == 0
+        assert clocks.last_connect_failure_at is None
+
+    def test_a_changed_saved_network_resets_the_failure_count(
+        self, state_store: ProvisioningStateStore
+    ) -> None:
+        """A stale failure count against a network that's no longer the
+        saved one (installer reconfigured via the portal, issue #10)
+        must not suppress retrying the new one. max_connect_failures=1
+        makes the old count of 5 suppress immediately *if* it wrongly
+        carried over, so the assertion actually distinguishes "reset"
+        from "ignored"."""
+        config = NetProvisionConfig(ap_password=_PASSWORD, max_connect_failures=1)
+        state_store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="OldSiteWiFi",
+                consecutive_connect_failures=5,
+                last_connect_failure_at=990.0,
+            )
+        )
+        adapter = FakeAdapter(
+            _SAVED_WIFI_VISIBLE_STATE.model_copy(
+                update={"saved_wifi_name": "NewSiteWiFi"}
+            )
+        )
+
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        assert action is ProvisionAction.STOP_AP_AND_CONNECT
+
+    def test_non_connect_actions_leave_the_failure_record_untouched(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        """An IDLE/START_AP/RESCAN tick isn't an attempt — it must not
+        reset or otherwise mutate a still-applicable failure count."""
+        state_store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="SiteWiFi",
+                consecutive_connect_failures=2,
+                last_connect_failure_at=990.0,
+            )
+        )
+        adapter = FakeAdapter(
+            _CONNECTED_STATE.model_copy(update={"saved_wifi_name": "SiteWiFi"})
+        )
+
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        clocks = state_store.load()
+        assert clocks.failed_connect_ssid == "SiteWiFi"
+        assert clocks.consecutive_connect_failures == 2
+        assert clocks.last_connect_failure_at == 990.0
+
+    def test_run_forever_survives_a_failed_connect_every_tick(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(_SAVED_WIFI_VISIBLE_STATE)
+        adapter.fail_connect_with = WifiConnectError("SiteWiFi", "wrong password")
         stop_event = FakeStopEvent(stop_after=3)
 
         run_forever(

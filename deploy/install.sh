@@ -34,6 +34,9 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/sp-rtk-base}"
 STATE_DIR="${STATE_DIR:-/var/lib/sp-rtk-base}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
+NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
+POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
+POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
 VERSION="${1:-${VERSION:-}}"          # empty => latest from PyPI
 
 REPO_RAW_BASE="https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main"
@@ -160,7 +163,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"
 # Step 6 — Symlink console scripts into /usr/local/bin
 # ---------------------------------------------------------------------------
 log "Linking console scripts into ${BIN_DIR}…"
-for cmd in sp-rtk-base sp-rtk-base-gps-audit; do
+for cmd in sp-rtk-base sp-rtk-base-gps-audit sp-rtk-base-net-provision; do
     src="${VENV_DIR}/bin/${cmd}"
     dst="${BIN_DIR}/${cmd}"
     if [[ -x "$src" ]]; then
@@ -287,6 +290,71 @@ systemctl restart sp-rtk-base.service
 ok "Service enabled and (re)started"
 
 # ---------------------------------------------------------------------------
+# Step 8.5 — Polkit rule for headless network provisioning (issue #9)
+# ---------------------------------------------------------------------------
+# NetworkManager's default policy only grants connection up/down without
+# interactive auth to a user with an *active local session*.  A systemd
+# service account has no session, so every `nmcli connection up/down` call
+# from sp-rtk-base-net-provision.service would otherwise be silently
+# refused.  This rule grants the service user unconditional control.
+if [[ -d /etc/polkit-1 ]]; then
+    polkit_rule_src="$(dirname "$0")/polkit/10-sp-rtk-base-net-provision.rules"
+    log "Installing polkit rule for ${SERVICE_USER} → NetworkManager control…"
+    install -d -m 0755 -o root -g root "$POLKIT_RULES_DIR"
+    if [[ -f "$polkit_rule_src" ]]; then
+        install -m 0644 -o root -g root "$polkit_rule_src" "$POLKIT_RULE_DEST"
+    else
+        curl -fsSL "${REPO_RAW_BASE}/deploy/polkit/10-sp-rtk-base-net-provision.rules" \
+            -o "$POLKIT_RULE_DEST"
+        chmod 0644 "$POLKIT_RULE_DEST"
+    fi
+    # polkit picks up rules.d changes automatically, but restart it
+    # (best-effort — package name varies by distro) so the new rule is
+    # live before the net-provision service starts below.
+    systemctl try-restart polkit.service 2>/dev/null \
+        || systemctl try-restart polkitd.service 2>/dev/null \
+        || true
+    ok "Polkit rule installed at ${POLKIT_RULE_DEST}"
+else
+    warn "polkit not found at /etc/polkit-1; skipping polkit rule (nmcli calls from
+sp-rtk-base-net-provision.service may need manual polkit configuration)"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 8.6 — Network-provisioning systemd unit (issue #9)
+# ---------------------------------------------------------------------------
+# Deliberately independent of sp-rtk-base.service (issue #6, story 17): no
+# dependency between the two units either direction.  Unlike config.yaml,
+# net_provision.yaml is NOT written here — issue #11 owns writing that file
+# (ap_password has no default, so it can't be synthesised safely).  Without
+# it the service will fail loudly and get restarted by systemd, which is
+# expected until that file exists.
+net_provision_unit_src=""
+if [[ -f "$(dirname "$0")/sp-rtk-base-net-provision.service" ]]; then
+    net_provision_unit_src="$(dirname "$0")/sp-rtk-base-net-provision.service"
+    log "Installing systemd unit from ${net_provision_unit_src}…"
+    install -m 0644 -o root -g root "$net_provision_unit_src" "$NET_PROVISION_SYSTEMD_UNIT"
+else
+    log "Downloading network-provisioning systemd unit from GitHub…"
+    curl -fsSL "${REPO_RAW_BASE}/deploy/sp-rtk-base-net-provision.service" \
+        -o "$NET_PROVISION_SYSTEMD_UNIT"
+    chmod 0644 "$NET_PROVISION_SYSTEMD_UNIT"
+fi
+ok "systemd unit installed at ${NET_PROVISION_SYSTEMD_UNIT}"
+
+log "Reloading systemd and enabling sp-rtk-base-net-provision.service…"
+systemctl daemon-reload
+systemctl enable sp-rtk-base-net-provision.service >/dev/null
+if systemctl restart sp-rtk-base-net-provision.service 2>/dev/null \
+        && sleep 2 && systemctl is-active --quiet sp-rtk-base-net-provision.service; then
+    ok "Network-provisioning service enabled and (re)started"
+else
+    warn "sp-rtk-base-net-provision.service is enabled but not running — this is
+expected until ${CONFIG_DIR}/net_provision.yaml exists (see issue #11).
+Once that file is in place: sudo systemctl restart sp-rtk-base-net-provision"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 9 — Final status
 # ---------------------------------------------------------------------------
 sleep 2
@@ -306,6 +374,11 @@ if systemctl is-active --quiet sp-rtk-base.service; then
     echo "  Stop:     sudo systemctl stop sp-rtk-base"
     echo "  Upgrade:  sudo ${INSTALL_PREFIX}/venv/bin/pip install -U sp-rtk-base && \\"
     echo "            sudo systemctl restart sp-rtk-base"
+    echo
+    echo "  Network-provisioning service (issue #9, independent unit):"
+    echo "    Config:   ${CONFIG_DIR}/net_provision.yaml (not written by this installer — see issue #11)"
+    echo "    Logs:     sudo journalctl -u sp-rtk-base-net-provision -f"
+    echo "    Status:   systemctl status sp-rtk-base-net-provision"
     echo
 else
     warn "Service failed to start.  Check logs with:"

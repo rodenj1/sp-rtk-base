@@ -37,6 +37,7 @@ dependencies = [
 [project.scripts]
 sp-rtk-base = "sp_rtk_base.main:main"
 sp-rtk-base-gps-audit = "sp_rtk_base.cli.config_audit:main"
+sp-rtk-base-net-provision = "sp_rtk_base.cli.net_provision:main"
 
 [project.urls]
 Homepage = "https://github.com/rodenj1/sp-rtk-base"

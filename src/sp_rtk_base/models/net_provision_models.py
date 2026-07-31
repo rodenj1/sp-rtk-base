@@ -190,3 +190,12 @@ class NetProvisionConfig(BaseModel):
             "the saved WiFi network."
         ),
     )
+    poll_interval_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        description=(
+            "How often the supervisor loop re-reads state and calls "
+            "decide(). Must be finer-grained than the other thresholds "
+            "or the loop can sleep straight through them."
+        ),
+    )

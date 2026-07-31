@@ -26,6 +26,7 @@ _THRESHOLDS = [
     "boot_wait_seconds",
     "fallback_window_seconds",
     "rescan_interval_seconds",
+    "poll_interval_seconds",
 ]
 
 
@@ -58,6 +59,18 @@ class TestNetProvisionConfigDefaults:
         """
         config = NetProvisionConfig(ap_password=_PASSWORD)
         assert config.rescan_interval_seconds < config.fallback_window_seconds
+
+    def test_poll_interval_is_shorter_than_every_other_threshold(self) -> None:
+        """The loop tick must be finer-grained than the windows it measures.
+
+        A poll interval as long as (or longer than) boot-wait, the
+        fallback window, or the rescan interval would make those knobs
+        meaningless — the loop could sleep straight through a threshold.
+        """
+        config = NetProvisionConfig(ap_password=_PASSWORD)
+        assert config.poll_interval_seconds < config.boot_wait_seconds
+        assert config.poll_interval_seconds < config.rescan_interval_seconds
+        assert config.poll_interval_seconds < config.fallback_window_seconds
 
 
 class TestNetProvisionConfigValidation:

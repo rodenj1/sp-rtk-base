@@ -13,11 +13,21 @@ human user account:
 | `/etc/systemd/system/sp-rtk-base.service` | systemd unit | `root:root` (0644) |
 | `/usr/local/bin/sp-rtk-base` | Operator CLI (symlink into the venv) | `root:root` |
 | `/usr/local/bin/sp-rtk-base-gps-audit` | u-blox config audit CLI (symlink) | `root:root` |
+| `/etc/sp-rtk-base/net_provision.yaml` | Network-provisioning config (issue #9 — not written by `install.sh`, see issue #11) | `root:sp-rtk-base` (0640) |
+| `/etc/systemd/system/sp-rtk-base-net-provision.service` | Independent systemd unit for headless network provisioning | `root:root` (0644) |
+| `/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules` | Grants the service account NetworkManager control | `root:root` (0644) |
+| `/usr/local/bin/sp-rtk-base-net-provision` | Network-provisioning CLI (symlink) | `root:root` |
 
 The service runs as the dedicated **`sp-rtk-base`** system user (no
 shell, no home directory) added to the `dialout`, `bluetooth`, and
 `plugdev` groups so it can talk to the GPS receiver (USB-serial
 adapters land in `plugdev` on Raspberry Pi OS Bookworm).
+
+`sp-rtk-base-net-provision.service` is a **separate, independent**
+systemd unit (issue #6, story 17) with no dependency on
+`sp-rtk-base.service` in either direction — it runs the headless
+Ethernet-first / WiFi-AP-fallback provisioning loop and must keep
+self-healing network state even while the web app is down.
 
 ---
 
@@ -59,7 +69,11 @@ That single command will:
    (only if one isn't already there — your existing config is never
    touched).
 8. Install the `sp-rtk-base.service` systemd unit, enable + start it.
-9. Print the LAN URL (`http://<pi-ip>:8080`) and a help summary.
+9. Install a polkit rule granting `sp-rtk-base` NetworkManager control,
+   and install + enable `sp-rtk-base-net-provision.service` (it will
+   fail loudly and restart in a loop until `net_provision.yaml` exists
+   — see issue #11 — which is expected on a fresh install).
+10. Print the LAN URL (`http://<pi-ip>:8080`) and a help summary.
 
 The installer is **idempotent** — re-running it upgrades the venv,
 reloads systemd, and restarts the service.
@@ -128,6 +142,50 @@ operator chooses Serial / Bluetooth / TCP from the **Input** page on
 first launch, and the YAML is populated then.  (`input:` is an
 optional field on `AppConfig`.)
 
+### Network-provisioning unit (`/etc/systemd/system/sp-rtk-base-net-provision.service`)
+
+A second, independent systemd unit runs the headless Ethernet-first /
+WiFi-AP-fallback loop — see
+[`deploy/sp-rtk-base-net-provision.service`](../deploy/sp-rtk-base-net-provision.service):
+
+```ini
+[Service]
+User=sp-rtk-base
+Group=sp-rtk-base
+WorkingDirectory=/var/lib/sp-rtk-base
+Environment=SP_RTK_BASE_NET_CONFIG=/etc/sp-rtk-base/net_provision.yaml
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-net-provision
+Restart=on-failure
+```
+
+It deliberately does **not** depend on `sp-rtk-base.service`, and does
+**not** wait on `network-online.target` — the entire point of the loop
+is to open a setup AP when there is no network, so it must be able to
+start and run before connectivity exists.
+
+Unlike `config.yaml`, `install.sh` does **not** write a default
+`net_provision.yaml` — the AP password has no safe default, so there
+is no valid default config to synthesise (issue #11 owns provisioning
+this file at install time). Until it exists, the service logs an
+actionable error and gets restarted by systemd — this is expected on a
+fresh install, not a bug. Create the file yourself to bring it up:
+
+```yaml
+# /etc/sp-rtk-base/net_provision.yaml
+ap_password: "choose-a-real-wpa2-passphrase"
+```
+
+then `sudo systemctl restart sp-rtk-base-net-provision`.
+
+Because the service calls `nmcli connection up/down` with no
+interactive session to authenticate against, `install.sh` also drops a
+polkit rule at
+[`/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules`](../deploy/polkit/10-sp-rtk-base-net-provision.rules)
+granting the `sp-rtk-base` user unconditional NetworkManager control.
+Durable clocks (`seconds_disconnected` / `seconds_in_ap`) persist to
+`/var/lib/sp-rtk-base/net_provision_state.json` so a service restart
+doesn't reset the fallback-window or AP-rescan timers.
+
 ---
 
 ## Day-2 operations
@@ -182,7 +240,9 @@ sudo ./deploy/upgrade.sh 0.3.0              # pinned
 ### Backup
 
 Everything stateful lives in **two directories** — back them up
-together:
+together. This also covers `net_provision.yaml` and the durable
+provisioning clocks (`net_provision_state.json`), since both live
+under these same paths:
 
 ```bash
 sudo tar czf sp-rtk-base-backup-$(date +%F).tar.gz \
@@ -194,9 +254,9 @@ To restore on a fresh Pi:
 
 ```bash
 # (Run install.sh first, then…)
-sudo systemctl stop sp-rtk-base
+sudo systemctl stop sp-rtk-base sp-rtk-base-net-provision
 sudo tar xzf sp-rtk-base-backup-2026-05-20.tar.gz -C /
-sudo systemctl start sp-rtk-base
+sudo systemctl start sp-rtk-base sp-rtk-base-net-provision
 ```
 
 The venv at `/opt/sp-rtk-base/` is *not* in the backup — `pip install`

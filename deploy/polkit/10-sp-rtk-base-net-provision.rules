@@ -1,0 +1,23 @@
+// Grants the unprivileged `sp-rtk-base` service account control over
+// NetworkManager, without which sp-rtk-base-net-provision.service
+// (issue #9) cannot bring the setup AP up/down or join the saved WiFi
+// network.
+//
+// NetworkManager's default policy grants these actions to a user
+// holding an *active local session* (or requires interactive admin
+// auth otherwise). A systemd service account has neither — there is
+// no logged-in session and no console to prompt — so every
+// `nmcli connection up/down` / rescan call from the provisioning
+// supervisor would be silently refused without this rule.
+polkit.addRule(function (action, subject) {
+    var actions = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.settings.modify.system",
+    ];
+    if (subject.user == "sp-rtk-base" && actions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+});

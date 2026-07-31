@@ -22,6 +22,8 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/sp-rtk-base}"
 STATE_DIR="${STATE_DIR:-/var/lib/sp-rtk-base}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
+NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
+POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules}"
 
 PURGE=false
 KEEP_DATA=false
@@ -46,14 +48,32 @@ echo "==> Stopping + disabling sp-rtk-base.service…"
 systemctl stop    sp-rtk-base.service 2>/dev/null || true
 systemctl disable sp-rtk-base.service 2>/dev/null || true
 
+echo "==> Stopping + disabling sp-rtk-base-net-provision.service…"
+systemctl stop    sp-rtk-base-net-provision.service 2>/dev/null || true
+systemctl disable sp-rtk-base-net-provision.service 2>/dev/null || true
+
 if [[ -f "$SYSTEMD_UNIT" ]]; then
     echo "==> Removing systemd unit ${SYSTEMD_UNIT}"
     rm -f "$SYSTEMD_UNIT"
     systemctl daemon-reload
 fi
 
+if [[ -f "$NET_PROVISION_SYSTEMD_UNIT" ]]; then
+    echo "==> Removing systemd unit ${NET_PROVISION_SYSTEMD_UNIT}"
+    rm -f "$NET_PROVISION_SYSTEMD_UNIT"
+    systemctl daemon-reload
+fi
+
+if [[ -f "$POLKIT_RULE_DEST" ]]; then
+    echo "==> Removing polkit rule ${POLKIT_RULE_DEST}"
+    rm -f "$POLKIT_RULE_DEST"
+    systemctl try-restart polkit.service 2>/dev/null \
+        || systemctl try-restart polkitd.service 2>/dev/null \
+        || true
+fi
+
 echo "==> Removing console-script symlinks from ${BIN_DIR}"
-rm -f "${BIN_DIR}/sp-rtk-base" "${BIN_DIR}/sp-rtk-base-gps-audit"
+rm -f "${BIN_DIR}/sp-rtk-base" "${BIN_DIR}/sp-rtk-base-gps-audit" "${BIN_DIR}/sp-rtk-base-net-provision"
 
 if [[ -d "$INSTALL_PREFIX" ]]; then
     echo "==> Removing app tree ${INSTALL_PREFIX}"

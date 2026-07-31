@@ -5,16 +5,25 @@
 #
 # Installs sp-rtk-base from PyPI into an isolated venv at /opt/sp-rtk-base/
 # under a dedicated `sp-rtk-base` system user, then enables a systemd
-# service so the relay starts at boot.
+# service so the relay starts at boot. Also sets up headless network
+# provisioning (issue #6/#11): ensures NetworkManager, installs the
+# fixed-credential setup-AP connection profile, and enables the
+# independent sp-rtk-base-net-provision.service.
 #
 # Usage:
-#   sudo ./deploy/install.sh                  # install latest from PyPI
-#   sudo ./deploy/install.sh 0.2.0            # pin to a specific version
-#   sudo VERSION=0.2.0 ./deploy/install.sh    # same, via env var
+#   sudo AP_PASSWORD=xxxx ./deploy/install.sh          # install latest from PyPI
+#   sudo AP_PASSWORD=xxxx ./deploy/install.sh 0.2.0    # pin to a specific version
+#   sudo VERSION=0.2.0 AP_PASSWORD=xxxx ./deploy/install.sh  # same, via env var
 #
 # Or one-shot from a fresh Pi:
 #   curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
-#       | sudo bash
+#       | sudo AP_PASSWORD=xxxx bash
+#
+# AP_PASSWORD is the fixed setup-AP WPA2 passphrase for this fleet (issue
+# #6, story 8: one sticker template for every unit) — required the first
+# time net_provision.yaml is written, has no default, and is only read
+# then (never overwrites an existing net_provision.yaml). AP_SSID
+# optionally overrides the setup-AP name (default: sp-rtk-base-setup).
 #
 # Re-running is safe: the script is idempotent (creates user/dirs if missing,
 # upgrades the venv in place, reloads systemd).  Config in /etc/sp-rtk-base/
@@ -37,6 +46,14 @@ SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
+# Fixed setup-AP identity (issue #6, story 8): every deployed unit ships
+# the *same* SSID/password so one sticker template covers the fleet.
+# AP_SSID defaults to NetProvisionConfig's DEFAULT_AP_SSID; AP_PASSWORD
+# has no default on purpose (see NetProvisionConfig docstring) — it must
+# be supplied via env var, e.g. from your provisioning pipeline's secret
+# store, so it never ends up baked into source or PyPI.
+AP_SSID="${AP_SSID:-sp-rtk-base-setup}"
+AP_PASSWORD="${AP_PASSWORD:-}"
 VERSION="${1:-${VERSION:-}}"          # empty => latest from PyPI
 
 REPO_RAW_BASE="https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main"
@@ -290,6 +307,135 @@ systemctl restart sp-rtk-base.service
 ok "Service enabled and (re)started"
 
 # ---------------------------------------------------------------------------
+# Step 8.2 — Ensure NetworkManager is present and managing the network (issue #11)
+# ---------------------------------------------------------------------------
+# Raspberry Pi OS Bookworm ships NetworkManager by default, but the
+# one-line curl|bash installer targets "any Debian-based host" — ensure
+# it's here rather than assuming it. Non-NetworkManager network stacks
+# (dhcpcd, iwd, connman, …) are out of scope (issue #6); we don't try to
+# migrate an existing one away, just make sure NM itself is ready.
+if command -v nmcli >/dev/null 2>&1; then
+    ok "NetworkManager already installed"
+else
+    log "Installing NetworkManager…"
+    apt-get install -y --no-install-recommends network-manager >/dev/null
+    ok "Installed NetworkManager"
+fi
+systemctl enable --now NetworkManager.service >/dev/null 2>&1 || true
+ok "NetworkManager enabled"
+
+# A dhcpcd/udev override that marks wlan0 unmanaged is the classic reason
+# NetworkManager is running but the setup AP never comes up. We don't
+# force a fix here (stopping a live network service mid curl|bash is
+# exactly the kind of surprise a headless install shouldn't spring), just
+# surface it loudly so it isn't a silent dead end.
+wlan0_state="$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: '$1=="wlan0"{print $2}')"
+if [[ "$wlan0_state" == "unmanaged" ]]; then
+    warn "wlan0 is unmanaged by NetworkManager (commonly caused by dhcpcd or a
+udev/NM config override) — the setup AP cannot come up until it's managed.
+See docs/deployment-pi.md for troubleshooting."
+fi
+
+# ---------------------------------------------------------------------------
+# Step 8.3 — Network-provisioning config (issue #11)
+# ---------------------------------------------------------------------------
+# Separate file from config.yaml (services/net_provision/config_loader.py
+# reads it independently — issue #9). Written only if absent, same
+# only-if-absent contract as config.yaml above: re-running the installer
+# must never clobber a site's tuned knobs. ap_password has no default in
+# the AppConfig model on purpose, so unlike config.yaml there is no safe
+# default to synthesise here — it must come from $AP_PASSWORD (issue #6,
+# story 8: one fixed SSID/password sticker for the whole fleet).
+net_provision_cfg="${CONFIG_DIR}/net_provision.yaml"
+if [[ ! -e "$net_provision_cfg" ]]; then
+    if [[ -z "$AP_PASSWORD" ]]; then
+        die "AP_PASSWORD is not set and ${net_provision_cfg} does not exist yet.
+Set AP_PASSWORD to the fixed setup-AP passphrase for this fleet (WPA2: 8-63
+chars), e.g.:
+  sudo AP_PASSWORD='your-sticker-password' ./deploy/install.sh
+Optionally override the SSID too with AP_SSID (default: ${AP_SSID}).
+If you already have a device provisioned, copy its ${net_provision_cfg}
+onto this one instead of generating a new password."
+    fi
+    log "Writing network-provisioning config to ${net_provision_cfg}…"
+    # A WPA2 passphrase may legally contain " or \, either of which would
+    # break out of the YAML double-quoted scalar below (or worse, get
+    # interpreted as a second key) if interpolated raw. Escape both before
+    # they go anywhere near the heredoc.
+    yaml_dq_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+    ap_ssid_yaml="$(yaml_dq_escape "$AP_SSID")"
+    ap_password_yaml="$(yaml_dq_escape "$AP_PASSWORD")"
+    cat >"$net_provision_cfg" <<YAML
+# sp-rtk-base network-provisioning config — headless field onboarding
+# (issue #6). ap_ssid / ap_password are the fixed setup-AP credentials
+# printed on this fleet's sticker. Restart the provisioning service
+# after manual edits:
+#   sudo systemctl restart sp-rtk-base-net-provision
+
+ap_ssid: "${ap_ssid_yaml}"
+ap_password: "${ap_password_yaml}"
+YAML
+    ok "Wrote network-provisioning config (setup AP: ${AP_SSID})"
+else
+    ok "Network-provisioning config already present at ${net_provision_cfg} (contents left untouched)"
+fi
+
+# Always (re)apply ownership + mode, same reasoning as config.yaml above:
+# a re-run must heal a pre-existing file created by hand (e.g. per the
+# docs' manual-creation fallback) that ended up root-owned, or the
+# sudo -u "$SERVICE_USER" read just below fails with EACCES.
+chown "${SERVICE_USER}:${SERVICE_USER}" "$net_provision_cfg"
+chmod 0640 "$net_provision_cfg"
+
+log "Validating ${net_provision_cfg} loads cleanly into NetProvisionConfig…"
+net_provision_creds="$(sudo -u "$SERVICE_USER" \
+        SP_RTK_BASE_NET_CONFIG="$net_provision_cfg" \
+        "${VENV_DIR}/bin/python" - <<'PY'
+from sp_rtk_base.services.net_provision.config_loader import load_net_provision_config
+cfg = load_net_provision_config()
+print(cfg.ap_ssid)
+print(cfg.ap_password)
+PY
+)" || die "Config at ${net_provision_cfg} failed to validate (see traceback above)."
+provisioned_ap_ssid="$(sed -n '1p' <<<"$net_provision_creds")"
+provisioned_ap_password="$(sed -n '2p' <<<"$net_provision_creds")"
+ok "Config validated (setup AP: ${provisioned_ap_ssid})"
+
+# ---------------------------------------------------------------------------
+# Step 8.4 — Setup-AP NetworkManager connection profile (issue #11)
+# ---------------------------------------------------------------------------
+# NmcliAdapter._ap_up()/_ap_down() (issue #8) call `nmcli connection up/down
+# id <ap_ssid>` — they never create the profile, only activate one that
+# already exists. This is that profile. Idempotent: only created if
+# missing, and always built from whatever ap_ssid/ap_password is *actually*
+# in net_provision.yaml (not $AP_SSID/$AP_PASSWORD directly), so a re-run
+# after a hand-edited config or a restored backup stays in sync.
+if nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$provisioned_ap_ssid"; then
+    ok "Setup-AP connection profile '${provisioned_ap_ssid}' already present"
+else
+    log "Creating setup-AP connection profile '${provisioned_ap_ssid}'…"
+    # `mode ap` is a wifi type-specific keyword nmcli recognizes directly;
+    # everything else is a raw <setting>.<property> override, documented
+    # as requiring a literal `--` separator before the pairs (`nmcli
+    # connection add help`) — kept explicit here for portability across
+    # nmcli versions even though 1.36+ also accepts them without it.
+    nmcli connection add \
+        type wifi \
+        ifname wlan0 \
+        con-name "$provisioned_ap_ssid" \
+        autoconnect no \
+        ssid "$provisioned_ap_ssid" \
+        mode ap \
+        -- \
+        802-11-wireless.band bg \
+        ipv4.method shared \
+        wifi-sec.key-mgmt wpa-psk \
+        wifi-sec.psk "$provisioned_ap_password" \
+        >/dev/null
+    ok "Setup-AP connection profile installed"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 8.5 — Polkit rule for headless network provisioning (issue #9)
 # ---------------------------------------------------------------------------
 # NetworkManager's default policy only grants connection up/down without
@@ -324,11 +470,9 @@ fi
 # Step 8.6 — Network-provisioning systemd unit (issue #9)
 # ---------------------------------------------------------------------------
 # Deliberately independent of sp-rtk-base.service (issue #6, story 17): no
-# dependency between the two units either direction.  Unlike config.yaml,
-# net_provision.yaml is NOT written here — issue #11 owns writing that file
-# (ap_password has no default, so it can't be synthesised safely).  Without
-# it the service will fail loudly and get restarted by systemd, which is
-# expected until that file exists.
+# dependency between the two units either direction. net_provision.yaml
+# and its AP connection profile were written above (issue #11), so this
+# should come up clean on a fresh install rather than fail-and-restart.
 net_provision_unit_src=""
 if [[ -f "$(dirname "$0")/sp-rtk-base-net-provision.service" ]]; then
     net_provision_unit_src="$(dirname "$0")/sp-rtk-base-net-provision.service"
@@ -349,9 +493,8 @@ if systemctl restart sp-rtk-base-net-provision.service 2>/dev/null \
         && sleep 2 && systemctl is-active --quiet sp-rtk-base-net-provision.service; then
     ok "Network-provisioning service enabled and (re)started"
 else
-    warn "sp-rtk-base-net-provision.service is enabled but not running — this is
-expected until ${CONFIG_DIR}/net_provision.yaml exists (see issue #11).
-Once that file is in place: sudo systemctl restart sp-rtk-base-net-provision"
+    warn "sp-rtk-base-net-provision.service is enabled but not running.
+Check logs with: sudo journalctl -u sp-rtk-base-net-provision --no-pager -n 50"
 fi
 
 # ---------------------------------------------------------------------------
@@ -375,8 +518,9 @@ if systemctl is-active --quiet sp-rtk-base.service; then
     echo "  Upgrade:  sudo ${INSTALL_PREFIX}/venv/bin/pip install -U sp-rtk-base && \\"
     echo "            sudo systemctl restart sp-rtk-base"
     echo
-    echo "  Network-provisioning service (issue #9, independent unit):"
-    echo "    Config:   ${CONFIG_DIR}/net_provision.yaml (not written by this installer — see issue #11)"
+    echo "  Network-provisioning service (issue #9/#11, independent unit):"
+    echo "    Setup AP: ${provisioned_ap_ssid} (password in ${net_provision_cfg})"
+    echo "    Config:   ${net_provision_cfg}"
     echo "    Logs:     sudo journalctl -u sp-rtk-base-net-provision -f"
     echo "    Status:   systemctl status sp-rtk-base-net-provision"
     echo

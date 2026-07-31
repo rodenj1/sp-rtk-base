@@ -13,10 +13,11 @@ human user account:
 | `/etc/systemd/system/sp-rtk-base.service` | systemd unit | `root:root` (0644) |
 | `/usr/local/bin/sp-rtk-base` | Operator CLI (symlink into the venv) | `root:root` |
 | `/usr/local/bin/sp-rtk-base-gps-audit` | u-blox config audit CLI (symlink) | `root:root` |
-| `/etc/sp-rtk-base/net_provision.yaml` | Network-provisioning config (issue #9 — not written by `install.sh`, see issue #11) | `root:sp-rtk-base` (0640) |
+| `/etc/sp-rtk-base/net_provision.yaml` | Network-provisioning config, written from `$AP_SSID`/`$AP_PASSWORD` only if absent (issue #11) | `sp-rtk-base:sp-rtk-base` (0640) |
 | `/etc/systemd/system/sp-rtk-base-net-provision.service` | Independent systemd unit for headless network provisioning | `root:root` (0644) |
 | `/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules` | Grants the service account NetworkManager control | `root:root` (0644) |
 | `/usr/local/bin/sp-rtk-base-net-provision` | Network-provisioning CLI (symlink) | `root:root` |
+| NetworkManager connection profile named after `ap_ssid` | Setup-AP profile `NmcliAdapter` activates via `nmcli connection up/down` (issue #11) | root (NetworkManager's own keyfile store) |
 
 The service runs as the dedicated **`sp-rtk-base`** system user (no
 shell, no home directory) added to the `dialout`, `bluetooth`, and
@@ -45,12 +46,20 @@ nothing needs to be installed by hand first.
 
 ## Quick install (recommended)
 
-From a fresh Pi:
+From a fresh Pi. `AP_PASSWORD` is required the first time — issue #6's
+story 8 fixes one setup-AP SSID/password across the whole fleet, printed
+once on a sticker template, so it's never baked into source and has to
+come from you:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
-    | sudo bash
+    | sudo AP_PASSWORD='your-sticker-password' bash
 ```
+
+`AP_SSID` optionally overrides the setup-AP name (default:
+`sp-rtk-base-setup`). Both are only consulted the first time
+`net_provision.yaml` is written — a re-run with `net_provision.yaml`
+already in place ignores them.
 
 That single command will:
 
@@ -63,17 +72,20 @@ That single command will:
    with the correct ownership and modes.
 4. Build a Python venv at `/opt/sp-rtk-base/venv/`.
 5. `pip install` the latest `sp-rtk-base` release from PyPI.
-6. Symlink the `sp-rtk-base` and `sp-rtk-base-gps-audit` CLIs into
-   `/usr/local/bin/`.
+6. Symlink the `sp-rtk-base`, `sp-rtk-base-gps-audit`, and
+   `sp-rtk-base-net-provision` CLIs into `/usr/local/bin/`.
 7. Write a minimal default config to `/etc/sp-rtk-base/config.yaml`
    (only if one isn't already there — your existing config is never
    touched).
 8. Install the `sp-rtk-base.service` systemd unit, enable + start it.
-9. Install a polkit rule granting `sp-rtk-base` NetworkManager control,
-   and install + enable `sp-rtk-base-net-provision.service` (it will
-   fail loudly and restart in a loop until `net_provision.yaml` exists
-   — see issue #11 — which is expected on a fresh install).
-10. Print the LAN URL (`http://<pi-ip>:8080`) and a help summary.
+9. Ensure NetworkManager is installed and enabled, write
+   `net_provision.yaml` from `$AP_SSID`/`$AP_PASSWORD` (only if absent),
+   and install the setup-AP NetworkManager connection profile (issue #11)
+   — all idempotent.
+10. Install a polkit rule granting `sp-rtk-base` NetworkManager control,
+    and install + enable `sp-rtk-base-net-provision.service`.
+11. Print the LAN URL (`http://<pi-ip>:8080`), the setup-AP SSID, and a
+    help summary.
 
 The installer is **idempotent** — re-running it upgrades the venv,
 reloads systemd, and restarts the service.
@@ -82,7 +94,7 @@ reloads systemd, and restarts the service.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
-    | sudo bash -s -- 0.2.0
+    | sudo AP_PASSWORD='your-sticker-password' bash -s -- 0.2.0
 ```
 
 ### Run the script from a cloned repo
@@ -90,8 +102,8 @@ curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/ins
 ```bash
 git clone https://github.com/rodenj1/sp-rtk-base.git
 cd sp-rtk-base
-sudo ./deploy/install.sh            # latest
-sudo ./deploy/install.sh 0.2.0      # pinned
+sudo AP_PASSWORD='your-sticker-password' ./deploy/install.sh            # latest
+sudo AP_PASSWORD='your-sticker-password' ./deploy/install.sh 0.2.0      # pinned
 ```
 
 ---
@@ -163,19 +175,32 @@ It deliberately does **not** depend on `sp-rtk-base.service`, and does
 is to open a setup AP when there is no network, so it must be able to
 start and run before connectivity exists.
 
-Unlike `config.yaml`, `install.sh` does **not** write a default
-`net_provision.yaml` — the AP password has no safe default, so there
-is no valid default config to synthesise (issue #11 owns provisioning
-this file at install time). Until it exists, the service logs an
-actionable error and gets restarted by systemd — this is expected on a
-fresh install, not a bug. Create the file yourself to bring it up:
+`install.sh` writes `net_provision.yaml` from `$AP_SSID`/`$AP_PASSWORD`
+the first time it runs, **only if the file is absent** — a re-run never
+overwrites a site's provisioned config, same contract as `config.yaml`
+(issue #11). `ap_password` has no default in the model on purpose, so if
+you skip `AP_PASSWORD` on a truly fresh install the script fails loudly
+with instructions rather than guessing:
 
 ```yaml
 # /etc/sp-rtk-base/net_provision.yaml
-ap_password: "choose-a-real-wpa2-passphrase"
+ap_ssid: "sp-rtk-base-setup"
+ap_password: "your-sticker-password"
 ```
 
-then `sudo systemctl restart sp-rtk-base-net-provision`.
+To reconfigure the fixed AP credentials on an already-provisioned
+device: edit this file by hand, delete the matching NetworkManager
+connection profile (`sudo nmcli connection delete id <old ap_ssid>`),
+re-run `install.sh` to recreate the profile from the new values, then
+`sudo systemctl restart sp-rtk-base-net-provision`.
+
+`install.sh` also ensures NetworkManager itself is installed and
+enabled, and installs the setup-AP NetworkManager connection profile
+that `NmcliAdapter` (issue #8) activates via `nmcli connection up/down
+id <ap_ssid>` — the adapter only ever brings that profile up or down,
+it never creates one, so this is the one place the profile comes from.
+Also idempotent: skipped if a connection profile by that name already
+exists.
 
 Because the service calls `nmcli connection up/down` with no
 interactive session to authenticate against, `install.sh` also drops a
@@ -292,6 +317,12 @@ Wipe everything including config + state:
 sudo ./deploy/uninstall.sh --purge
 ```
 
+Either form always removes the setup-AP NetworkManager connection
+profile (read out of `net_provision.yaml` before anything else is
+touched) alongside the systemd units and polkit rule — it's
+installer-created infrastructure, not site data, so it isn't gated
+behind the config/state `[y/N]` prompts.
+
 ---
 
 ## Networking
@@ -370,6 +401,30 @@ Common causes:
 | `org.bluez.Error.NotReady` on Bluetooth scan, or no devices found | See **"Bluetooth scan finds nothing"** below. |
 | `OSError: [Errno 98] Address already in use` | Another service is on port 8080.  Change either port. |
 | `ImportError: dbus-fast` | Run `sudo /opt/sp-rtk-base/venv/bin/pip install --force-reinstall sp-rtk-base` — the build wheel from PyPI should be picked up automatically. |
+
+### Setup AP never appears (wlan0 unmanaged)
+
+`install.sh` warns `wlan0 is unmanaged by NetworkManager` if
+`nmcli device status` reports `wlan0` as `unmanaged` — NetworkManager
+itself is running, but something else (commonly `dhcpcd`, or a
+distro-shipped `/etc/NetworkManager/conf.d/*.conf` override) has claimed
+the interface, so the setup-AP connection profile can never come up no
+matter how many times `sp-rtk-base-net-provision.service` retries it.
+
+```bash
+nmcli device status                          # confirm wlan0 shows "unmanaged"
+sudo systemctl status dhcpcd                 # a common culprit on older Pi OS images
+sudo systemctl disable --now dhcpcd          # if dhcpcd is managing wlan0
+sudo systemctl restart NetworkManager
+nmcli device status                          # re-check: wlan0 should now show
+                                              # "disconnected" or "connected"
+```
+
+`install.sh` deliberately doesn't do this for you automatically —
+disabling a network service you didn't ask it to touch, mid
+`curl | sudo bash`, is exactly the kind of surprise a headless installer
+shouldn't spring on a box you might be SSH'd into over that same
+interface.
 
 ### Bluetooth scan finds nothing
 

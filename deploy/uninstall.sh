@@ -36,6 +36,32 @@ esac
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo $0" >&2; exit 1; }
 
+# Capture the setup-AP SSID before anything below removes net_provision.yaml
+# or the venv used to parse it (issue #11). Falls back to the model's
+# DEFAULT_AP_SSID, matching install.sh, if the file is missing or was
+# never customised — a best-effort delete against that name is harmless
+# if no such connection profile exists. Parsed with the venv's own PyYAML
+# (still intact at this point — the app tree isn't removed until later)
+# rather than a shell regex, so a quoted SSID containing spaces or YAML
+# escapes round-trips the same way install.sh wrote it.
+DEFAULT_AP_SSID="sp-rtk-base-setup"
+AP_SSID="$DEFAULT_AP_SSID"
+net_provision_cfg="${CONFIG_DIR}/net_provision.yaml"
+venv_python="${INSTALL_PREFIX}/venv/bin/python"
+if [[ -f "$net_provision_cfg" && -x "$venv_python" ]]; then
+    parsed_ssid="$("$venv_python" - "$net_provision_cfg" <<'PY' 2>/dev/null || true
+import sys
+import yaml
+with open(sys.argv[1]) as f:
+    data = yaml.safe_load(f) or {}
+ssid = data.get("ap_ssid") if isinstance(data, dict) else None
+if isinstance(ssid, str) and ssid:
+    print(ssid)
+PY
+)"
+    [[ -n "$parsed_ssid" ]] && AP_SSID="$parsed_ssid"
+fi
+
 ask() {
     local prompt="$1"
     if $PURGE;     then return 0; fi
@@ -62,6 +88,11 @@ if [[ -f "$NET_PROVISION_SYSTEMD_UNIT" ]]; then
     echo "==> Removing systemd unit ${NET_PROVISION_SYSTEMD_UNIT}"
     rm -f "$NET_PROVISION_SYSTEMD_UNIT"
     systemctl daemon-reload
+fi
+
+if command -v nmcli >/dev/null 2>&1 && nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$AP_SSID"; then
+    echo "==> Removing setup-AP connection profile '${AP_SSID}'"
+    nmcli connection delete id "$AP_SSID" 2>/dev/null || true
 fi
 
 if [[ -f "$POLKIT_RULE_DEST" ]]; then

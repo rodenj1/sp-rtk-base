@@ -19,10 +19,18 @@ reverse proxy, troubleshooting, and fleet management.
 
 ## Quick install on a fresh Pi
 
+`AP_PASSWORD` is required the first time (issue #6, story 8: one fixed
+setup-AP SSID/password sticker for the whole fleet — it's never baked
+into source, so it has to come from you):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
-    | sudo bash
+    | sudo AP_PASSWORD='your-sticker-password' bash
 ```
+
+`AP_SSID` optionally overrides the setup-AP name (default:
+`sp-rtk-base-setup`). Neither is needed on a re-run once
+`net_provision.yaml` already exists — it's written only if absent.
 
 ## Layout summary
 
@@ -32,17 +40,18 @@ curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/ins
 /usr/local/bin/sp-rtk-base-gps-audit            u-blox audit CLI (symlink)
 /usr/local/bin/sp-rtk-base-net-provision        network-provisioning CLI (symlink)
 /etc/sp-rtk-base/config.yaml                    operator configuration
-/etc/sp-rtk-base/net_provision.yaml             network-provisioning config (not written by install.sh — see issue #11)
+/etc/sp-rtk-base/net_provision.yaml             network-provisioning config (written from $AP_SSID/$AP_PASSWORD, only if absent — issue #11)
 /var/lib/sp-rtk-base/                           runtime state (incl. durable provisioning clocks)
 /etc/systemd/system/sp-rtk-base.service         systemd unit — web UI + relay
 /etc/systemd/system/sp-rtk-base-net-provision.service   systemd unit — network provisioning (independent, issue #9)
 /etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules  NetworkManager control for the service account
+(NetworkManager connection profile named after ap_ssid)   setup-AP profile (issue #11) — lives in NetworkManager's own store, not a plain file
 ```
 
 Both services run as the dedicated `sp-rtk-base` system user (member of
 `dialout` + `bluetooth` groups). The two units have no dependency on each
 other by design: the network-provisioning loop keeps self-healing
 Ethernet/WiFi/AP state even while the web app is down, and vice versa.
-`sp-rtk-base-net-provision.service` will fail loudly and restart on a
-loop until `net_provision.yaml` exists — that file is deliberately not
-synthesised with defaults, since its AP password has no safe default.
+`install.sh` also ensures NetworkManager is installed and enabled, and
+creates the setup-AP connection profile `NmcliAdapter` activates via
+`nmcli connection up/down` — both idempotently, only if missing.

@@ -26,7 +26,6 @@ _THRESHOLDS = [
     "boot_wait_seconds",
     "fallback_window_seconds",
     "rescan_interval_seconds",
-    "poll_interval_seconds",
 ]
 
 
@@ -39,7 +38,6 @@ class TestNetProvisionConfigDefaults:
         assert config.ap_ssid == DEFAULT_AP_SSID
         assert config.fallback_window_seconds == 300.0
         assert config.rescan_interval_seconds == 120.0
-        assert config.poll_interval_seconds == 5.0
 
     def test_ap_password_has_no_default(self) -> None:
         """No unit ever ships with a hotspot password baked into source."""
@@ -124,7 +122,7 @@ class TestNetworkStateValidation:
     def test_negative_durations_are_rejected(self, field: str) -> None:
         """Elapsed time never runs backwards."""
         values: dict[str, Any] = {
-            "connectivity": Connectivity.NONE,
+            "uplink_connectivity": Connectivity.NONE,
             "seconds_since_boot": 0.0,
             "seconds_disconnected": 0.0,
             field: -1.0,
@@ -135,12 +133,12 @@ class TestNetworkStateValidation:
     def test_clocks_are_required(self) -> None:
         """Uptime and outage duration have no sensible default."""
         with pytest.raises(ValidationError):
-            NetworkState(connectivity=Connectivity.NONE)  # type: ignore[call-arg]
+            NetworkState(uplink_connectivity=Connectivity.NONE)  # type: ignore[call-arg]
 
     def test_a_fresh_device_defaults_to_client_mode_unprovisioned(self) -> None:
         """Defaults describe a just-booted, never-configured unit."""
         state = NetworkState(
-            connectivity=Connectivity.NONE,
+            uplink_connectivity=Connectivity.NONE,
             seconds_since_boot=0.0,
             seconds_disconnected=0.0,
         )

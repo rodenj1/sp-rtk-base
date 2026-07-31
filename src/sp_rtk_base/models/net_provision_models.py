@@ -22,19 +22,29 @@ from pydantic import BaseModel, Field
 
 
 class Connectivity(str, enum.Enum):
-    """Whether the device currently has a usable network.
+    """State of the device's *uplink* — its route off the box.
 
     Mirrors the meaningful values of ``nmcli networking connectivity``.
-    Anything other than :attr:`NONE` counts as "has a network" — an RTK
+    Anything other than :attr:`NONE` counts as a usable uplink — an RTK
     base on a LAN-only site with an on-premise NTRIP caster is fully
     operational without internet, so flipping such a device into AP
     mode would take a working install offline.
 
-    NetworkManager also reports ``unknown`` when its connectivity
-    checking is disabled (common on Pi images).  Mapping that to one of
-    these members is the nmcli adapter's job (issue #8): a device with
-    an active connection should be reported as :attr:`LIMITED`, not
-    :attr:`NONE`.
+    Two mapping rules bind the nmcli adapter (issue #8), because the
+    decision core cannot see interfaces:
+
+    1. **Exclude the setup AP's own connection.**  A NetworkManager
+       ``shared``-mode hotspot is itself an active connection, and NM
+       will happily report ``limited`` for a host whose only connection
+       is that hotspot.  Passing that through as an uplink would make
+       the orchestrator tear down the AP it just raised, re-raise it on
+       the next tick, and flap the hotspot faster than an installer's
+       phone can associate.  A hotspot-only host has **no** uplink:
+       report :attr:`NONE`.
+    2. **Map NM's ``unknown``.**  NM reports ``unknown`` when its
+       connectivity checking is disabled (common on Pi images); report
+       :attr:`LIMITED` when some non-AP connection is active, otherwise
+       :attr:`NONE`.
     """
 
     NONE = "none"
@@ -49,8 +59,11 @@ class NetworkState(BaseModel):
     Produced by the nmcli adapter, consumed by :func:`decide`.
     """
 
-    connectivity: Connectivity = Field(
-        description="Whether a usable network is present",
+    uplink_connectivity: Connectivity = Field(
+        description=(
+            "State of the uplink, excluding the setup AP's own "
+            "connection (see Connectivity for the adapter's rules)"
+        ),
     )
     seconds_since_boot: float = Field(
         ge=0.0,
@@ -59,7 +72,7 @@ class NetworkState(BaseModel):
     seconds_disconnected: float = Field(
         ge=0.0,
         description=(
-            "How long the device has been without a network. 0 while "
+            "How long the device has been without an uplink. 0 while "
             "connected. Read against the fallback window on a device "
             "that already has a saved WiFi profile."
         ),
@@ -88,15 +101,18 @@ class NetworkState(BaseModel):
         default=False,
         description=(
             "The saved WiFi network was seen in the most recent scan. "
-            "Only ever True on the tick after a RESCAN, because a "
-            "single-radio Pi cannot scan while serving the AP."
+            "A single-radio Pi cannot scan while serving the AP, so the "
+            "adapter must report False whenever the AP is (re)started "
+            "and only report True for a scan newer than that. A stale "
+            "True would retry a failing network every tick and leave no "
+            "AP window to reconfigure through."
         ),
     )
 
     @property
-    def has_network(self) -> bool:
-        """True when a usable network is present."""
-        return self.connectivity is not Connectivity.NONE
+    def has_uplink(self) -> bool:
+        """True when a usable route off the device exists."""
+        return self.uplink_connectivity is not Connectivity.NONE
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +189,4 @@ class NetProvisionConfig(BaseModel):
             "How long to serve the AP before dropping it to look for "
             "the saved WiFi network."
         ),
-    )
-    poll_interval_seconds: float = Field(
-        default=5.0,
-        gt=0.0,
-        description="How often the supervisor loop samples state (issue #9)",
     )

@@ -27,10 +27,13 @@ def decide(state: NetworkState, config: NetProvisionConfig) -> ProvisionAction:
         The action the adapter should execute.
     """
     if state.ap_active:
-        # Connectivity while the AP is up means another interface came
-        # good — an installer running a cable mid-setup — so stop
-        # hosting a setup hotspot nobody needs.
-        if state.has_network:
+        # An uplink while the AP is up means another interface came good
+        # — an installer running a cable mid-setup — so stop hosting a
+        # setup hotspot nobody needs.  This reads the uplink and not the
+        # AP's own shared connection on purpose: counting the hotspot as
+        # connectivity would tear down the AP that produced it and flap
+        # it every tick.
+        if state.has_uplink:
             return ProvisionAction.STOP_AP_AND_CONNECT
         # The last rescan saw the site network, so stop guessing and go
         # back to being a client.
@@ -42,7 +45,7 @@ def decide(state: NetworkState, config: NetProvisionConfig) -> ProvisionAction:
             return ProvisionAction.RESCAN
         return ProvisionAction.IDLE
 
-    if state.has_network:
+    if state.has_uplink:
         return ProvisionAction.IDLE
 
     # Boot-wait applies unconditionally: never open the AP while a

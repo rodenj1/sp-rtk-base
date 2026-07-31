@@ -164,6 +164,60 @@ class WifiNetwork(BaseModel):
             "the adapter normalizes nmcli's '--' column to ''."
         )
     )
+    in_range: bool = Field(
+        default=True,
+        description=(
+            "Whether this network was detected by the scan that produced "
+            "this entry. Always True for a fresh nmcli scan (issue #21) — "
+            "the field exists so console API responses are self-describing "
+            "rather than relying on callers to know that invariant."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Console network operations (issue #21)
+# ---------------------------------------------------------------------------
+
+
+class SavedWifiConnection(BaseModel):
+    """One saved WiFi profile NetworkManager knows about.
+
+    Excludes the setup AP's own profile — the console has no business
+    listing, switching to, or forgetting the provisioning hotspot.
+    """
+
+    name: str = Field(
+        description=(
+            "The nmcli connection id, which also serves as the SSID under "
+            "this codebase's existing convention (see "
+            "NmcliAdapter._saved_wifi_connection_name)."
+        )
+    )
+    active: bool = Field(description="True if this is the currently active connection")
+
+
+class LinkType(str, enum.Enum):
+    """The kind of link a device's active connection runs over."""
+
+    WIRED = "wired"
+    WIFI = "wifi"
+
+
+class ActiveLink(BaseModel):
+    """The device's current non-AP network link, for the console status view."""
+
+    link_type: LinkType = Field(description="Wired or WiFi")
+    name: str = Field(description="Connection name (the SSID, for WiFi)")
+    ip_address: str | None = Field(
+        default=None, description="IPv4 address without the CIDR suffix, if assigned"
+    )
+    signal: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Signal strength percent; None for a wired link",
+    )
 
 
 # ---------------------------------------------------------------------------

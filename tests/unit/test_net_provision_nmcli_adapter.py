@@ -17,10 +17,13 @@ from typing import Any
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    ActiveLink,
     Connectivity,
+    LinkType,
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    SavedWifiConnection,
     WifiNetwork,
 )
 from sp_rtk_base.services.net_provision import (
@@ -49,6 +52,15 @@ SCAN = [
 AP_UP = ["nmcli", "connection", "up", "id", AP_SSID]
 AP_DOWN = ["nmcli", "connection", "down", "id", AP_SSID]
 SAVED_UP = ["nmcli", "connection", "up", "id", SAVED_SSID]
+DEVICE_SHOW = [
+    "nmcli",
+    "-t",
+    "-f",
+    "GENERAL.TYPE,GENERAL.CONNECTION,IP4.ADDRESS",
+    "device",
+    "show",
+]
+WIFI_SIGNAL_LIST = ["nmcli", "-t", "-f", "ACTIVE,SIGNAL", "device", "wifi", "list"]
 
 
 def _scan_line(ssid: str, signal: int = 50, security: str = "WPA2") -> str:
@@ -477,6 +489,15 @@ class TestScanNetworks:
         fake.set_response(SCAN, stdout="")
         assert _adapter(fake).scan_networks() == []
 
+    def test_every_result_is_flagged_in_range(self) -> None:
+        """issue #21: the console's scan surface reports SSID, signal,
+        security, and an in-range flag — true for every entry here, since
+        a fresh nmcli scan only ever returns networks it just detected."""
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
+        networks = _adapter(fake).scan_networks()
+        assert all(network.in_range for network in networks)
+
 
 # ---------------------------------------------------------------------------
 # latest_scan() — cache read by the portal (issue #10)
@@ -536,3 +557,225 @@ class TestConnectToNetwork:
     def test_succeeds_silently_on_a_correct_password(self) -> None:
         fake = FakeNmcli()
         _adapter(fake).connect_to_network("SiteWiFi", "hunter22")  # no raise
+
+    def test_hidden_network_adds_hidden_yes_flag(self) -> None:
+        """issue #21: the console lets an operator type a hidden SSID that
+        never shows up in a scan — nmcli needs an explicit `hidden yes` to
+        even attempt associating with it."""
+        fake = FakeNmcli()
+        _adapter(fake).connect_to_network("HiddenNet", "hunter22", hidden=True)
+        assert fake.calls == [
+            [
+                "nmcli",
+                "device",
+                "wifi",
+                "connect",
+                "HiddenNet",
+                "password",
+                "hunter22",
+                "hidden",
+                "yes",
+            ]
+        ]
+
+    def test_visible_network_omits_hidden_flag(self) -> None:
+        """Default behavior (issue #10's portal call site) is unchanged."""
+        fake = FakeNmcli()
+        _adapter(fake).connect_to_network("SiteWiFi", "hunter22", hidden=False)
+        assert fake.calls == [
+            ["nmcli", "device", "wifi", "connect", "SiteWiFi", "password", "hunter22"]
+        ]
+
+
+# ---------------------------------------------------------------------------
+# list_saved_connections() — console saved-profile listing (issue #21)
+# ---------------------------------------------------------------------------
+
+
+class TestListSavedConnections:
+    def test_lists_wireless_profiles_excluding_the_ap(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            ALL_CONNECTIONS,
+            stdout=(
+                f"802-11-wireless:{AP_SSID}\n"
+                f"802-11-wireless:{SAVED_SSID}\n"
+                "802-3-ethernet:Wired connection 1\n"
+            ),
+        )
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        connections = _adapter(fake).list_saved_connections()
+        assert connections == [SavedWifiConnection(name=SAVED_SSID, active=True)]
+
+    def test_marks_inactive_profile_as_not_active(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{AP_SSID}\n")
+        connections = _adapter(fake).list_saved_connections()
+        assert connections == [SavedWifiConnection(name=SAVED_SSID, active=False)]
+
+    def test_no_saved_wireless_profiles_yields_empty_list(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{AP_SSID}\n")
+        fake.set_response(ACTIVE_CONNECTIONS, stdout="")
+        assert _adapter(fake).list_saved_connections() == []
+
+
+# ---------------------------------------------------------------------------
+# read_active_link() — console current-connection status (issue #21)
+# ---------------------------------------------------------------------------
+
+
+def _device_block(conn_type: str, connection: str, ip: str | None = None) -> str:
+    lines = [f"GENERAL.TYPE:{conn_type}", f"GENERAL.CONNECTION:{connection}"]
+    if ip is not None:
+        lines.append(f"IP4.ADDRESS[1]:{ip}")
+    return "\n".join(lines)
+
+
+class TestReadActiveLink:
+    def test_wired_link_reports_type_name_and_ip(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=_device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
+            + "\n",
+        )
+        link = _adapter(fake).read_active_link()
+        assert link == ActiveLink(
+            link_type=LinkType.WIRED,
+            name="Wired connection 1",
+            ip_address="192.168.1.50",
+            signal=None,
+        )
+
+    def test_wifi_link_includes_signal_from_the_active_scan_row(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=_device_block("wifi", SAVED_SSID, "192.168.1.60/24") + "\n",
+        )
+        fake.set_response(WIFI_SIGNAL_LIST, stdout="no:40\nyes:77\n")
+        link = _adapter(fake).read_active_link()
+        assert link == ActiveLink(
+            link_type=LinkType.WIFI,
+            name=SAVED_SSID,
+            ip_address="192.168.1.60",
+            signal=77,
+        )
+
+    def test_excludes_the_setup_ap_connection(self) -> None:
+        """An operator's console session cannot itself be running over the
+        provisioning hotspot in normal operation — reporting the AP as
+        'the active link' would be nonsensical."""
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=(
+                _device_block("wifi", AP_SSID, "10.42.0.1/24")
+                + "\n\n"
+                + _device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
+                + "\n"
+            ),
+        )
+        link = _adapter(fake).read_active_link()
+        assert link is not None
+        assert link.name == "Wired connection 1"
+
+    def test_prefers_wired_when_both_wired_and_wifi_are_active(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=(
+                _device_block("wifi", SAVED_SSID, "192.168.1.60/24")
+                + "\n\n"
+                + _device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
+                + "\n"
+            ),
+        )
+        link = _adapter(fake).read_active_link()
+        assert link is not None
+        assert link.link_type is LinkType.WIRED
+
+    def test_returns_none_when_nothing_is_connected(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=_device_block("ethernet", "")
+            + "\n\n"
+            + _device_block("wifi", "")
+            + "\n",
+        )
+        assert _adapter(fake).read_active_link() is None
+
+    def test_ignores_non_physical_device_types(self) -> None:
+        """Bridges/loopback/etc. can report a 'connected' state on a dev
+        box; only ethernet and wifi are real links a console cares about."""
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW,
+            stdout=_device_block("bridge", "docker0", "172.17.0.1/16") + "\n",
+        )
+        assert _adapter(fake).read_active_link() is None
+
+    def test_missing_ip_address_is_none(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            DEVICE_SHOW, stdout=_device_block("ethernet", "Wired connection 1") + "\n"
+        )
+        link = _adapter(fake).read_active_link()
+        assert link is not None
+        assert link.ip_address is None
+
+
+# ---------------------------------------------------------------------------
+# activate_connection() / forget_connection() — issue #21
+# ---------------------------------------------------------------------------
+
+
+class TestActivateConnection:
+    def test_issues_connection_up(self) -> None:
+        fake = FakeNmcli()
+        _adapter(fake).activate_connection(SAVED_SSID)
+        assert fake.calls == [SAVED_UP]
+
+    def test_raises_wifi_connect_error_on_failure(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SAVED_UP, stderr="Error: no such connection.", returncode=10)
+        with pytest.raises(WifiConnectError) as exc_info:
+            _adapter(fake).activate_connection(SAVED_SSID)
+        assert exc_info.value.ssid == SAVED_SSID
+
+
+class TestForgetConnection:
+    def test_issues_connection_delete(self) -> None:
+        fake = FakeNmcli()
+        _adapter(fake).forget_connection(SAVED_SSID)
+        assert fake.calls == [["nmcli", "connection", "delete", "id", SAVED_SSID]]
+
+    def test_raises_nmcli_error_on_failure(self) -> None:
+        fake = FakeNmcli()
+        delete_cmd = ["nmcli", "connection", "delete", "id", SAVED_SSID]
+        fake.set_response(
+            delete_cmd, stderr="Error: unknown connection.", returncode=10
+        )
+        with pytest.raises(NmcliError):
+            _adapter(fake).forget_connection(SAVED_SSID)
+
+    def test_forgets_the_currently_active_connection(self) -> None:
+        """issue #21's AC explicitly covers this case: NetworkManager
+        deactivates a connection before deleting it, so forgetting the
+        active profile needs no special-casing here — it's the same
+        `connection delete` call as any other saved profile."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        _adapter(fake).forget_connection(SAVED_SSID)
+        assert fake.calls == [["nmcli", "connection", "delete", "id", SAVED_SSID]]
+
+    def test_refuses_to_forget_the_setup_ap_profile(self) -> None:
+        """Deleting the provisioning hotspot's own profile from the console
+        would strand the fallback path issue #6 depends on."""
+        fake = FakeNmcli()
+        with pytest.raises(NmcliError):
+            _adapter(fake).forget_connection(AP_SSID)
+        assert fake.calls == []

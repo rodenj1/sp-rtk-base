@@ -8,6 +8,13 @@ every branch here answers "what does nmcli currently say" or "which
 nmcli command does this action need", never "what should happen
 next".
 
+The operator console (issue #21) is a second consumer of this same
+class, deliberately: :meth:`NmcliAdapter.list_saved_connections`,
+:meth:`NmcliAdapter.read_active_link`, :meth:`NmcliAdapter.activate_connection`,
+and :meth:`NmcliAdapter.forget_connection` don't serve the decision
+loop at all, but living here keeps there being exactly one nmcli
+boundary in the codebase rather than a second, console-only one.
+
 Two things this adapter deliberately does **not** own:
 
 * ``seconds_since_boot`` / ``seconds_disconnected`` / ``seconds_in_ap``
@@ -27,10 +34,13 @@ import subprocess
 from collections.abc import Callable
 
 from sp_rtk_base.models.net_provision_models import (
+    ActiveLink,
     Connectivity,
+    LinkType,
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    SavedWifiConnection,
     WifiNetwork,
 )
 
@@ -38,6 +48,14 @@ NmcliRunner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 _NMCLI_TIMEOUT_SECONDS = 10.0
 _WIRELESS_TYPE = "802-11-wireless"
+
+# `nmcli device show`'s GENERAL.TYPE uses short names ("wifi", "ethernet"),
+# distinct from `nmcli connection show`'s TYPE column format above
+# ("802-11-wireless") — the two commands describe different objects
+# (devices vs. connection profiles) and don't share a vocabulary.
+_DEVICE_TYPE_WIFI = "wifi"
+_DEVICE_TYPE_ETHERNET = "ethernet"
+_DEVICE_SHOW_FIELDS = "GENERAL.TYPE,GENERAL.CONNECTION,IP4.ADDRESS"
 
 
 def _run_nmcli(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -56,11 +74,13 @@ class NmcliError(RuntimeError):
 
 
 class WifiConnectError(NmcliError):
-    """Connecting to the saved WiFi network failed (e.g. wrong password).
+    """Connecting to a WiFi network failed (e.g. wrong password).
 
-    Raised only for the connect step of ``STOP_AP_AND_CONNECT`` — this
-    is the "surfaces connect failures distinctly from success" signal
-    issue #25 will later count consecutive occurrences of.
+    Raised for the connect step of ``STOP_AP_AND_CONNECT`` — the
+    "surfaces connect failures distinctly from success" signal issue
+    #25 counts consecutive occurrences of — and, for the console (issue
+    #21), by :meth:`NmcliAdapter.connect_to_network` and
+    :meth:`NmcliAdapter.activate_connection`.
     """
 
     def __init__(self, ssid: str, reason: str) -> None:
@@ -166,6 +186,106 @@ class NmcliAdapter:
             conn_type, _, name = line.partition(":")
             if conn_type == _WIRELESS_TYPE and name != self._config.ap_ssid:
                 return name
+        return None
+
+    def list_saved_connections(self) -> list[SavedWifiConnection]:
+        """List saved WiFi profiles, for the console's Network page (issue #21).
+
+        Excludes the setup AP's own profile — the console has no business
+        listing, switching to, or forgetting the provisioning hotspot.
+
+        Returns:
+            One entry per saved WiFi profile, flagged with whether it is
+            the currently active connection.
+        """
+        result = self._run(["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"])
+        active = self._active_connection_names()
+        connections: list[SavedWifiConnection] = []
+        for line in result.stdout.splitlines():
+            if not line:
+                continue
+            conn_type, _, name = line.partition(":")
+            if conn_type != _WIRELESS_TYPE or name == self._config.ap_ssid:
+                continue
+            connections.append(SavedWifiConnection(name=name, active=name in active))
+        return connections
+
+    def read_active_link(self) -> ActiveLink | None:
+        """The device's current non-AP link, for the console status view (issue #21).
+
+        Returns:
+            The active ethernet or WiFi link, or ``None`` if neither is
+            connected. When both are active (e.g. an installer plugging in
+            a cable mid-reconfiguration), wired wins — this mirrors the
+            package's Ethernet-first philosophy and gives an unambiguous
+            single answer.
+        """
+        wired: ActiveLink | None = None
+        wifi: ActiveLink | None = None
+        for block in self._read_device_blocks():
+            conn_type = block.get("GENERAL.TYPE", "")
+            name = block.get("GENERAL.CONNECTION", "")
+            if not name or name == "--" or name == self._config.ap_ssid:
+                continue
+            ip_address = self._parse_ip_address(block.get("IP4.ADDRESS", ""))
+            if conn_type == _DEVICE_TYPE_ETHERNET:
+                wired = ActiveLink(
+                    link_type=LinkType.WIRED, name=name, ip_address=ip_address
+                )
+            elif conn_type == _DEVICE_TYPE_WIFI:
+                wifi = ActiveLink(
+                    link_type=LinkType.WIFI,
+                    name=name,
+                    ip_address=ip_address,
+                    signal=self._active_wifi_signal(),
+                )
+        return wired if wired is not None else wifi
+
+    def _read_device_blocks(self) -> list[dict[str, str]]:
+        """Parse ``nmcli device show``'s blank-line-separated device blocks."""
+        result = self._run(["nmcli", "-t", "-f", _DEVICE_SHOW_FIELDS, "device", "show"])
+        blocks: list[dict[str, str]] = []
+        current: dict[str, str] = {}
+        for line in result.stdout.splitlines():
+            if not line:
+                if current:
+                    blocks.append(current)
+                    current = {}
+                continue
+            key, _, value = line.partition(":")
+            # Multi-value fields print as e.g. IP4.ADDRESS[1] — only the
+            # first entry (the primary address) is wanted here.
+            base_key = key.split("[", 1)[0]
+            current.setdefault(base_key, value)
+        if current:
+            blocks.append(current)
+        return blocks
+
+    @staticmethod
+    def _parse_ip_address(raw: str) -> str | None:
+        if not raw:
+            return None
+        return raw.split("/", 1)[0]
+
+    def _active_wifi_signal(self) -> int | None:
+        """Signal strength of the currently-connected AP, if any."""
+        result = self._run(
+            ["nmcli", "-t", "-f", "ACTIVE,SIGNAL", "device", "wifi", "list"]
+        )
+        for line in result.stdout.splitlines():
+            if not line:
+                continue
+            # Split from the right for the same reason scan_networks does:
+            # SIGNAL never contains a colon, but an SSID theoretically
+            # could, so anchoring on the last colon keeps it intact.
+            active_flag, _, rest = line.partition(":")
+            if active_flag != "yes":
+                continue
+            _, _, signal_str = rest.rpartition(":")
+            try:
+                return int(signal_str)
+            except ValueError:
+                return None
         return None
 
     def scan_networks(self) -> list[WifiNetwork]:
@@ -314,13 +434,43 @@ class NmcliAdapter:
         saved_name = self._saved_wifi_connection_name()
         if saved_name is None:
             return
-        result = self._run(["nmcli", "connection", "up", "id", saved_name])
+        self.activate_connection(saved_name)
+
+    def activate_connection(self, name: str) -> None:
+        """Activate an already-saved connection profile (issue #21).
+
+        Used by the console's "switch to a different saved network" flow.
+        Unlike :meth:`connect_to_network`, this never creates a profile —
+        it only (re)activates one nmcli already knows about.
+
+        Raises:
+            WifiConnectError: The connection failed to come up.
+        """
+        result = self._run(["nmcli", "connection", "up", "id", name])
         if result.returncode != 0:
             raise WifiConnectError(
-                saved_name, result.stderr.strip() or "nmcli connection up failed"
+                name, result.stderr.strip() or "nmcli connection up failed"
             )
 
-    def connect_to_network(self, ssid: str, password: str) -> None:
+    def forget_connection(self, name: str) -> None:
+        """Delete a saved connection profile (issue #21).
+
+        Works whether or not ``name`` is currently active — NetworkManager
+        deactivates before deleting. Refuses to delete the setup AP's own
+        profile: doing so from the console would strand the AP-fallback
+        path issue #6 depends on.
+
+        Raises:
+            NmcliError: ``name`` is the setup AP profile, or the delete
+                failed.
+        """
+        if name == self._config.ap_ssid:
+            raise NmcliError(f"refusing to forget the setup AP connection {name!r}")
+        self._run_checked(["nmcli", "connection", "delete", "id", name])
+
+    def connect_to_network(
+        self, ssid: str, password: str, *, hidden: bool = False
+    ) -> None:
         """Connect to an installer-submitted SSID+password (issue #10).
 
         Unlike :meth:`_stop_ap_and_connect`, which reconnects an
@@ -338,12 +488,18 @@ class NmcliAdapter:
         never sees a plaintext secret because it only reactivates an
         already-saved profile by name.
 
+        Args:
+            hidden: The SSID is not broadcast, so nmcli must be told to
+                attempt an association blind rather than rely on a scan
+                result (issue #21's console hidden-SSID entry).
+
         Raises:
             WifiConnectError: The connect failed, e.g. a wrong password.
         """
-        result = self._run(
-            ["nmcli", "device", "wifi", "connect", ssid, "password", password]
-        )
+        args = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
+        if hidden:
+            args += ["hidden", "yes"]
+        result = self._run(args)
         if result.returncode != 0:
             raise WifiConnectError(
                 ssid, result.stderr.strip() or "nmcli device wifi connect failed"

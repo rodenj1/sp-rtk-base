@@ -26,6 +26,7 @@ from types import FrameType
 from sp_rtk_base.services.net_provision import (
     NetProvisionConfigError,
     NmcliAdapter,
+    Portal,
     ProvisioningStateStore,
     load_net_provision_config,
     run_forever,
@@ -62,15 +63,28 @@ def main() -> None:
 
     adapter = NmcliAdapter(config)
     state_store = ProvisioningStateStore()
+    portal = Portal(adapter=adapter, config=config)
     stop_event = threading.Event()
     _install_shutdown_handler(stop_event)
 
-    run_forever(
-        adapter=adapter,
-        config=config,
-        state_store=state_store,
-        stop_event=stop_event,
-    )
+    def _sync_portal(ap_active: bool) -> None:
+        if ap_active:
+            portal.start()
+        else:
+            portal.stop()
+
+    try:
+        run_forever(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            stop_event=stop_event,
+            on_ap_active=_sync_portal,
+        )
+    finally:
+        # Belt-and-braces: leaves nothing bound to port 80/53 on shutdown
+        # regardless of what AP state the last tick left the portal in.
+        portal.stop()
 
 
 if __name__ == "__main__":

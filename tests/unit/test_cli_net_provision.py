@@ -33,6 +33,7 @@ class TestMainWiring:
             patch(
                 "sp_rtk_base.cli.net_provision.ProvisioningStateStore"
             ) as mock_store_cls,
+            patch("sp_rtk_base.cli.net_provision.Portal") as mock_portal_cls,
             patch("sp_rtk_base.cli.net_provision.run_forever") as mock_run_forever,
             patch("sp_rtk_base.cli.net_provision._install_shutdown_handler"),
         ):
@@ -40,11 +41,58 @@ class TestMainWiring:
 
             mock_adapter_cls.assert_called_once_with(_CONFIG)
             mock_store_cls.assert_called_once_with()
+            mock_portal_cls.assert_called_once_with(
+                adapter=mock_adapter_cls.return_value, config=_CONFIG
+            )
             mock_run_forever.assert_called_once()
             kwargs = mock_run_forever.call_args.kwargs
             assert kwargs["adapter"] is mock_adapter_cls.return_value
             assert kwargs["config"] is _CONFIG
             assert kwargs["state_store"] is mock_store_cls.return_value
+            assert callable(kwargs["on_ap_active"])
+
+    def test_on_ap_active_callback_starts_and_stops_the_portal(self) -> None:
+        """The wiring's whole point: the portal follows the AP's status
+        without the cli needing to know anything about tick()/decide()."""
+        with (
+            patch(
+                "sp_rtk_base.cli.net_provision.load_net_provision_config",
+                return_value=_CONFIG,
+            ),
+            patch("sp_rtk_base.cli.net_provision.NmcliAdapter"),
+            patch("sp_rtk_base.cli.net_provision.ProvisioningStateStore"),
+            patch("sp_rtk_base.cli.net_provision.Portal") as mock_portal_cls,
+            patch("sp_rtk_base.cli.net_provision.run_forever") as mock_run_forever,
+            patch("sp_rtk_base.cli.net_provision._install_shutdown_handler"),
+        ):
+            main()
+            on_ap_active = mock_run_forever.call_args.kwargs["on_ap_active"]
+            portal = mock_portal_cls.return_value
+            portal.stop.reset_mock()  # clear main()'s own shutdown-cleanup call
+
+            on_ap_active(True)
+            portal.start.assert_called_once_with()
+            portal.stop.assert_not_called()
+
+            on_ap_active(False)
+            portal.stop.assert_called_once_with()
+
+    def test_stops_the_portal_after_run_forever_returns(self) -> None:
+        """Belt-and-braces cleanup on shutdown, independent of whatever
+        AP state the last tick left the portal in."""
+        with (
+            patch(
+                "sp_rtk_base.cli.net_provision.load_net_provision_config",
+                return_value=_CONFIG,
+            ),
+            patch("sp_rtk_base.cli.net_provision.NmcliAdapter"),
+            patch("sp_rtk_base.cli.net_provision.ProvisioningStateStore"),
+            patch("sp_rtk_base.cli.net_provision.Portal") as mock_portal_cls,
+            patch("sp_rtk_base.cli.net_provision.run_forever"),
+            patch("sp_rtk_base.cli.net_provision._install_shutdown_handler"),
+        ):
+            main()
+            mock_portal_cls.return_value.stop.assert_called_once_with()
 
     def test_main_installs_the_shutdown_handler_before_running(self) -> None:
         with (
@@ -54,6 +102,7 @@ class TestMainWiring:
             ),
             patch("sp_rtk_base.cli.net_provision.NmcliAdapter"),
             patch("sp_rtk_base.cli.net_provision.ProvisioningStateStore"),
+            patch("sp_rtk_base.cli.net_provision.Portal"),
             patch("sp_rtk_base.cli.net_provision.run_forever") as mock_run_forever,
             patch(
                 "sp_rtk_base.cli.net_provision._install_shutdown_handler"

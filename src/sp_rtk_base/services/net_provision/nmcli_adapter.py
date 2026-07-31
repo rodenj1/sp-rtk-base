@@ -31,6 +31,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    WifiNetwork,
 )
 
 NmcliRunner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
@@ -82,6 +83,7 @@ class NmcliAdapter:
         self._config = config
         self._run = runner
         self._saved_wifi_seen = False
+        self._last_scan: list[WifiNetwork] = []
 
     # ------------------------------------------------------------------
     # Reads
@@ -161,11 +163,64 @@ class NmcliAdapter:
                 return name
         return None
 
-    def _scan_ssids(self) -> set[str]:
+    def scan_networks(self) -> list[WifiNetwork]:
+        """Scan for nearby WiFi networks, for the WiFi-picker portal (issue #10).
+
+        A single-radio Pi can only scan while it isn't itself acting as
+        the AP, so callers are the AP lifecycle methods below, not the
+        portal directly — the portal reads :meth:`latest_scan` instead.
+
+        Returns:
+            One entry per SSID, strongest signal first. A network seen
+            on multiple BSSIDs (repeaters, band-steering) collapses to
+            its single strongest reading.
+        """
         result = self._run(
-            ["nmcli", "-t", "-f", "SSID", "device", "wifi", "list", "--rescan", "yes"]
+            [
+                "nmcli",
+                "-t",
+                "-f",
+                "SSID,SIGNAL,SECURITY",
+                "device",
+                "wifi",
+                "list",
+                "--rescan",
+                "yes",
+            ]
         )
-        return {line for line in result.stdout.splitlines() if line}
+        best_by_ssid: dict[str, WifiNetwork] = {}
+        for line in result.stdout.splitlines():
+            if not line:
+                continue
+            # Split from the right: SIGNAL/SECURITY never contain a colon,
+            # but an SSID theoretically could, so anchoring on the last
+            # two colons keeps an SSID with colons in it intact.
+            parts = line.rsplit(":", 2)
+            if len(parts) != 3:
+                continue
+            ssid, signal_str, security_raw = parts
+            if not ssid:
+                continue
+            try:
+                signal = int(signal_str)
+            except ValueError:
+                continue
+            security = "" if security_raw == "--" else security_raw
+            existing = best_by_ssid.get(ssid)
+            if existing is None or signal > existing.signal:
+                best_by_ssid[ssid] = WifiNetwork(
+                    ssid=ssid, signal=signal, security=security
+                )
+        return sorted(best_by_ssid.values(), key=lambda n: n.signal, reverse=True)
+
+    def latest_scan(self) -> list[WifiNetwork]:
+        """The scan cached by the most recent AP (re)start or rescan.
+
+        Fed to the WiFi-picker portal (issue #10): the radio can't scan
+        again while serving the AP an installer's phone is connected to,
+        so this is a cache rather than a fresh read.
+        """
+        return list(self._last_scan)
 
     # ------------------------------------------------------------------
     # Commands
@@ -215,6 +270,11 @@ class NmcliAdapter:
         # saved_wifi_visible = False until a scan taken during *this*
         # session says otherwise.
         self._saved_wifi_seen = False
+        # The radio is free right up until the AP comes up — the one
+        # moment a scan is cheap — so the portal (issue #10) has a
+        # network list ready the instant an installer's phone associates,
+        # rather than an empty list until the first RESCAN cycle.
+        self._last_scan = self.scan_networks()
         self._ap_up()
 
     def _rescan(self) -> None:
@@ -226,7 +286,10 @@ class NmcliAdapter:
         # is the entire point of this method.
         self._ap_down()
         saved_name = self._saved_wifi_connection_name()
-        if saved_name is not None and saved_name in self._scan_ssids():
+        self._last_scan = self.scan_networks()
+        if saved_name is not None and any(
+            n.ssid == saved_name for n in self._last_scan
+        ):
             self._saved_wifi_seen = True
         self._ap_up()
 
@@ -250,4 +313,33 @@ class NmcliAdapter:
         if result.returncode != 0:
             raise WifiConnectError(
                 saved_name, result.stderr.strip() or "nmcli connection up failed"
+            )
+
+    def connect_to_network(self, ssid: str, password: str) -> None:
+        """Connect to an installer-submitted SSID+password (issue #10).
+
+        Unlike :meth:`_stop_ap_and_connect`, which reconnects an
+        already-*saved* profile chosen by :func:`decide`, this creates
+        and activates a profile for whatever network the installer typed
+        into the WiFi-picker portal. Deliberately does not call
+        :meth:`_ap_down` first: NetworkManager tears the AP down itself
+        as part of activating the new connection — a single-radio device
+        can only run one — so a caller-issued teardown would just race it.
+
+        The password is briefly visible in this process's argv (e.g. via
+        `ps`/`/proc`) — an accepted tradeoff, since `nmcli device wifi
+        connect` has no other way to pass a PSK on first connect to an
+        unsaved network. Contrast :meth:`_stop_ap_and_connect`, which
+        never sees a plaintext secret because it only reactivates an
+        already-saved profile by name.
+
+        Raises:
+            WifiConnectError: The connect failed, e.g. a wrong password.
+        """
+        result = self._run(
+            ["nmcli", "device", "wifi", "connect", ssid, "password", password]
+        )
+        if result.returncode != 0:
+            raise WifiConnectError(
+                ssid, result.stderr.strip() or "nmcli device wifi connect failed"
             )

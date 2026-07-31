@@ -61,6 +61,26 @@ def read_system_uptime_seconds() -> float:
         return float(f.readline().split()[0])
 
 
+def _resulting_ap_active(state: NetworkState, action: ProvisionAction) -> bool:
+    """Whether the AP is up *after* ``execute(action)`` has run.
+
+    ``state.ap_active`` is what nmcli reported *before* this tick's
+    execute() call — decide() saw it and chose ``action`` from it, but a
+    caller reacting to the AP's live status (the WiFi-picker portal,
+    issue #10) needs to know what's true now, not what was true a
+    moment ago. START_AP/STOP_AP_AND_CONNECT change it; IDLE leaves it
+    as-is; RESCAN's down/up cycle restores it to active by the time
+    execute() returns.
+    """
+    if action is ProvisionAction.START_AP:
+        return True
+    if action is ProvisionAction.STOP_AP_AND_CONNECT:
+        return False
+    if action is ProvisionAction.RESCAN:
+        return True
+    return state.ap_active
+
+
 def tick(
     *,
     adapter: ProvisioningAdapter,
@@ -68,6 +88,7 @@ def tick(
     state_store: ProvisioningStateStore,
     now_fn: Callable[[], float] = time.time,
     uptime_fn: Callable[[], float] = read_system_uptime_seconds,
+    on_ap_active: Callable[[bool], None] | None = None,
 ) -> ProvisionAction:
     """Run one supervisor iteration and return the action taken.
 
@@ -95,6 +116,11 @@ def tick(
         state_store: Durable clock storage.
         now_fn: Wall-clock source; overridable for tests.
         uptime_fn: System-uptime source; overridable for tests.
+        on_ap_active: Called once per tick with whether the AP is up
+            *after* ``execute()`` ran (see :func:`_resulting_ap_active`).
+            The WiFi-picker portal (issue #10) uses this to start/stop
+            itself; its own start()/stop() are idempotent, so calling it
+            every tick regardless of change is fine.
 
     Returns:
         The action :func:`decide` chose (already executed).
@@ -122,6 +148,9 @@ def tick(
     action = decide(state, config)
     adapter.execute(action)
 
+    if on_ap_active is not None:
+        on_ap_active(_resulting_ap_active(state, action))
+
     new_clocks = ProvisioningClockState(
         last_uplink_at=now if state.has_uplink else clocks.last_uplink_at,
         ap_started_at=(
@@ -144,6 +173,7 @@ def run_forever(
     stop_event: threading.Event,
     now_fn: Callable[[], float] = time.time,
     uptime_fn: Callable[[], float] = read_system_uptime_seconds,
+    on_ap_active: Callable[[bool], None] | None = None,
 ) -> None:
     """Tick on ``config.poll_interval_seconds`` until ``stop_event`` fires.
 
@@ -153,6 +183,10 @@ def run_forever(
     into one. ``stop_event.wait`` doubles as the interruptible sleep so
     a signal handler can end the loop promptly instead of waiting out
     a full poll interval.
+
+    Args:
+        on_ap_active: See :func:`tick` — passed straight through, and
+            invoked once per tick.
     """
     logger.info(
         "Provisioning supervisor starting (poll interval %.1fs)",
@@ -166,6 +200,7 @@ def run_forever(
                 state_store=state_store,
                 now_fn=now_fn,
                 uptime_fn=uptime_fn,
+                on_ap_active=on_ap_active,
             )
             logger.info("Provisioning tick: action=%s", action.value)
         except Exception:

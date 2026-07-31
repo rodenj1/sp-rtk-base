@@ -335,6 +335,129 @@ class TestDecideAndExecute:
         assert action is ProvisionAction.IDLE
 
 
+class TestOnApActiveCallback:
+    """tick()/run_forever() report the resulting AP state so a caller
+
+    (the WiFi-picker portal's start()/stop(), issue #10) can follow it
+    without polling nmcli itself.
+    """
+
+    def test_defaults_to_none_and_does_not_raise(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        tick(
+            adapter=FakeAdapter(_CONNECTED_STATE),
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+    def test_start_ap_reports_true_even_though_the_pre_execute_state_was_false(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        """The state read at the top of the tick reflects nmcli *before*
+        execute() ran — decide() saw ap_active=False and chose START_AP.
+        The callback must reflect what's true *after* execute(), not the
+        stale pre-execute reading, or the portal would only start a full
+        poll interval late."""
+        just_booted_no_ap = NetworkState(
+            uplink_connectivity=Connectivity.NONE,
+            seconds_since_boot=9_999.0,
+            seconds_disconnected=9_999.0,
+            ap_active=False,
+        )
+        adapter = FakeAdapter(just_booted_no_ap)
+        calls: list[bool] = []
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 9_999.0,
+            on_ap_active=calls.append,
+        )
+        assert action is ProvisionAction.START_AP
+        assert calls == [True]
+
+    def test_stop_ap_and_connect_reports_false(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        state = NetworkState(
+            uplink_connectivity=Connectivity.FULL,
+            seconds_since_boot=999.0,
+            seconds_disconnected=0.0,
+            ap_active=True,
+            seconds_in_ap=10.0,
+        )
+        adapter = FakeAdapter(state)
+        calls: list[bool] = []
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+            on_ap_active=calls.append,
+        )
+        assert calls == [False]
+
+    def test_idle_reports_the_unchanged_current_ap_state(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(_CONNECTED_STATE)  # ap_active=False, decide()->IDLE
+        calls: list[bool] = []
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+            on_ap_active=calls.append,
+        )
+        assert calls == [False]
+
+    def test_rescan_reports_true_since_the_ap_resumes(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        state = NetworkState(
+            uplink_connectivity=Connectivity.NONE,
+            seconds_since_boot=999.0,
+            seconds_disconnected=999.0,
+            ap_active=True,
+            seconds_in_ap=999.0,  # past rescan_interval_seconds
+        )
+        adapter = FakeAdapter(state)
+        calls: list[bool] = []
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+            on_ap_active=calls.append,
+        )
+        assert action is ProvisionAction.RESCAN
+        assert calls == [True]
+
+    def test_run_forever_invokes_the_callback_once_per_tick(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(_CONNECTED_STATE)
+        stop_event = FakeStopEvent(stop_after=3)
+        calls: list[bool] = []
+        run_forever(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            stop_event=stop_event,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+            on_ap_active=calls.append,
+        )
+        assert calls == [False, False, False]
+
+
 class TestRunForever:
     """The loop wrapper: tick on an interval until told to stop."""
 

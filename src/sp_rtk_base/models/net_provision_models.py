@@ -116,6 +116,24 @@ class NetworkState(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# WiFi scan results
+# ---------------------------------------------------------------------------
+
+
+class WifiNetwork(BaseModel):
+    """One network from an nmcli scan, as rendered by the WiFi-picker portal."""
+
+    ssid: str = Field(description="Network name")
+    signal: int = Field(ge=0, le=100, description="Signal strength percent")
+    security: str = Field(
+        description=(
+            "Security type (e.g. 'WPA2'), or empty for an open network — "
+            "the adapter normalizes nmcli's '--' column to ''."
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 
@@ -197,5 +215,37 @@ class NetProvisionConfig(BaseModel):
             "How often the supervisor loop re-reads state and calls "
             "decide(). Must be finer-grained than the other thresholds "
             "or the loop can sleep straight through them."
+        ),
+    )
+    ap_gateway_ip: str = Field(
+        default="10.42.0.1",
+        min_length=1,
+        description=(
+            "The setup AP's own address — NetworkManager's `shared`-mode "
+            "hotspot default is 10.42.0.1/24. The wildcard DNS responder "
+            "answers every lookup with this address, and it is the "
+            "documented manual-URL fallback if the captive-portal prompt "
+            "doesn't auto-pop."
+        ),
+    )
+    portal_http_port: int = Field(
+        default=80,
+        ge=0,
+        le=65535,
+        description=(
+            "Port the WiFi-picker portal listens on. OS captive-portal "
+            "probes use plain http:// with no port, so this must be 80 "
+            "in production. 0 (bind an OS-assigned ephemeral port) is "
+            "allowed for tests."
+        ),
+    )
+    portal_dns_port: int = Field(
+        default=53,
+        ge=0,
+        le=65535,
+        description=(
+            "Port the wildcard DNS responder listens on. Must be 53 in "
+            "production for OS DNS resolution to reach it. 0 (bind an "
+            "OS-assigned ephemeral port) is allowed for tests."
         ),
     )

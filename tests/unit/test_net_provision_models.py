@@ -18,6 +18,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    WifiNetwork,
 )
 
 _PASSWORD = "sticker-secret"
@@ -159,6 +160,57 @@ class TestNetworkStateValidation:
         assert state.seconds_in_ap == 0.0
         assert not state.saved_wifi_known
         assert not state.saved_wifi_visible
+
+
+class TestPortalConfigDefaults:
+    """Knobs the WiFi-picker captive portal (issue #10) needs."""
+
+    def test_ap_gateway_ip_defaults_to_nm_shared_mode_convention(self) -> None:
+        """NM's `shared` hotspot mode defaults to 10.42.0.1/24; the portal
+        and wildcard DNS both answer with this address unless a
+        deployment's AP profile (issue #11) uses a different subnet."""
+        config = NetProvisionConfig(ap_password=_PASSWORD)
+        assert config.ap_gateway_ip == "10.42.0.1"
+
+    def test_portal_http_port_defaults_to_80(self) -> None:
+        """OS captive-portal probes hit plain http:// with no port, so the
+        portal must listen on 80 for the auto-popup to work at all."""
+        config = NetProvisionConfig(ap_password=_PASSWORD)
+        assert config.portal_http_port == 80
+
+    def test_portal_dns_port_defaults_to_53(self) -> None:
+        config = NetProvisionConfig(ap_password=_PASSWORD)
+        assert config.portal_dns_port == 53
+
+    def test_portal_ports_are_overridable(self) -> None:
+        """Tests (and unusual deployments) need to bind non-privileged ports."""
+        config = NetProvisionConfig(
+            ap_password=_PASSWORD, portal_http_port=8080, portal_dns_port=5353
+        )
+        assert config.portal_http_port == 8080
+        assert config.portal_dns_port == 5353
+
+
+class TestWifiNetwork:
+    """The scan-result shape the portal renders (issue #10)."""
+
+    def test_holds_ssid_signal_and_security(self) -> None:
+        network = WifiNetwork(ssid="SiteWiFi", signal=72, security="WPA2")
+        assert network.ssid == "SiteWiFi"
+        assert network.signal == 72
+        assert network.security == "WPA2"
+
+    def test_open_network_has_empty_security(self) -> None:
+        """nmcli reports `--` for an open network's SECURITY column; the
+        adapter normalizes that to an empty string so the portal can
+        render a plain "open" label without nmcli-specific knowledge."""
+        network = WifiNetwork(ssid="Guest", signal=50, security="")
+        assert network.security == ""
+
+    @pytest.mark.parametrize("signal", [-1, 101])
+    def test_signal_out_of_percent_range_is_rejected(self, signal: int) -> None:
+        with pytest.raises(ValidationError):
+            WifiNetwork(ssid="SiteWiFi", signal=signal, security="WPA2")
 
 
 class TestEnumWireValues:

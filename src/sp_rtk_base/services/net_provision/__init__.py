@@ -7,9 +7,10 @@ decision core that chooses *when* to flip between client and AP mode
 (:func:`decide`), the nmcli adapter that reads state and executes the
 chosen action (:class:`NmcliAdapter`), the durable clock store that
 survives a service restart (:class:`ProvisioningStateStore`), the
-strict config loader (:func:`load_net_provision_config`), and the
+strict config loader (:func:`load_net_provision_config`), the
 supervisor loop that ties them all together on a timer
-(:func:`run_forever`).
+(:func:`run_forever`), and the AP-mode WiFi-picker captive portal
+(:class:`Portal`) that lets an installer choose the site network.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from sp_rtk_base.services.net_provision.nmcli_adapter import (
     NmcliError,
     WifiConnectError,
 )
+from sp_rtk_base.services.net_provision.portal import Portal
 from sp_rtk_base.services.net_provision.state_store import (
     ProvisioningClockState,
     ProvisioningStateStore,
@@ -34,6 +36,7 @@ __all__ = [
     "NetProvisionConfigError",
     "NmcliAdapter",
     "NmcliError",
+    "Portal",
     "ProvisioningClockState",
     "ProvisioningStateStore",
     "WifiConnectError",

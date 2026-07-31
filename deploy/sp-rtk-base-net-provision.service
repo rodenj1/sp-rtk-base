@@ -21,6 +21,12 @@ ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-net-provision
 Restart=on-failure
 RestartSec=5
 
+# The WiFi-picker captive portal (issue #10) binds ports 80 (HTTP) and
+# 53 (wildcard DNS) while the setup AP is active. Both are privileged
+# ports the non-root User= above can't bind without this.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
 # --- Sandboxing / hardening ---------------------------------------------
 # Safe to leave enabled on Raspberry Pi OS Bookworm and any modern Debian.
 # Comment any line out if you hit permission errors during bring-up.

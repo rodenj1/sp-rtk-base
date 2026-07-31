@@ -21,6 +21,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    WifiNetwork,
 )
 from sp_rtk_base.services.net_provision import (
     NmcliAdapter,
@@ -34,10 +35,25 @@ SAVED_SSID = "SiteWiFi"
 ACTIVE_CONNECTIONS = ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"]
 CONNECTIVITY_CHECK = ["nmcli", "-t", "networking", "connectivity", "check"]
 ALL_CONNECTIONS = ["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"]
-SCAN = ["nmcli", "-t", "-f", "SSID", "device", "wifi", "list", "--rescan", "yes"]
+SCAN = [
+    "nmcli",
+    "-t",
+    "-f",
+    "SSID,SIGNAL,SECURITY",
+    "device",
+    "wifi",
+    "list",
+    "--rescan",
+    "yes",
+]
 AP_UP = ["nmcli", "connection", "up", "id", AP_SSID]
 AP_DOWN = ["nmcli", "connection", "down", "id", AP_SSID]
 SAVED_UP = ["nmcli", "connection", "up", "id", SAVED_SSID]
+
+
+def _scan_line(ssid: str, signal: int = 50, security: str = "WPA2") -> str:
+    """One `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list` line."""
+    return f"{ssid}:{signal}:{security}"
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +224,9 @@ class TestSavedWifiVisible:
     def test_true_after_rescan_finds_saved_ssid(self) -> None:
         fake = FakeNmcli()
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
-        fake.set_response(SCAN, stdout=f"OtherNetwork\n{SAVED_SSID}\n")
+        fake.set_response(
+            SCAN, stdout=f"{_scan_line('OtherNetwork')}\n{_scan_line(SAVED_SSID)}\n"
+        )
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
         state = _read_state(adapter)
@@ -217,7 +235,7 @@ class TestSavedWifiVisible:
     def test_false_after_rescan_does_not_find_saved_ssid(self) -> None:
         fake = FakeNmcli()
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
-        fake.set_response(SCAN, stdout="OtherNetwork\n")
+        fake.set_response(SCAN, stdout=f"{_scan_line('OtherNetwork')}\n")
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
         state = _read_state(adapter)
@@ -230,7 +248,7 @@ class TestSavedWifiVisible:
         down/up (which is what sets it in the first place)."""
         fake = FakeNmcli()
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
-        fake.set_response(SCAN, stdout=f"{SAVED_SSID}\n")
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
         adapter.execute(ProvisionAction.START_AP)
@@ -251,10 +269,23 @@ class TestExecuteIdle:
 
 
 class TestExecuteStartAp:
-    def test_activates_ap_connection(self) -> None:
+    def test_scans_then_activates_ap_connection(self) -> None:
+        """The radio is free right up until the AP comes up — this is the
+        one moment a fresh scan is cheap, so the portal has a network list
+        ready the instant an installer's phone associates."""
         fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
         _adapter(fake).execute(ProvisionAction.START_AP)
-        assert fake.calls == [AP_UP]
+        assert fake.calls == [SCAN, AP_UP]
+
+    def test_caches_the_pre_ap_scan_for_the_portal(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID, signal=80)}\n")
+        adapter = _adapter(fake)
+        adapter.execute(ProvisionAction.START_AP)
+        assert adapter.latest_scan() == [
+            WifiNetwork(ssid=SAVED_SSID, signal=80, security="WPA2")
+        ]
 
     def test_raises_nmcli_error_when_ap_fails_to_come_up(self) -> None:
         fake = FakeNmcli()
@@ -275,7 +306,7 @@ class TestExecuteRescan:
         active again on the next tick."""
         fake = FakeNmcli()
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
-        fake.set_response(SCAN, stdout=f"{SAVED_SSID}\n")
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
         assert fake.calls == [AP_DOWN, ALL_CONNECTIONS, SCAN, AP_UP]
@@ -287,6 +318,16 @@ class TestExecuteRescan:
         adapter.execute(ProvisionAction.RESCAN)
         assert fake.calls[-1] == AP_UP
         assert _read_state(adapter).saved_wifi_visible is False
+
+    def test_caches_the_rescan_results_for_the_portal(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout="")
+        fake.set_response(SCAN, stdout=f"{_scan_line('OtherNetwork', signal=40)}\n")
+        adapter = _adapter(fake)
+        adapter.execute(ProvisionAction.RESCAN)
+        assert adapter.latest_scan() == [
+            WifiNetwork(ssid="OtherNetwork", signal=40, security="WPA2")
+        ]
 
     def test_raises_nmcli_error_when_ap_fails_to_resume(self) -> None:
         fake = FakeNmcli()
@@ -352,3 +393,120 @@ class TestExecuteStopApAndConnect:
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.STOP_AP_AND_CONNECT)
         assert fake.calls == [ACTIVE_CONNECTIONS]
+
+
+# ---------------------------------------------------------------------------
+# scan_networks() — public scan-with-metadata (issue #10)
+# ---------------------------------------------------------------------------
+
+
+class TestScanNetworks:
+    def test_parses_ssid_signal_and_security(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID, signal=64)}\n")
+        networks = _adapter(fake).scan_networks()
+        assert networks == [WifiNetwork(ssid=SAVED_SSID, signal=64, security="WPA2")]
+
+    def test_normalizes_open_network_security_dash_to_empty_string(self) -> None:
+        """nmcli prints `--` in the SECURITY column for an open network —
+        the portal shouldn't have to know nmcli-specific sentinels."""
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line('Guest', security='--')}\n")
+        networks = _adapter(fake).scan_networks()
+        assert networks[0].security == ""
+
+    def test_sorts_strongest_signal_first(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN,
+            stdout=(
+                f"{_scan_line('Weak', signal=20)}\n{_scan_line('Strong', signal=90)}\n"
+            ),
+        )
+        networks = _adapter(fake).scan_networks()
+        assert [n.ssid for n in networks] == ["Strong", "Weak"]
+
+    def test_deduplicates_by_ssid_keeping_the_strongest_signal(self) -> None:
+        """The same network can show up once per BSSID (repeater APs,
+        band-steering); the portal wants one row per SSID to pick from."""
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN,
+            stdout=(
+                f"{_scan_line(SAVED_SSID, signal=30)}\n"
+                f"{_scan_line(SAVED_SSID, signal=75)}\n"
+            ),
+        )
+        networks = _adapter(fake).scan_networks()
+        assert networks == [WifiNetwork(ssid=SAVED_SSID, signal=75, security="WPA2")]
+
+    def test_ignores_blank_lines(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"\n{_scan_line(SAVED_SSID)}\n\n")
+        networks = _adapter(fake).scan_networks()
+        assert len(networks) == 1
+
+    def test_empty_scan_yields_no_networks(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout="")
+        assert _adapter(fake).scan_networks() == []
+
+
+# ---------------------------------------------------------------------------
+# latest_scan() — cache read by the portal (issue #10)
+# ---------------------------------------------------------------------------
+
+
+class TestLatestScan:
+    def test_empty_before_any_ap_session_or_rescan(self) -> None:
+        fake = FakeNmcli()
+        assert _adapter(fake).latest_scan() == []
+
+    def test_returns_a_copy_not_the_internal_list(self) -> None:
+        """Callers (the portal) must not be able to corrupt adapter state
+        by mutating what they got back."""
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
+        adapter = _adapter(fake)
+        adapter.execute(ProvisionAction.START_AP)
+        adapter.latest_scan().clear()
+        assert adapter.latest_scan() != []
+
+
+# ---------------------------------------------------------------------------
+# connect_to_network() — installer-submitted SSID+password (issue #10)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectToNetwork:
+    def test_issues_nmcli_device_wifi_connect(self) -> None:
+        fake = FakeNmcli()
+        _adapter(fake).connect_to_network("SiteWiFi", "hunter22")
+        assert fake.calls == [
+            ["nmcli", "device", "wifi", "connect", "SiteWiFi", "password", "hunter22"]
+        ]
+
+    def test_raises_wifi_connect_error_on_wrong_password(self) -> None:
+        fake = FakeNmcli()
+        connect_cmd = [
+            "nmcli",
+            "device",
+            "wifi",
+            "connect",
+            "SiteWiFi",
+            "password",
+            "wrong",
+        ]
+        fake.set_response(
+            connect_cmd,
+            stderr="Error: Connection activation failed: Secrets were required.",
+            returncode=4,
+        )
+        adapter = _adapter(fake)
+        with pytest.raises(WifiConnectError) as exc_info:
+            adapter.connect_to_network("SiteWiFi", "wrong")
+        assert exc_info.value.ssid == "SiteWiFi"
+
+    def test_succeeds_silently_on_a_correct_password(self) -> None:
+        fake = FakeNmcli()
+        _adapter(fake).connect_to_network("SiteWiFi", "hunter22")  # no raise

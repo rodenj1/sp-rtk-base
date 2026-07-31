@@ -186,6 +186,21 @@ Durable clocks (`seconds_disconnected` / `seconds_in_ap`) persist to
 `/var/lib/sp-rtk-base/net_provision_state.json` so a service restart
 doesn't reset the fallback-window or AP-rescan timers.
 
+### WiFi-picker captive portal
+
+While the setup AP is up, the same process also runs a minimal HTTP
+server (port 80) and a wildcard DNS responder (port 53) — this is why
+the systemd unit grants `AmbientCapabilities=CAP_NET_BIND_SERVICE`.
+
+For an installer: join the AP (`ap_ssid` / `ap_password` from
+`net_provision.yaml`) with a phone, and the "Sign in to network"
+prompt should pop up automatically. **If it doesn't**, open a browser
+and visit `http://<ap_gateway_ip>/` (default `10.42.0.1`, NetworkManager's
+`shared`-mode hotspot address) — this is the manual fallback and reaches
+the exact same picker page. Choose a network from the scan, enter its
+password, and submit; a wrong password re-shows the form with an error
+so you can retry.
+
 ---
 
 ## Day-2 operations

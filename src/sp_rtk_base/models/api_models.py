@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.models.net_provision_models import ActiveLink
+
 # ---------------------------------------------------------------------------
 # Relay status response models
 # ---------------------------------------------------------------------------
@@ -218,6 +220,89 @@ class DeviceConnectRequest(BaseModel):
 
 class DeviceActionResponse(BaseModel):
     """Generic response for device control actions."""
+
+    status: str
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Network request/response models
+# ---------------------------------------------------------------------------
+
+
+class NetworkStatusResponse(BaseModel):
+    """Snapshot of the device's current network link, for the console."""
+
+    configured: bool = Field(
+        description=(
+            "Whether net-provisioning config exists on this device. False "
+            "means the box was never set up for headless provisioning "
+            "(issue #6+) and no live network data is available."
+        )
+    )
+    link: ActiveLink | None = Field(
+        default=None,
+        description="Current wired or WiFi link, or None if neither is active",
+    )
+
+
+class NetworkFallbackInfoResponse(BaseModel):
+    """AP-fallback config values for the console's pre-apply session-drop warning.
+
+    Values come straight from the device's provisioning config (issue
+    #6) rather than being hard-coded, so the warning stays accurate if
+    an installer's config overrides the defaults.
+    """
+
+    ap_ssid: str = Field(description="Setup-AP SSID printed on the device sticker")
+    fallback_window_seconds: float = Field(
+        description=(
+            "Seconds a provisioned device tolerates having no network "
+            "before the setup AP reappears"
+        )
+    )
+
+
+class NetworkConnectRequest(BaseModel):
+    """Request body for joining a WiFi network (issue #23).
+
+    Covers both a network picked from the scan list and a hidden SSID
+    typed in manually — the only difference is ``hidden``.
+    """
+
+    ssid: str = Field(min_length=1, max_length=32, description="Network SSID")
+    password: str = Field(
+        default="", description="WPA passphrase; empty for an open network"
+    )
+    hidden: bool = Field(
+        default=False,
+        description=(
+            "The SSID is not broadcast, so nmcli must attempt the "
+            "association blind rather than matching a scan result"
+        ),
+    )
+
+
+class NetworkConnectResponse(BaseModel):
+    """Fire-and-acknowledge response for a WiFi connect request (issue #23).
+
+    ``status='accepted'`` means NetworkManager was instructed, not that
+    the device is now on the new network — the console warns the
+    operator about this distinction before it ever sends the request.
+    """
+
+    status: str
+    message: str
+
+
+class NetworkActionResponse(BaseModel):
+    """Fire-and-acknowledge response for a WiFi switch or forget request (issue #24).
+
+    Same shape and semantics as :class:`NetworkConnectResponse`:
+    ``status='accepted'`` means NetworkManager was instructed, not that
+    the switch/forget has completed — either can drop the very console
+    session that made the request before the real outcome is known.
+    """
 
     status: str
     message: str

@@ -28,6 +28,7 @@ from sp_rtk_base.api.device import router as device_router
 from sp_rtk_base.api.events import router as events_router
 from sp_rtk_base.api.health import router as health_router
 from sp_rtk_base.api.metrics import router as metrics_router
+from sp_rtk_base.api.network import router as network_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
 
@@ -71,6 +72,7 @@ def create_api_app() -> FastAPI:
     api.include_router(metrics_router)
     api.include_router(config_router)
     api.include_router(device_router)
+    api.include_router(network_router)
     return api
 
 
@@ -202,12 +204,13 @@ def init_app() -> None:
     from sp_rtk_base.ui.pages import dashboard as _dashboard
     from sp_rtk_base.ui.pages import gps_config as _gps_config
     from sp_rtk_base.ui.pages import input as _input
+    from sp_rtk_base.ui.pages import network as _network
     from sp_rtk_base.ui.pages import outputs as _outputs
     from sp_rtk_base.ui.pages import settings as _settings
     from sp_rtk_base.ui.pages import survey as _survey
 
     # Reference the modules to prevent "unused import" removal
-    _ = (_dashboard, _gps_config, _input, _outputs, _settings, _survey)
+    _ = (_dashboard, _gps_config, _input, _network, _outputs, _settings, _survey)
 
     app.on_startup(startup_services)
     app.on_shutdown(shutdown_services)

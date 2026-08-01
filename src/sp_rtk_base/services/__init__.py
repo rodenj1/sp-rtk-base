@@ -26,6 +26,7 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
+from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.relay_service import RelayService
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ config_service: ConfigService = ConfigService()
 event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
 device_service: DeviceService = DeviceService()
+network_service: NetworkService = NetworkService()
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +157,15 @@ def get_device_service() -> DeviceService:
         The application's DeviceService instance.
     """
     return device_service
+
+
+def get_network_service() -> NetworkService:
+    """Get the singleton NetworkService instance.
+
+    Returns:
+        The application's NetworkService instance.
+    """
+    return network_service
 
 
 # ---------------------------------------------------------------------------

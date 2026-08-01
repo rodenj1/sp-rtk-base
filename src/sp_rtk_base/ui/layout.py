@@ -38,6 +38,7 @@ NAVIGATION_SECTIONS: list[tuple[str | None, list[tuple[str, str, str]]]] = [
     (
         "System",
         [
+            ("Network", "/network", "wifi"),
             ("Settings", "/settings", "settings"),
             ("Advanced GPS", "/gps-config", "memory"),
         ],

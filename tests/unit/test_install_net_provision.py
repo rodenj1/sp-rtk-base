@@ -23,6 +23,7 @@ from sp_rtk_base.models.net_provision_models import NetProvisionConfig
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "deploy" / "install.sh"
 UNINSTALL_SCRIPT = REPO_ROOT / "deploy" / "uninstall.sh"
+APP_SERVICE_UNIT = REPO_ROOT / "deploy" / "sp-rtk-base.service"
 
 # Matches the unquoted heredoc `cat >"$net_provision_cfg" <<YAML … YAML` —
 # unlike config.yaml's heredoc this one is unquoted so $AP_SSID/$AP_PASSWORD
@@ -264,6 +265,26 @@ class TestApConnectionProfile:
         assert re.search(r"--\s*\\\n\s*802-11-wireless\.band", block)
         assert "ipv4.method shared" in block
         assert "wifi-sec.key-mgmt wpa-psk" in block
+
+
+class TestMainAppServiceHasNetProvisionEnv:
+    """The Network console page (issues #22-24) reads net-provisioning
+    config through the same :func:`load_net_provision_config` the
+    provisioning supervisor uses, from inside the *main* app process —
+    not just the separate ``sp-rtk-base-net-provision.service``. Without
+    ``SP_RTK_BASE_NET_CONFIG`` set here too, the loader falls back to a
+    ``~/.config`` path that doesn't exist for the homeless ``sp-rtk-base``
+    system user, and every ``/api/network/*`` call 502s in production
+    even though the provisioning supervisor itself runs fine.
+    """
+
+    def test_sets_net_provision_config_env_var(self) -> None:
+        assert APP_SERVICE_UNIT.is_file(), f"unit file not found: {APP_SERVICE_UNIT}"
+        text = APP_SERVICE_UNIT.read_text(encoding="utf-8")
+        assert (
+            "Environment=SP_RTK_BASE_NET_CONFIG=/etc/sp-rtk-base/net_provision.yaml"
+            in text
+        )
 
 
 class TestUninstallerRemovesApProfile:

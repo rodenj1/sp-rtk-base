@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "deploy" / "install.sh"
 UNINSTALL_SCRIPT = REPO_ROOT / "deploy" / "uninstall.sh"
 APP_SERVICE_UNIT = REPO_ROOT / "deploy" / "sp-rtk-base.service"
+POLKIT_RULE = REPO_ROOT / "deploy" / "polkit" / "10-sp-rtk-base-net-provision.rules"
 
 # Matches the unquoted heredoc `cat >"$net_provision_cfg" <<YAML … YAML` —
 # unlike config.yaml's heredoc this one is unquoted so $AP_SSID/$AP_PASSWORD
@@ -285,6 +286,25 @@ class TestMainAppServiceHasNetProvisionEnv:
             "Environment=SP_RTK_BASE_NET_CONFIG=/etc/sp-rtk-base/net_provision.yaml"
             in text
         )
+
+
+class TestPolkitRuleGrantsWifiShare:
+    """Activating the setup AP is a WPA2-PSK shared-mode connection,
+    which NetworkManager gates behind the ``wifi.share.protected``
+    polkit action specifically — separate from the broader
+    ``network-control`` action the rule already grants. Missing it means
+    ``nmcli connection up id <ap_ssid>`` fails with "Not authorized to
+    share connections via wifi" and the setup AP can never come up,
+    silently breaking the one fallback path a stranded device has.
+    Caught by deploying to real hardware — no nmcli/polkit mock can
+    exercise this, so it's pinned here as a static-text check like the
+    rest of this module.
+    """
+
+    def test_grants_wifi_share_protected(self) -> None:
+        assert POLKIT_RULE.is_file(), f"polkit rule not found: {POLKIT_RULE}"
+        text = POLKIT_RULE.read_text(encoding="utf-8")
+        assert '"org.freedesktop.NetworkManager.wifi.share.protected"' in text
 
 
 class TestUninstallerRemovesApProfile:

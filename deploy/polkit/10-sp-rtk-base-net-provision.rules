@@ -9,11 +9,19 @@
 // no logged-in session and no console to prompt — so every
 // `nmcli connection up/down` / rescan call from the provisioning
 // supervisor would be silently refused without this rule.
+//
+// `wifi.share.protected` is its own separate action, distinct from
+// `network-control` — NetworkManager gates activating any WPA2-PSK
+// shared-mode (hotspot) connection behind it specifically. Without it,
+// `nmcli connection up id <ap_ssid>` fails with "Not authorized to
+// share connections via wifi" and the setup AP can never come up,
+// silently breaking the one fallback path a stranded device has.
 polkit.addRule(function (action, subject) {
     var actions = [
         "org.freedesktop.NetworkManager.network-control",
         "org.freedesktop.NetworkManager.enable-disable-wifi",
         "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.wifi.share.protected",
         "org.freedesktop.NetworkManager.settings.modify.own",
         "org.freedesktop.NetworkManager.settings.modify.system",
     ];

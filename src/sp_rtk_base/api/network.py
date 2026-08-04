@@ -15,13 +15,32 @@ from sp_rtk_base.models.api_models import (
     NetworkStatusResponse,
 )
 from sp_rtk_base.models.net_provision_models import SavedWifiConnection, WifiNetwork
-from sp_rtk_base.services import get_network_service
+from sp_rtk_base.services import get_config_service, get_network_service
+from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.network_service import (
     NetworkNotConfiguredError,
     NetworkService,
 )
 
-router = APIRouter(prefix="/api/network", tags=["network"])
+
+def _require_appliance_mode(
+    config_svc: ConfigService = Depends(get_config_service),
+) -> None:
+    """404 the whole router outside ``appliance`` mode (issue #28).
+
+    In ``managed-host`` mode something else owns the host's network
+    stack, so this API surface doesn't exist here — not just an empty
+    result, an actual 404, same as any other route that doesn't exist.
+    """
+    if config_svc.get_config().deployment.mode != "appliance":
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+router = APIRouter(
+    prefix="/api/network",
+    tags=["network"],
+    dependencies=[Depends(_require_appliance_mode)],
+)
 
 
 @router.get("/status", response_model=NetworkStatusResponse)

@@ -8,13 +8,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
     ActiveLink,
     LinkType,
     SavedWifiConnection,
     WifiNetwork,
 )
-from sp_rtk_base.services import get_network_service
+from sp_rtk_base.services import get_config_service, get_network_service
+from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.network_service import (
     ApFallbackInfo,
     NetworkNotConfiguredError,
@@ -44,11 +46,30 @@ def mock_network_service() -> NetworkService:
     return svc
 
 
+def _mock_config_service(mode: str) -> ConfigService:
+    """A mock ConfigService pinned to a given deployment mode."""
+    svc = MagicMock(spec=ConfigService)
+    svc.get_config.return_value = AppConfig(deployment=DeploymentConfig(mode=mode))  # type: ignore[arg-type]
+    return svc
+
+
 @pytest.fixture()
-def client(mock_network_service: NetworkService) -> TestClient:
-    """Create a test client with the network service dependency overridden."""
+def mock_config_service() -> ConfigService:
+    """Deployment mode defaults to 'appliance' — the mode under test for
+    every existing test in this file, which predates deployment modes
+    (issues #22-24) and exercises the network console's normal behavior."""
+    return _mock_config_service("appliance")
+
+
+@pytest.fixture()
+def client(
+    mock_network_service: NetworkService, mock_config_service: ConfigService
+) -> TestClient:
+    """Create a test client with the network + config service dependencies
+    overridden."""
     app = create_api_app()
     app.dependency_overrides[get_network_service] = lambda: mock_network_service
+    app.dependency_overrides[get_config_service] = lambda: mock_config_service
     return TestClient(app)
 
 
@@ -435,3 +456,56 @@ class TestForgetNetwork:
         )
         resp = client.delete("/api/network/saved/SiteWiFi")
         assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# managed-host mode disables the whole /api/network/* surface (issue #28)
+# ---------------------------------------------------------------------------
+
+
+class TestManagedHostModeDisablesNetworkApi:
+    """In managed-host mode something else owns the network stack, so
+    every /api/network/* route must 404 — not just return an empty/
+    disabled-looking result."""
+
+    @pytest.fixture()
+    def client(self, mock_network_service: NetworkService) -> TestClient:
+        app = create_api_app()
+        app.dependency_overrides[get_network_service] = lambda: mock_network_service
+        app.dependency_overrides[get_config_service] = lambda: _mock_config_service(
+            "managed-host"
+        )
+        return TestClient(app)
+
+    def test_status_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/status").status_code == 404
+
+    def test_scan_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/scan").status_code == 404
+
+    def test_fallback_info_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/fallback-info").status_code == 404
+
+    def test_connect_is_404(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/network/connect", json={"ssid": "SiteWiFi", "password": "x"}
+        )
+        assert resp.status_code == 404
+
+    def test_saved_list_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/saved").status_code == 404
+
+    def test_activate_is_404(self, client: TestClient) -> None:
+        resp = client.post("/api/network/saved/SiteWiFi/activate")
+        assert resp.status_code == 404
+
+    def test_forget_is_404(self, client: TestClient) -> None:
+        assert client.delete("/api/network/saved/SiteWiFi").status_code == 404
+
+    def test_network_service_is_never_reached(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        """The 404 gate must short-circuit before the network service is
+        touched at all."""
+        client.get("/api/network/status")
+        mock_network_service.get_active_link.assert_not_called()

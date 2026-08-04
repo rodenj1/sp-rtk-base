@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+# shellcheck source=shared/net-provision-teardown.sh
+source "$(dirname "$0")/shared/net-provision-teardown.sh"
+
 SERVICE_USER="${SERVICE_USER:-sp-rtk-base}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/opt/sp-rtk-base}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/sp-rtk-base}"
@@ -62,6 +65,30 @@ PY
     [[ -n "$parsed_ssid" ]] && AP_SSID="$parsed_ssid"
 fi
 
+# Read deployment.mode (issue #27/#31) purely for messaging: a managed-host
+# install never had network artifacts in the first place, so announcing
+# "stopping sp-rtk-base-net-provision.service" etc. on one is confusing
+# noise. Same parsing approach as install.sh's existing_mode (Step 6.5) —
+# the venv's own PyYAML rather than a shell regex. Absent config/section
+# (pre-#28 installs always ran full appliance takeover) falls back to
+# "appliance" so those installs still get a full, unchanged cleanup.
+DEPLOYMENT_MODE="appliance"
+config_yaml="${CONFIG_DIR}/config.yaml"
+if [[ -f "$config_yaml" && -x "$venv_python" ]]; then
+    parsed_mode="$("$venv_python" - "$config_yaml" <<'PY' 2>/dev/null || true
+import sys
+import yaml
+with open(sys.argv[1]) as f:
+    data = yaml.safe_load(f) or {}
+deployment = data.get("deployment") if isinstance(data, dict) else None
+mode = deployment.get("mode") if isinstance(deployment, dict) else None
+if isinstance(mode, str) and mode:
+    print(mode)
+PY
+)"
+    [[ -n "$parsed_mode" ]] && DEPLOYMENT_MODE="$parsed_mode"
+fi
+
 ask() {
     local prompt="$1"
     if $PURGE;     then return 0; fi
@@ -74,33 +101,22 @@ echo "==> Stopping + disabling sp-rtk-base.service…"
 systemctl stop    sp-rtk-base.service 2>/dev/null || true
 systemctl disable sp-rtk-base.service 2>/dev/null || true
 
-echo "==> Stopping + disabling sp-rtk-base-net-provision.service…"
-systemctl stop    sp-rtk-base-net-provision.service 2>/dev/null || true
-systemctl disable sp-rtk-base-net-provision.service 2>/dev/null || true
-
 if [[ -f "$SYSTEMD_UNIT" ]]; then
     echo "==> Removing systemd unit ${SYSTEMD_UNIT}"
     rm -f "$SYSTEMD_UNIT"
     systemctl daemon-reload
 fi
 
-if [[ -f "$NET_PROVISION_SYSTEMD_UNIT" ]]; then
-    echo "==> Removing systemd unit ${NET_PROVISION_SYSTEMD_UNIT}"
-    rm -f "$NET_PROVISION_SYSTEMD_UNIT"
-    systemctl daemon-reload
-fi
-
-if command -v nmcli >/dev/null 2>&1 && nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$AP_SSID"; then
-    echo "==> Removing setup-AP connection profile '${AP_SSID}'"
-    nmcli connection delete id "$AP_SSID" 2>/dev/null || true
-fi
-
-if [[ -f "$POLKIT_RULE_DEST" ]]; then
-    echo "==> Removing polkit rule ${POLKIT_RULE_DEST}"
-    rm -f "$POLKIT_RULE_DEST"
-    systemctl try-restart polkit.service 2>/dev/null \
-        || systemctl try-restart polkitd.service 2>/dev/null \
-        || true
+# Net-provision service/unit, AP connection profile, and polkit rule
+# (issue #27/#30 shared helper — same teardown install.sh runs on an
+# appliance -> managed-host mode switch). Skipped entirely on a
+# managed-host install: it never had these artifacts, so there's nothing
+# to stop/remove and no point printing lines that imply otherwise.
+echo "==> Detected deployment mode: ${DEPLOYMENT_MODE}"
+if [[ "$DEPLOYMENT_MODE" == "managed-host" ]]; then
+    echo "==> managed-host install — no network artifacts to remove"
+else
+    teardown_appliance_network_artifacts "$AP_SSID"
 fi
 
 echo "==> Removing console-script symlinks from ${BIN_DIR}"

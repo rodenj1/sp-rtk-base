@@ -27,6 +27,7 @@ FALLBACK_WINDOW = 300.0
 RESCAN_INTERVAL = 120.0
 MAX_CONNECT_FAILURES = 3
 FAILURE_SUPPRESSION = 300.0
+UPLINK_CONFIRM_TICKS = 2
 
 CONFIG = NetProvisionConfig(
     ap_password="sticker-secret",
@@ -35,6 +36,7 @@ CONFIG = NetProvisionConfig(
     rescan_interval_seconds=RESCAN_INTERVAL,
     max_connect_failures=MAX_CONNECT_FAILURES,
     failure_suppression_seconds=FAILURE_SUPPRESSION,
+    uplink_confirm_ticks=UPLINK_CONFIRM_TICKS,
 )
 
 
@@ -399,6 +401,7 @@ class TestFailureAwareRetryBackoff:
             seconds_in_ap=5.0,
             consecutive_connect_failures=MAX_CONNECT_FAILURES,
             seconds_since_last_connect_failure=0.0,
+            consecutive_uplink_ticks=UPLINK_CONFIRM_TICKS,
         )
         assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
 
@@ -411,14 +414,41 @@ class TestEthernetArrivesDuringSetup:
     """
 
     def test_uplink_while_ap_is_up_tears_the_ap_down(self) -> None:
-        """An uplink appeared on another interface -> drop the AP."""
+        """An uplink confirmed for uplink_confirm_ticks polls in a row
+        -> drop the AP."""
         state = _state(
             uplink_connectivity=Connectivity.LIMITED,
             seconds_since_boot=5_000.0,
             ap_active=True,
             seconds_in_ap=60.0,
+            consecutive_uplink_ticks=UPLINK_CONFIRM_TICKS,
         )
         assert decide(state, CONFIG) is ProvisionAction.STOP_AP_AND_CONNECT
+
+    def test_single_noisy_uplink_reading_does_not_tear_the_ap_down(self) -> None:
+        """A single tick observing has_uplink=True is not enough (issue
+        #33) — a one-off stale/noisy nmcli connectivity read must not
+        kill an AP session a phone may be mid-join on. Only the *next*
+        tick, once the supervisor has counted a second consecutive
+        True reading, acts on it."""
+        state = _state(
+            uplink_connectivity=Connectivity.LIMITED,
+            seconds_since_boot=5_000.0,
+            ap_active=True,
+            seconds_in_ap=60.0,
+            consecutive_uplink_ticks=1,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.IDLE
+
+    def test_just_below_the_uplink_confirm_threshold_is_idle(self) -> None:
+        state = _state(
+            uplink_connectivity=Connectivity.LIMITED,
+            seconds_since_boot=5_000.0,
+            ap_active=True,
+            seconds_in_ap=60.0,
+            consecutive_uplink_ticks=UPLINK_CONFIRM_TICKS - 1,
+        )
+        assert decide(state, CONFIG) is ProvisionAction.IDLE
 
 
 class TestUplinkPresentNeverStartsAp:

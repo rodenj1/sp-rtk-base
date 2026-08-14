@@ -18,6 +18,11 @@ consecutive-connect-failure count keyed to whichever WiFi profile
 caught, recorded, and the tick completes normally, unlike an unexpected
 adapter exception, which still aborts the tick and is left to
 :func:`run_forever`'s catch-all.
+
+Issue #33 adds a fourth: a consecutive-uplink-ticks count, so decide()
+only tears down an active AP session once ``has_uplink`` has read True
+for ``config.uplink_confirm_ticks`` polls in a row, rather than acting
+on one possibly-noisy reading.
 """
 
 from __future__ import annotations
@@ -180,10 +185,17 @@ def tick(
         if last_connect_failure_at is not None
         else 0.0
     )
+    # Issue #33: a single noisy/stale has_uplink=True reading must not
+    # be enough for decide() to tear down the AP — count how many polls
+    # in a row have seen it, reset the instant a poll doesn't.
+    consecutive_uplink_ticks = (
+        clocks.consecutive_uplink_ticks + 1 if state.has_uplink else 0
+    )
     state = state.model_copy(
         update={
             "consecutive_connect_failures": consecutive_connect_failures,
             "seconds_since_last_connect_failure": seconds_since_last_connect_failure,
+            "consecutive_uplink_ticks": consecutive_uplink_ticks,
         }
     )
     action = decide(state, config)
@@ -224,6 +236,7 @@ def tick(
         failed_connect_ssid=new_failed_ssid,
         consecutive_connect_failures=new_consecutive_failures,
         last_connect_failure_at=new_last_failure_at,
+        consecutive_uplink_ticks=consecutive_uplink_ticks,
     )
     if new_clocks != clocks:
         state_store.save(new_clocks)

@@ -49,6 +49,15 @@ NmcliRunner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 _NMCLI_TIMEOUT_SECONDS = 10.0
 _WIRELESS_TYPE = "802-11-wireless"
 
+# NetworkManager's loopback connection ("lo") is active on every host,
+# always, independent of any real uplink — it is not a stable, fixed
+# name the way _WIRELESS_TYPE is a fixed nmcli vocabulary term, but in
+# practice NM always names it exactly this. Excluded from
+# _active_connection_names() so "only the AP (and loopback) are active"
+# is correctly recognized as "no other uplink" (issue #8's Rule 1)
+# instead of loopback's permanent presence defeating that check.
+_LOOPBACK_CONNECTION_NAME = "lo"
+
 # `nmcli device show`'s GENERAL.TYPE uses short names ("wifi", "ethernet"),
 # distinct from `nmcli connection show`'s TYPE column format above
 # ("802-11-wireless") — the two commands describe different objects
@@ -150,7 +159,11 @@ class NmcliAdapter:
         result = self._run(
             ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"]
         )
-        return {line for line in result.stdout.splitlines() if line}
+        return {
+            line
+            for line in result.stdout.splitlines()
+            if line and line != _LOOPBACK_CONNECTION_NAME
+        }
 
     def _has_other_uplink(self, active: set[str]) -> bool:
         """Whether any active connection besides the setup AP exists."""

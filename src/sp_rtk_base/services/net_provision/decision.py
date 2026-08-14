@@ -47,8 +47,15 @@ def decide(state: NetworkState, config: NetProvisionConfig) -> ProvisionAction:
         # setup hotspot nobody needs.  This reads the uplink and not the
         # AP's own shared connection on purpose: counting the hotspot as
         # connectivity would tear down the AP that produced it and flap
-        # it every tick.
-        if state.has_uplink:
+        # it every tick. Requiring the reading to hold for
+        # uplink_confirm_ticks consecutive polls (issue #33) guards
+        # against a single noisy/stale nmcli connectivity check doing
+        # the same thing — a phone mid-join can't survive an AP that
+        # blinks off the instant one bad reading comes back.
+        if (
+            state.has_uplink
+            and state.consecutive_uplink_ticks >= config.uplink_confirm_ticks
+        ):
             return ProvisionAction.STOP_AP_AND_CONNECT
         # The last rescan saw the site network, so stop guessing and go
         # back to being a client — unless it's failed to join enough

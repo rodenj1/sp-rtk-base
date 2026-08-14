@@ -148,6 +148,21 @@ class TestUplinkConnectivity:
         assert state.uplink_connectivity is Connectivity.NONE
         assert state.ap_active is True
 
+    def test_loopback_alongside_ap_still_reports_no_uplink(self) -> None:
+        """NetworkManager's loopback connection ("lo") is active on every
+        host regardless of any real uplink (issue #33). A hotspot-only
+        host with nothing else connected must short-circuit to NONE
+        without even consulting the live connectivity check — "lo"
+        polluting the active set must not defeat that short-circuit the
+        way it did in production (field device flapped every ~12s for
+        5+ minutes with Ethernet physically unplugged)."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{AP_SSID}\nlo\n")
+        fake.set_response(CONNECTIVITY_CHECK, stdout="full\n")
+        state = _read_state(_adapter(fake))
+        assert state.uplink_connectivity is Connectivity.NONE
+        assert fake.calls.count(CONNECTIVITY_CHECK) == 0
+
     def test_unknown_with_active_non_ap_connection_is_limited(self) -> None:
         """NM's `unknown` (connectivity checking disabled, common on Pi
         images) maps to `limited` when some non-AP connection is active."""

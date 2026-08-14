@@ -141,6 +141,17 @@ class NetworkState(BaseModel):
             "AP mode forever over a transient association failure."
         ),
     )
+    consecutive_uplink_ticks: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Consecutive polls in a row that have observed has_uplink "
+            "True (issue #33). A single noisy nmcli connectivity read "
+            "must not be enough to tear down an AP session someone may "
+            "be mid-join on; read against uplink_confirm_ticks so the "
+            "signal has to hold steady before decide() acts on it."
+        ),
+    )
 
     @property
     def has_uplink(self) -> bool:
@@ -323,6 +334,16 @@ class NetProvisionConfig(BaseModel):
             "max_connect_failures is reached, before trying it again. "
             "Bounds the backoff so a genuinely transient association "
             "failure doesn't pin the device in AP mode forever."
+        ),
+    )
+    uplink_confirm_ticks: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Consecutive polls has_uplink must read True before decide() "
+            "tears down an active AP session over it (issue #33). A "
+            "single noisy/stale nmcli connectivity read must not be "
+            "enough to kill an AP a phone may be mid-join on."
         ),
     )
     ap_gateway_ip: str = Field(

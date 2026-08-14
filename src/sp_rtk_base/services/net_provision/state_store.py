@@ -10,10 +10,12 @@ AP would never come back down.
 
 This module persists the timestamps the supervisor derives elapsed
 time from — when an uplink was last seen, when the current AP session
-started, and (issue #25) the consecutive-connect-failure count/SSID/
-timestamp behind the failure-aware retry backoff — to a small JSON file
-under a state directory. Nothing here talks to nmcli or drives the
-loop; see ``supervisor.py`` for that.
+started, (issue #25) the consecutive-connect-failure count/SSID/
+timestamp behind the failure-aware retry backoff, and (issue #33) a
+consecutive-uplink-ticks count guarding against a single noisy
+connectivity read tearing down the AP — to a small JSON file under a
+state directory. Nothing here talks to nmcli or drives the loop; see
+``supervisor.py`` for that.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ class ProvisioningClockState(BaseModel):
     failed_connect_ssid: str | None = None
     consecutive_connect_failures: int = 0
     last_connect_failure_at: float | None = None
+    consecutive_uplink_ticks: int = 0
 
 
 class ProvisioningStateStore:

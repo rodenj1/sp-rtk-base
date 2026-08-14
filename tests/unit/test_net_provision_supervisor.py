@@ -316,6 +316,9 @@ class TestDecideAndExecute:
     def test_ap_active_with_uplink_stops_the_ap(
         self, config: NetProvisionConfig, state_store: ProvisioningStateStore
     ) -> None:
+        """Second consecutive uplink reading (issue #33's debounce) —
+        the first is exercised separately in TestUplinkConfirmationDebounce."""
+        state_store.save(ProvisioningClockState(consecutive_uplink_ticks=1))
         state = NetworkState(
             uplink_connectivity=Connectivity.FULL,
             seconds_since_boot=999.0,
@@ -405,6 +408,7 @@ class TestOnApActiveCallback:
     def test_stop_ap_and_connect_reports_false(
         self, config: NetProvisionConfig, state_store: ProvisioningStateStore
     ) -> None:
+        state_store.save(ProvisioningClockState(consecutive_uplink_ticks=1))
         state = NetworkState(
             uplink_connectivity=Connectivity.FULL,
             seconds_since_boot=999.0,
@@ -744,3 +748,107 @@ class TestFailureAwareRetryBackoff:
         )
 
         assert len(adapter.executed_actions) == 3
+
+
+class TestUplinkConfirmationDebounce:
+    """tick() must track consecutive_uplink_ticks durably (issue #33).
+
+    Reproduces the field incident on larson-base: Ethernet physically
+    unplugged for 5+ minutes, yet the AP cycled start_ap ->
+    stop_ap_and_connect every poll because a single has_uplink=True
+    reading was enough to act on. The fix requires the reading to hold
+    for config.uplink_confirm_ticks consecutive polls.
+    """
+
+    _AP_ACTIVE_UPLINK_TRUE = _AP_ACTIVE_STATE.model_copy(
+        update={"uplink_connectivity": Connectivity.LIMITED}
+    )
+
+    def test_first_uplink_reading_holds_the_ap_instead_of_tearing_down(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(self._AP_ACTIVE_UPLINK_TRUE)
+
+        action = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+        assert action is ProvisionAction.IDLE
+        assert state_store.load().consecutive_uplink_ticks == 1
+
+    def test_second_consecutive_reading_tears_the_ap_down(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(self._AP_ACTIVE_UPLINK_TRUE)
+
+        first = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+        second = tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_010.0,
+            uptime_fn=lambda: 510.0,
+        )
+
+        assert first is ProvisionAction.IDLE
+        assert second is ProvisionAction.STOP_AP_AND_CONNECT
+        assert state_store.load().consecutive_uplink_ticks == 2
+
+    def test_alternating_noisy_readings_never_tear_the_ap_down(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        """The exact field pattern: has_uplink flips True/False every
+        tick, never twice in a row. Before the fix, a single True
+        reading was enough — this asserts the AP is never torn down
+        across a long alternating run."""
+        adapter = FakeAdapter(self._AP_ACTIVE_UPLINK_TRUE)
+
+        actions = []
+        for i in range(10):
+            adapter.state_to_return = (
+                self._AP_ACTIVE_UPLINK_TRUE if i % 2 == 0 else _AP_ACTIVE_STATE
+            )
+            actions.append(
+                tick(
+                    adapter=adapter,
+                    config=config,
+                    state_store=state_store,
+                    now_fn=lambda i=i: 1_000.0 + i * 10,
+                    uptime_fn=lambda i=i: 500.0 + i * 10,
+                )
+            )
+
+        assert ProvisionAction.STOP_AP_AND_CONNECT not in actions
+
+    def test_a_dropped_reading_resets_the_streak(
+        self, config: NetProvisionConfig, state_store: ProvisioningStateStore
+    ) -> None:
+        adapter = FakeAdapter(self._AP_ACTIVE_UPLINK_TRUE)
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+        assert state_store.load().consecutive_uplink_ticks == 1
+
+        adapter.state_to_return = _AP_ACTIVE_STATE
+        tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_010.0,
+            uptime_fn=lambda: 510.0,
+        )
+        assert state_store.load().consecutive_uplink_ticks == 0

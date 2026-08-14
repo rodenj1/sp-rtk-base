@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from nicegui import ui
 
 from sp_rtk_base import __version__ as app_version
+from sp_rtk_base.services import get_config_service
 
 # Navigation structure: list of (section_header | None, label, path, icon)
 # A None section_header means "no header before this item".
@@ -38,6 +39,7 @@ NAVIGATION_SECTIONS: list[tuple[str | None, list[tuple[str, str, str]]]] = [
     (
         "System",
         [
+            ("Network", "/network", "wifi"),
             ("Settings", "/settings", "settings"),
             ("Advanced GPS", "/gps-config", "memory"),
         ],
@@ -111,13 +113,19 @@ def page_layout(title: str) -> Iterator[None]:
         .style("background-color: #16213e")
         .props("breakpoint=1024 behavior=mobile overlay") as left_drawer
     ):
+        is_appliance = get_config_service().get_config().deployment.mode == "appliance"
         for section_header, items in NAVIGATION_SECTIONS:
+            visible_items = [
+                item for item in items if is_appliance or item[1] != "/network"
+            ]
+            if not visible_items:
+                continue
             if section_header is not None:
                 ui.separator().classes("q-my-sm")
                 ui.label(section_header).classes(
                     "text-overline text-grey-6 q-mb-xs q-ml-sm"
                 )
-            for label, path, icon in items:
+            for label, path, icon in visible_items:
                 _nav_link(label, path, icon, left_drawer)
 
     with ui.column().classes("w-full q-pa-md"):

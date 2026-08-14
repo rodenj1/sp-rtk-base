@@ -344,6 +344,22 @@ class BaseStationPosition(BaseModel):
     )
 
 
+class DeploymentConfig(BaseModel):
+    """Deployment-mode selection (issue #27/#28).
+
+    ``appliance`` — full-control install: NetworkManager takeover,
+    setup-AP, polkit rule, net-provision unit, console Network page.
+    ``managed-host`` — app-only install; something else owns the host's
+    network stack, so the console's network UI/API are disabled.
+
+    Absent/missing ``deployment`` section defaults to ``managed-host``
+    (fail-safe — never auto-seize a network the app can't prove it
+    owns).
+    """
+
+    mode: Literal["appliance", "managed-host"] = "managed-host"
+
+
 class AppConfig(BaseModel):
     """Complete application configuration for YAML persistence.
 
@@ -352,6 +368,7 @@ class AppConfig(BaseModel):
     """
 
     input: InputProfile | None = None
+    deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     destinations: list[DestinationProfile] = Field(
         default_factory=lambda: list[DestinationProfile]()
     )

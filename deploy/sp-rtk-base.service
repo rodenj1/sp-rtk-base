@@ -14,6 +14,12 @@ Group=sp-rtk-base
 SupplementaryGroups=dialout bluetooth plugdev
 WorkingDirectory=/var/lib/sp-rtk-base
 Environment=SP_RTK_BASE_CONFIG=/etc/sp-rtk-base/config.yaml
+# The Network console page (issues #22-24) reads net-provisioning
+# config via the same NetworkService the supervisor unit uses — without
+# this, load_net_provision_config() falls back to a ~/.config path that
+# doesn't exist for this homeless system user, and every /api/network/*
+# call 502s.
+Environment=SP_RTK_BASE_NET_CONFIG=/etc/sp-rtk-base/net_provision.yaml
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base
 Restart=on-failure
 RestartSec=5

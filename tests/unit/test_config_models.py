@@ -18,6 +18,7 @@ from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     BaseStationPosition,
+    DeploymentConfig,
     DestinationProfile,
     FilterProfile,
     InputProfile,
@@ -425,6 +426,21 @@ class TestAppSettings:
 # ---------------------------------------------------------------------------
 
 
+class TestDeploymentConfig:
+    """Tests for DeploymentConfig model (issue #27/#28)."""
+
+    def test_default_mode_is_managed_host(self) -> None:
+        """Fail-safe default: never auto-seize a network on trust alone."""
+        assert DeploymentConfig().mode == "managed-host"
+
+    def test_accepts_appliance_mode(self) -> None:
+        assert DeploymentConfig(mode="appliance").mode == "appliance"
+
+    def test_rejects_unknown_mode(self) -> None:
+        with pytest.raises(ValidationError):
+            DeploymentConfig(mode="container")  # type: ignore[arg-type]
+
+
 class TestAppConfig:
     """Tests for AppConfig model."""
 
@@ -434,6 +450,25 @@ class TestAppConfig:
         assert cfg.input is None
         assert cfg.destinations == []
         assert cfg.settings.auto_start is False
+
+    def test_default_deployment_mode_is_managed_host(self) -> None:
+        """Missing/absent ``deployment`` section defaults to managed-host."""
+        cfg = AppConfig()
+        assert cfg.deployment.mode == "managed-host"
+
+    def test_missing_deployment_section_in_yaml_defaults_to_managed_host(self) -> None:
+        """A config loaded from YAML with no ``deployment`` key at all
+        (e.g. every pre-#28 install) must default the same way as a
+        freshly constructed AppConfig."""
+        cfg = AppConfig.model_validate({"destinations": [], "base_positions": []})
+        assert cfg.deployment.mode == "managed-host"
+
+    def test_appliance_deployment_mode_round_trips(self) -> None:
+        cfg = AppConfig.model_validate({"deployment": {"mode": "appliance"}})
+        assert cfg.deployment.mode == "appliance"
+        data = cfg.model_dump(mode="json")
+        restored = AppConfig.model_validate(data)
+        assert restored.deployment.mode == "appliance"
 
     def test_full_config(self) -> None:
         """AppConfig with all fields populated."""

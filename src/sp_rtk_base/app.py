@@ -28,6 +28,7 @@ from sp_rtk_base.api.device import router as device_router
 from sp_rtk_base.api.events import router as events_router
 from sp_rtk_base.api.health import router as health_router
 from sp_rtk_base.api.metrics import router as metrics_router
+from sp_rtk_base.api.network import router as network_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
 
@@ -71,6 +72,7 @@ def create_api_app() -> FastAPI:
     api.include_router(metrics_router)
     api.include_router(config_router)
     api.include_router(device_router)
+    api.include_router(network_router)
     return api
 
 
@@ -208,6 +210,16 @@ def init_app() -> None:
 
     # Reference the modules to prevent "unused import" removal
     _ = (_dashboard, _gps_config, _input, _outputs, _settings, _survey)
+
+    # Network page is appliance-only (issue #28) — in managed-host mode
+    # something else owns the host's network stack, so the route isn't
+    # registered at all rather than rendered disabled.
+    from sp_rtk_base.services import get_config_service
+
+    if get_config_service().get_config().deployment.mode == "appliance":
+        from sp_rtk_base.ui.pages import network as _network
+
+        _ = _network
 
     app.on_startup(startup_services)
     app.on_shutdown(shutdown_services)

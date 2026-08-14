@@ -31,9 +31,11 @@ from sp_rtk_base.models.config_models import AppConfig
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "deploy" / "install.sh"
 
-# Matches a bash heredoc of the form:  cat >"$default_cfg" <<'YAML' … YAML
+# Matches a bash heredoc of the form:  cat >"$default_cfg" <<YAML … YAML
+# Unquoted (no literal quotes around the tag) since issue #29 interpolates
+# $MODE into the deployment.mode field.
 _HEREDOC_RE = re.compile(
-    r"cat\s*>\s*\"?\$\{?default_cfg\}?\"?\s*<<'YAML'\n(?P<body>.*?)\nYAML\b",
+    r"cat\s*>\s*\"?\$\{?default_cfg\}?\"?\s*<<'?YAML'?\n(?P<body>.*?)\nYAML\b",
     re.DOTALL,
 )
 
@@ -46,9 +48,10 @@ def install_script_text() -> str:
 
 
 @pytest.fixture(scope="module")
-def default_config_yaml(install_script_text: str) -> str:
-    """Extract the heredoc-embedded default ``config.yaml`` from
-    ``deploy/install.sh``.
+def default_config_yaml_template(install_script_text: str) -> str:
+    """Extract the raw heredoc-embedded default ``config.yaml`` template
+    from ``deploy/install.sh``, ``${MODE}`` and all — for tests that care
+    about the template shape itself rather than a rendered instance.
     """
     match = _HEREDOC_RE.search(install_script_text)
     assert match, (
@@ -56,6 +59,14 @@ def default_config_yaml(install_script_text: str) -> str:
         "If you reformatted the heredoc, update _HEREDOC_RE in this test."
     )
     return match.group("body")
+
+
+@pytest.fixture(scope="module")
+def default_config_yaml(default_config_yaml_template: str) -> str:
+    """Extract the default ``config.yaml`` heredoc with ``$MODE``
+    substituted for a stand-in value, ready for ``yaml.safe_load``.
+    """
+    return default_config_yaml_template.replace("${MODE}", "managed-host")
 
 
 class TestInstallerDefaultConfig:
@@ -94,6 +105,22 @@ class TestInstallerDefaultConfig:
             "good reason to ship a default input, make sure the heredoc "
             "produces a valid InputProfile (fields: source, config)."
         )
+        assert cfg.deployment.mode == "managed-host", (
+            "Stand-in substitution for ${MODE} — this pins the template "
+            "shape, not a real default (there is no default mode; see "
+            "test_deployment_mode_interpolates_shell_variable below)."
+        )
+
+    def test_deployment_mode_interpolates_shell_variable(
+        self, default_config_yaml_template: str
+    ) -> None:
+        """The heredoc must write whatever mode Step 6.5 resolved into
+        ``$MODE``, not a hardcoded literal — otherwise every install would
+        silently land in the same mode regardless of ``--mode`` (issue
+        #27/#29).
+        """
+        assert "${MODE}" in default_config_yaml_template
+        assert "deployment:" in default_config_yaml_template
 
 
 class TestInstallerConfigPermissions:

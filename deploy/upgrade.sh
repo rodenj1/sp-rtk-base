@@ -41,6 +41,13 @@ new_ver="$("${VENV_DIR}/bin/python" -c 'import sp_rtk_base; print(sp_rtk_base.__
 echo "==> Restarting sp-rtk-base.service…"
 systemctl restart sp-rtk-base.service
 
+# sp-rtk-base-net-provision.service (issue #9) is a separate, independent
+# unit — only touch it if a prior install actually set it up.
+if systemctl list-unit-files sp-rtk-base-net-provision.service >/dev/null 2>&1; then
+    echo "==> Restarting sp-rtk-base-net-provision.service…"
+    systemctl restart sp-rtk-base-net-provision.service 2>/dev/null || true
+fi
+
 sleep 2
 if systemctl is-active --quiet sp-rtk-base.service; then
     echo "✓ Upgrade complete: sp-rtk-base ${old_ver} → ${new_ver}"

@@ -48,12 +48,45 @@ host best.
 
 One-shot installer creates a `sp-rtk-base` system user, an isolated
 venv at `/opt/sp-rtk-base/`, config in `/etc/sp-rtk-base/`, state in
-`/var/lib/sp-rtk-base/`, and a hardened systemd service:
+`/var/lib/sp-rtk-base/`, and a hardened systemd service.
+
+#### Deployment modes
+
+The installer requires an explicit `--mode` — it never guesses, because
+guessing wrong is destructive (seizing `wlan0` on a box something else
+manages, or shipping a device with no way to join a network):
+
+| Mode | Installs | Use for |
+|---|---|---|
+| `appliance` | App + relay **plus** a full NetworkManager takeover: fixed setup-AP, WiFi-picker captive portal, polkit rule, and the independent `sp-rtk-base-net-provision.service` | A dedicated Pi shipped to a customer — sp-rtk-base owns the network stack |
+| `managed-host` | App + relay only — no NetworkManager install, no AP, no polkit, no net-provision unit; the host's own network stack is left completely alone | A co-tenant Pi/NUC/VM where something else already manages networking |
+
+```bash
+# Dedicated appliance — full network takeover, fixed setup-AP
+curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
+    | sudo bash -s -- --mode appliance
+
+# Managed host — app only, host network stack untouched
+curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
+    | sudo bash -s -- --mode managed-host
+```
+
+In `appliance` mode, if `AP_PASSWORD` isn't set the installer falls back
+to a fixed fleet default (`sp-rtk-base1234!`) and prints a warning —
+override it per fleet in production:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
-    | sudo bash
+    | sudo AP_PASSWORD='your-sticker-password' bash -s -- --mode appliance
 ```
+
+A bare re-run with no `--mode` preserves whichever mode is already
+recorded in `config.yaml`, so version-bump re-runs don't need the flag
+repeated. A future `container` mode (app-only, published image) is
+planned but not yet built — see
+[`docs/deployment-pi.md`](docs/deployment-pi.md#deployment-modes) for
+details, the full behavior matrix, and how to switch modes on an
+existing install.
 
 Open **http://&lt;pi-ip&gt;:8080** in your browser when it finishes.
 

@@ -72,6 +72,8 @@ SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
+DNSMASQ_SHARED_D="${DNSMASQ_SHARED_D:-/etc/NetworkManager/dnsmasq-shared.d}"
+DNSMASQ_WILDCARD_CONF="${DNSMASQ_WILDCARD_CONF:-${DNSMASQ_SHARED_D}/sp-rtk-base-wildcard.conf}"
 # Fixed setup-AP identity (issue #6, story 8): every deployed unit ships
 # the *same* SSID/password so one sticker template covers the fleet.
 # AP_SSID defaults to NetProvisionConfig's DEFAULT_AP_SSID. AP_PASSWORD has
@@ -496,6 +498,7 @@ ok "Service enabled and (re)started"
 # in Step 6.5, which needs it for the mode-switch teardown lookup.)
 provisioned_ap_ssid=""
 provisioned_ap_password=""
+provisioned_ap_gateway_ip=""
 
 if [[ "$MODE" == "appliance" ]]; then
 
@@ -588,10 +591,12 @@ from sp_rtk_base.services.net_provision.config_loader import load_net_provision_
 cfg = load_net_provision_config()
 print(cfg.ap_ssid)
 print(cfg.ap_password)
+print(cfg.ap_gateway_ip)
 PY
 )" || die "Config at ${net_provision_cfg} failed to validate (see traceback above)."
 provisioned_ap_ssid="$(sed -n '1p' <<<"$net_provision_creds")"
 provisioned_ap_password="$(sed -n '2p' <<<"$net_provision_creds")"
+provisioned_ap_gateway_ip="$(sed -n '3p' <<<"$net_provision_creds")"
 ok "Config validated (setup AP: ${provisioned_ap_ssid})"
 
 # ---------------------------------------------------------------------------
@@ -627,6 +632,30 @@ else
         >/dev/null
     ok "Setup-AP connection profile installed"
 fi
+
+# ---------------------------------------------------------------------------
+# Step 8.4b — Wildcard DNS via NM's shared-mode dnsmasq (issue #34)
+# ---------------------------------------------------------------------------
+# `ipv4.method shared` on the AP profile makes NetworkManager spawn its own
+# dnsmasq for the AP interface, bound to the AP's specific gateway IP.
+# Linux's UDP socket demux always prefers that specific-address bind over
+# any wildcard-bind (0.0.0.0) responder, so every real client DNS query
+# goes to NM's dnsmasq — a custom responder bound to 0.0.0.0 (an earlier
+# version of this installer ran one) never sees real traffic. Feeding NM's
+# own dnsmasq an `address=/#/<gateway>` line — answer every domain with the
+# AP's own address — is what actually makes the captive-portal auto-popup
+# fire. Unconditionally (re)written, same as the polkit rule below: it's
+# fully derived from net_provision.yaml, never hand-edited.
+install -d -m 0755 -o root -g root "$DNSMASQ_SHARED_D"
+cat >"$DNSMASQ_WILDCARD_CONF" <<CONF
+# Managed by sp-rtk-base's installer — do not edit by hand.
+# Answers every DNS lookup from a setup-AP client with the AP's own
+# gateway IP, which is what makes the OS's captive-portal sign-in
+# prompt pop automatically (issue #34).
+address=/#/${provisioned_ap_gateway_ip}
+CONF
+chmod 0644 "$DNSMASQ_WILDCARD_CONF"
+ok "Wildcard DNS drop-in installed at ${DNSMASQ_WILDCARD_CONF}"
 
 # ---------------------------------------------------------------------------
 # Step 8.5 — Polkit rule for headless network provisioning (issue #9)

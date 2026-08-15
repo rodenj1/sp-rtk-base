@@ -11,13 +11,23 @@ issue, "a minimal HTTP server" — not a second ASGI stack inside an
 otherwise blocking systemd service.
 
 Every GET, regardless of path, renders the same picker page. That is
-what makes wildcard DNS (:mod:`~.dns_responder`) work: an OS
-captive-portal probe requests some fixed hostname/path (e.g.
-``/generate_204``, ``/hotspot-detect.html``) expecting a specific,
-narrow response; getting this page back instead is the mismatch that
-triggers the "Sign in to network" prompt. It's also the manual-URL
-fallback the issue asks for — visiting ``http://<ap_gateway_ip>/``
-by hand hits the same handler.
+what makes wildcard DNS work: an OS captive-portal probe requests some
+fixed hostname/path (e.g. ``/generate_204``, ``/hotspot-detect.html``)
+expecting a specific, narrow response; getting this page back instead
+is the mismatch that triggers the "Sign in to network" prompt. It's
+also the manual-URL fallback the issue asks for — visiting
+``http://<ap_gateway_ip>/`` by hand hits the same handler.
+
+The wildcard DNS answer itself (every hostname -> the AP's own
+gateway IP) is *not* served by this module (issue #34). An earlier
+version ran a custom UDP/53 responder here, but NetworkManager's
+``ipv4.method shared`` already spawns its own ``dnsmasq`` for the AP
+interface, bound to the AP's specific gateway IP — Linux's UDP socket
+demux always prefers that over our wildcard-bind responder, so real
+client DNS traffic never reached it. The wildcard answer is configured
+into NM's own ``dnsmasq`` instead, via an
+``/etc/NetworkManager/dnsmasq-shared.d/*.conf`` drop-in
+(``deploy/install.sh``) — see that file for the actual mechanism.
 """
 
 from __future__ import annotations
@@ -31,7 +41,6 @@ from typing import Protocol, cast
 from urllib.parse import parse_qs
 
 from sp_rtk_base.models.net_provision_models import NetProvisionConfig, WifiNetwork
-from sp_rtk_base.services.net_provision.dns_responder import WildcardDnsServer
 from sp_rtk_base.services.net_provision.nmcli_adapter import (
     NmcliAdapter,
     WifiConnectError,
@@ -202,11 +211,14 @@ class _PortalHTTPServer(ThreadingHTTPServer):
 
 
 class Portal:
-    """Owns the AP-mode HTTP portal and wildcard DNS responder together.
+    """Owns the AP-mode HTTP portal.
 
     ``start()``/``stop()`` are idempotent so the supervisor (issue #9)
     can call them on every tick as ``NetworkState.ap_active`` flips,
     without tracking whether the portal is already running.
+
+    Wildcard DNS is NM's own shared-mode ``dnsmasq``, configured via an
+    install-time drop-in (issue #34) — not this class's concern.
     """
 
     def __init__(self, *, adapter: NmcliAdapter, config: NetProvisionConfig) -> None:
@@ -214,8 +226,6 @@ class Portal:
         self._config = config
         self._http: _PortalHTTPServer | None = None
         self._http_thread: threading.Thread | None = None
-        self._dns: WildcardDnsServer | None = None
-        self._dns_thread: threading.Thread | None = None
 
     @property
     def is_running(self) -> bool:
@@ -236,29 +246,11 @@ class Portal:
             name="net-provision-portal-http",
         )
         self._http_thread.start()
-
-        self._dns = WildcardDnsServer(
-            bind_host="0.0.0.0",
-            port=self._config.portal_dns_port,
-            answer_ip=self._config.ap_gateway_ip,
-        )
-        self._dns_thread = threading.Thread(
-            target=self._dns.serve_forever, daemon=True, name="net-provision-portal-dns"
-        )
-        self._dns_thread.start()
-        logger.info(
-            "Portal started (http :%d, dns :%d)",
-            self._config.portal_http_port,
-            self._config.portal_dns_port,
-        )
+        logger.info("Portal started (http :%d)", self._config.portal_http_port)
 
     def stop(self) -> None:
         if self._http is not None:
             self._http.shutdown()
             self._http.server_close()
             self._http = None
-        if self._dns is not None:
-            self._dns.shutdown()
-            self._dns.server_close()
-            self._dns = None
         logger.info("Portal stopped")

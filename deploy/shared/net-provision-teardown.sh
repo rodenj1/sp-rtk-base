@@ -11,15 +11,17 @@
 # Callers must have these set before calling the function below:
 #   NET_PROVISION_SYSTEMD_UNIT   path to the net-provision systemd unit file
 #   POLKIT_RULE_DEST             path to the installed polkit rule
+#   DNSMASQ_WILDCARD_CONF        path to the dnsmasq-shared.d wildcard drop-in (issue #34)
 # ============================================================================
 
 # teardown_appliance_network_artifacts <ap_ssid>
 #
 # Stops/disables sp-rtk-base-net-provision.service, removes its unit file,
-# deletes the setup-AP nmcli connection profile named <ap_ssid>, and
-# removes the polkit rule. Every step is best-effort and idempotent — safe
-# to call against a host that never had any of this installed (a plain
-# managed-host install, or a second teardown in a row).
+# deletes the setup-AP nmcli connection profile named <ap_ssid>, removes the
+# polkit rule, and removes the dnsmasq-shared.d wildcard DNS drop-in. Every
+# step is best-effort and idempotent — safe to call against a host that
+# never had any of this installed (a plain managed-host install, or a
+# second teardown in a row).
 teardown_appliance_network_artifacts() {
     local ap_ssid="$1"
 
@@ -44,5 +46,10 @@ teardown_appliance_network_artifacts() {
         systemctl try-restart polkit.service 2>/dev/null \
             || systemctl try-restart polkitd.service 2>/dev/null \
             || true
+    fi
+
+    if [[ -f "$DNSMASQ_WILDCARD_CONF" ]]; then
+        echo "==> Removing wildcard DNS drop-in ${DNSMASQ_WILDCARD_CONF}"
+        rm -f "$DNSMASQ_WILDCARD_CONF"
     fi
 }

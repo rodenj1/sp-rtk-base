@@ -206,7 +206,6 @@ class TestPortalLifecycle:
             ap_password="sticker-secret",
             ap_gateway_ip=_GATEWAY_IP,
             portal_http_port=0,
-            portal_dns_port=0,
         )
         return Portal(adapter=FakeAdapter(), config=config)
 

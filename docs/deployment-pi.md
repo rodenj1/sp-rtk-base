@@ -343,8 +343,18 @@ doesn't reset the fallback-window or AP-rescan timers.
 ### WiFi-picker captive portal
 
 While the setup AP is up, the same process also runs a minimal HTTP
-server (port 80) and a wildcard DNS responder (port 53) — this is why
-the systemd unit grants `AmbientCapabilities=CAP_NET_BIND_SERVICE`.
+server on port 80 — this is why the systemd unit grants
+`AmbientCapabilities=CAP_NET_BIND_SERVICE`. The wildcard DNS answer
+(every hostname resolves to the AP's own gateway IP, which triggers
+the OS's captive-portal sign-in prompt) is *not* served by
+`sp-rtk-base` itself: `install.sh` drops an
+`address=/#/<ap_gateway_ip>` config snippet into
+`/etc/NetworkManager/dnsmasq-shared.d/`, which feeds NetworkManager's
+own shared-mode `dnsmasq` instance. An earlier version ran a custom
+UDP/53 responder here, but NM's own `dnsmasq` always wins real client
+DNS traffic (it binds the AP's specific gateway IP; Linux's UDP demux
+prefers that over a wildcard `0.0.0.0` bind), so the custom responder
+never actually worked in production.
 
 For an installer: join the AP (`ap_ssid` / `ap_password` from
 `net_provision.yaml`) with a phone, and the "Sign in to network"

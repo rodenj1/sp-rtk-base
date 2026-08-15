@@ -27,6 +27,7 @@ BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules}"
+DNSMASQ_WILDCARD_CONF="${DNSMASQ_WILDCARD_CONF:-/etc/NetworkManager/dnsmasq-shared.d/sp-rtk-base-wildcard.conf}"
 
 PURGE=false
 KEEP_DATA=false

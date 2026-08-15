@@ -312,6 +312,39 @@ class TestApConnectionProfile:
         assert "wifi-sec.key-mgmt wpa-psk" in block
 
 
+class TestDnsmasqWildcardDropIn:
+    """issue #34: wildcard DNS must be configured into NM's own
+    shared-mode dnsmasq, not served by a custom responder — a custom
+    UDP/53 bind never sees real client traffic (NM's dnsmasq binds the
+    AP's specific gateway IP, which Linux's socket demux always
+    prefers over a wildcard 0.0.0.0 bind).
+    """
+
+    def test_creates_the_dnsmasq_shared_d_directory(
+        self, install_script_text: str
+    ) -> None:
+        assert 'install -d -m 0755 -o root -g root "$DNSMASQ_SHARED_D"' in (
+            install_script_text
+        )
+
+    def test_writes_wildcard_answer_from_configured_gateway_ip(
+        self, install_script_text: str
+    ) -> None:
+        assert "address=/#/${provisioned_ap_gateway_ip}" in install_script_text
+
+    def test_gateway_ip_is_read_from_validated_config_not_a_raw_env_var(
+        self, install_script_text: str
+    ) -> None:
+        """Same principle as the AP connection profile (issue #11): built
+        from what's actually in net_provision.yaml, so a re-run after a
+        hand-edited config stays in sync."""
+        assert "print(cfg.ap_gateway_ip)" in install_script_text
+        assert (
+            'provisioned_ap_gateway_ip="$(sed -n \'3p\' <<<"$net_provision_creds")"'
+            in install_script_text
+        )
+
+
 class TestMainAppServiceHasNetProvisionEnv:
     """The Network console page (issues #22-24) reads net-provisioning
     config through the same :func:`load_net_provision_config` the
@@ -431,6 +464,12 @@ class TestSharedTeardownHelper:
         assert '-f "$NET_PROVISION_SYSTEMD_UNIT"' in teardown_lib_text
         assert '-f "$POLKIT_RULE_DEST"' in teardown_lib_text
 
+    def test_helper_removes_dnsmasq_wildcard_drop_in(
+        self, teardown_lib_text: str
+    ) -> None:
+        assert '-f "$DNSMASQ_WILDCARD_CONF"' in teardown_lib_text
+        assert 'rm -f "$DNSMASQ_WILDCARD_CONF"' in teardown_lib_text
+
     def test_uninstall_sources_shared_helper(self, uninstall_script_text: str) -> None:
         assert (
             'source "$(dirname "$0")/shared/net-provision-teardown.sh"'
@@ -546,6 +585,7 @@ CONFIG_DIR="{td}"
 MODE="{mode}"
 NET_PROVISION_SYSTEMD_UNIT="{td}/sp-rtk-base-net-provision.service"
 POLKIT_RULE_DEST="{td}/10-sp-rtk-base-net-provision.rules"
+DNSMASQ_WILDCARD_CONF="{td}/sp-rtk-base-wildcard.conf"
 source "{NET_PROVISION_TEARDOWN_LIB}"
 {mode_resolution_block}
 echo "RESOLVED_MODE=$MODE"
@@ -720,6 +760,7 @@ class TestApplianceOnlyGating:
             "nmcli connection add",
             "POLKIT_RULE_DEST",
             "NET_PROVISION_SYSTEMD_UNIT",
+            "DNSMASQ_WILDCARD_CONF",
         ):
             assert needle in gated_block, (
                 f"Expected {needle!r} inside the appliance-only gated block"
@@ -877,6 +918,7 @@ AP_SSID="test-setup-ap"
 venv_python="{VENV_DIR_STANDIN}/bin/python"
 NET_PROVISION_SYSTEMD_UNIT="{td}/sp-rtk-base-net-provision.service"
 POLKIT_RULE_DEST="{td}/10-sp-rtk-base-net-provision.rules"
+DNSMASQ_WILDCARD_CONF="{td}/sp-rtk-base-wildcard.conf"
 source "{NET_PROVISION_TEARDOWN_LIB}"
 {mode_read_block}
 """

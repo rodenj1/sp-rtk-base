@@ -204,8 +204,9 @@ class TestPortalConfigDefaults:
 
     def test_ap_gateway_ip_defaults_to_nm_shared_mode_convention(self) -> None:
         """NM's `shared` hotspot mode defaults to 10.42.0.1/24; the portal
-        and wildcard DNS both answer with this address unless a
-        deployment's AP profile (issue #11) uses a different subnet."""
+        and NM's own dnsmasq (issue #34) both answer with this address
+        unless a deployment's AP profile (issue #11) uses a different
+        subnet."""
         config = NetProvisionConfig(ap_password=_PASSWORD)
         assert config.ap_gateway_ip == "10.42.0.1"
 
@@ -215,17 +216,10 @@ class TestPortalConfigDefaults:
         config = NetProvisionConfig(ap_password=_PASSWORD)
         assert config.portal_http_port == 80
 
-    def test_portal_dns_port_defaults_to_53(self) -> None:
-        config = NetProvisionConfig(ap_password=_PASSWORD)
-        assert config.portal_dns_port == 53
-
-    def test_portal_ports_are_overridable(self) -> None:
-        """Tests (and unusual deployments) need to bind non-privileged ports."""
-        config = NetProvisionConfig(
-            ap_password=_PASSWORD, portal_http_port=8080, portal_dns_port=5353
-        )
+    def test_portal_http_port_is_overridable(self) -> None:
+        """Tests (and unusual deployments) need to bind a non-privileged port."""
+        config = NetProvisionConfig(ap_password=_PASSWORD, portal_http_port=8080)
         assert config.portal_http_port == 8080
-        assert config.portal_dns_port == 5353
 
 
 class TestWifiNetwork:

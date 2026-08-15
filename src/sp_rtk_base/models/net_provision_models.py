@@ -351,10 +351,11 @@ class NetProvisionConfig(BaseModel):
         min_length=1,
         description=(
             "The setup AP's own address — NetworkManager's `shared`-mode "
-            "hotspot default is 10.42.0.1/24. The wildcard DNS responder "
-            "answers every lookup with this address, and it is the "
-            "documented manual-URL fallback if the captive-portal prompt "
-            "doesn't auto-pop."
+            "hotspot default is 10.42.0.1/24. NM's own shared-mode dnsmasq "
+            "is configured (issue #34, install-time dnsmasq-shared.d "
+            "drop-in) to answer every DNS lookup with this address, and it "
+            "is the documented manual-URL fallback if the captive-portal "
+            "prompt doesn't auto-pop."
         ),
     )
     portal_http_port: int = Field(
@@ -366,15 +367,5 @@ class NetProvisionConfig(BaseModel):
             "probes use plain http:// with no port, so this must be 80 "
             "in production. 0 (bind an OS-assigned ephemeral port) is "
             "allowed for tests."
-        ),
-    )
-    portal_dns_port: int = Field(
-        default=53,
-        ge=0,
-        le=65535,
-        description=(
-            "Port the wildcard DNS responder listens on. Must be 53 in "
-            "production for OS DNS resolution to reach it. 0 (bind an "
-            "OS-assigned ephemeral port) is allowed for tests."
         ),
     )

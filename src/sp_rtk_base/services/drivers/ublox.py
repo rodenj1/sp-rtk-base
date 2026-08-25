@@ -536,6 +536,20 @@ class UbloxDriver(GpsReceiverDriver):
         lon_hp = int(config.longitude * 1e7)
         alt_cm = int(config.altitude_m * 100)
 
+        # The ZED-F9P base engine will not generate RTCM corrections
+        # unless a valid (non-origin) 3D position is present in ECEF —
+        # writing LLH alone leaves CFG_TMODE_ECEF_X/Y/Z at their 0,0,0
+        # default and the base silently never engages, even though
+        # TMODE_MODE=2 and the RTCM message selection both ACK cleanly.
+        # Derive ECEF from the same WGS84 LLH input so both
+        # representations agree.
+        ecef_x_m, ecef_y_m, ecef_z_m = self._llh_to_ecef(
+            config.latitude, config.longitude, config.altitude_m
+        )
+        ecef_x_cm, ecef_x_hp = self._m_to_cm_hp(ecef_x_m)
+        ecef_y_cm, ecef_y_hp = self._m_to_cm_hp(ecef_y_m)
+        ecef_z_cm, ecef_z_hp = self._m_to_cm_hp(ecef_z_m)
+
         cfg_data = [
             ("CFG_TMODE_MODE", 2),  # Fixed mode
             ("CFG_TMODE_POS_TYPE", 1),  # LLH
@@ -546,6 +560,12 @@ class UbloxDriver(GpsReceiverDriver):
             # wire (same convention as CFG_TMODE_SVIN_ACC_LIMIT).
             # The Python API uses mm, so multiply by 10 here.
             ("CFG_TMODE_FIXED_POS_ACC", config.accuracy_mm * 10),
+            ("CFG_TMODE_ECEF_X", ecef_x_cm),
+            ("CFG_TMODE_ECEF_Y", ecef_y_cm),
+            ("CFG_TMODE_ECEF_Z", ecef_z_cm),
+            ("CFG_TMODE_ECEF_X_HP", ecef_x_hp),
+            ("CFG_TMODE_ECEF_Y_HP", ecef_y_hp),
+            ("CFG_TMODE_ECEF_Z_HP", ecef_z_hp),
         ]
         with self._lock:
             # Pre-disable TMODE before writing the new fixed-base
@@ -572,11 +592,44 @@ class UbloxDriver(GpsReceiverDriver):
             # layer=5 ensures Flash holds the new TMODE config
             # immediately, before any subsequent reset can wipe RAM.
             self._send_cfg_valset_locked(cfg_data, layer=5)  # RAM + Flash
+
+            # Verify-and-retry: read back the ECEF triple and confirm it
+            # matches what was just written — not merely non-zero.  A
+            # stale non-zero ECEF left over from a *previous* fixed-base
+            # config would pass a bare non-zero check while still being
+            # wrong, so we compare against the values derived from this
+            # call's LLH input.  A silent no-op here (ACK received but
+            # ECEF unchanged) is exactly the failure mode that let a
+            # "successfully configured" base emit zero RTCM frames.
+            expected_ecef = (ecef_x_cm, ecef_y_cm, ecef_z_cm)
+            ecef_x, ecef_y, ecef_z = self._read_ecef_locked()
+            if (ecef_x, ecef_y, ecef_z) != expected_ecef:
+                logger.warning(
+                    "ECEF position mismatch after first write "
+                    "(got %d,%d,%d cm, expected %d,%d,%d cm) — retrying",
+                    ecef_x,
+                    ecef_y,
+                    ecef_z,
+                    *expected_ecef,
+                )
+                self._send_cfg_valset_locked(cfg_data, layer=5)
+                ecef_x, ecef_y, ecef_z = self._read_ecef_locked()
+                if (ecef_x, ecef_y, ecef_z) != expected_ecef:
+                    raise RuntimeError(
+                        "Fixed base position did not take effect: "
+                        f"receiver reports ECEF={ecef_x},{ecef_y},{ecef_z} cm, "
+                        f"expected {expected_ecef} cm after two write "
+                        "attempts. Try disconnecting and reconnecting, "
+                        "or power-cycle the receiver."
+                    )
         logger.info(
-            "Fixed base configured: %.7f, %.7f, %.2fm",
+            "Fixed base configured: %.7f, %.7f, %.2fm (ECEF cm: %d, %d, %d)",
             config.latitude,
             config.longitude,
             config.altitude_m,
+            ecef_x,
+            ecef_y,
+            ecef_z,
         )
 
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
@@ -1135,6 +1188,87 @@ class UbloxDriver(GpsReceiverDriver):
         alt = p / math.cos(lat) - n
 
         return (math.degrees(lat), math.degrees(lon), alt)
+
+    @staticmethod
+    def _llh_to_ecef(
+        lat_deg: float, lon_deg: float, alt_m: float
+    ) -> tuple[float, float, float]:
+        """Convert WGS84 lat/lon/alt to ECEF coordinates (metres).
+
+        Inverse of ``_ecef_to_llh``. Used to populate
+        ``CFG_TMODE_ECEF_X/Y/Z`` alongside the LLH keys when writing a
+        fixed-base position — the ZED-F9P base engine requires a valid
+        ECEF position before it will generate RTCM corrections.
+
+        Returns:
+            Tuple of (x_m, y_m, z_m).
+        """
+        import math
+
+        a = 6378137.0  # WGS84 semi-major axis
+        f = 1.0 / 298.257223563  # WGS84 flattening
+        e2 = 2.0 * f - f * f  # eccentricity squared
+
+        lat = math.radians(lat_deg)
+        lon = math.radians(lon_deg)
+        sin_lat = math.sin(lat)
+        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+
+        x = (n + alt_m) * math.cos(lat) * math.cos(lon)
+        y = (n + alt_m) * math.cos(lat) * math.sin(lon)
+        z = (n * (1.0 - e2) + alt_m) * sin_lat
+
+        return (x, y, z)
+
+    @staticmethod
+    def _m_to_cm_hp(value_m: float) -> tuple[int, int]:
+        """Split a metre value into wire-format (cm, HP) for CFG_TMODE_ECEF_*.
+
+        Inverse of the ``cm / 100.0 + hp * 0.0001`` reconstruction used
+        elsewhere in this file. HP (0.1 mm resolution, range -99..99)
+        must share ``cm``'s sign per the u-blox interface spec, so the
+        split truncates toward zero rather than using floor division
+        (which would give HP the wrong sign for negative coordinates).
+        """
+        total_tenths_mm = round(value_m * 10000)
+        cm, hp = divmod(abs(total_tenths_mm), 100)
+        if total_tenths_mm < 0:
+            cm, hp = -cm, -hp
+        return cm, hp
+
+    def _read_ecef_locked(self) -> tuple[int, int, int]:
+        """Poll CFG_TMODE_ECEF_X/Y/Z (cm) from the receiver.
+
+        Must hold ``self._lock``. Used to verify a fixed-base ECEF
+        write actually took effect.
+        """
+        ser, reader = self._require_connection()
+
+        keys: list[str | int] = [
+            "CFG_TMODE_ECEF_X",
+            "CFG_TMODE_ECEF_Y",
+            "CFG_TMODE_ECEF_Z",
+        ]
+        msg = UBXMessage.config_poll(0, 0, keys)
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+
+        for _ in range(_MAX_READ_ATTEMPTS):
+            try:
+                raw, parsed = reader.read()  # type: ignore[misc]
+                if parsed is None:
+                    continue
+                identity = getattr(parsed, "identity", "")
+                if identity == "CFG-VALGET":
+                    return (
+                        int(getattr(parsed, "CFG_TMODE_ECEF_X", 0)),
+                        int(getattr(parsed, "CFG_TMODE_ECEF_Y", 0)),
+                        int(getattr(parsed, "CFG_TMODE_ECEF_Z", 0)),
+                    )
+            except Exception:
+                continue
+
+        raise RuntimeError("No CFG-VALGET response for ECEF position")
 
     @staticmethod
     def extract_svin_position(parsed: object) -> tuple[float, float, float]:

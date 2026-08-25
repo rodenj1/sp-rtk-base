@@ -365,11 +365,24 @@ class TestUbloxDriverConfiguration:
         # configure_survey_in's edge-triggered TMODE pattern):
         #   1. UBX-CFG-RST (no ACK read needed)
         #   2. CFG-VALSET TMODE=0 (layer=7)  -> ACK
-        #   3. CFG-VALSET TMODE=2 + coords (layer=1) -> ACK
+        #   3. CFG-VALSET TMODE=2 + coords + ECEF (layer=5) -> ACK
+        #   4. CFG-VALGET ECEF read-back verify -> matches written ECEF
+        # Read-back values are the exact CFG_TMODE_ECEF_X/Y/Z cm the
+        # driver computes for lat=47.3977, lon=8.5456, alt=408.0m —
+        # the verify step now checks equality, not just non-zero.
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_ack_response()),  # ACK for layer=7 disable
-            (b"", _make_ack_response()),  # ACK for layer=1 fixed-base write
+            (b"", _make_ack_response()),  # ACK for layer=5 fixed-base write
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_ECEF_X=427750094,
+                    CFG_TMODE_ECEF_Y=64275758,
+                    CFG_TMODE_ECEF_Z=467210663,
+                ),
+            ),
         ]
         mock_reader_cls.return_value = reader
 
@@ -414,11 +427,125 @@ class TestUbloxDriverConfiguration:
         # TMODE=2 (fixed) in the second call
         mode_vals = [v for k, v in fixed_cfg if k == "CFG_TMODE_MODE"]
         assert mode_vals == [2]
+        # The ZED-F9P base engine requires a valid (non-origin) ECEF
+        # position before it will generate RTCM — LLH alone leaves
+        # CFG_TMODE_ECEF_X/Y/Z at their 0,0,0 default. Assert they're
+        # written alongside LLH and are non-zero for a non-origin fix.
+        for ecef_key in ("CFG_TMODE_ECEF_X", "CFG_TMODE_ECEF_Y", "CFG_TMODE_ECEF_Z"):
+            assert ecef_key in keys
+        ecef_vals = {k: v for k, v in fixed_cfg if k.startswith("CFG_TMODE_ECEF_")}
+        assert ecef_vals["CFG_TMODE_ECEF_X"] != 0
+        assert ecef_vals["CFG_TMODE_ECEF_Y"] != 0
+        assert ecef_vals["CFG_TMODE_ECEF_Z"] != 0
         # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm wire units; the
         # Python API takes mm so we multiply by 10 when sending.
         # accuracy_mm=500 -> 5000 on the wire.
         acc_vals = [v for k, v in fixed_cfg if k == "CFG_TMODE_FIXED_POS_ACC"]
         assert acc_vals == [5000]
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_fixed_base_raises_when_ecef_stays_zero(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #39: an ACK'd write that leaves ECEF at 0,0,0 must not be
+        reported as success — this is exactly the failure mode where a
+        "successfully configured" base emitted zero RTCM frames."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        zero_ecef = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_TMODE_ECEF_X=0,
+            CFG_TMODE_ECEF_Y=0,
+            CFG_TMODE_ECEF_Z=0,
+        )
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for first layer=5 write
+            (b"", zero_ecef),  # first read-back — still zero
+            (b"", _make_ack_response()),  # ACK for retried layer=5 write
+            (b"", zero_ecef),  # second read-back — still zero
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = FixedBaseConfig(
+            latitude=47.3977, longitude=8.5456, altitude_m=408.0, accuracy_mm=500
+        )
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            with pytest.raises(RuntimeError, match="did not take effect"):
+                driver.configure_fixed_base(config)
+
+        # Retried once: layer=7 disable + two layer=5 writes.
+        assert mock_ubx_msg.config_set.call_count == 3
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_fixed_base_raises_when_ecef_is_stale(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #39 spec item 2: the read-back must be consistent with the
+        LLH just written, not merely non-zero. A *stale* non-zero ECEF left
+        over from a previous fixed-base config must still be rejected —
+        a bare non-zero check would have passed this and reported success
+        with the wrong position."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        # Non-zero, but not the ECEF for this config's lat/lon/alt — as
+        # if a prior fixed-base session's coordinates were still latched.
+        stale_ecef = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_TMODE_ECEF_X=-245790204,
+            CFG_TMODE_ECEF_Y=-477512066,
+            CFG_TMODE_ECEF_Z=342909332,
+        )
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for first layer=5 write
+            (b"", stale_ecef),  # first read-back — stale, wrong position
+            (b"", _make_ack_response()),  # ACK for retried layer=5 write
+            (b"", stale_ecef),  # second read-back — still stale
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = FixedBaseConfig(
+            latitude=47.3977, longitude=8.5456, altitude_m=408.0, accuracy_mm=500
+        )
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            with pytest.raises(RuntimeError, match="did not take effect"):
+                driver.configure_fixed_base(config)
+
+        # Retried once: layer=7 disable + two layer=5 writes.
+        assert mock_ubx_msg.config_set.call_count == 3
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -1022,6 +1149,58 @@ class TestEcefToLlh:
         # North pole: lat ≈ 90°, ECEF z ≈ 6356752.3 (semi-minor axis)
         lat, _lon, _alt = UbloxDriver._ecef_to_llh(0.0, 0.0, 6356752.3)  # pyright: ignore[reportPrivateUsage]
         assert abs(lat - 90.0) < 0.01
+
+
+class TestLlhToEcef:
+    """Tests for the WGS84 LLH→ECEF coordinate conversion (issue #39)."""
+
+    def test_origin(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        """0,0,0 lands on the equator at the WGS84 semi-major axis."""
+        x, y, z = UbloxDriver._llh_to_ecef(0.0, 0.0, 0.0)  # pyright: ignore[reportPrivateUsage]
+        assert x == pytest.approx(6378137.0, abs=1e-3)
+        assert y == pytest.approx(0.0, abs=1e-6)
+        assert z == pytest.approx(0.0, abs=1e-6)
+
+    def test_north_pole(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        """90°N lands on the WGS84 semi-minor axis."""
+        x, y, z = UbloxDriver._llh_to_ecef(90.0, 0.0, 0.0)  # pyright: ignore[reportPrivateUsage]
+        assert x == pytest.approx(0.0, abs=1e-3)
+        assert y == pytest.approx(0.0, abs=1e-3)
+        assert z == pytest.approx(6356752.3, abs=1.0)
+
+    def test_round_trip_with_ecef_to_llh(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        """LLH -> ECEF -> LLH recovers the original coordinate."""
+        lat, lon, alt = 47.3977, 8.5456, 408.0
+        x, y, z = UbloxDriver._llh_to_ecef(lat, lon, alt)  # pyright: ignore[reportPrivateUsage]
+        # Never all-zero for a non-origin fix — this is the exact bug:
+        # a fixed base silently kept ECEF at 0,0,0 and emitted no RTCM.
+        assert (x, y, z) != (0.0, 0.0, 0.0)
+        round_lat, round_lon, round_alt = UbloxDriver._ecef_to_llh(x, y, z)  # pyright: ignore[reportPrivateUsage]
+        assert round_lat == pytest.approx(lat, abs=1e-6)
+        assert round_lon == pytest.approx(lon, abs=1e-6)
+        assert round_alt == pytest.approx(alt, abs=1e-3)
+
+
+class TestMToCmHp:
+    """Tests for the metre -> (cm, HP) wire-format split (issue #39)."""
+
+    def test_positive_value_hp_matches_sign(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        cm, hp = UbloxDriver._m_to_cm_hp(2457902.0403)  # pyright: ignore[reportPrivateUsage]
+        assert cm == 245790204
+        assert hp == 3
+        assert cm >= 0 and hp >= 0
+
+    def test_negative_value_hp_matches_sign(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        """HP must share cm's sign per the u-blox interface spec."""
+        cm, hp = UbloxDriver._m_to_cm_hp(-2457902.0403)  # pyright: ignore[reportPrivateUsage]
+        assert cm == -245790204
+        assert hp == -3
+        assert cm <= 0 and hp <= 0
+
+    def test_round_trip(self) -> None:  # pyright: ignore[reportPrivateUsage]
+        cm, hp = UbloxDriver._m_to_cm_hp(-477512.06601)  # pyright: ignore[reportPrivateUsage]
+        reconstructed_m = cm / 100.0 + hp * 0.0001
+        assert reconstructed_m == pytest.approx(-477512.06601, abs=1e-4)
 
 
 # ---------------------------------------------------------------------------

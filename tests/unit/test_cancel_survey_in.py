@@ -58,6 +58,19 @@ def _make_ack() -> SimpleNamespace:
     return SimpleNamespace(identity="ACK-ACK")
 
 
+def _make_profile_valget() -> SimpleNamespace:
+    """CFG-VALGET response matching the RTCM-only base output profile."""
+    return SimpleNamespace(
+        identity="CFG-VALGET",
+        CFG_UART1OUTPROT_NMEA=0,
+        CFG_UART1OUTPROT_UBX=0,
+        CFG_UART1OUTPROT_RTCM3X=1,
+        CFG_UART2OUTPROT_NMEA=0,
+        CFG_UART2OUTPROT_UBX=0,
+        CFG_UART2OUTPROT_RTCM3X=1,
+    )
+
+
 # ---------------------------------------------------------------------------
 # FakeGpsDriver.disable_base_mode
 # ---------------------------------------------------------------------------
@@ -198,6 +211,8 @@ class TestUbloxDisableBaseMode:
                     obs=1,
                 ),
             ),
+            (b"", _make_ack()),  # base output profile write (issue #40)
+            (b"", _make_profile_valget()),  # read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -212,8 +227,9 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
             )
 
-        # Two config_sets: full-layer disable, then RAM-only enable.
-        assert mock_ubx_msg.config_set.call_count == 2
+        # Three config_sets: full-layer disable, RAM-only enable, and
+        # the layer=5 base output profile (issue #40).
+        assert mock_ubx_msg.config_set.call_count == 3
         disable = mock_ubx_msg.config_set.call_args_list[0]
         enable = mock_ubx_msg.config_set.call_args_list[1]
         assert disable[0][2] == [("CFG_TMODE_MODE", 0)]
@@ -353,6 +369,8 @@ class TestUbloxDisableBaseMode:
             (b"", _make_ack()),  # enable (RAM)
             (b"", nav_svin_fresh_before),  # before-snapshot
             (b"", nav_svin_fresh_after),  # after-snapshot
+            (b"", _make_ack()),  # base output profile write (issue #40)
+            (b"", _make_profile_valget()),  # read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -374,11 +392,11 @@ class TestUbloxDisableBaseMode:
 
         # No rollback path triggered — the pre-reset cleared the
         # stale state, and the post-write verify saw a fresh
-        # (dur=0 -> dur=3) progression.  Only 2 CFG-VALSETs fire:
-        # layer=7 disable, layer=1 enable.
-        assert mock_ubx_msg.config_set.call_count == 2
+        # (dur=0 -> dur=3) progression.  3 CFG-VALSETs fire:
+        # layer=7 disable, layer=1 enable, layer=5 output profile.
+        assert mock_ubx_msg.config_set.call_count == 3
         layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
-        assert layers == [7, 1]
+        assert layers == [7, 1, 5]
 
     def test_disable_base_mode_when_disconnected(self) -> None:
         drv = UbloxDriver()

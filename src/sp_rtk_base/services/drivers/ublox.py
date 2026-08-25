@@ -86,6 +86,21 @@ _RTCM_USB_KEYS: dict[int, str] = {
     msg_id: _rtcm_key(msg_id, "USB") for msg_id in _RTCM_KEY_BASES
 }
 
+# RTCM-only output profile applied to UART1/UART2 on every base-mode
+# transition (survey-in or fixed).  Silences NMEA/UBX output so a base
+# station doesn't flood rover data links with traffic they don't need —
+# see issue #40.  UBX *input* protocols and USB output are deliberately
+# left untouched: input must stay enabled for the app to manage the
+# receiver, and USB is used for local diagnostics.
+_BASE_OUTPUT_PROFILE: dict[str, int] = {
+    "CFG_UART1OUTPROT_NMEA": 0,
+    "CFG_UART1OUTPROT_UBX": 0,
+    "CFG_UART1OUTPROT_RTCM3X": 1,
+    "CFG_UART2OUTPROT_NMEA": 0,
+    "CFG_UART2OUTPROT_UBX": 0,
+    "CFG_UART2OUTPROT_RTCM3X": 1,
+}
+
 
 class UbloxDriver(GpsReceiverDriver):
     """u-blox GPS receiver driver using UBX protocol via PyUBX2.
@@ -487,6 +502,14 @@ class UbloxDriver(GpsReceiverDriver):
                     "state machine did not engage.  TMODE has been "
                     "reset to 0."
                 )
+
+            # Apply the RTCM-only output profile as a separate layer=5
+            # (RAM+Flash) VALSET — independent of the layer=1 survey
+            # write above.  Unlike TMODE/SVIN params, port protocol
+            # config is not survey state, so it's flashed immediately
+            # even during survey-in (silencing NMEA for the whole
+            # survey, not just once a fixed base is later saved).
+            self._apply_base_output_profile_locked()
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,
@@ -622,6 +645,11 @@ class UbloxDriver(GpsReceiverDriver):
                         "attempts. Try disconnecting and reconnecting, "
                         "or power-cycle the receiver."
                     )
+
+            # Apply the RTCM-only output profile as a separate layer=5
+            # VALSET, same as configure_survey_in — see that method's
+            # comment for why this isn't merged into the write above.
+            self._apply_base_output_profile_locked()
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm (ECEF cm: %d, %d, %d)",
             config.latitude,
@@ -631,6 +659,70 @@ class UbloxDriver(GpsReceiverDriver):
             ecef_y,
             ecef_z,
         )
+
+    # ------------------------------------------------------------------
+    # Base station output profile (issue #40)
+    # ------------------------------------------------------------------
+
+    def _apply_base_output_profile_locked(self) -> None:
+        """Write and verify the RTCM-only UART1/UART2 output profile.
+
+        Must hold ``self._lock``. Called from both ``configure_survey_in``
+        and ``configure_fixed_base`` after their mode-specific VALSET has
+        already succeeded. Always writes unconditionally — no pre-read
+        to skip an already-correct profile — since that keeps this
+        simple and guarantees convergence even after a prior partial
+        failure.
+
+        Verify-and-retry: matches ``disable_base_mode``'s pattern, since
+        the ACK can lie when the receiver is under load. A read-back
+        mismatch that survives one retry is a hard failure — the
+        RTCM-only profile is a required end-state per issue #40's
+        acceptance criteria, not best-effort, so a soft failure here
+        would silently reintroduce the exact NMEA-flooding bug this
+        exists to fix.
+        """
+        cfg_data = list(_BASE_OUTPUT_PROFILE.items())
+
+        self._send_cfg_valset_locked(cfg_data, layer=5)
+        if self._read_base_output_profile_locked() == _BASE_OUTPUT_PROFILE:
+            return
+
+        logger.warning("Base output profile mismatch after first write — retrying")
+        self._send_cfg_valset_locked(cfg_data, layer=5)
+        actual = self._read_base_output_profile_locked()
+        if actual != _BASE_OUTPUT_PROFILE:
+            raise RuntimeError(
+                "Base output profile did not take effect: receiver "
+                f"reports {actual}, expected {_BASE_OUTPUT_PROFILE} "
+                "after two write attempts. Try disconnecting and "
+                "reconnecting, or power-cycle the receiver."
+            )
+
+    def _read_base_output_profile_locked(self) -> dict[str, int]:
+        """Poll the six UART1/UART2 OUTPROT keys (must hold ``self._lock``)."""
+        ser, reader = self._require_connection()
+
+        keys: list[str | int] = list(_BASE_OUTPUT_PROFILE.keys())
+        msg = UBXMessage.config_poll(0, 0, keys)
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+
+        for _ in range(_MAX_READ_ATTEMPTS):
+            try:
+                raw, parsed = reader.read()  # type: ignore[misc]
+                if parsed is None:
+                    continue
+                identity = getattr(parsed, "identity", "")
+                if identity == "CFG-VALGET":
+                    return {
+                        key: int(getattr(parsed, key, -1))
+                        for key in _BASE_OUTPUT_PROFILE
+                    }
+            except Exception:
+                continue
+
+        raise RuntimeError("No CFG-VALGET response for base output profile")
 
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
         cfg_data: list[tuple[str, int]] = []

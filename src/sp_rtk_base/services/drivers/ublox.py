@@ -101,6 +101,15 @@ _BASE_OUTPUT_PROFILE: dict[str, int] = {
     "CFG_UART2OUTPROT_RTCM3X": 1,
 }
 
+# u-blox dynamics-model class for a fixed-mount base station (issue #38).
+# 2 = stationary — tightens the position filter and suppresses
+# velocity/heading estimation, which is the correct nav class for a
+# receiver that never moves.  The receiver defaults to 0 (portable),
+# which is wrong for every base in this fleet, so it's applied
+# unconditionally on every base-mode transition rather than left as an
+# operator-configurable setting.
+_STATIONARY_DYN_MODEL: int = 2
+
 
 class UbloxDriver(GpsReceiverDriver):
     """u-blox GPS receiver driver using UBX protocol via PyUBX2.
@@ -518,6 +527,9 @@ class UbloxDriver(GpsReceiverDriver):
             # for the whole survey, not just once a fixed base is
             # later saved.
             self._apply_base_output_profile_locked()
+            # Force stationary dynamics for the whole survey (issue
+            # #38) — see ``_apply_stationary_dyn_model_locked``.
+            self._apply_stationary_dyn_model_locked()
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,
@@ -540,6 +552,12 @@ class UbloxDriver(GpsReceiverDriver):
         after the second attempt, a ``RuntimeError`` is raised so
         the caller can surface the failure to the operator instead
         of silently leaving the survey running.
+
+        Deliberately leaves ``CFG_NAVSPG_DYNMODEL`` untouched (issue
+        #38): rover mode is not a concern of this app, so there's no
+        "correct" dynamics class to restore here, and clearing it would
+        regress a receiver that a prior fixed-base/survey-in session
+        already set to stationary back to portable for no benefit.
         """
         with self._lock:
             self._send_cfg_valset_locked([("CFG_TMODE_MODE", 0)], layer=1)
@@ -658,6 +676,9 @@ class UbloxDriver(GpsReceiverDriver):
             # VALSET, same as configure_survey_in — see that method's
             # comment for why this isn't merged into the write above.
             self._apply_base_output_profile_locked()
+            # Force stationary dynamics (issue #38) — see
+            # ``_apply_stationary_dyn_model_locked``.
+            self._apply_stationary_dyn_model_locked()
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm (ECEF cm: %d, %d, %d)",
             config.latitude,
@@ -671,6 +692,34 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
     # Base station output profile (issue #40)
     # ------------------------------------------------------------------
+
+    def _apply_stationary_dyn_model_locked(self) -> None:
+        """Write and verify ``CFG_NAVSPG_DYNMODEL=2`` (stationary).
+
+        Must hold ``self._lock``.  Called from both ``configure_survey_in``
+        and ``configure_fixed_base`` after their mode-specific VALSET (and
+        the base output profile) has already succeeded — issue #38.
+
+        Written to layer=5 (RAM+Flash) rather than the RAM-only layer the
+        issue's original write-up suggested, matching the layer
+        ``configure_survey_in``'s own SVIN params already use since issue
+        #42: a RAM-only write reverts to the last-flashed value on reboot
+        or port reopen, which would fail this issue's own "after a reboot,
+        the value is still 2" acceptance criterion for the survey-in path.
+
+        Reuses ``_write_and_verify_locked``, so a read-back mismatch
+        retries once before raising — same pattern as every other durable
+        CFG-VALSET write in this driver.
+        """
+        self._write_and_verify_locked(
+            [("CFG_NAVSPG_DYNMODEL", _STATIONARY_DYN_MODEL)],
+            layer=5,
+            label="Dynamics model",
+        )
+        logger.info(
+            "Dynamics model set to stationary (CFG_NAVSPG_DYNMODEL=%d)",
+            _STATIONARY_DYN_MODEL,
+        )
 
     def _apply_base_output_profile_locked(self) -> None:
         """Write and verify the RTCM-only UART1/UART2 output profile.

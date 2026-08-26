@@ -85,6 +85,24 @@ def _make_nav_svin_response(
     )
 
 
+def _make_rtcm_valget(overrides: dict[str, int] | None = None) -> object:
+    """Fake CFG-VALGET response for RTCM message keys.
+
+    Any key not present in ``overrides`` reads back as 0 (disabled) —
+    the ``_read_cfg_keys_locked`` verify step polls a specific key
+    list, so this only needs to answer for the keys it's asked about.
+    """
+    values = dict(overrides or {})
+
+    class _FakeRtcmValGet:
+        identity = "CFG-VALGET"
+
+        def __getattr__(self, name: str) -> int:
+            return values.get(name, 0)
+
+    return _FakeRtcmValGet()
+
+
 def _make_base_output_profile_valget(**overrides: int) -> SimpleNamespace:
     """Create a mock CFG-VALGET response for the six OUTPROT keys.
 
@@ -311,17 +329,27 @@ class TestUbloxDriverConfiguration:
         # configure_survey_in now performs:
         #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
         #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
-        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
-        #   3. NAV-SVIN poll                                -> dur=0
-        #   4. (~2 s gap)
-        #   5. NAV-SVIN poll                                -> dur=3 (incremented)
-        #   6. CFG-VALSET base output profile (layer=5)     -> ACK
-        #   7. CFG-VALGET read-back                         -> matches (issue #40)
+        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=5)   -> ACK
+        #   3. CFG-VALGET read-back                         -> matches (issue #42)
+        #   4. NAV-SVIN poll                                -> dur=0
+        #   5. (~2 s gap)
+        #   6. NAV-SVIN poll                                -> dur=3 (incremented)
+        #   7. CFG-VALSET base output profile (layer=5)     -> ACK
+        #   8. CFG-VALGET read-back                         -> matches (issue #40)
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),  # baseline
             (b"", _make_ack_response()),  # full-layer disable
             (b"", _make_ack_response()),  # enable
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_SVIN_MIN_DUR=300,
+                    CFG_TMODE_SVIN_ACC_LIMIT=400000,
+                    CFG_TMODE_MODE=1,
+                ),
+            ),  # enable read-back — matches
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=3, obs=1)),
             (b"", _make_ack_response()),  # base output profile write
@@ -340,8 +368,8 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_survey_in(config)
 
-        # Three CFG-VALSET calls: layer=7 disable, layer=1 enable, and
-        # layer=5 base output profile (issue #40).
+        # Three CFG-VALSET calls: layer=7 disable, layer=5 enable
+        # (issue #42), and layer=5 base output profile (issue #40).
         assert mock_ubx_msg.config_set.call_count == 3
         disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
         disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
@@ -355,8 +383,9 @@ class TestUbloxDriverConfiguration:
         # accumulating from prior sessions.
         assert disable_layer == 7
         assert disable_cfg == [("CFG_TMODE_MODE", 0)]
-        # Enable is RAM-only — survey-in is intentionally not persisted.
-        assert enable_layer == 1
+        # Enable is RAM+Flash (issue #42) — a RAM-only write reverted
+        # to the last-flashed selection on reboot / port reopen.
+        assert enable_layer == 5
         keys = [k for k, _ in enable_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys
@@ -740,6 +769,16 @@ class TestUbloxDriverConfiguration:
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_ack_response()),
+            (
+                b"",
+                _make_rtcm_valget(
+                    {
+                        "CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 1,
+                        "CFG_MSGOUT_RTCM_3X_TYPE1077_USB": 1,
+                        "CFG_MSGOUT_RTCM_3X_TYPE1087_USB": 1,
+                    }
+                ),
+            ),  # read-back verify (issue #42) — matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -754,6 +793,9 @@ class TestUbloxDriverConfiguration:
         driver.configure_rtcm_messages(config)
 
         mock_ubx_msg.config_set.assert_called_once()
+        # Issue #42: RAM+Flash, not RAM-only — a layer=1 write reverted
+        # to the last-flashed message selection on reboot / reconnect.
+        assert mock_ubx_msg.config_set.call_args[0][0] == 5
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -772,6 +814,10 @@ class TestUbloxDriverConfiguration:
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_ack_response()),
+            (
+                b"",
+                _make_rtcm_valget({"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 1}),
+            ),  # read-back verify — matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -785,6 +831,86 @@ class TestUbloxDriverConfiguration:
         # 9999 is not a known RTCM message
         config = RtcmMessageConfig(message_ids=[1005, 9999], rate_hz=1)
         driver.configure_rtcm_messages(config)  # Should not raise, just warn
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_rtcm_messages_retries_once_on_mismatch(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #42: a read-back mismatch after the first write is
+        retried once rather than failing immediately."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # first write
+            (b"", _make_rtcm_valget()),  # first read-back — still all zero
+            (b"", _make_ack_response()),  # retried write
+            (
+                b"",
+                _make_rtcm_valget({"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 1}),
+            ),  # second read-back — matches
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = RtcmMessageConfig(message_ids=[1005], rate_hz=1)
+        driver.configure_rtcm_messages(config)  # must not raise
+
+        assert mock_ubx_msg.config_set.call_count == 2
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_configure_rtcm_messages_raises_after_second_mismatch(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #42: if the message selection still doesn't match after
+        the retry, the call must fail hard instead of silently reporting
+        success — this is the exact bug that let RTCM output go silent
+        after a reboot while the UI claimed success."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # first write
+            (b"", _make_rtcm_valget()),  # first read-back — still all zero
+            (b"", _make_ack_response()),  # retried write
+            (b"", _make_rtcm_valget()),  # second read-back — still all zero
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = RtcmMessageConfig(message_ids=[1005], rate_hz=1)
+        with pytest.raises(RuntimeError, match="did not take effect"):
+            driver.configure_rtcm_messages(config)
+
+        assert mock_ubx_msg.config_set.call_count == 2
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

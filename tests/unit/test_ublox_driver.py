@@ -121,6 +121,14 @@ def _make_base_output_profile_valget(**overrides: int) -> SimpleNamespace:
     return SimpleNamespace(identity="CFG-VALGET", **values)
 
 
+def _make_dyn_model_valget(value: int = 2) -> SimpleNamespace:
+    """Create a mock CFG-VALGET response for CFG_NAVSPG_DYNMODEL (issue #38).
+
+    Defaults to 2 (stationary); pass ``value=0`` to simulate a mismatch.
+    """
+    return SimpleNamespace(identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=value)
+
+
 @pytest.fixture()
 def mock_serial() -> MagicMock:
     """Create a mock serial.Serial instance."""
@@ -336,6 +344,8 @@ class TestUbloxDriverConfiguration:
         #   6. NAV-SVIN poll                                -> dur=3 (incremented)
         #   7. CFG-VALSET base output profile (layer=5)     -> ACK
         #   8. CFG-VALGET read-back                         -> matches (issue #40)
+        #   9. CFG-VALSET dyn model (layer=5)                -> ACK
+        #  10. CFG-VALGET read-back                         -> matches (issue #38)
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),  # baseline
@@ -354,6 +364,11 @@ class TestUbloxDriverConfiguration:
             (b"", _make_nav_svin_response(active=0, valid=0, dur=3, obs=1)),
             (b"", _make_ack_response()),  # base output profile write
             (b"", _make_base_output_profile_valget()),  # read-back matches
+            (b"", _make_ack_response()),  # dyn model write
+            (
+                b"",
+                _make_dyn_model_valget(),
+            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -368,15 +383,18 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_survey_in(config)
 
-        # Three CFG-VALSET calls: layer=7 disable, layer=5 enable
-        # (issue #42), and layer=5 base output profile (issue #40).
-        assert mock_ubx_msg.config_set.call_count == 3
+        # Four CFG-VALSET calls: layer=7 disable, layer=5 enable
+        # (issue #42), layer=5 base output profile (issue #40), and
+        # layer=5 dyn model (issue #38).
+        assert mock_ubx_msg.config_set.call_count == 4
         disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
         disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
         enable_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
         enable_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
         profile_layer = mock_ubx_msg.config_set.call_args_list[2][0][0]
         profile_cfg = mock_ubx_msg.config_set.call_args_list[2][0][2]
+        dyn_model_layer = mock_ubx_msg.config_set.call_args_list[3][0][0]
+        dyn_model_cfg = mock_ubx_msg.config_set.call_args_list[3][0][2]
 
         # Disable must hit RAM|BBR|Flash (7), per u-blox C099 reference
         # script — RAM-only leaves BBR pinned and the ``dur`` counter
@@ -411,6 +429,9 @@ class TestUbloxDriverConfiguration:
             ("CFG_UART2OUTPROT_UBX", 0),
             ("CFG_UART2OUTPROT_RTCM3X", 1),
         ]
+        # Dynamics model: separate layer=5 VALSET, stationary (issue #38).
+        assert dyn_model_layer == 5
+        assert dyn_model_cfg == [("CFG_NAVSPG_DYNMODEL", 2)]
         # UBX input protocols must never be touched — the app manages
         # the receiver over the same link.
         all_keys = {
@@ -457,6 +478,11 @@ class TestUbloxDriverConfiguration:
             ),
             (b"", _make_ack_response()),  # ACK for base output profile write
             (b"", _make_base_output_profile_valget()),  # read-back matches
+            (b"", _make_ack_response()),  # ACK for dyn model write
+            (
+                b"",
+                _make_dyn_model_valget(),
+            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -476,19 +502,22 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_fixed_base(config)
 
-        # Three CFG-VALSETs: layer=7 disable, layer=5 fixed-base, and
-        # layer=5 base output profile (issue #40).
+        # Four CFG-VALSETs: layer=7 disable, layer=5 fixed-base, layer=5
+        # base output profile (issue #40), and layer=5 dyn model
+        # (issue #38).
         # Pre-disable mirrors configure_survey_in — without it, a
         # receiver currently in TMODE=1 silently coalesces the
         # TMODE=2 write and stays in survey-in (the Path 2 bug
         # diagnosed on larson-base before v0.3.5).
-        assert mock_ubx_msg.config_set.call_count == 3
+        assert mock_ubx_msg.config_set.call_count == 4
         disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
         disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
         fixed_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
         fixed_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
         profile_layer = mock_ubx_msg.config_set.call_args_list[2][0][0]
         profile_cfg = mock_ubx_msg.config_set.call_args_list[2][0][2]
+        dyn_model_layer = mock_ubx_msg.config_set.call_args_list[3][0][0]
+        dyn_model_cfg = mock_ubx_msg.config_set.call_args_list[3][0][2]
 
         assert disable_layer == 7
         assert disable_cfg == [("CFG_TMODE_MODE", 0)]
@@ -530,6 +559,9 @@ class TestUbloxDriverConfiguration:
             ("CFG_UART2OUTPROT_UBX", 0),
             ("CFG_UART2OUTPROT_RTCM3X", 1),
         ]
+        # Dynamics model: separate layer=5 VALSET, stationary (issue #38).
+        assert dyn_model_layer == 5
+        assert dyn_model_cfg == [("CFG_NAVSPG_DYNMODEL", 2)]
         # UBX input protocols must never be touched — the app manages
         # the receiver over the same link.
         all_keys = {
@@ -677,6 +709,11 @@ class TestUbloxDriverConfiguration:
             (b"", _make_base_output_profile_valget(CFG_UART1OUTPROT_NMEA=1)),
             (b"", _make_ack_response()),  # retried profile write
             (b"", _make_base_output_profile_valget()),  # second read-back matches
+            (b"", _make_ack_response()),  # dyn model write
+            (
+                b"",
+                _make_dyn_model_valget(),
+            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -693,8 +730,9 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_fixed_base(config)  # must not raise
 
-        # disable(7) + fixed(5) + profile write + profile retry = 4 VALSETs.
-        assert mock_ubx_msg.config_set.call_count == 4
+        # disable(7) + fixed(5) + profile write + profile retry + dyn
+        # model = 5 VALSETs.
+        assert mock_ubx_msg.config_set.call_count == 5
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -751,6 +789,122 @@ class TestUbloxDriverConfiguration:
 
         # disable(7) + fixed(5) + profile write + profile retry = 4 VALSETs.
         assert mock_ubx_msg.config_set.call_count == 4
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_dyn_model_retries_once_on_mismatch(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #38: a read-back mismatch on CFG_NAVSPG_DYNMODEL is
+        retried once, mirroring the base output profile's verify-and-retry
+        pattern, rather than failing immediately."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for layer=5 fixed-base write
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_ECEF_X=427750094,
+                    CFG_TMODE_ECEF_Y=64275758,
+                    CFG_TMODE_ECEF_Z=467210663,
+                ),
+            ),
+            (b"", _make_ack_response()),  # base output profile write
+            (b"", _make_base_output_profile_valget()),  # read-back matches
+            (b"", _make_ack_response()),  # first dyn model write
+            # First read-back — still portable (0), write hasn't taken.
+            (b"", _make_dyn_model_valget(0)),
+            (b"", _make_ack_response()),  # retried dyn model write
+            (
+                b"",
+                _make_dyn_model_valget(),
+            ),  # second read-back matches
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = FixedBaseConfig(
+            latitude=47.3977, longitude=8.5456, altitude_m=408.0, accuracy_mm=500
+        )
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            driver.configure_fixed_base(config)  # must not raise
+
+        # disable(7) + fixed(5) + profile + dyn write + dyn retry = 5.
+        assert mock_ubx_msg.config_set.call_count == 5
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_dyn_model_raises_after_second_mismatch(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Issue #38: if CFG_NAVSPG_DYNMODEL still doesn't read back as 2
+        after the retry, configure_fixed_base must fail hard — even though
+        TMODE/position and the output profile already succeeded."""
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        stale = _make_dyn_model_valget(0)
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for layer=5 fixed-base write
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_ECEF_X=427750094,
+                    CFG_TMODE_ECEF_Y=64275758,
+                    CFG_TMODE_ECEF_Z=467210663,
+                ),
+            ),
+            (b"", _make_ack_response()),  # base output profile write
+            (b"", _make_base_output_profile_valget()),  # read-back matches
+            (b"", _make_ack_response()),  # first dyn model write
+            (b"", stale),  # first read-back — mismatch
+            (b"", _make_ack_response()),  # retried dyn model write
+            (b"", stale),  # second read-back — still mismatched
+        ]
+        mock_reader_cls.return_value = reader
+
+        mock_msg = MagicMock()
+        mock_msg.serialize.return_value = b"\x00"
+        mock_ubx_msg.config_set.return_value = mock_msg
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0")
+
+        config = FixedBaseConfig(
+            latitude=47.3977, longitude=8.5456, altitude_m=408.0, accuracy_mm=500
+        )
+        with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
+            with pytest.raises(RuntimeError, match="[Dd]ynamics model"):
+                driver.configure_fixed_base(config)
+
+        # disable(7) + fixed(5) + profile + dyn write + dyn retry = 5.
+        assert mock_ubx_msg.config_set.call_count == 5
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

@@ -213,7 +213,14 @@ class TestConfigureRtcmPorts:
         # Patch the *locked* variant — that's what writers call now that
         # all CFG-VALSET callers acquire ``self._lock`` directly to make
         # multi-step writes atomic against concurrent polls.
-        with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
+        def _fake_read_back(keys: list[str]) -> dict[str, int]:
+            return dict.fromkeys(keys, 0) | {k: 1 for k in keys if k.endswith("_USB")}
+
+        with (
+            patch.object(driver, "_send_cfg_valset_locked") as mock_valset,
+            patch.object(driver, "_read_cfg_keys_locked") as mock_read,
+        ):
+            mock_read.side_effect = _fake_read_back
             driver.configure_rtcm_ports(config)
 
             mock_valset.assert_called_once()
@@ -225,6 +232,13 @@ class TestConfigureRtcmPorts:
             usb_entry = [(k, v) for k, v in cfg_data if k.endswith("_USB")]
             assert len(usb_entry) == 1
             assert usb_entry[0][1] == 1
+            # Issue #42: RAM+Flash, not RAM-only — a layer=1 write
+            # reverted to the last-flashed rates on reboot / reconnect.
+            assert mock_valset.call_args.kwargs["layer"] == 5
+            # Verify-after-write: the read-back must be polled with
+            # exactly the keys just written.
+            mock_read.assert_called_once()
+            assert set(mock_read.call_args[0][0]) == {k for k, _ in cfg_data}
 
     def test_configure_empty_config(self) -> None:
         from sp_rtk_base.services.drivers.ublox import UbloxDriver
@@ -258,6 +272,56 @@ class TestConfigureRtcmPorts:
         with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
             driver.configure_rtcm_ports(config)
             mock_valset.assert_not_called()
+
+    def test_configure_retries_once_on_mismatch(self) -> None:
+        """Issue #42: a read-back mismatch after the first write is
+        retried once, mirroring the ECEF/base-output-profile pattern,
+        rather than failing immediately."""
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        driver = UbloxDriver()
+        driver._serial = MagicMock()
+        driver._serial.is_open = True
+        driver._reader = MagicMock()
+
+        config = RtcmPortConfig(messages={1005: {"USB": 1}})
+
+        with (
+            patch.object(driver, "_send_cfg_valset_locked") as mock_valset,
+            patch.object(driver, "_read_cfg_keys_locked") as mock_read,
+        ):
+            mock_read.side_effect = [
+                {"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 0},  # mismatch
+                {"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 1},  # matches on retry
+            ]
+            driver.configure_rtcm_ports(config)  # must not raise
+
+        assert mock_valset.call_count == 2
+        assert mock_read.call_count == 2
+
+    def test_configure_raises_after_second_mismatch(self) -> None:
+        """Issue #42: if the read-back still doesn't match after the
+        retry, the call must fail hard rather than silently reporting
+        success with a config that never took effect."""
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver
+
+        driver = UbloxDriver()
+        driver._serial = MagicMock()
+        driver._serial.is_open = True
+        driver._reader = MagicMock()
+
+        config = RtcmPortConfig(messages={1005: {"USB": 1}})
+
+        with (
+            patch.object(driver, "_send_cfg_valset_locked") as mock_valset,
+            patch.object(driver, "_read_cfg_keys_locked") as mock_read,
+        ):
+            mock_read.return_value = {"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 0}
+            with pytest.raises(RuntimeError, match="did not take effect"):
+                driver.configure_rtcm_ports(config)
+
+        assert mock_valset.call_count == 2
+        assert mock_read.call_count == 2
 
 
 # ---------------------------------------------------------------------------

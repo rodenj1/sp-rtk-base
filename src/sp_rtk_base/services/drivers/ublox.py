@@ -416,11 +416,15 @@ class UbloxDriver(GpsReceiverDriver):
             # rather than coalesced with the previous state.
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
-            # Step 3: write the new survey-in parameters and enable
-            # to RAM only.  Per u-blox C099 "F9P Base Survey in
-            # start.txt", survey-in is intentionally NOT persisted to
-            # flash — only the completed fixed-base coordinates from
-            # ``save_to_flash`` are persisted.
+            # Step 3: write the new survey-in parameters and enable.
+            # Issue #42: this used to write RAM only (layer=1) on the
+            # theory that survey-in is transient state; in practice
+            # that meant the *enable* never survived a reboot or even
+            # the app re-opening the port, silently reverting the base
+            # to disabled. Write RAM+Flash (layer=5) instead, matching
+            # ``configure_fixed_base`` — the transition intent must be
+            # durable even though CFG_TMODE_MODE=1 is conceptually
+            # transient while the survey itself is running.
             # CFG_TMODE_SVIN_ACC_LIMIT is in 0.1 mm units on the
             # wire (u-blox spec: "1 m = 10000, 3.2598 m = 32598").
             # The Python API uses mm, so multiply by 10 here.  Same
@@ -439,7 +443,12 @@ class UbloxDriver(GpsReceiverDriver):
                 # Survey-in mode (last so params land first)
                 ("CFG_TMODE_MODE", 1),
             ]
-            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
+            # Verify-after-write: an ACK'd layer=5 write that silently
+            # didn't persist is exactly issue #42's original failure
+            # mode, and it wouldn't be caught by the dur-progression
+            # check below (that confirms the survey *engine* started,
+            # not that these CFG keys landed in flash).
+            self._write_and_verify_locked(cfg_data, layer=5, label="Survey-in config")
 
             # Step 5: confirm a *fresh* survey is running.  Two
             # signals together:
@@ -504,11 +513,10 @@ class UbloxDriver(GpsReceiverDriver):
                 )
 
             # Apply the RTCM-only output profile as a separate layer=5
-            # (RAM+Flash) VALSET — independent of the layer=1 survey
-            # write above.  Unlike TMODE/SVIN params, port protocol
-            # config is not survey state, so it's flashed immediately
-            # even during survey-in (silencing NMEA for the whole
-            # survey, not just once a fixed base is later saved).
+            # (RAM+Flash) VALSET — independent of the survey write
+            # above (also layer=5 as of issue #42).  Silences NMEA
+            # for the whole survey, not just once a fixed base is
+            # later saved.
             self._apply_base_output_profile_locked()
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
@@ -724,6 +732,66 @@ class UbloxDriver(GpsReceiverDriver):
 
         raise RuntimeError("No CFG-VALGET response for base output profile")
 
+    def _read_cfg_keys_locked(self, keys: list[str]) -> dict[str, int]:
+        """Poll arbitrary CFG keys and return them as a dict (must hold ``self._lock``).
+
+        Used to verify a CFG-VALSET write actually took effect — same
+        read-back pattern as ``_read_ecef_locked`` /
+        ``_read_base_output_profile_locked``, generalised to an
+        arbitrary key list (issue #42).
+        """
+        ser, reader = self._require_connection()
+
+        poll_keys: list[str | int] = list(keys)
+        msg = UBXMessage.config_poll(0, 0, poll_keys)
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+
+        for _ in range(_MAX_READ_ATTEMPTS):
+            try:
+                raw, parsed = reader.read()  # type: ignore[misc]
+                if parsed is None:
+                    continue
+                identity = getattr(parsed, "identity", "")
+                if identity == "CFG-VALGET":
+                    return {key: int(getattr(parsed, key, -1)) for key in keys}
+            except Exception:
+                continue
+
+        raise RuntimeError("No CFG-VALGET response for config keys")
+
+    def _write_and_verify_locked(
+        self, cfg_data: list[tuple[str, int]], layer: int, label: str
+    ) -> None:
+        """Send a CFG-VALSET and verify the read-back, retrying once on mismatch.
+
+        Must hold ``self._lock``. Shared verify-and-retry helper for the
+        layer=5 writers touched by issue #42 — a bare ACK can lie about
+        whether the value actually landed, so every durable write needs
+        the same read-back check ``configure_fixed_base`` established for
+        ECEF (issue #39).
+
+        Raises:
+            RuntimeError: if the read-back still doesn't match after one
+                retry.
+        """
+        expected = dict(cfg_data)
+        self._send_cfg_valset_locked(cfg_data, layer=layer)
+        actual = self._read_cfg_keys_locked(list(expected))
+        if actual == expected:
+            return
+
+        logger.warning("%s mismatch after first write — retrying", label)
+        self._send_cfg_valset_locked(cfg_data, layer=layer)
+        actual = self._read_cfg_keys_locked(list(expected))
+        if actual != expected:
+            raise RuntimeError(
+                f"{label} did not take effect: receiver reports {actual}, "
+                f"expected {expected} after two write attempts. Try "
+                "disconnecting and reconnecting, or power-cycle the "
+                "receiver."
+            )
+
     def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
         cfg_data: list[tuple[str, int]] = []
 
@@ -741,7 +809,15 @@ class UbloxDriver(GpsReceiverDriver):
                 logger.warning("Unknown RTCM message ID %d — skipped", msg_id)
 
         with self._lock:
-            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
+            # Issue #42: this used to write RAM only (layer=1), so the
+            # message selection reverted to whatever was last flashed
+            # as soon as the receiver rebooted or the port was
+            # reopened. Write RAM+Flash (layer=5) and verify the
+            # read-back, mirroring the ECEF verify-and-retry pattern
+            # added for issue #39.
+            self._write_and_verify_locked(
+                cfg_data, layer=5, label="RTCM message config"
+            )
         logger.info(
             "RTCM messages configured: %s @ %dHz",
             config.message_ids,
@@ -857,7 +933,9 @@ class UbloxDriver(GpsReceiverDriver):
     def configure_rtcm_ports(self, config: RtcmPortConfig) -> None:
         """Apply multi-port RTCM output configuration to the receiver.
 
-        Sends a CFG-VALSET with rates for each message on each port.
+        Sends a CFG-VALSET with rates for each message on each port,
+        writes to RAM+Flash (layer=5), and verifies the read-back —
+        see ``configure_rtcm_messages`` for why (issue #42).
         """
         cfg_data: list[tuple[str, int]] = []
 
@@ -874,7 +952,7 @@ class UbloxDriver(GpsReceiverDriver):
             return
 
         with self._lock:
-            self._send_cfg_valset_locked(cfg_data, layer=1)  # RAM only
+            self._write_and_verify_locked(cfg_data, layer=5, label="RTCM port config")
         logger.info("RTCM multi-port config applied (%d keys)", len(cfg_data))
 
     # ------------------------------------------------------------------

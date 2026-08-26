@@ -11,6 +11,21 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.5.2 (2026-08-26)
+
+- feat(ublox): force stationary dynamics model (DYN_MODEL=2) on base-mode transitions
+- Fresh ZED-F9P receivers default CFG_NAVSPG_DYNMODEL to 0 (portable),
+which is the wrong nav class for a fixed-mount base station and can
+slow survey-in convergence / degrade the averaged position. Add
+_apply_stationary_dyn_model_locked(), called from both
+configure_survey_in() and configure_fixed_base() after their
+mode-specific write succeeds, to write and verify CFG_NAVSPG_DYNMODEL=2
+via the existing layer=5 verify-and-retry helper.
+- disable_base_mode() deliberately leaves the dynamics model untouched
+— rover mode is out of scope for this app, and clearing it would
+regress a receiver a prior session already set to stationary.
+- Closes #38
+
 ## v0.5.0 (2026-08-25)
 
 

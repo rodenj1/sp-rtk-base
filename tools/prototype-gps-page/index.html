@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE — GPS page: profile picker + pre-filled form (T5 #49)</title>
+<style>
+  :root {
+    --bg: #0f0f1e; --card: #1a1a2e; --card2: #16213e; --line: #2a2a44;
+    --txt: #e8e8f0; --dim: #9a9ab0; --faint: #6a6a85;
+    --accent: #4f8cff; --pos: #3ecf8e; --warn: #ffb347; --neg: #ff6b6b;
+    --chip: #2a2a44;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--txt);
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--card); display: flex; align-items: center; gap: 12px;
+           padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header .logo { font-size: 16px; font-weight: 600; }
+  header .title { color: var(--dim); }
+  header .spacer { flex: 1; }
+  .proto-banner { background: #3a2a10; color: var(--warn); padding: 6px 16px;
+                  font-size: 12px; border-bottom: 1px solid #5a4520; }
+  main { padding: 16px; max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12.5px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+  .card .hint { color: var(--dim); font-size: 12px; margin: 4px 0 10px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); }
+  select, input[type=number] { background: var(--card2); color: var(--txt);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    min-width: 90px; }
+  select { min-width: 320px; }
+  select:disabled { opacity: .55; cursor: not-allowed; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--chip);
+          border-radius: 20px; padding: 3px 10px; font-size: 11.5px; color: var(--dim); }
+  .chip.ok { color: var(--pos); } .chip.no { color: var(--faint); text-decoration: line-through; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  /* picker */
+  .picker-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .picker-head .hw { font-size: 12px; color: var(--dim); }
+  .picker-head .hw b { color: var(--txt); font-weight: 600; }
+  /* matrix */
+  table.m { border-collapse: collapse; width: 100%; }
+  table.m th, table.m td { padding: 4px 6px; text-align: center; font-size: 12.5px;
+                           border-bottom: 1px solid var(--line); }
+  table.m th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase;
+               letter-spacing: .4px; }
+  table.m td.msg { text-align: left; color: var(--dim); width: 46%; }
+  table.m td.msg b { color: var(--txt); font-weight: 600; margin-right: 6px; }
+  table.m tr.dl td.msg { background: rgba(79,140,255,.07); }
+  table.m th.dl, table.m td.dl { box-shadow: inset 0 0 0 1px rgba(79,140,255,.55); }
+  table.m th.dl { color: var(--accent); }
+  table.m th.usb { opacity: .5; } table.m td.usb { opacity: .65; }
+  .cell { cursor: pointer; user-select: none; border-radius: 4px; padding: 2px 8px;
+          display: inline-block; min-width: 34px; }
+  .cell.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .cell.off { background: transparent; color: var(--faint); }
+  .cell.guard { cursor: not-allowed; }
+  .guardrow td { color: var(--faint); }
+  .guardrow td.msg { font-style: italic; }
+  .grp { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  /* toggles */
+  .tgl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
+         color: var(--dim); cursor: pointer; user-select: none; }
+  .tgl .sw { width: 30px; height: 16px; border-radius: 9px; background: #3a3a55; position: relative;
+             transition: background .15s; }
+  .tgl .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+                    border-radius: 50%; background: #888; transition: all .15s; }
+  .tgl.on .sw { background: var(--accent); }
+  .tgl.on .sw::after { left: 16px; background: #fff; }
+  .tgl.on { color: var(--txt); }
+  .prototable { font-size: 12px; color: var(--dim); }
+  .prototable b { color: var(--txt); font-weight: 600; }
+  /* action bar */
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { background: var(--card2); color: var(--txt); border: 1px solid var(--line);
+           border-radius: 7px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .dirty { display: none; align-items: center; gap: 6px; font-size: 12px; color: var(--warn);
+           background: #3a2a10; border: 1px solid #5a4520; border-radius: 20px; padding: 4px 12px; }
+  .dirty.show { display: inline-flex; }
+  .dirty .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .inv { font-size: 12px; color: var(--faint); margin-top: 8px; }
+  .inv b { color: var(--dim); font-weight: 600; }
+  /* survey-in */
+  .survey { border-style: dashed; }
+  .stepline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .step { display: inline-flex; align-items: center; gap: 6px; background: var(--card2);
+          border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 12.5px; }
+  .step .n { color: var(--accent); font-weight: 700; }
+  .step.done { opacity: .65; } .step.done .n { color: var(--pos); }
+  .step.pend .n { color: var(--warn); }
+  .arrow { color: var(--faint); }
+  .pos { font-family: ui-monospace, monospace; font-size: 12px; color: var(--pos); }
+  .badge-new { background: var(--accent); color: #fff; font-size: 10px; border-radius: 4px;
+               padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+  /* dialog */
+  dialog { background: var(--card); color: var(--txt); border: 1px solid var(--line);
+           border-radius: 10px; padding: 18px; min-width: 420px; max-width: 480px; }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h3 { margin: 0 0 4px; font-size: 15px; }
+  dialog .hint { margin-bottom: 12px; }
+  dialog .frow { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+                 color: var(--dim); margin-bottom: 10px; }
+  dialog .frow input { min-width: 0; width: 100%; }
+  dialog .err { color: var(--neg); font-size: 12px; margin-top: 4px; min-height: 16px; }
+  dialog .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .footnote { color: var(--faint); font-size: 11.5px; margin-top: 18px; line-height: 1.5; }
+  .log { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--dim);
+         background: var(--card2); border-radius: 6px; padding: 8px 10px; margin-top: 10px;
+         max-height: 150px; overflow-y: auto; white-space: pre-wrap; display: none; }
+  .log.show { display: block; }
+  .tag { font-size: 10.5px; color: var(--faint); background: var(--chip); border-radius: 4px;
+         padding: 1px 6px; margin-left: 8px; vertical-align: 1px; }
+</style>
+</head>
+<body>
+<div class="proto-banner">
+  PROTOTYPE — throwaway reaction surface for <b>T5 #49</b> (GPS page layout). Not the final UI.
+  State is in-memory only; nothing here is wired to a real receiver.
+</div>
+<header>
+  <span class="logo">SP-Base</span><span class="spacer"></span>
+  <span class="title">GPS</span>
+</header>
+<main>
+  <h1>GPS <span class="badge-new">NEW PROFILE FLOW</span></h1>
+  <div class="sub">
+    North-star flow: fresh receiver connects → pick “u-blox F9P — Base Station (Standard)” → Apply → correctly-configured base.
+    Profile sets everything <i>except</i> position — survey-in stays a separate operator step below.
+  </div>
+
+  <!-- ══════════ 1. PROFILE PICKER (new, at top per #q8) ══════════ -->
+  <div class="card">
+    <h2>Profile</h2>
+    <div class="picker-head">
+      <span class="hw">Connected receiver: <b>u-blox ZED-F9P</b> (MON-VER MOD=ZED-F9P, SW 1.51)</span>
+      <span class="chip"><span class="dot"></span>connected via USB</span>
+    </div>
+    <label class="f" style="width:100%">
+      Select profile
+      <select id="picker"></select>
+    </label>
+    <div id="picker-note" class="inv"></div>
+  </div>
+
+  <!-- ══════════ 2. PRE-FILLED FORM ══════════ -->
+  <div class="card">
+    <h2 id="hw-title">Hardware</h2>
+    <div class="hint">Pre-filled from the selected profile. Edit freely — changes mark the form dirty.</div>
+    <div class="row">
+      <label class="f">Nav rate (global, CFG-RATE-NAV)
+        <input type="number" id="navrate" min="1" max="10" step="1">
+      </label>
+      <label class="f">UART1 baud
+        <select id="baud1"></select>
+      </label>
+      <label class="f">UART2 baud
+        <select id="baud2"></select>
+      </label>
+      <label class="f">Data link port(s)
+        <span id="dlchips" class="row" style="gap:6px"></span>
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:12px" id="consts"></div>
+
+    <div style="margin-top:12px">
+      <div class="hint" style="margin:0 0 6px">Port protocols (per-port in/out — full sets, assertive)</div>
+      <table class="prototable" id="porttable"></table>
+    </div>
+
+    <div class="inv">
+      <b>Invariants applied on every base apply (not editable):</b>
+      DYN_MODEL = stationary · CFG-TMODE-MODE = fixed · all writes layer=5 ·
+      UBX-in liveness guard on the connected port (USB here)
+    </div>
+  </div>
+
+  <!-- ══════════ 3. RTCM STREAM MATRIX (boolean grid, #q6/T1) ══════════ -->
+  <div class="card">
+    <h2>RTCM Stream</h2>
+    <div class="hint">
+      Boolean matrix — on/off per message × port (no per-message rates on the F9P; emission rate = global nav rate above).
+      Click a cell to toggle. <b>Highlighted columns = data-link ports</b> (where rovers read corrections).
+      USB is excluded from the data link (local diagnostics only).
+    </div>
+    <table class="m" id="matrix"></table>
+  </div>
+
+  <!-- ══════════ 4. APPLY / SAVE AS (T4 mechanics) ══════════ -->
+  <div class="card">
+    <div class="actions">
+      <button class="primary" id="apply">Apply to receiver</button>
+      <button id="saveas" disabled>Save as…</button>
+      <span class="dirty" id="dirty"><span class="dot"></span>unsaved changes — form ≠ receiver</span>
+      <span class="spacer" style="flex:1"></span>
+      <span id="status" class="chip" style="border:1px solid var(--line)">receiver: in sync</span>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- ══════════ 5. SURVEY-IN FOLLOW-UP (separate from apply, #q5) ══════════ -->
+  <div class="card survey">
+    <h2>Fixed Position <span class="tag">separate operator step — not part of the profile</span></h2>
+    <div class="hint">
+      A profile has <b>no position field</b>. After Apply, the base is a correctly-configured fixed-mode
+      receiver still without a fixed point — positioning is your deliberate step, unchanged from today's Survey-In page.
+    </div>
+    <div class="stepline">
+      <span class="step" id="st-profile"><span class="n">1</span> Apply profile</span>
+      <span class="arrow">→</span>
+      <span class="step pend" id="st-survey"><span class="n">2</span> Run survey-in <span id="survey-state">— not started</span></span>
+      <span class="arrow">→</span>
+      <span class="step pend" id="st-fixed"><span class="n">3</span> Fixed position set <span id="fixed-pos">— none</span></span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="run-survey">Run survey-in</button>
+      <button id="manual-set">Set fixed position (manual)</button>
+    </div>
+    <div class="inv" id="survey-note">Survey-in is a live observation session (link to /survey) — this step is shown here only to make the
+    apply → position sequence legible at a glance. It never blocks Apply, and the profile never carries it.</div>
+  </div>
+
+  <div class="footnote">
+    Sample data: the real vaio-base reference config (T3 “u-blox F9P — Base Station (Standard)”, MSM4 set,
+    UART1 57600 / UART2 115200, RTCM-only UART1+UART2, all constellations). The picker also shows a
+    hypothetical ZED-X20P built-in to demo hardware-compatibility filtering (T6 #50 — still open): it renders
+    greyed with “not compatible with this receiver”. Decisions wired in: T1 #45 (fields/matrix), T3 #47 (built-in
+    catalog), T4 #48 (apply vs save, dirty-state, fork naming).
+  </div>
+</main>
+
+<!-- Save-as dialog (T4: auto-suggest "(copy)", editable, reject-on-collision) -->
+<dialog id="savedlg">
+  <h3>Save as new profile</h3>
+  <div class="hint">Forks the current form into an independent custom profile (built-ins are immutable).</div>
+  <div class="frow"><span>Name</span><input id="savedlg-name" type="text"></div>
+  <div class="frow"><span>Forked from</span>
+    <span style="color:var(--dim); font-size:12px" id="savedlg-from">u-blox F9P — Base Station (Standard)</span>
+  </div>
+  <div class="err" id="savedlg-err"></div>
+  <div class="btns">
+    <button id="savedlg-cancel">Cancel</button>
+    <button class="primary" id="savedlg-ok">Create</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+// ─── sample data: real vaio-base reference (T3 resolution, #47) ─────────────
+const HW = ["ZED-F9P", "ZED-X20P"];
+const PORTS = ["UART1", "UART2", "USB"];
+const BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+const CONSTS = [
+  ["GPS","GPS"], ["GLONASS","GLONASS"], ["Galileo","Galileo"],
+  ["BeiDou","BeiDou"], ["QZSS","QZSS"], ["SBAS","SBAS"]
+];
+// T1 matrix rows (12, 4072.0/4072.1 separate)
+const ROWS = [
+  ["ref",  "1005",  "Station ARP", true],
+  ["ref",  "4072.0","Ref-station PVT (RTCM 3.0)", false],
+  ["ref",  "4072.1","Ref-station PVT (RTCM 3.1)", false],
+  ["gps",  "1074",  "GPS MSM4", false],
+  ["gps",  "1077",  "GPS MSM7", false],
+  ["glo",  "1084",  "GLONASS MSM4", false],
+  ["glo",  "1087",  "GLONASS MSM7", false],
+  ["glo",  "1094",  "Galileo MSM4", false],
+  ["glo",  "1097",  "Galileo MSM7", false],
+  ["glo",  "1124",  "BeiDou MSM4", false],
+  ["glo",  "1127",  "BeiDou MSM7", false],
+  ["glo",  "1230",  "GLONASS code-phase biases", false],
+];
+const BUILTIN_STANDARD = {
+  name: "u-blox F9P — Base Station (Standard)",
+  internal: "ublox-f9p-base-standard",
+  hw: "ZED-F9P", builtin: true,
+  form: {
+    nav: 1,
+    baud1: 57600, baud2: 115200,
+    dl: ["UART1","UART2"],
+    consts: ["GPS","GLONASS","Galileo","BeiDou","QZSS","SBAS"],
+    ports: {
+      UART1: {in: ["UBX"], out: ["RTCM3"]},
+      UART2: {in: ["UBX"], out: ["RTCM3"]},
+      USB:   {in: ["UBX"], out: []},
+    },
+    matrix: {
+      "1005":  {UART1:true,  UART2:true,  USB:false},
+      "4072.0":{UART1:true,  UART2:true,  USB:false},
+      "4072.1":{UART1:false, UART2:false, USB:false},
+      "1074":  {UART1:true,  UART2:true,  USB:false},
+      "1077":  {UART1:false, UART2:false, USB:false},
+      "1084":  {UART1:true,  UART2:true,  USB:false},
+      "1087":  {UART1:false, UART2:false, USB:false},
+      "1094":  {UART1:true,  UART2:true,  USB:false},
+      "1097":  {UART1:false, UART2:false, USB:false},
+      "1124":  {UART1:true,  UART2:true,  USB:false},
+      "1127":  {UART1:false, UART2:false, USB:false},
+      "1230":  {UART1:true,  UART2:true,  USB:false},
+    }
+  }
+};
+// hypothetical X20P built-in — only to demo T6 compatibility filtering
+const BUILTIN_X20P = {
+  name: "u-blox X20P — Base Station (Standard)",
+  internal: "ublox-x20p-base-standard",
+  hw: "ZED-X20P", builtin: true,
+  form: null
+};
+
+// ─── state ───────────────────────────────────────────────────────────────────
+const state = {
+  connectedHW: "ZED-F9P",
+  selected: "ublox-f9p-base-standard",
+  profiles: [BUILTIN_STANDARD, BUILTIN_X20P],   // built-ins
+  customs: [],                                   // forked customs (in-memory)
+  form: null,                                    // working buffer (T4: transient)
+  loadedProfile: null,                           // last loaded profile snapshot
+  receiver: null,                                // last-applied state (in-memory)
+  survey: "none"                                 // none | running | fixed
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+const formEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// ─── rendering ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function renderPicker() {
+  const sel = $("picker");
+  sel.innerHTML = "";
+  const all = [...state.profiles, ...state.customs];
+  for (const p of all) {
+    const opt = document.createElement("option");
+    opt.value = p.internal;
+    const compat = p.hw === state.connectedHW;
+    opt.textContent = p.name + (p.builtin ? "" : "  (custom)") + (compat ? "" : "  ⚠ incompatible");
+    opt.disabled = !compat;
+    sel.appendChild(opt);
+  }
+  const cur = all.find(p => p.internal === state.selected);
+  if (cur) sel.value = cur.internal;
+  // note under picker (T6 filtering is a stub here — #50 still open)
+  const note = $("picker-note");
+  const hidden = all.filter(p => p.hw !== state.connectedHW);
+  note.innerHTML = hidden.length
+    ? `<b>Compatibility filter (T6 stub):</b> ${hidden.map(p => `“${p.name}”`).join(", ")}
+       shown disabled — “not compatible with this receiver” (hardware ${hidden[0].hw} ≠ ${state.connectedHW}).
+       Real family/unknown fallback rules land in #50.`
+    : "";
+  if (sel.disabled) { /* keep */ }
+  sel.disabled = false;
+  // make incompatible options visibly greyed: title tooltip on hover
+  for (const opt of sel.options) {
+    if (opt.disabled) opt.title = "not compatible with this receiver (hardware target mismatch)";
+  }
+}
+function renderForm() {
+  const f = state.form; if (!f) return;
+  $("navrate").value = f.nav;
+  $("baud1").value = f.baud1; $("baud2").value = f.baud2;
+  // data-link chips
+  const dl = $("dlchips"); dl.innerHTML = "";
+  for (const p of PORTS) {
+    if (p === "USB") continue; // USB not a data-link candidate (T1)
+    const c = document.createElement("span");
+    c.className = "chip " + (f.dl.includes(p) ? "ok" : "");
+    c.innerHTML = `<span class="dot"></span>${p}`;
+    dl.appendChild(c);
+  }
+  // constellations
+  const cw = $("consts"); cw.innerHTML = "";
+  for (const [val] of CONSTS) {
+    const on = f.consts.includes(val);
+    const t = document.createElement("span");
+    t.className = "tgl " + (on ? "on" : "");
+    t.innerHTML = `<span class="sw"></span>${val}`;
+    t.onclick = () => {
+      const i = f.consts.indexOf(val);
+      i >= 0 ? f.consts.splice(i, 1) : f.consts.push(val);
+      renderForm(); dirtyCheck();
+    };
+    cw.appendChild(t);
+  }
+  // port protocol table
+  const pt = $("porttable");
+  pt.innerHTML = `<tr><td></td><td colspan="6" class="grp">port protocols — in / out (UBX · NMEA · RTCM3)</td></tr>`;
+  let html = "";
+  for (const p of PORTS) {
+    const pr = f.ports[p];
+    const isConn = p === "USB"; // app connected via USB
+    html += `<tr><td style="padding-right:14px"><b>${p}</b>${isConn ? ' <span class="tag">connected</span>' : ""}</td><td>`;
+    for (const proto of ["UBX", "NMEA", "RTCM3"]) {
+      const inOn = pr.in.includes(proto);
+      const outOn = pr.out.includes(proto);
+      const guarded = isConn && proto === "UBX" && inOn; // liveness guard cell
+      const inTitle = inOn ? (guarded ? "UBX-in on the connected port is required (liveness guard — cannot turn off)" : "in: on") : "in: off";
+      const outTitle = outOn ? "out: on" : "out: off";
+      html += `<span class="tgl ${inOn ? "on" : ""}" data-p="${p}" data-dir="in" data-proto="${proto}"
+        ${guarded ? 'data-guard="1"' : ""} title="${inTitle}" style="margin-right:10px">
+        <span class="sw"></span>in ${proto}</span>`;
+      html += `<span class="tgl ${outOn ? "on" : ""}" data-p="${p}" data-dir="out" data-proto="${proto}"
+        title="${outTitle}" style="margin-right:10px"><span class="sw"></span>out ${proto}</span>`;
+    }
+    html += `</td></tr>`;
+  }
+  pt.innerHTML += html;
+  pt.querySelectorAll(".tgl").forEach(t => {
+    t.onclick = () => {
+      if (t.dataset.guard) {
+        flashLog("⛔ Refused: UBX-in must stay enabled on the connected port (USB) — turning it off would cut the only management link. (T1 liveness guard)");
+        return;
+      }
+      const p = t.dataset.p, dir = t.dataset.dir, proto = t.dataset.proto;
+      const list = f.ports[p][dir];
+      const i = list.indexOf(proto);
+      i >= 0 ? list.splice(i, 1) : list.push(proto);
+      renderForm(); dirtyCheck();
+    };
+  });
+  renderMatrix();
+}
+function renderMatrix() {
+  const f = state.form; const m = $("matrix");
+  let html = `<tr><th style="text-align:left">Message</th>`;
+  for (const p of PORTS) {
+    const dl = p !== "USB" && f.dl.includes(p);
+    html += `<th class="${dl ? "dl" : p === "USB" ? "usb" : ""}">${p}${dl ? " ★" : ""}</th>`;
+  }
+  html += `</tr>`;
+  let lastGrp = null;
+  for (const [grp, id, desc, mandatory] of ROWS) {
+    const dlRow = f.dl.length > 0; // highlight the row band? no — highlight columns only
+    const grpCell = (grp !== lastGrp) ? grp : "";
+    lastGrp = grp;
+    html += `<tr><td class="msg"><b>${id}</b>${desc}${mandatory ? ' <span class="tag" title="1005 must be on on a data-link port (T1 validation rule 2)">required*</span>' : ""}</td>`;
+    for (const p of PORTS) {
+      const on = f.matrix[id][p];
+      const cls = "cell " + (on ? "on" : "off") + (p === "USB" ? " usb" : "");
+      html += `<td class="${p === "USB" ? "usb" : ""}"><span class="${cls}" data-msg="${id}" data-port="${p}">${on ? "on" : "—"}</span></td>`;
+    }
+    html += `</tr>`;
+  }
+  // guard note row
+  html += `<tr class="guardrow"><td class="msg" colspan="4">★ highlighted columns = data_link_port (writes target these). Cells off on USB are normal — USB is diagnostics, not a data link. * 1005 must be ON on ≥1 data-link port.</td></tr>`;
+  m.innerHTML = html;
+  m.querySelectorAll(".cell").forEach(c => {
+    c.onclick = () => {
+      const msg = c.dataset.msg, port = c.dataset.port;
+      state.form.matrix[msg][port] = !state.form.matrix[msg][port];
+      renderMatrix(); dirtyCheck();
+    };
+  });
+}
+function renderStatus() {
+  const d = $("dirty");
+  const isDirty = state.form && state.receiver && !formEq(state.form, state.receiver);
+  d.classList.toggle("show", !!isDirty);
+  $("saveas").disabled = !isDirty; // T4: divergence-gated Save as…
+  const st = $("status");
+  if (!state.receiver) {
+    st.textContent = "receiver: fresh (nothing applied yet)";
+  } else if (isDirty) {
+    st.textContent = "receiver: behind form";
+    st.style.color = "var(--warn)";
+  } else {
+    st.textContent = "receiver: in sync";
+    st.style.color = "var(--pos)";
+  }
+  // survey steps
+  const s = state.survey;
+  const st1 = $("st-profile"), st2 = $("st-survey"), st3 = $("st-fixed");
+  st1.className = "step" + (state.receiver ? " done" : "");
+  st2.className = "step" + (s === "running" ? " pend" : s === "fixed" ? " done" : "");
+  st3.className = "step" + (s === "fixed" ? " done" : "");
+  $("survey-state").textContent = s === "none" ? "— not started" : s === "running" ? "… observing" : "✓ complete";
+  $("fixed-pos").textContent = s === "fixed" ? "" : "— none";
+  $("fixed-pos").className = "pos";
+}
+function dirtyCheck() { renderStatus(); }
+
+// ─── actions ─────────────────────────────────────────────────────────────────
+function flashLog(msg) {
+  const log = $("log");
+  log.classList.add("show");
+  log.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + log.textContent;
+}
+function loadProfile(internal) {
+  const p = [...state.profiles, ...state.customs].find(x => x.internal === internal);
+  if (!p || !p.form) return;
+  state.selected = p.internal;
+  state.form = clone(p.form);
+  state.loadedProfile = clone(p.form);
+  // T4: picking a profile replaces the working buffer (transient v1)
+  renderForm(); renderStatus();
+  const note = p.builtin ? "built-in (read-only — saving forks a copy)" : "custom profile";
+  $("hw-title").innerHTML = `Hardware <span class="tag">${p.name} · ${note}</span>`;
+  flashLog(`Loaded profile “${p.name}” → form pre-filled.`);
+}
+function doApply() {
+  // T1 validation (pre-write) — surface failures, don't fake success
+  const f = state.form; const errors = [];
+  if (!f.dl.length) errors.push("data_link_port is empty (≥1 required)");
+  for (const p of f.dl) {
+    const any = ROWS.some(([, id]) => f.matrix[id][p]);
+    if (!any) errors.push(`data-link port ${p} has no RTCM row on (rule 3)`);
+  }
+  const arp = f.dl.some(p => f.matrix["1005"][p]);
+  if (!arp) errors.push("1005 (Station ARP) must be ON on a data-link port (rule 2)");
+  if (f.ports.USB && !f.ports.USB.in.includes("UBX"))
+    errors.push("UBX-in must stay on the connected port (USB) — liveness guard");
+  if (errors.length) {
+    flashLog("⛔ Apply refused — validation:\n  • " + errors.join("\n  • "));
+    return;
+  }
+  state.receiver = clone(f); // in-memory: receiver now equals form
+  dirtyCheck();
+  const steps = [
+    "validate ✓ (hardware ZED-F9P · 1005 on UART1/UART2 · UBX-in on USB kept)",
+    "ports protocol writes → layer 5",
+    "constellations → CFG-GNSS (6 systems)",
+    "invariants → DYN_MODEL=stationary, CFG-TMODE-MODE=FIXED, layer=5",
+    "RTCM matrix → CFG_MSGOUT_RTCM_3X_TYPE* on data_link_port {UART1, UART2}",
+    "baud last → UART1 57600, UART2 115200; connection reopened at new rate",
+    "read-back verify (CFG-VALGET + GET /api/device/rtcm-ports) ✓"
+  ];
+  flashLog("Apply sequence (T1 order):\n  " + steps.join("\n  "));
+}
+function openSaveDialog() {
+  if (!state.dirtyIsOn()) return;
+  const p = [...state.profiles, ...state.customs].find(x => x.internal === state.selected);
+  $("savedlg-name").value = (p ? p.name : "profile") + " (copy)"; // T4 auto-suggest
+  $("savedlg-from").textContent = p ? p.name : "";
+  $("savedlg-err").textContent = "";
+  $("savedlg").showModal();
+}
+state.dirtyIsOn = () => state.form && state.receiver && !formEq(state.form, state.receiver);
+
+// ─── init ────────────────────────────────────────────────────────────────────
+for (const id of ["baud1", "baud2"]) {
+  const s = $(id);
+  for (const b of BAUDS) {
+    const o = document.createElement("option"); o.value = b; o.textContent = b; s.appendChild(o);
+  }
+}
+$("picker").onchange = e => loadProfile(e.target.value);
+$("navrate").onchange = e => { state.form.nav = +e.target.value; dirtyCheck(); };
+$("baud1").onchange = e => { state.form.baud1 = +e.target.value; dirtyCheck(); };
+$("baud2").onchange = e => { state.form.baud2 = +e.target.value; dirtyCheck(); };
+$("apply").onclick = doApply;
+$("saveas").onclick = openSaveDialog;
+$("savedlg-cancel").onclick = () => $("savedlg").close();
+$("savedlg-ok").onclick = () => {
+  const name = $("savedlg-name").value.trim();
+  const err = $("savedlg-err");
+  if (!name) { err.textContent = "Name required."; return; }
+  const exists = [...state.profiles, ...state.customs].some(p => !p.builtin &&
+      (p.name === name || p.internal === name));
+  if (exists) { err.textContent = `A custom profile named “${name}” exists. Pick another name, or open it and overwrite it explicitly. (built-ins can never be overwritten)`; return; }
+  const internal = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  state.customs.push({ name, internal, hw: state.connectedHW, builtin: false,
+                       form: clone(state.form), forkedFrom: state.selected });
+  renderPicker(); renderStatus();
+  $("savedlg").close();
+  flashLog(`Saved custom profile “${name}” (forked from selected profile — independent copy).`);
+};
+$("run-survey").onclick = () => {
+  if (!state.receiver) { flashLog("Apply a profile first — survey-in needs a configured base."); return; }
+  state.survey = "running"; renderStatus();
+  flashLog("Survey-in started (→ /survey page in the real app): observing position for N epochs…");
+  setTimeout(() => {
+    state.survey = "fixed";
+    $("fixed-pos").textContent = "49°17'23.4\"N 123°05'11.2\"W (mock — would come from /survey)";
+    renderStatus();
+    flashLog("Survey-in complete → fixed position set. Base is now fully operational. (Position was never part of the profile.)");
+  }, 1800);
+};
+$("manual-set").onclick = () => {
+  if (!state.receiver) { flashLog("Apply a profile first."); return; }
+  state.survey = "fixed";
+  $("fixed-pos").textContent = "49°17'23.4\"N 123°05'11.2\"W (manual entry, mock)";
+  renderStatus();
+  flashLog("Fixed position set manually. (Alternative to survey-in — still a separate operator step.)");
+};
+// boot: fresh receiver connects → app defaults to the matching built-in (T2/T6 behavior)
+renderPicker();
+loadProfile("ublox-f9p-base-standard");
+</script>
+</body>
+</html>

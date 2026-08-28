@@ -12,6 +12,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.models.hardware_identity import (
+    HARDWARE_UNKNOWN,
+    HardwareConfidence,
+    HardwareTarget,
+)
+
 # ---------------------------------------------------------------------------
 # Connection state
 # ---------------------------------------------------------------------------
@@ -69,6 +75,15 @@ class DeviceInfo(BaseModel):
     hardware_version: str = Field(default="", description="Hardware version string")
     serial_number: str = Field(
         default="", description="Device serial number if available"
+    )
+    hardware_target: HardwareTarget = Field(
+        default=HARDWARE_UNKNOWN,
+        description="Resolved identity target: a specific model, a family "
+        "token, or 'unknown' (see models.hardware_identity)",
+    )
+    hardware_confidence: HardwareConfidence = Field(
+        default=HardwareConfidence.UNKNOWN,
+        description="How hardware_target was obtained",
     )
 
 

@@ -28,24 +28,27 @@ from sp_rtk_base.models.device_models import (
     RtcmRowId,
     UbxProtocol,
 )
+from sp_rtk_base.models.hardware_identity import (
+    HARDWARE_ANY,
+    KNOWN_FAMILY_TOKENS,
+    KNOWN_MODEL_TOKENS,
+)
 
 # ---------------------------------------------------------------------------
 # Hardware target tokens
+#
+# The identity-resolution catalog lives in ``hardware_identity`` — the
+# hardware-detection ticket (#60) that owns it — and is re-exported here so
+# a ``Profile`` can target any model or family that resolver can actually
+# produce, plus ``HARDWARE_ANY``.
 # ---------------------------------------------------------------------------
 
-#: Verbatim MON-VER MOD= model ids this app can target directly. The only
-#: entry needed today is the one built-in's hardware tag; the hardware-
-#: detection ticket owns the full identity catalog.
-KNOWN_HARDWARE_MODELS: frozenset[str] = frozenset({"ZED-F9P"})
+#: Verbatim MON-VER MOD= model ids a profile may target directly.
+KNOWN_HARDWARE_MODELS: frozenset[str] = KNOWN_MODEL_TOKENS
 
 #: Generation-level fallback tokens (a profile compatible with a whole
-#: hardware family rather than one specific model). Empty for now — no
-#: profile targets a family yet, and the token names themselves are the
-#: hardware-detection ticket's design to make, not this schema's to guess.
-KNOWN_HARDWARE_FAMILIES: frozenset[str] = frozenset()
-
-#: Token meaning "compatible with every receiver".
-HARDWARE_ANY: str = "any"
+#: hardware family rather than one specific model).
+KNOWN_HARDWARE_FAMILIES: frozenset[str] = KNOWN_FAMILY_TOKENS
 
 #: Schema major versions this running app understands.
 KNOWN_PROFILE_VERSIONS: frozenset[int] = frozenset({1})

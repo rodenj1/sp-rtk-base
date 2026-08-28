@@ -10,18 +10,23 @@ from __future__ import annotations
 import abc
 
 from sp_rtk_base.models.device_models import (
+    BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
+    DynModel,
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortId,
     PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
+    RtcmRowId,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
 
 
@@ -194,6 +199,130 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
             RuntimeError: If save fails.
+        """
+
+    # ------------------------------------------------------------------
+    # Apply-config primitives (issue #61)
+    #
+    # Lower-level writers the apply-config service orchestrates in a
+    # fixed order. Each is independently callable and independently
+    # verified — none of them know about ``ReceiverConfig``, keeping
+    # the profile schema out of the vendor-neutral driver layer.
+    # ------------------------------------------------------------------
+
+    @abc.abstractmethod
+    def configure_port_protocols(
+        self,
+        in_protocols: dict[PortId, list[UbxProtocol]],
+        out_protocols: dict[PortId, list[UbxProtocol]],
+    ) -> None:
+        """Assertive per-port in/out protocol write for the ports given.
+
+        Only ports present in either mapping are touched — a port with
+        no entry in either dict keeps its current state untouched.
+
+        Args:
+            in_protocols: port -> exactly the input protocols that
+                should be enabled (every other protocol on that port
+                is turned off).
+            out_protocols: same, for output protocols.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def configure_measurement_rate(self, period_ms: int) -> None:
+        """Write the measurement period in milliseconds.
+
+        Args:
+            period_ms: Raw ``CFG_RATE_MEAS`` period in ms (not Hz).
+                ``CFG_RATE_NAV`` is pinned to 1 alongside it.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def configure_dyn_model(self, model: DynModel) -> None:
+        """Write the receiver's dynamics platform model.
+
+        Args:
+            model: Desired dynamics class.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def configure_tmode_mode(self, mode: BaseMode) -> None:
+        """Write ``CFG_TMODE_MODE`` directly, without touching position keys.
+
+        A plain mode assertion, not a full base-mode transition —
+        callers that need survey-in/fixed-base position writes should
+        use ``configure_survey_in``/``configure_fixed_base`` instead.
+        Any coordinate precondition for ``fixed`` mode is the caller's
+        responsibility.
+
+        Args:
+            mode: Desired TMODE mode.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def configure_optimisations(
+        self,
+        elevation_mask_deg: int | None,
+        bds_b2_enabled: bool | None,
+        spi_enabled: bool | None,
+    ) -> None:
+        """Write only the optimisation fields provided; ``None`` means leave untouched.
+
+        Args:
+            elevation_mask_deg: Minimum satellite elevation, degrees.
+            bds_b2_enabled: Whether the BeiDou B2 signal is enabled.
+            spi_enabled: Whether the SPI interface is enabled.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def apply_rtcm_matrix(self, matrix: dict[RtcmRowId, dict[PortId, bool]]) -> None:
+        """Assertive write of all 36 cells (12 rows x UART1/UART2/USB).
+
+        Every cell is written explicitly, including zeros, so a row
+        enabled by a previous profile/session that isn't in ``matrix``
+        ends up off rather than surviving as a silent superset.
+
+        Args:
+            matrix: row id -> {port: enabled}. A missing cell means off.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def get_uart_baud_rates(self) -> dict[PortId, int]:
+        """Read the live UART1/UART2 baud rates.
+
+        Used only for the non-blocking apply-config throughput
+        estimate — baud itself is never written by apply-config.
+
+        Returns:
+            Baud rate for UART1 and UART2 (USB has no baud rate).
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the read fails.
         """
 
     # ------------------------------------------------------------------

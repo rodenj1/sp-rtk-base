@@ -48,10 +48,14 @@ import time
 from datetime import datetime, timezone
 
 from sp_rtk_base.models.device_models import (
+    ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
+)
+from sp_rtk_base.models.device_models import (
     BaseMode,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
+    DynModel,
     FixedBaseConfig,
     GnssConfig,
     GnssConstellation,
@@ -224,6 +228,19 @@ class FakeGpsDriver(GpsReceiverDriver):
             ]
         )
 
+        # Apply-config primitives (issue #61) — plain in-memory state,
+        # defaults chosen to match the shipped built-in profile
+        # (docs/zed-f9p-base-station-config-reference.md).
+        self._dyn_model: DynModel = DynModel.PORTABLE
+        self._elevation_mask_deg: int = 15
+        self._bds_b2_enabled: bool = False
+        self._spi_enabled: bool = True
+        self._meas_period_ms: int = 1000
+        self._uart_baud_rates: dict[PortId, int] = {
+            PortId.UART1: 57600,
+            PortId.UART2: 115200,
+        }
+
     # ------------------------------------------------------------------
     # Identity
     # ------------------------------------------------------------------
@@ -368,6 +385,83 @@ class FakeGpsDriver(GpsReceiverDriver):
         Real drivers might raise on NAK; the fake never does.
         """
         self._ensure_connected()
+
+    # ------------------------------------------------------------------
+    # Apply-config primitives (issue #61)
+    # ------------------------------------------------------------------
+
+    def configure_port_protocols(
+        self,
+        in_protocols: dict[PortId, list[UbxProtocol]],
+        out_protocols: dict[PortId, list[UbxProtocol]],
+    ) -> None:
+        """Store the per-port protocol write in memory.
+
+        Only ports present in either mapping are touched, mirroring
+        ``UbloxDriver``'s assertive-per-touched-port semantics.
+        """
+        self._ensure_connected()
+        new_in = dict(self._port_protocols.in_protocols)
+        new_out = dict(self._port_protocols.out_protocols)
+        for port, protocols in in_protocols.items():
+            new_in[port] = list(protocols)
+        for port, protocols in out_protocols.items():
+            new_out[port] = list(protocols)
+        self._port_protocols = PortProtocolConfig(
+            in_protocols=new_in, out_protocols=new_out
+        )
+
+    def configure_measurement_rate(self, period_ms: int) -> None:
+        """Store the measurement period in memory."""
+        self._ensure_connected()
+        self._meas_period_ms = period_ms
+
+    def configure_dyn_model(self, model: DynModel) -> None:
+        """Store the dynamics model in memory."""
+        self._ensure_connected()
+        self._dyn_model = model
+
+    def configure_tmode_mode(self, mode: BaseMode) -> None:
+        """Store the TMODE mode, leaving any existing position untouched."""
+        self._ensure_connected()
+        self._base_config = self._base_config.model_copy(update={"mode": mode})
+
+    def configure_optimisations(
+        self,
+        elevation_mask_deg: int | None,
+        bds_b2_enabled: bool | None,
+        spi_enabled: bool | None,
+    ) -> None:
+        """Store only the optimisation fields provided."""
+        self._ensure_connected()
+        if elevation_mask_deg is not None:
+            self._elevation_mask_deg = elevation_mask_deg
+        if bds_b2_enabled is not None:
+            self._bds_b2_enabled = bds_b2_enabled
+        if spi_enabled is not None:
+            self._spi_enabled = spi_enabled
+
+    def apply_rtcm_matrix(self, matrix: dict[RtcmRowId, dict[PortId, bool]]) -> None:
+        """Store the assertive 12x3 RTCM matrix write in memory.
+
+        I2C/SPI columns (which the matrix doesn't claim) are preserved
+        from whatever the fake driver already held for them.
+        """
+        self._ensure_connected()
+        updated: dict[RtcmRowId, dict[str, int]] = {}
+        for row in _ALL_RTCM_IDS:
+            cell = dict(self._rtcm_ports.messages.get(row, {}))
+            for port in (PortId.UART1, PortId.UART2, PortId.USB):
+                cell[port.value] = int(matrix.get(row, {}).get(port, False))
+            cell.setdefault("I2C", 0)
+            cell.setdefault("SPI", 0)
+            updated[row] = cell
+        self._rtcm_ports = RtcmPortConfig(messages=updated)
+
+    def get_uart_baud_rates(self) -> dict[PortId, int]:
+        """Return the fixed in-memory UART baud rates."""
+        self._ensure_connected()
+        return dict(self._uart_baud_rates)
 
     # ------------------------------------------------------------------
     # GNSS constellation configuration

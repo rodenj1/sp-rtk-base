@@ -17,6 +17,7 @@ from sp_rtk_base.models.config_models import (
     InputProfile,
 )
 from sp_rtk_base.models.device_models import (
+    ApplyConfigResult,
     CurrentBaseConfig,
     DeviceStatus,
     FixedBaseConfig,
@@ -29,13 +30,14 @@ from sp_rtk_base.models.device_models import (
     SurveyInConfig,
     SurveyInProgress,
 )
+from sp_rtk_base.models.profile_models import ReceiverConfig
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
     get_relay_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.device_service import ApplyConfigRefusedError, DeviceService
 from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
 
@@ -273,6 +275,38 @@ async def get_port_protocols(
     """Read the live in/out protocol state for UART1, UART2 and USB."""
     try:
         return await svc.get_port_protocols()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Apply-config — the profile one-shot (issue #61)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/apply-config", response_model=ApplyConfigResult)
+async def apply_config(
+    config: ReceiverConfig,
+    svc: DeviceService = Depends(get_device_service),
+) -> ApplyConfigResult:
+    """Apply a bare ``ReceiverConfig`` to the receiver, verified with a read-back.
+
+    An ordered series of layer=5 writes (see
+    ``DeviceService.apply_receiver_config`` for the exact sequence and
+    guards), followed by a read-back of the RTCM matrix. A read-back
+    mismatch still returns 200 with ``status: "failed"`` and a
+    per-cell diff — the writes are left in flash, nothing is rolled
+    back.
+
+    Status contract: 409 if not connected or the relay is running;
+    422 for a schema violation (handled automatically by the
+    ``ReceiverConfig`` body validation); 400 for a business-rule
+    refusal, with the failed rule named and nothing written.
+    """
+    try:
+        return await svc.apply_receiver_config(config)
+    except ApplyConfigRefusedError as exc:
+        raise HTTPException(status_code=400, detail=f"{exc.rule}: {exc}") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

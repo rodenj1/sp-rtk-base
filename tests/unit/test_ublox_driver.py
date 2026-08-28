@@ -19,11 +19,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from sp_rtk_base.models.device_models import (
+    BaseMode,
     DeviceCapability,
+    DynModel,
     FixedBaseConfig,
+    PortId,
     RtcmMessageConfig,
     RtcmRowId,
     SurveyInConfig,
+    UbxProtocol,
 )
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
@@ -2011,3 +2015,380 @@ class TestDeviceServiceCancelConnect:
         mock_driver.cancel_connect.assert_called_once()
         assert svc.state == DeviceConnectionState.DISCONNECTED
         assert svc.get_status().last_error == "Connection cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Apply-config primitives (issue #61)
+# ---------------------------------------------------------------------------
+
+
+def _connect_driver(
+    mock_serial_cls: MagicMock,
+    mock_reader_cls: MagicMock,
+    mock_ubx_msg: MagicMock,
+    responses: list[object],
+) -> tuple[UbloxDriver, MagicMock]:
+    """Connect a ``UbloxDriver`` against mocked serial/reader/UBXMessage.
+
+    ``responses`` are queued *after* the MON-VER response ``connect()``
+    consumes, in the order the driver under test will read them.
+    """
+    ser = MagicMock()
+    ser.is_open = True
+    mock_serial_cls.return_value = ser
+
+    reader = MagicMock()
+    reader.read.side_effect = [
+        (b"", _make_mon_ver_response()),
+        *[(b"", r) for r in responses],
+    ]
+    mock_reader_cls.return_value = reader
+
+    mock_msg = MagicMock()
+    mock_msg.serialize.return_value = b"\x00"
+    mock_ubx_msg.config_set.return_value = mock_msg
+
+    driver = UbloxDriver()
+    driver.connect("/dev/ttyUSB0")
+    return driver, reader
+
+
+class TestConfigurePortProtocols:
+    """Tests for ``UbloxDriver.configure_port_protocols`` (issue #61)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_assertive_keys_for_touched_ports_only(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Only UART1 is present in either mapping, so only its six
+        IN/OUT protocol keys should be written — UART2/USB untouched."""
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_UART1INPROT_UBX=1,
+            CFG_UART1INPROT_NMEA=0,
+            CFG_UART1INPROT_RTCM3X=0,
+            CFG_UART1OUTPROT_UBX=0,
+            CFG_UART1OUTPROT_NMEA=0,
+            CFG_UART1OUTPROT_RTCM3X=1,
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_ack_response(), read_back],
+        )
+
+        driver.configure_port_protocols(
+            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
+            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
+        )
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        written = dict(cfg_data)
+        assert written == {
+            "CFG_UART1INPROT_UBX": 1,
+            "CFG_UART1INPROT_NMEA": 0,
+            "CFG_UART1INPROT_RTCM3X": 0,
+            "CFG_UART1OUTPROT_UBX": 0,
+            "CFG_UART1OUTPROT_NMEA": 0,
+            "CFG_UART1OUTPROT_RTCM3X": 1,
+        }
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_empty_mappings_write_nothing(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+
+        driver.configure_port_protocols(in_protocols={}, out_protocols={})
+
+        mock_ubx_msg.config_set.assert_not_called()
+
+
+class TestConfigureMeasurementRate:
+    """Tests for ``UbloxDriver.configure_measurement_rate`` (issue #61)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_meas_and_pins_nav_to_one(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """meas_period_ms is a raw ms value passed straight through —
+        no Hz conversion — and CFG_RATE_NAV is always pinned to 1."""
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET", CFG_RATE_MEAS=333, CFG_RATE_NAV=1
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_ack_response(), read_back],
+        )
+
+        driver.configure_measurement_rate(333)
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {"CFG_RATE_MEAS": 333, "CFG_RATE_NAV": 1}
+
+
+class TestConfigureDynModel:
+    """Tests for ``UbloxDriver.configure_dyn_model`` (issue #61)."""
+
+    @pytest.mark.parametrize(
+        ("model", "expected_value"),
+        [
+            (DynModel.PORTABLE, 0),
+            (DynModel.STATIONARY, 2),
+            (DynModel.AIRBORNE_4G, 8),
+        ],
+    )
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_mapped_value(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+        model: DynModel,
+        expected_value: int,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),
+                SimpleNamespace(
+                    identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=expected_value
+                ),
+            ],
+        )
+
+        driver.configure_dyn_model(model)
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {"CFG_NAVSPG_DYNMODEL": expected_value}
+
+
+class TestConfigureTmodeMode:
+    """Tests for ``UbloxDriver.configure_tmode_mode`` (issue #61)."""
+
+    @pytest.mark.parametrize(
+        ("mode", "expected_value"),
+        [
+            (BaseMode.DISABLED, 0),
+            (BaseMode.SURVEY_IN, 1),
+            (BaseMode.FIXED, 2),
+        ],
+    )
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_mapped_value_without_position_keys(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+        mode: BaseMode,
+        expected_value: int,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),
+                SimpleNamespace(identity="CFG-VALGET", CFG_TMODE_MODE=expected_value),
+            ],
+        )
+
+        driver.configure_tmode_mode(mode)
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {"CFG_TMODE_MODE": expected_value}
+
+
+class TestConfigureOptimisations:
+    """Tests for ``UbloxDriver.configure_optimisations`` (issue #61)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_only_provided_fields(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        read_back = SimpleNamespace(identity="CFG-VALGET", CFG_NAVSPG_INFIL_MINELEV=10)
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_ack_response(), read_back],
+        )
+
+        driver.configure_optimisations(
+            elevation_mask_deg=10, bds_b2_enabled=None, spi_enabled=None
+        )
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {"CFG_NAVSPG_INFIL_MINELEV": 10}
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_all_none_writes_nothing(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+
+        driver.configure_optimisations(
+            elevation_mask_deg=None, bds_b2_enabled=None, spi_enabled=None
+        )
+
+        mock_ubx_msg.config_set.assert_not_called()
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_all_three_fields_when_all_provided(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_NAVSPG_INFIL_MINELEV=15,
+            CFG_SIGNAL_BDS_B2_ENA=0,
+            CFG_SPI_ENABLED=1,
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_ack_response(), read_back],
+        )
+
+        driver.configure_optimisations(
+            elevation_mask_deg=15, bds_b2_enabled=False, spi_enabled=True
+        )
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {
+            "CFG_NAVSPG_INFIL_MINELEV": 15,
+            "CFG_SIGNAL_BDS_B2_ENA": 0,
+            "CFG_SPI_ENABLED": 1,
+        }
+
+
+class TestApplyRtcmMatrix:
+    """Tests for ``UbloxDriver.apply_rtcm_matrix`` (issue #61)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_all_36_cells_including_zeros(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A row not present in ``matrix`` at all must still be written
+        as an explicit 0 — a previously-enabled message left out of a
+        profile must end up off, not survive as a silent superset."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_ack_response()]
+        )
+
+        matrix = {
+            RtcmRowId.RTCM_1005: {PortId.UART1: True, PortId.UART2: True},
+            RtcmRowId.RTCM_1077: {PortId.UART1: True},
+        }
+        driver.apply_rtcm_matrix(matrix)
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        written = dict(cfg_data)
+        assert len(written) == 36
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1005_UART1"] == 1
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1005_UART2"] == 1
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1005_USB"] == 0
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1077_UART1"] == 1
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1077_UART2"] == 0
+        # A row entirely absent from the matrix — explicit zeros everywhere.
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1230_UART1"] == 0
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1230_UART2"] == 0
+        assert written["CFG_MSGOUT_RTCM_3X_TYPE1230_USB"] == 0
+        # I2C/SPI are never claimed by the matrix.
+        assert not any(key.endswith(("_I2C", "_SPI")) for key in written)
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_single_write_no_internal_retry(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Unlike this driver's other layer=5 writers, apply_rtcm_matrix
+        does not read back or retry internally — the apply-config
+        endpoint owns that verification step."""
+        driver, reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_ack_response()]
+        )
+
+        driver.apply_rtcm_matrix({})
+
+        assert mock_ubx_msg.config_set.call_count == 1
+        # Exactly MON-VER + ACK consumed — no extra VALGET poll/read.
+        assert reader.read.call_count == 2
+
+
+class TestGetUartBaudRates:
+    """Tests for ``UbloxDriver.get_uart_baud_rates`` (issue #61)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_reads_uart1_and_uart2_baud(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_UART1_BAUDRATE=57600,
+            CFG_UART2_BAUDRATE=115200,
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
+        )
+
+        result = driver.get_uart_baud_rates()
+
+        assert result == {PortId.UART1: 57600, PortId.UART2: 115200}

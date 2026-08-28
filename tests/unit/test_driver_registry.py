@@ -9,14 +9,18 @@ from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
+    DynModel,
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortId,
     PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
+    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.services.drivers import (
     _DRIVER_REGISTRY,  # pyright: ignore[reportPrivateUsage]
@@ -97,6 +101,36 @@ class StubDriver(GpsReceiverDriver):
 
     def get_base_config(self) -> CurrentBaseConfig:
         return CurrentBaseConfig(mode=BaseMode.DISABLED)
+
+    def configure_port_protocols(
+        self,
+        in_protocols: dict[PortId, list[UbxProtocol]],
+        out_protocols: dict[PortId, list[UbxProtocol]],
+    ) -> None:
+        pass
+
+    def configure_measurement_rate(self, period_ms: int) -> None:
+        pass
+
+    def configure_dyn_model(self, model: DynModel) -> None:
+        pass
+
+    def configure_tmode_mode(self, mode: BaseMode) -> None:
+        pass
+
+    def configure_optimisations(
+        self,
+        elevation_mask_deg: int | None,
+        bds_b2_enabled: bool | None,
+        spi_enabled: bool | None,
+    ) -> None:
+        pass
+
+    def apply_rtcm_matrix(self, matrix: dict[RtcmRowId, dict[PortId, bool]]) -> None:
+        pass
+
+    def get_uart_baud_rates(self) -> dict[PortId, int]:
+        return {}
 
 
 # ---------------------------------------------------------------------------

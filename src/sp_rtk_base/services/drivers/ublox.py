@@ -123,6 +123,12 @@ _PROTOCOL_PORT_PREFIXES: dict[PortId, str] = {
     PortId.USB: "CFG_USB",
 }
 
+# Explicitly typed so a `for direction in _PROTOCOL_DIRECTIONS` loop
+# variable narrows to ``Literal["IN", "OUT"]`` under mypy strict, not
+# just pyright — an inline `("IN", "OUT")` tuple loses that narrowing
+# under mypy.
+_PROTOCOL_DIRECTIONS: tuple[Literal["IN", "OUT"], ...] = ("IN", "OUT")
+
 
 def _protocol_key(
     port: PortId, direction: Literal["IN", "OUT"], protocol: UbxProtocol
@@ -1044,7 +1050,7 @@ class UbloxDriver(GpsReceiverDriver):
         all_keys: list[str | int] = [
             _protocol_key(port, direction, protocol)
             for port in PortId
-            for direction in ("IN", "OUT")
+            for direction in _PROTOCOL_DIRECTIONS
             for protocol in UbxProtocol
         ]
 

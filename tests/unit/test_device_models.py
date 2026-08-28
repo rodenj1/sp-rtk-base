@@ -12,6 +12,7 @@ from sp_rtk_base.models.device_models import (
     DeviceStatus,
     FixedBaseConfig,
     RtcmMessageConfig,
+    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
 )
@@ -128,11 +129,20 @@ class TestRtcmMessageConfig:
 
     def test_defaults(self) -> None:
         cfg = RtcmMessageConfig()
-        assert cfg.message_ids == [1005, 1077, 1087, 1097, 1127, 1230]
+        assert cfg.message_ids == [
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+            RtcmRowId.RTCM_1087,
+            RtcmRowId.RTCM_1097,
+            RtcmRowId.RTCM_1127,
+            RtcmRowId.RTCM_1230,
+        ]
         assert cfg.rate_hz == 1
 
     def test_custom_messages(self) -> None:
-        cfg = RtcmMessageConfig(message_ids=[1005, 1077], rate_hz=5)
+        cfg = RtcmMessageConfig(
+            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=5
+        )
         assert len(cfg.message_ids) == 2
         assert cfg.rate_hz == 5
 
@@ -141,6 +151,28 @@ class TestRtcmMessageConfig:
             RtcmMessageConfig(rate_hz=0)
         with pytest.raises(ValidationError):
             RtcmMessageConfig(rate_hz=11)
+
+    def test_rejects_unknown_row_id(self) -> None:
+        """message_ids only accepts the 12 known RtcmRowId values."""
+        with pytest.raises(ValidationError):
+            RtcmMessageConfig(message_ids=["9999"])  # type: ignore[list-item]
+
+
+class TestRtcmRowId:
+    """Tests for the RtcmRowId enum."""
+
+    def test_twelve_members(self) -> None:
+        assert len(RtcmRowId) == 12
+
+    def test_4072_split_into_two_rows(self) -> None:
+        assert RtcmRowId.RTCM_4072_0.value == "4072.0"
+        assert RtcmRowId.RTCM_4072_1.value == "4072.1"
+        assert RtcmRowId.RTCM_4072_0 != RtcmRowId.RTCM_4072_1
+
+    def test_is_str_subclass(self) -> None:
+        """Values must serialise as plain strings over the API."""
+        assert isinstance(RtcmRowId.RTCM_1005, str)
+        assert RtcmRowId.RTCM_1005 == "1005"
 
 
 class TestSurveyInProgress:

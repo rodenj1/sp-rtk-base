@@ -15,6 +15,7 @@ from sp_rtk_base.models.device_models import (
     DeviceInfo,
     FixedBaseConfig,
     RtcmMessageConfig,
+    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
 )
@@ -267,7 +268,9 @@ class TestConfiguration:
 
     @pytest.mark.asyncio()
     async def test_configure_rtcm_messages(self, connected_svc: DeviceService) -> None:
-        config = RtcmMessageConfig(message_ids=[1005, 1077], rate_hz=2)
+        config = RtcmMessageConfig(
+            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=2
+        )
         await connected_svc.configure_rtcm_messages(config)
 
         assert connected_svc.state == DeviceConnectionState.CONNECTED

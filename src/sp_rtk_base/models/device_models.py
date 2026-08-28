@@ -168,10 +168,34 @@ class CurrentBaseConfig(BaseModel):
     )
 
 
+class RtcmRowId(str, enum.Enum):
+    """Row identity for an RTCM message output slot.
+
+    The 12 rows this app can address, keyed by their RTCM/u-blox
+    identity string rather than a bare message-type int. This exists
+    because 4072 (u-blox reference-station PVT) has two independently
+    controllable sub-messages, 4072.0 and 4072.1, which an ``int``
+    cannot represent as distinct rows.
+    """
+
+    RTCM_1005 = "1005"
+    RTCM_4072_0 = "4072.0"
+    RTCM_4072_1 = "4072.1"
+    RTCM_1074 = "1074"
+    RTCM_1077 = "1077"
+    RTCM_1084 = "1084"
+    RTCM_1087 = "1087"
+    RTCM_1094 = "1094"
+    RTCM_1097 = "1097"
+    RTCM_1124 = "1124"
+    RTCM_1127 = "1127"
+    RTCM_1230 = "1230"
+
+
 class RtcmMessageConfig(BaseModel):
     """RTCM message output selection (simple, single-port).
 
-    Standard RTCM 3.x message IDs for base station operation:
+    Standard RTCM 3.x rows for base station operation:
     - 1005: Station ARP (position)
     - 1077: GPS MSM7
     - 1087: GLONASS MSM7
@@ -180,9 +204,16 @@ class RtcmMessageConfig(BaseModel):
     - 1230: GLONASS code-phase biases
     """
 
-    message_ids: list[int] = Field(
-        default_factory=lambda: [1005, 1077, 1087, 1097, 1127, 1230],
-        description="RTCM message IDs to enable on the receiver",
+    message_ids: list[RtcmRowId] = Field(
+        default_factory=lambda: [
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+            RtcmRowId.RTCM_1087,
+            RtcmRowId.RTCM_1097,
+            RtcmRowId.RTCM_1127,
+            RtcmRowId.RTCM_1230,
+        ],
+        description="RTCM row IDs to enable on the receiver",
     )
     rate_hz: int = Field(
         default=1,
@@ -190,6 +221,18 @@ class RtcmMessageConfig(BaseModel):
         le=10,
         description="Output rate in Hz (messages per second)",
     )
+
+    @property
+    def message_id_values(self) -> list[str]:
+        """Plain string values, for logging/display.
+
+        A bare f-string/list of ``RtcmRowId`` members renders via
+        ``repr()`` (e.g. ``<RtcmRowId.RTCM_1005: '1005'>``) rather than
+        the enum's string value, since Python only special-cases the
+        mixed-in ``__str__`` for a single member, not one nested in a
+        list.
+        """
+        return [m.value for m in self.message_ids]
 
 
 class RtcmOutputPort(str, enum.Enum):
@@ -202,18 +245,25 @@ class RtcmOutputPort(str, enum.Enum):
     SPI = "SPI"
 
 
-# RTCM message groups for UI display
-RTCM_MESSAGE_GROUPS: list[tuple[str, list[tuple[int, str]]]] = [
-    ("Reference", [(1005, "Station ARP"), (4072, "Ref station PVT")]),
-    ("GPS", [(1074, "MSM4"), (1077, "MSM7")]),
-    ("GLONASS", [(1084, "MSM4"), (1087, "MSM7")]),
-    ("Galileo", [(1094, "MSM4"), (1097, "MSM7")]),
-    ("BeiDou", [(1124, "MSM4"), (1127, "MSM7")]),
-    ("GLONASS Bias", [(1230, "Code-phase biases")]),
+# RTCM row groups for UI display
+RTCM_MESSAGE_GROUPS: list[tuple[str, list[tuple[RtcmRowId, str]]]] = [
+    (
+        "Reference",
+        [
+            (RtcmRowId.RTCM_1005, "Station ARP"),
+            (RtcmRowId.RTCM_4072_0, "Ref station PVT (4072.0)"),
+            (RtcmRowId.RTCM_4072_1, "Ref station PVT (4072.1)"),
+        ],
+    ),
+    ("GPS", [(RtcmRowId.RTCM_1074, "MSM4"), (RtcmRowId.RTCM_1077, "MSM7")]),
+    ("GLONASS", [(RtcmRowId.RTCM_1084, "MSM4"), (RtcmRowId.RTCM_1087, "MSM7")]),
+    ("Galileo", [(RtcmRowId.RTCM_1094, "MSM4"), (RtcmRowId.RTCM_1097, "MSM7")]),
+    ("BeiDou", [(RtcmRowId.RTCM_1124, "MSM4"), (RtcmRowId.RTCM_1127, "MSM7")]),
+    ("GLONASS Bias", [(RtcmRowId.RTCM_1230, "Code-phase biases")]),
 ]
 
-# All known RTCM message IDs (flat list)
-ALL_RTCM_MESSAGE_IDS: list[int] = [
+# All known RTCM row IDs (flat list)
+ALL_RTCM_MESSAGE_IDS: list[RtcmRowId] = [
     msg_id for _, msgs in RTCM_MESSAGE_GROUPS for msg_id, _ in msgs
 ]
 
@@ -221,37 +271,37 @@ ALL_RTCM_MESSAGE_IDS: list[int] = [
 class RtcmPortConfig(BaseModel):
     """Multi-port RTCM output configuration.
 
-    Stores per-message, per-port output rates.  A rate of 0 means
-    the message is disabled on that port; rate > 0 means enabled
+    Stores per-row, per-port output rates.  A rate of 0 means
+    the row is disabled on that port; rate > 0 means enabled
     at that many messages per navigation epoch.
 
     Example::
 
         config.messages = {
-            1005: {"USB": 1, "UART1": 0, "UART2": 1, "I2C": 0, "SPI": 0},
-            1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
+            RtcmRowId.RTCM_1005: {"USB": 1, "UART1": 0, "UART2": 1, "I2C": 0, "SPI": 0},
+            RtcmRowId.RTCM_1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
         }
     """
 
-    messages: dict[int, dict[str, int]] = Field(
-        default_factory=lambda: dict[int, dict[str, int]](),
-        description="msg_id → {port: rate} mapping",
+    messages: dict[RtcmRowId, dict[str, int]] = Field(
+        default_factory=lambda: dict[RtcmRowId, dict[str, int]](),
+        description="row id → {port: rate} mapping",
     )
 
-    def enabled_on_port(self, port: RtcmOutputPort) -> list[int]:
-        """Return message IDs enabled (rate > 0) on a given port."""
+    def enabled_on_port(self, port: RtcmOutputPort) -> list[RtcmRowId]:
+        """Return row IDs enabled (rate > 0) on a given port."""
         return [
             msg_id
             for msg_id, ports in self.messages.items()
             if ports.get(port.value, 0) > 0
         ]
 
-    def is_enabled(self, msg_id: int, port: RtcmOutputPort) -> bool:
-        """Check if a specific message is enabled on a specific port."""
+    def is_enabled(self, msg_id: RtcmRowId, port: RtcmOutputPort) -> bool:
+        """Check if a specific row is enabled on a specific port."""
         return self.messages.get(msg_id, {}).get(port.value, 0) > 0
 
-    def rate(self, msg_id: int, port: RtcmOutputPort) -> int:
-        """Get the rate for a specific message on a specific port."""
+    def rate(self, msg_id: RtcmRowId, port: RtcmOutputPort) -> int:
+        """Get the rate for a specific row on a specific port."""
         return self.messages.get(msg_id, {}).get(port.value, 0)
 
 

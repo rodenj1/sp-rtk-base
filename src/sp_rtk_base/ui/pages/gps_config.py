@@ -24,6 +24,7 @@ from sp_rtk_base.models.device_models import (
     DeviceConnectionState,
     RtcmOutputPort,
     RtcmPortConfig,
+    RtcmRowId,
 )
 from sp_rtk_base.services import get_config_service, get_device_service
 from sp_rtk_base.services.drivers import create_driver, list_drivers
@@ -125,7 +126,7 @@ def gps_config_page() -> None:
                 ).classes("text-grey-4 q-mt-xs text-caption")
 
                 # Build checkbox grid: rtcm_port_checks[msg_id][port] = checkbox
-                rtcm_port_checks: dict[int, dict[str, ui.checkbox]] = {}
+                rtcm_port_checks: dict[RtcmRowId, dict[str, ui.checkbox]] = {}
 
                 with ui.column().classes("q-mt-sm gap-0 w-full"):
                     # Header row
@@ -480,7 +481,7 @@ def gps_config_page() -> None:
         async def _apply_rtcm() -> None:
             """Apply multi-port RTCM message configuration."""
             rate = int(rtcm_rate.value or 1)
-            messages: dict[int, dict[str, int]] = {}
+            messages: dict[RtcmRowId, dict[str, int]] = {}
 
             any_enabled = False
             for msg_id, port_cbs in rtcm_port_checks.items():

@@ -7,12 +7,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
     RtcmOutputPort,
     RtcmPortConfig,
+    RtcmRowId,
 )
 
 # ---------------------------------------------------------------------------
@@ -30,40 +32,64 @@ class TestRtcmPortConfig:
     def test_enabled_on_port(self) -> None:
         config = RtcmPortConfig(
             messages={
-                1005: {"USB": 1, "UART1": 0, "UART2": 1, "I2C": 0, "SPI": 0},
-                1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1087: {"USB": 0, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
+                RtcmRowId.RTCM_1005: {
+                    "USB": 1,
+                    "UART1": 0,
+                    "UART2": 1,
+                    "I2C": 0,
+                    "SPI": 0,
+                },
+                RtcmRowId.RTCM_1077: {
+                    "USB": 1,
+                    "UART1": 1,
+                    "UART2": 0,
+                    "I2C": 0,
+                    "SPI": 0,
+                },
+                RtcmRowId.RTCM_1087: {
+                    "USB": 0,
+                    "UART1": 0,
+                    "UART2": 0,
+                    "I2C": 0,
+                    "SPI": 0,
+                },
             }
         )
         usb_enabled = config.enabled_on_port(RtcmOutputPort.USB)
-        assert 1005 in usb_enabled
-        assert 1077 in usb_enabled
-        assert 1087 not in usb_enabled
+        assert RtcmRowId.RTCM_1005 in usb_enabled
+        assert RtcmRowId.RTCM_1077 in usb_enabled
+        assert RtcmRowId.RTCM_1087 not in usb_enabled
 
         uart1_enabled = config.enabled_on_port(RtcmOutputPort.UART1)
-        assert 1077 in uart1_enabled
-        assert 1005 not in uart1_enabled
+        assert RtcmRowId.RTCM_1077 in uart1_enabled
+        assert RtcmRowId.RTCM_1005 not in uart1_enabled
 
     def test_is_enabled(self) -> None:
         config = RtcmPortConfig(
             messages={
-                1005: {"USB": 1, "UART1": 0},
+                RtcmRowId.RTCM_1005: {"USB": 1, "UART1": 0},
             }
         )
-        assert config.is_enabled(1005, RtcmOutputPort.USB) is True
-        assert config.is_enabled(1005, RtcmOutputPort.UART1) is False
-        # Non-existent message
-        assert config.is_enabled(9999, RtcmOutputPort.USB) is False
+        assert config.is_enabled(RtcmRowId.RTCM_1005, RtcmOutputPort.USB) is True
+        assert config.is_enabled(RtcmRowId.RTCM_1005, RtcmOutputPort.UART1) is False
+        # Non-existent row on this config
+        assert config.is_enabled(RtcmRowId.RTCM_1230, RtcmOutputPort.USB) is False
 
     def test_rate(self) -> None:
         config = RtcmPortConfig(
             messages={
-                1005: {"USB": 3, "UART1": 0},
+                RtcmRowId.RTCM_1005: {"USB": 3, "UART1": 0},
             }
         )
-        assert config.rate(1005, RtcmOutputPort.USB) == 3
-        assert config.rate(1005, RtcmOutputPort.UART1) == 0
-        assert config.rate(9999, RtcmOutputPort.USB) == 0
+        assert config.rate(RtcmRowId.RTCM_1005, RtcmOutputPort.USB) == 3
+        assert config.rate(RtcmRowId.RTCM_1005, RtcmOutputPort.UART1) == 0
+        assert config.rate(RtcmRowId.RTCM_1230, RtcmOutputPort.USB) == 0
+
+    def test_construct_rejects_unknown_row_id(self) -> None:
+        """messages is keyed by RtcmRowId — an unknown identifier must
+        fail at the model boundary rather than being silently accepted."""
+        with pytest.raises(ValidationError):
+            RtcmPortConfig(messages={"9999": {"USB": 1}})  # type: ignore[arg-type]
 
 
 class TestRtcmOutputPort:
@@ -84,11 +110,14 @@ class TestRtcmMessageGroups:
 
     def test_all_ids_covered(self) -> None:
         """Ensure ALL_RTCM_MESSAGE_IDS matches the groups."""
-        ids_from_groups: list[int] = []
+        ids_from_groups: list[RtcmRowId] = []
         for _, messages in RTCM_MESSAGE_GROUPS:
             for msg_id, _ in messages:
                 ids_from_groups.append(msg_id)
         assert sorted(ids_from_groups) == sorted(ALL_RTCM_MESSAGE_IDS)
+
+    def test_twelve_rows_total(self) -> None:
+        assert len(ALL_RTCM_MESSAGE_IDS) == 12
 
     def test_groups_present(self) -> None:
         group_names = [name for name, _ in RTCM_MESSAGE_GROUPS]
@@ -98,6 +127,15 @@ class TestRtcmMessageGroups:
         assert "Galileo" in group_names
         assert "BeiDou" in group_names
         assert "GLONASS Bias" in group_names
+
+    def test_reference_group_has_both_4072_rows(self) -> None:
+        """4072.0 and 4072.1 must be separately addressable rows."""
+        reference = next(
+            msgs for name, msgs in RTCM_MESSAGE_GROUPS if name == "Reference"
+        )
+        ids = [msg_id for msg_id, _ in reference]
+        assert RtcmRowId.RTCM_4072_0 in ids
+        assert RtcmRowId.RTCM_4072_1 in ids
 
     def test_msm4_and_msm7_pairs(self) -> None:
         """MSM4 and MSM7 messages should be paired per constellation."""
@@ -119,15 +157,32 @@ class TestRtcmKeyMapping:
     def test_rtcm_key_standard(self) -> None:
         from sp_rtk_base.services.drivers.ublox import _rtcm_key
 
-        assert _rtcm_key(1005, "USB") == "CFG_MSGOUT_RTCM_3X_TYPE1005_USB"
-        assert _rtcm_key(1077, "UART1") == "CFG_MSGOUT_RTCM_3X_TYPE1077_UART1"
-        assert _rtcm_key(1087, "I2C") == "CFG_MSGOUT_RTCM_3X_TYPE1087_I2C"
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_1005, "USB") == "CFG_MSGOUT_RTCM_3X_TYPE1005_USB"
+        )
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_1077, "UART1")
+            == "CFG_MSGOUT_RTCM_3X_TYPE1077_UART1"
+        )
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_1087, "I2C") == "CFG_MSGOUT_RTCM_3X_TYPE1087_I2C"
+        )
 
-    def test_rtcm_key_4072(self) -> None:
+    def test_rtcm_key_4072_0_and_4072_1_are_distinct(self) -> None:
         from sp_rtk_base.services.drivers.ublox import _rtcm_key
 
-        assert _rtcm_key(4072, "USB") == "CFG_MSGOUT_RTCM_3X_TYPE4072_0_USB"
-        assert _rtcm_key(4072, "UART2") == "CFG_MSGOUT_RTCM_3X_TYPE4072_0_UART2"
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_4072_0, "USB")
+            == "CFG_MSGOUT_RTCM_3X_TYPE4072_0_USB"
+        )
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_4072_1, "USB")
+            == "CFG_MSGOUT_RTCM_3X_TYPE4072_1_USB"
+        )
+        assert (
+            _rtcm_key(RtcmRowId.RTCM_4072_1, "UART2")
+            == "CFG_MSGOUT_RTCM_3X_TYPE4072_1_UART2"
+        )
 
     def test_legacy_usb_keys_match(self) -> None:
         from sp_rtk_base.services.drivers.ublox import _RTCM_KEY_BASES, _RTCM_USB_KEYS
@@ -175,17 +230,34 @@ class TestParseRtcmPortValget:
 
         parsed = _FakeValget(
             {
-                _rtcm_key(1005, "USB"): 1,
-                _rtcm_key(1005, "UART1"): 2,
-                _rtcm_key(1077, "USB"): 1,
+                _rtcm_key(RtcmRowId.RTCM_1005, "USB"): 1,
+                _rtcm_key(RtcmRowId.RTCM_1005, "UART1"): 2,
+                _rtcm_key(RtcmRowId.RTCM_1077, "USB"): 1,
             }
         )
 
         config = UbloxDriver._parse_rtcm_port_valget(parsed)
-        assert config.is_enabled(1005, RtcmOutputPort.USB)
-        assert config.rate(1005, RtcmOutputPort.UART1) == 2
-        assert config.is_enabled(1077, RtcmOutputPort.USB)
-        assert not config.is_enabled(1087, RtcmOutputPort.USB)
+        assert config.is_enabled(RtcmRowId.RTCM_1005, RtcmOutputPort.USB)
+        assert config.rate(RtcmRowId.RTCM_1005, RtcmOutputPort.UART1) == 2
+        assert config.is_enabled(RtcmRowId.RTCM_1077, RtcmOutputPort.USB)
+        assert not config.is_enabled(RtcmRowId.RTCM_1087, RtcmOutputPort.USB)
+
+    def test_parse_round_trips_all_twelve_rows_including_4072_split(self) -> None:
+        """Acceptance: a read-model round trip preserves all 12 rows,
+        with 4072.0 and 4072.1 controllable independently."""
+        from sp_rtk_base.services.drivers.ublox import UbloxDriver, _rtcm_key
+
+        parsed = _FakeValget(
+            {
+                _rtcm_key(RtcmRowId.RTCM_4072_0, "USB"): 1,
+                _rtcm_key(RtcmRowId.RTCM_4072_1, "USB"): 0,
+            }
+        )
+
+        config = UbloxDriver._parse_rtcm_port_valget(parsed)
+        assert set(config.messages.keys()) == set(ALL_RTCM_MESSAGE_IDS)
+        assert config.is_enabled(RtcmRowId.RTCM_4072_0, RtcmOutputPort.USB)
+        assert not config.is_enabled(RtcmRowId.RTCM_4072_1, RtcmOutputPort.USB)
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +278,13 @@ class TestConfigureRtcmPorts:
 
         config = RtcmPortConfig(
             messages={
-                1005: {"USB": 1, "UART1": 0, "UART2": 0, "I2C": 0, "SPI": 0},
+                RtcmRowId.RTCM_1005: {
+                    "USB": 1,
+                    "UART1": 0,
+                    "UART2": 0,
+                    "I2C": 0,
+                    "SPI": 0,
+                },
             }
         )
 
@@ -255,24 +333,6 @@ class TestConfigureRtcmPorts:
             # Should NOT call valset since there are no keys
             mock_valset.assert_not_called()
 
-    def test_configure_unknown_msg_skipped(self) -> None:
-        from sp_rtk_base.services.drivers.ublox import UbloxDriver
-
-        driver = UbloxDriver()
-        driver._serial = MagicMock()
-        driver._serial.is_open = True
-        driver._reader = MagicMock()
-
-        config = RtcmPortConfig(
-            messages={
-                9999: {"USB": 1},  # Unknown message
-            }
-        )
-
-        with patch.object(driver, "_send_cfg_valset_locked") as mock_valset:
-            driver.configure_rtcm_ports(config)
-            mock_valset.assert_not_called()
-
     def test_configure_retries_once_on_mismatch(self) -> None:
         """Issue #42: a read-back mismatch after the first write is
         retried once, mirroring the ECEF/base-output-profile pattern,
@@ -284,7 +344,7 @@ class TestConfigureRtcmPorts:
         driver._serial.is_open = True
         driver._reader = MagicMock()
 
-        config = RtcmPortConfig(messages={1005: {"USB": 1}})
+        config = RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"USB": 1}})
 
         with (
             patch.object(driver, "_send_cfg_valset_locked") as mock_valset,
@@ -310,7 +370,7 @@ class TestConfigureRtcmPorts:
         driver._serial.is_open = True
         driver._reader = MagicMock()
 
-        config = RtcmPortConfig(messages={1005: {"USB": 1}})
+        config = RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"USB": 1}})
 
         with (
             patch.object(driver, "_send_cfg_valset_locked") as mock_valset,
@@ -338,7 +398,7 @@ class TestDeviceServiceRtcmPorts:
 
         mock_driver = MagicMock()
         mock_driver.is_connected = True
-        expected = RtcmPortConfig(messages={1005: {"USB": 1}})
+        expected = RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"USB": 1}})
         mock_driver.get_rtcm_port_config.return_value = expected
 
         svc = DeviceService()
@@ -367,7 +427,7 @@ class TestDeviceServiceRtcmPorts:
         svc._driver = mock_driver
         svc._state = DeviceConnectionState.CONNECTED
 
-        config = RtcmPortConfig(messages={1005: {"USB": 1}})
+        config = RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"USB": 1}})
         await svc.configure_rtcm_ports(config)
         mock_driver.configure_rtcm_ports.assert_called_once_with(config)
         assert svc._state == DeviceConnectionState.CONNECTED

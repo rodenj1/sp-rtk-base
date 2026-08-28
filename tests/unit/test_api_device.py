@@ -421,7 +421,7 @@ class TestConfigureRtcm:
         resp = client.post(
             "/api/device/configure/rtcm",
             json={
-                "message_ids": [1005, 1077, 1087],
+                "message_ids": ["1005", "1077", "1087"],
                 "rate_hz": 1,
             },
         )

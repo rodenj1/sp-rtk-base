@@ -46,6 +46,7 @@ from sp_rtk_base.models.device_models import (
     GpsFixType,
     RtcmMessageConfig,
     RtcmPortConfig,
+    RtcmRowId,
     SurveyInConfig,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -262,19 +263,32 @@ class TestConfigurationRoundTrips:
         assert current.accuracy_mm == 47308
 
     def test_rtcm_messages_round_trip(self, connected_driver: FakeGpsDriver) -> None:
-        cfg = RtcmMessageConfig(message_ids=[1005, 1077], rate_hz=2)
+        cfg = RtcmMessageConfig(
+            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=2
+        )
         connected_driver.configure_rtcm_messages(cfg)
-        assert connected_driver.get_rtcm_config().message_ids == [1005, 1077]
+        assert connected_driver.get_rtcm_config().message_ids == [
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+        ]
         assert connected_driver.get_rtcm_config().rate_hz == 2
 
     def test_rtcm_ports_round_trip(self, connected_driver: FakeGpsDriver) -> None:
         cfg = RtcmPortConfig(
-            messages={1005: {"USB": 0, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0}}
+            messages={
+                RtcmRowId.RTCM_1005: {
+                    "USB": 0,
+                    "UART1": 1,
+                    "UART2": 0,
+                    "I2C": 0,
+                    "SPI": 0,
+                }
+            }
         )
         connected_driver.configure_rtcm_ports(cfg)
         out = connected_driver.get_rtcm_port_config()
-        assert out.messages[1005]["UART1"] == 1
-        assert out.messages[1005]["USB"] == 0
+        assert out.messages[RtcmRowId.RTCM_1005]["UART1"] == 1
+        assert out.messages[RtcmRowId.RTCM_1005]["USB"] == 0
 
     def test_gnss_round_trip(self, connected_driver: FakeGpsDriver) -> None:
         cfg = GnssConfig(
@@ -297,7 +311,14 @@ class TestConfigurationRoundTrips:
         """Sanity check: default port config exposes the six common
         RTCM messages so the GPS-config UI has something to display."""
         cfg = connected_driver.get_rtcm_port_config()
-        assert {1005, 1077, 1087, 1097, 1127, 1230} <= cfg.messages.keys()
+        assert {
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+            RtcmRowId.RTCM_1087,
+            RtcmRowId.RTCM_1097,
+            RtcmRowId.RTCM_1127,
+            RtcmRowId.RTCM_1230,
+        } <= cfg.messages.keys()
 
     def test_default_gnss_has_all_six_constellations(
         self, connected_driver: FakeGpsDriver

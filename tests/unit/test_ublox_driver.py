@@ -22,6 +22,7 @@ from sp_rtk_base.models.device_models import (
     DeviceCapability,
     FixedBaseConfig,
     RtcmMessageConfig,
+    RtcmRowId,
     SurveyInConfig,
 )
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
@@ -943,48 +944,16 @@ class TestUbloxDriverConfiguration:
         driver = UbloxDriver()
         driver.connect("/dev/ttyUSB0")
 
-        config = RtcmMessageConfig(message_ids=[1005, 1077, 1087], rate_hz=1)
+        config = RtcmMessageConfig(
+            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077, RtcmRowId.RTCM_1087],
+            rate_hz=1,
+        )
         driver.configure_rtcm_messages(config)
 
         mock_ubx_msg.config_set.assert_called_once()
         # Issue #42: RAM+Flash, not RAM-only — a layer=1 write reverted
         # to the last-flashed message selection on reboot / reconnect.
         assert mock_ubx_msg.config_set.call_args[0][0] == 5
-
-    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
-    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
-    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
-    def test_configure_rtcm_unknown_message_id(
-        self,
-        mock_serial_cls: MagicMock,
-        mock_reader_cls: MagicMock,
-        mock_ubx_msg: MagicMock,
-    ) -> None:
-        ser = MagicMock()
-        ser.is_open = True
-        mock_serial_cls.return_value = ser
-
-        reader = MagicMock()
-        reader.read.side_effect = [
-            (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),
-            (
-                b"",
-                _make_rtcm_valget({"CFG_MSGOUT_RTCM_3X_TYPE1005_USB": 1}),
-            ),  # read-back verify — matches
-        ]
-        mock_reader_cls.return_value = reader
-
-        mock_msg = MagicMock()
-        mock_msg.serialize.return_value = b"\x00"
-        mock_ubx_msg.config_set.return_value = mock_msg
-
-        driver = UbloxDriver()
-        driver.connect("/dev/ttyUSB0")
-
-        # 9999 is not a known RTCM message
-        config = RtcmMessageConfig(message_ids=[1005, 9999], rate_hz=1)
-        driver.configure_rtcm_messages(config)  # Should not raise, just warn
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -1021,7 +990,7 @@ class TestUbloxDriverConfiguration:
         driver = UbloxDriver()
         driver.connect("/dev/ttyUSB0")
 
-        config = RtcmMessageConfig(message_ids=[1005], rate_hz=1)
+        config = RtcmMessageConfig(message_ids=[RtcmRowId.RTCM_1005], rate_hz=1)
         driver.configure_rtcm_messages(config)  # must not raise
 
         assert mock_ubx_msg.config_set.call_count == 2
@@ -1060,7 +1029,7 @@ class TestUbloxDriverConfiguration:
         driver = UbloxDriver()
         driver.connect("/dev/ttyUSB0")
 
-        config = RtcmMessageConfig(message_ids=[1005], rate_hz=1)
+        config = RtcmMessageConfig(message_ids=[RtcmRowId.RTCM_1005], rate_hz=1)
         with pytest.raises(RuntimeError, match="did not take effect"):
             driver.configure_rtcm_messages(config)
 
@@ -1803,7 +1772,14 @@ class TestGetRtcmConfig:
             CFG_MSGOUT_RTCM_3X_TYPE4072_0_USB=0,
         )
         result = UbloxDriver._parse_rtcm_valget(parsed)  # pyright: ignore[reportPrivateUsage]
-        assert set(result.message_ids) == {1005, 1077, 1087, 1097, 1127, 1230}
+        assert set(result.message_ids) == {
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+            RtcmRowId.RTCM_1087,
+            RtcmRowId.RTCM_1097,
+            RtcmRowId.RTCM_1127,
+            RtcmRowId.RTCM_1230,
+        }
         assert result.rate_hz == 1
 
     def test_parse_rtcm_valget_all_disabled(self) -> None:  # pyright: ignore[reportPrivateUsage]
@@ -1823,8 +1799,8 @@ class TestGetRtcmConfig:
             CFG_MSGOUT_RTCM_3X_TYPE1097_USB=1,
         )
         result = UbloxDriver._parse_rtcm_valget(parsed)  # pyright: ignore[reportPrivateUsage]
-        assert 1005 in result.message_ids
-        assert 1077 in result.message_ids
+        assert RtcmRowId.RTCM_1005 in result.message_ids
+        assert RtcmRowId.RTCM_1077 in result.message_ids
         assert result.rate_hz == 1  # most common
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
@@ -1862,8 +1838,8 @@ class TestGetRtcmConfig:
         driver.connect("/dev/ttyUSB0")
         result = driver.get_rtcm_config()
 
-        assert 1005 in result.message_ids
-        assert 1077 in result.message_ids
+        assert RtcmRowId.RTCM_1005 in result.message_ids
+        assert RtcmRowId.RTCM_1077 in result.message_ids
         assert result.rate_hz == 1
 
 

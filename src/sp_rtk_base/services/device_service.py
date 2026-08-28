@@ -437,7 +437,7 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "RTCM messages configured: %s @ %dHz",
-                config.message_ids,
+                config.message_id_values,
                 config.rate_hz,
             )
         except Exception as exc:

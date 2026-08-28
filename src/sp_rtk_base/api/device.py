@@ -231,7 +231,7 @@ async def configure_rtcm_messages(
 
     return DeviceActionResponse(
         status="ok",
-        message=f"RTCM messages configured: {config.message_ids}",
+        message=f"RTCM messages configured: {config.message_id_values}",
     )
 
 

@@ -152,7 +152,27 @@ set per u-blox, SparkFun, and ArduSimple documentation.
 | Setting | Current | Default | Rationale |
 |---------|---------|---------|-----------|
 | `CFG_SPI_ENABLED` | **1 (ON)** | 0 (OFF) | SPI interface enabled. Default is off. May have been enabled for a specific hardware connection or carrier board requirement. |
-| `CFG_TP_DUTY_LOCK_TP1` | **100,000** | 10.0 | Time pulse 1 duty cycle when GNSS is locked changed from 10% to effectively 100%. This turns TP1 into a "position locked" indicator — HIGH when the receiver has a GNSS fix. Can be used to drive an LED or logic signal. |
+| `CFG_TP_DUTY_LOCK_TP1` | **100,000** | 10.0 | ⚠️ **Set, but inert — has no effect on this receiver.** See the correction below. |
+
+> **⚠️ Correction (2026-08-28): the `CFG_TP_DUTY_LOCK_TP1` row was previously described as turning TP1 into a
+> "position locked" indicator. That is wrong on three counts, confirmed against the u-blox ZED-F9P interface
+> description and a fresh live audit.**
+>
+> 1. **The receiver ignores the value.** The key is `R008` (double, **percent**, default `10`) and the manual
+>    states it is *"only used if `CFG-TP-PULSE_LENGTH_DEF=RATIO` and `CFG-TP-USE_LOCKED_TP1` are set."*
+>    `CFG-TP-PULSE_LENGTH_DEF` defaults to `1 (LENGTH)` — the pulse is defined in microseconds, not as a ratio —
+>    and that key is **not changed on this receiver**. So `DUTY_LOCK_TP1` is never read.
+> 2. **The value is out of range, and looks like a key mix-up.** `100000` in a percent field would be 100000%.
+>    It is exactly the factory default of **`CFG-TP-LEN_LOCK_TP1`** (`U4`, microseconds — 100000 µs = 100 ms),
+>    so the *length* value appears to have been written into the *duty* key.
+> 3. **TP1 is already a lock indicator at factory defaults — no configuration needed.** `CFG-TP-TP1_ENA` = true,
+>    `CFG-TP-USE_LOCKED_TP1` = true, `CFG-TP-LEN_TP1` = 0 µs (no pulse when unlocked),
+>    `CFG-TP-LEN_LOCK_TP1` = 100000 µs, `CFG-TP-PERIOD_TP1` = 1 s. That is a 100 ms pulse once per second,
+>    emitted **only when locked to GNSS** — precisely the behaviour this row credited to the setting.
+>
+> **Do not copy this setting to other receivers.** It is retained in the table because it *is* a genuine
+> difference from factory defaults on this unit, but it changes no behaviour. Coherent time-pulse control would
+> require the whole TP block (`PULSE_LENGTH_DEF` plus the LEN/DUTY pairs and period), not this key alone.
 
 ---
 
@@ -182,7 +202,7 @@ recommended when configuring a new ZED-F9P as an RTK base station:
 
 - [ ] Disable `CFG_UART1OUTPROT_UBX` = 0 (suppress unsolicited UBX output)
 - [ ] Disable `CFG_SIGNAL_BDS_B2_ENA` = 0 (if B2 not needed in region)
-- [ ] Set `CFG_TP_DUTY_LOCK_TP1` = 100000 (use TP1 as lock indicator)
+- [ ] ~~Set `CFG_TP_DUTY_LOCK_TP1` = 100000 (use TP1 as lock indicator)~~ — **removed: inert, and TP1 is already a lock indicator by default. See the correction in section 6.**
 - [ ] Enable `CFG_SPI_ENABLED` = 1 (if SPI hardware connected)
 
 ---

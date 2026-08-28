@@ -23,6 +23,7 @@ from sp_rtk_base.models.device_models import (
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
     SurveyInConfig,
@@ -488,6 +489,18 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
             raise
+
+    async def get_port_protocols(self) -> PortProtocolConfig:
+        """Read live in/out protocol state for UART1, UART2 and USB.
+
+        Returns:
+            Per-port enabled input/output protocols.
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        driver = self._require_connected()
+        return await asyncio.to_thread(driver.get_port_protocols)
 
     async def get_gnss_config(self) -> GnssConfig:
         """Read the current GNSS constellation configuration.

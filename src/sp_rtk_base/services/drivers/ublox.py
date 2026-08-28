@@ -13,6 +13,7 @@ import fcntl
 import logging
 import threading
 import time
+from typing import Literal
 
 import serial  # type: ignore[import-untyped]
 from pyubx2 import (  # type: ignore[import-untyped]
@@ -36,12 +37,15 @@ from sp_rtk_base.models.device_models import (
     GnssSystemConfig,
     GpsFixType,
     GpsPosition,
+    PortId,
+    PortProtocolConfig,
     RtcmMessageConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
@@ -110,6 +114,33 @@ _BASE_OUTPUT_PROFILE: dict[str, int] = {
 # unconditionally on every base-mode transition rather than left as an
 # operator-configurable setting.
 _STATIONARY_DYN_MODEL: int = 2
+
+# CFG key prefix for each port covered by the live port-protocol read
+# (issue #57) — UART1/UART2 use a numbered prefix, USB does not.
+_PROTOCOL_PORT_PREFIXES: dict[PortId, str] = {
+    PortId.UART1: "CFG_UART1",
+    PortId.UART2: "CFG_UART2",
+    PortId.USB: "CFG_USB",
+}
+
+# Explicitly typed so a `for direction in _PROTOCOL_DIRECTIONS` loop
+# variable narrows to ``Literal["IN", "OUT"]`` under mypy strict, not
+# just pyright — an inline `("IN", "OUT")` tuple loses that narrowing
+# under mypy.
+_PROTOCOL_DIRECTIONS: tuple[Literal["IN", "OUT"], ...] = ("IN", "OUT")
+
+
+def _protocol_key(
+    port: PortId, direction: Literal["IN", "OUT"], protocol: UbxProtocol
+) -> str:
+    """Build the CFG_{PORT}{IN,OUT}PROT_{PROTOCOL} key name.
+
+    Args:
+        port: Communication port.
+        direction: ``"IN"`` or ``"OUT"``.
+        protocol: Protocol to query.
+    """
+    return f"{_PROTOCOL_PORT_PREFIXES[port]}{direction}PROT_{protocol.value}"
 
 
 class UbloxDriver(GpsReceiverDriver):
@@ -996,6 +1027,71 @@ class UbloxDriver(GpsReceiverDriver):
         with self._lock:
             self._write_and_verify_locked(cfg_data, layer=5, label="RTCM port config")
         logger.info("RTCM multi-port config applied (%d keys)", len(cfg_data))
+
+    # ------------------------------------------------------------------
+    # Port protocol configuration
+    # ------------------------------------------------------------------
+
+    def get_port_protocols(self) -> PortProtocolConfig:
+        """Read live in/out protocol state for UART1, UART2 and USB.
+
+        Polls all ``CFG_{PORT}{IN,OUT}PROT_{UBX,NMEA,RTCM3X}`` keys —
+        the driver previously only polled the six UART OUTPROT keys
+        (``_read_base_output_profile_locked``); this covers INPROT and
+        USB too (issue #57).
+        """
+        with self._lock:
+            return self._get_port_protocols_locked()
+
+    def _get_port_protocols_locked(self) -> PortProtocolConfig:
+        """Read port protocol config for all ports (must hold self._lock)."""
+        ser, reader = self._require_connection()
+
+        all_keys: list[str | int] = [
+            _protocol_key(port, direction, protocol)
+            for port in PortId
+            for direction in _PROTOCOL_DIRECTIONS
+            for protocol in UbxProtocol
+        ]
+
+        msg = UBXMessage.config_poll(0, 0, all_keys)
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+
+        for _ in range(_MAX_READ_ATTEMPTS):
+            try:
+                raw, parsed = reader.read()  # type: ignore[misc]
+                if parsed is None:
+                    continue
+                identity = getattr(parsed, "identity", "")
+                if identity == "CFG-VALGET":
+                    return self._parse_port_protocols_valget(parsed)
+            except Exception:
+                continue
+
+        raise RuntimeError("No CFG-VALGET response for port protocol config")
+
+    @staticmethod
+    def _parse_port_protocols_valget(parsed: object) -> PortProtocolConfig:
+        """Parse a CFG-VALGET response into a port protocol config."""
+        in_protocols: dict[PortId, list[UbxProtocol]] = {}
+        out_protocols: dict[PortId, list[UbxProtocol]] = {}
+
+        for port in PortId:
+            in_protocols[port] = [
+                protocol
+                for protocol in UbxProtocol
+                if int(getattr(parsed, _protocol_key(port, "IN", protocol), 0)) == 1
+            ]
+            out_protocols[port] = [
+                protocol
+                for protocol in UbxProtocol
+                if int(getattr(parsed, _protocol_key(port, "OUT", protocol), 0)) == 1
+            ]
+
+        return PortProtocolConfig(
+            in_protocols=in_protocols, out_protocols=out_protocols
+        )
 
     # ------------------------------------------------------------------
     # GNSS constellation configuration

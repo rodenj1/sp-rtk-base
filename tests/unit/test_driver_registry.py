@@ -12,6 +12,7 @@ from sp_rtk_base.models.device_models import (
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
     SurveyInConfig,
@@ -69,6 +70,9 @@ class StubDriver(GpsReceiverDriver):
 
     def configure_rtcm_ports(self, config: RtcmPortConfig) -> None:
         pass
+
+    def get_port_protocols(self) -> PortProtocolConfig:
+        return PortProtocolConfig()
 
     def get_gnss_config(self) -> GnssConfig:
         return GnssConfig()

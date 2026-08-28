@@ -306,6 +306,53 @@ class RtcmPortConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Port protocol configuration
+# ---------------------------------------------------------------------------
+
+
+class PortId(str, enum.Enum):
+    """Communication ports covered by live port-protocol reads."""
+
+    UART1 = "UART1"
+    UART2 = "UART2"
+    USB = "USB"
+
+
+class UbxProtocol(str, enum.Enum):
+    """I/O protocol a u-blox port can be configured to speak."""
+
+    UBX = "UBX"
+    NMEA = "NMEA"
+    RTCM3X = "RTCM3X"
+
+
+class PortProtocolConfig(BaseModel):
+    """Live in/out protocol state for UART1, UART2 and USB.
+
+    Covers the ``CFG_{PORT}{IN,OUT}PROT_{UBX,NMEA,RTCM3X}`` key family —
+    the full picture the assertive ports section, the UBX-in liveness
+    guard, and the profile form all need (issue #57).
+    """
+
+    in_protocols: dict[PortId, list[UbxProtocol]] = Field(
+        default_factory=lambda: dict[PortId, list[UbxProtocol]](),
+        description="port -> enabled input protocols",
+    )
+    out_protocols: dict[PortId, list[UbxProtocol]] = Field(
+        default_factory=lambda: dict[PortId, list[UbxProtocol]](),
+        description="port -> enabled output protocols",
+    )
+
+    def enabled_in(self, port: PortId) -> list[UbxProtocol]:
+        """Return input protocols enabled on a given port."""
+        return self.in_protocols.get(port, [])
+
+    def enabled_out(self, port: PortId) -> list[UbxProtocol]:
+        """Return output protocols enabled on a given port."""
+        return self.out_protocols.get(port, [])
+
+
+# ---------------------------------------------------------------------------
 # GNSS constellation configuration
 # ---------------------------------------------------------------------------
 

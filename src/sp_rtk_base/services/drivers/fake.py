@@ -58,12 +58,15 @@ from sp_rtk_base.models.device_models import (
     GnssSystemConfig,
     GpsFixType,
     GpsPosition,
+    PortId,
+    PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
@@ -150,6 +153,27 @@ class FakeGpsDriver(GpsReceiverDriver):
                     RtcmRowId.RTCM_1230,
                 )
             }
+        )
+
+        # Port protocols — mirrors the reference base's RTCM-only
+        # UART1/UART2 output profile (docs/zed-f9p-base-station-config-
+        # reference.md); USB is left at factory defaults (all three
+        # protocols both ways) since it's the local diagnostics port.
+        self._port_protocols: PortProtocolConfig = PortProtocolConfig(
+            in_protocols={
+                PortId.UART1: [
+                    UbxProtocol.UBX,
+                    UbxProtocol.NMEA,
+                    UbxProtocol.RTCM3X,
+                ],
+                PortId.UART2: [UbxProtocol.UBX, UbxProtocol.RTCM3X],
+                PortId.USB: [UbxProtocol.UBX, UbxProtocol.NMEA, UbxProtocol.RTCM3X],
+            },
+            out_protocols={
+                PortId.UART1: [UbxProtocol.RTCM3X],
+                PortId.UART2: [UbxProtocol.RTCM3X],
+                PortId.USB: [UbxProtocol.UBX, UbxProtocol.NMEA, UbxProtocol.RTCM3X],
+            },
         )
 
         # GNSS — all six constellations enabled by default.
@@ -331,6 +355,11 @@ class FakeGpsDriver(GpsReceiverDriver):
         """Store the per-port RTCM config in memory."""
         self._ensure_connected()
         self._rtcm_ports = config
+
+    def get_port_protocols(self) -> PortProtocolConfig:
+        """Return the fixed in-memory port protocol state."""
+        self._ensure_connected()
+        return self._port_protocols
 
     def save_to_flash(self) -> None:
         """No-op — fake driver has no flash memory.

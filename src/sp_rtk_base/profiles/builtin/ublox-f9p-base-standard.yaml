@@ -1,0 +1,59 @@
+# u-blox F9P — Base Station (Standard)
+#
+# The reference base station's measured configuration (HPG 1.12),
+# minus the survey-in position. See
+# docs/zed-f9p-base-station-config-reference.md for the hardware
+# audit this file reproduces cell-for-cell.
+name: ublox-f9p-base-standard
+version: 1
+hardware: ZED-F9P
+
+baud:
+  uart1: 57600
+  uart2: 115200
+
+meas_period_ms: 1000
+
+constellations:
+  - gps
+  - glonass
+  - galileo
+  - beidou
+  - qzss
+  - sbas
+
+# USB is omitted entirely — the reference records no USB protocol
+# changes, so leaving it out guarantees this can't drift from the
+# reference on USB (omitted = untouched).
+ports:
+  UART1:
+    in: [UBX, NMEA, RTCM3X]
+    out: [RTCM3X]
+  UART2:
+    in: [UBX, RTCM3X]
+    out: [RTCM3X]
+
+data_link_port: [UART1, UART2]
+
+dyn_model: stationary
+# tmode_mode is deliberately omitted — this is a configuration
+# profile; positioning stays the operator's separate survey-in step.
+
+elevation_mask_deg: 15
+bds_b2_enabled: false
+spi_enabled: true
+
+rtcm_stream:
+  matrix:
+    "1005": {UART1: true, UART2: true, USB: false}
+    "4072.0": {UART1: true, UART2: true, USB: false}
+    "4072.1": {UART1: true, UART2: true, USB: false}
+    "1074": {UART1: true, UART2: true, USB: false}
+    "1077": {UART1: false, UART2: false, USB: false}
+    "1084": {UART1: true, UART2: true, USB: false}
+    "1087": {UART1: false, UART2: false, USB: false}
+    "1094": {UART1: true, UART2: true, USB: false}
+    "1097": {UART1: false, UART2: false, USB: false}
+    "1124": {UART1: true, UART2: true, USB: false}
+    "1127": {UART1: false, UART2: false, USB: false}
+    "1230": {UART1: true, UART2: true, USB: false}

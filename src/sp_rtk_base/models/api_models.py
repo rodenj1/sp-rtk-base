@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from sp_rtk_base.models.net_provision_models import ActiveLink
+from sp_rtk_base.models.profile_models import Profile
 
 # ---------------------------------------------------------------------------
 # Relay status response models
@@ -306,3 +307,35 @@ class NetworkActionResponse(BaseModel):
 
     status: str
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Profile management (issue #59)
+# ---------------------------------------------------------------------------
+
+
+class ProfileListItem(BaseModel):
+    """One entry in the profile picker list, tagged with its origin."""
+
+    profile: Profile
+    is_builtin: bool
+
+
+class ProfileListResponse(BaseModel):
+    """Every profile, built-ins before customs, alphabetical within each."""
+
+    profiles: list[ProfileListItem]
+    count: int
+
+
+class ProfileDetailResponse(BaseModel):
+    """A single profile, tagged with its origin."""
+
+    profile: Profile
+    is_builtin: bool
+
+
+class ProfileRenameRequest(BaseModel):
+    """Body for ``PATCH /api/profiles/{name}`` — rename a custom profile."""
+
+    new_name: str = Field(min_length=1)

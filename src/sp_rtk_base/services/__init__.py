@@ -8,6 +8,7 @@ application's service layer:
 - ``EventBridge`` — thread-to-async event forwarding
 - ``MetricsService`` — Prometheus metrics from RelayStatus
 - ``DeviceService`` — GPS receiver connection & configuration (optional)
+- ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
+from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,7 @@ event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
 device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
+profile_store: ProfileStore = ProfileStore()
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +169,15 @@ def get_network_service() -> NetworkService:
         The application's NetworkService instance.
     """
     return network_service
+
+
+def get_profile_store() -> ProfileStore:
+    """Get the singleton ProfileStore instance.
+
+    Returns:
+        The application's ProfileStore instance.
+    """
+    return profile_store
 
 
 # ---------------------------------------------------------------------------

@@ -60,6 +60,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     RtcmMessageConfig,
     RtcmPortConfig,
+    RtcmRowId,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -139,12 +140,15 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._rtcm_msgs: RtcmMessageConfig = RtcmMessageConfig()
         self._rtcm_ports: RtcmPortConfig = RtcmPortConfig(
             messages={
-                1005: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1077: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1087: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1097: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1127: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
-                1230: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0},
+                msg_id: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0}
+                for msg_id in (
+                    RtcmRowId.RTCM_1005,
+                    RtcmRowId.RTCM_1077,
+                    RtcmRowId.RTCM_1087,
+                    RtcmRowId.RTCM_1097,
+                    RtcmRowId.RTCM_1127,
+                    RtcmRowId.RTCM_1230,
+                )
             }
         )
 

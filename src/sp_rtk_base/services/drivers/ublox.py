@@ -39,6 +39,7 @@ from sp_rtk_base.models.device_models import (
     RtcmMessageConfig,
     RtcmOutputPort,
     RtcmPortConfig,
+    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
 )
@@ -57,32 +58,32 @@ _MAX_READ_ATTEMPTS = 50
 # u-blox output port suffixes for CFG key names
 _RTCM_PORTS: list[str] = [p.value for p in RtcmOutputPort]
 
-# RTCM message IDs and their CFG key base names.
-# Most follow pattern CFG_MSGOUT_RTCM_3X_TYPE{id}_{port}
-# except 4072 which is CFG_MSGOUT_RTCM_3X_TYPE4072_0_{port}
-_RTCM_KEY_BASES: dict[int, str] = {
-    1005: "CFG_MSGOUT_RTCM_3X_TYPE1005",
-    1074: "CFG_MSGOUT_RTCM_3X_TYPE1074",
-    1077: "CFG_MSGOUT_RTCM_3X_TYPE1077",
-    1084: "CFG_MSGOUT_RTCM_3X_TYPE1084",
-    1087: "CFG_MSGOUT_RTCM_3X_TYPE1087",
-    1094: "CFG_MSGOUT_RTCM_3X_TYPE1094",
-    1097: "CFG_MSGOUT_RTCM_3X_TYPE1097",
-    1124: "CFG_MSGOUT_RTCM_3X_TYPE1124",
-    1127: "CFG_MSGOUT_RTCM_3X_TYPE1127",
-    1230: "CFG_MSGOUT_RTCM_3X_TYPE1230",
-    4072: "CFG_MSGOUT_RTCM_3X_TYPE4072_0",
+# RTCM row IDs and their CFG key base names.
+# Every row follows pattern CFG_MSGOUT_RTCM_3X_TYPE{id}_{port} — 4072.0
+# and 4072.1 are distinct rows with distinct CFG keys.
+_RTCM_KEY_BASES: dict[RtcmRowId, str] = {
+    RtcmRowId.RTCM_1005: "CFG_MSGOUT_RTCM_3X_TYPE1005",
+    RtcmRowId.RTCM_4072_0: "CFG_MSGOUT_RTCM_3X_TYPE4072_0",
+    RtcmRowId.RTCM_4072_1: "CFG_MSGOUT_RTCM_3X_TYPE4072_1",
+    RtcmRowId.RTCM_1074: "CFG_MSGOUT_RTCM_3X_TYPE1074",
+    RtcmRowId.RTCM_1077: "CFG_MSGOUT_RTCM_3X_TYPE1077",
+    RtcmRowId.RTCM_1084: "CFG_MSGOUT_RTCM_3X_TYPE1084",
+    RtcmRowId.RTCM_1087: "CFG_MSGOUT_RTCM_3X_TYPE1087",
+    RtcmRowId.RTCM_1094: "CFG_MSGOUT_RTCM_3X_TYPE1094",
+    RtcmRowId.RTCM_1097: "CFG_MSGOUT_RTCM_3X_TYPE1097",
+    RtcmRowId.RTCM_1124: "CFG_MSGOUT_RTCM_3X_TYPE1124",
+    RtcmRowId.RTCM_1127: "CFG_MSGOUT_RTCM_3X_TYPE1127",
+    RtcmRowId.RTCM_1230: "CFG_MSGOUT_RTCM_3X_TYPE1230",
 }
 
 
-def _rtcm_key(msg_id: int, port: str) -> str:
-    """Build the full CFG key name for an RTCM message + port."""
-    base = _RTCM_KEY_BASES.get(msg_id, f"CFG_MSGOUT_RTCM_3X_TYPE{msg_id}")
-    return f"{base}_{port}"
+def _rtcm_key(msg_id: RtcmRowId, port: str) -> str:
+    """Build the full CFG key name for an RTCM row + port."""
+    return f"{_RTCM_KEY_BASES[msg_id]}_{port}"
 
 
 # Legacy USB-only mapping (backward compat)
-_RTCM_USB_KEYS: dict[int, str] = {
+_RTCM_USB_KEYS: dict[RtcmRowId, str] = {
     msg_id: _rtcm_key(msg_id, "USB") for msg_id in _RTCM_KEY_BASES
 }
 
@@ -850,12 +851,7 @@ class UbloxDriver(GpsReceiverDriver):
 
         # Then enable requested messages at the specified rate
         for msg_id in config.message_ids:
-            # New local name (different type from the str loop var above)
-            mapped_key = _RTCM_USB_KEYS.get(msg_id)
-            if mapped_key is not None:
-                cfg_data.append((mapped_key, config.rate_hz))
-            else:
-                logger.warning("Unknown RTCM message ID %d — skipped", msg_id)
+            cfg_data.append((_RTCM_USB_KEYS[msg_id], config.rate_hz))
 
         with self._lock:
             # Issue #42: this used to write RAM only (layer=1), so the
@@ -869,7 +865,7 @@ class UbloxDriver(GpsReceiverDriver):
             )
         logger.info(
             "RTCM messages configured: %s @ %dHz",
-            config.message_ids,
+            config.message_id_values,
             config.rate_hz,
         )
 
@@ -907,7 +903,7 @@ class UbloxDriver(GpsReceiverDriver):
     @staticmethod
     def _parse_rtcm_valget(parsed: object) -> RtcmMessageConfig:
         """Parse a CFG-VALGET response containing RTCM message rates."""
-        enabled_ids: list[int] = []
+        enabled_ids: list[RtcmRowId] = []
         rates: list[int] = []
 
         for msg_id, key_name in _RTCM_USB_KEYS.items():
@@ -932,7 +928,7 @@ class UbloxDriver(GpsReceiverDriver):
         """Read RTCM output config for ALL ports from the receiver.
 
         Polls ``CFG_MSGOUT_RTCM_3X_TYPE*_{USB,UART1,UART2,I2C,SPI}``
-        and returns a matrix of msg_id → {port: rate}.
+        and returns a matrix of row id → {port: rate}.
         """
         with self._lock:
             return self._get_rtcm_port_config_locked()
@@ -941,7 +937,7 @@ class UbloxDriver(GpsReceiverDriver):
         """Read multi-port RTCM config (must hold self._lock)."""
         ser, reader = self._require_connection()
 
-        # Build key list: 11 messages × 5 ports = 55 keys
+        # Build key list: 12 rows × 5 ports = 60 keys
         all_keys: list[str | int] = []
         for msg_id in _ALL_RTCM_IDS:
             for port in _RTCM_PORTS:
@@ -967,7 +963,7 @@ class UbloxDriver(GpsReceiverDriver):
     @staticmethod
     def _parse_rtcm_port_valget(parsed: object) -> RtcmPortConfig:
         """Parse a CFG-VALGET response into a multi-port RTCM config."""
-        messages: dict[int, dict[str, int]] = {}
+        messages: dict[RtcmRowId, dict[str, int]] = {}
 
         for msg_id in _ALL_RTCM_IDS:
             port_rates: dict[str, int] = {}
@@ -989,9 +985,6 @@ class UbloxDriver(GpsReceiverDriver):
         cfg_data: list[tuple[str, int]] = []
 
         for msg_id, port_rates in config.messages.items():
-            if msg_id not in _RTCM_KEY_BASES:
-                logger.warning("Unknown RTCM message ID %d — skipped", msg_id)
-                continue
             for port, rate in port_rates.items():
                 key = _rtcm_key(msg_id, port)
                 cfg_data.append((key, rate))

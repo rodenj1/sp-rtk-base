@@ -16,6 +16,7 @@ from sp_rtk_base.models.device_models import (
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
     SerialPortInfo,
@@ -172,6 +173,18 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
             RuntimeError: If configuration fails.
+        """
+
+    @abc.abstractmethod
+    def get_port_protocols(self) -> PortProtocolConfig:
+        """Read live in/out protocol state for UART1, UART2 and USB.
+
+        Returns:
+            Per-port enabled input/output protocols.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the read fails.
         """
 
     @abc.abstractmethod

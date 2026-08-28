@@ -7,7 +7,7 @@ behaviour from the e2e harness.
 
 What we assert
 --------------
-- All 17 abstract methods of :class:`GpsReceiverDriver` are
+- All 18 abstract methods of :class:`GpsReceiverDriver` are
   implemented (mypy already enforces this; we verify at runtime too).
 - ``connect`` / ``disconnect`` flip the ``is_connected`` flag.
 - Every method that touches device state raises ``ConnectionError``
@@ -207,6 +207,12 @@ class TestDisconnectedGuards:
         with pytest.raises(ConnectionError):
             driver.configure_rtcm_ports(RtcmPortConfig())
 
+    def test_get_port_protocols_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.get_port_protocols()
+
     def test_save_to_flash_requires_connection(self, driver: FakeGpsDriver) -> None:
         with pytest.raises(ConnectionError):
             driver.save_to_flash()
@@ -326,6 +332,17 @@ class TestConfigurationRoundTrips:
         """Default GNSS config exposes every constellation in the model."""
         cfg = connected_driver.get_gnss_config()
         assert {s.constellation for s in cfg.systems} == set(GnssConstellation)
+
+    def test_default_port_protocols_covers_uart1_uart2_usb(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        """Default port protocol state covers all three ports so the
+        GPS-config UI has something to display for each."""
+        from sp_rtk_base.models.device_models import PortId
+
+        cfg = connected_driver.get_port_protocols()
+        for port in PortId:
+            assert cfg.enabled_in(port) != [] or cfg.enabled_out(port) != []
 
     def test_save_to_flash_is_noop_when_connected(
         self, connected_driver: FakeGpsDriver

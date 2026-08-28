@@ -22,7 +22,9 @@ from sp_rtk_base.models.device_models import (
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortProtocolConfig,
     RtcmMessageConfig,
+    RtcmPortConfig,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -246,6 +248,33 @@ async def save_to_flash(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return DeviceActionResponse(status="ok", message="Configuration saved to flash")
+
+
+# ---------------------------------------------------------------------------
+# Live receiver reads: multi-port RTCM state & port protocol state
+# ---------------------------------------------------------------------------
+
+
+@router.get("/rtcm-ports", response_model=RtcmPortConfig)
+async def get_rtcm_ports(
+    svc: DeviceService = Depends(get_device_service),
+) -> RtcmPortConfig:
+    """Read the live per-port RTCM enable state, keyed by RtcmRowId."""
+    try:
+        return await svc.get_rtcm_port_config()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/port-protocols", response_model=PortProtocolConfig)
+async def get_port_protocols(
+    svc: DeviceService = Depends(get_device_service),
+) -> PortProtocolConfig:
+    """Read the live in/out protocol state for UART1, UART2 and USB."""
+    try:
+        return await svc.get_port_protocols()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

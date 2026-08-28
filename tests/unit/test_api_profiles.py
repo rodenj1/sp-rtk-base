@@ -3,12 +3,56 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.device_models import DeviceInfo
+from sp_rtk_base.models.hardware_identity import HardwareConfidence
+from sp_rtk_base.services import get_device_service, get_profile_store
+from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.profile_store import ProfileStore
 
 BUILTIN_NAME = "ublox-f9p-base-standard"
+
+
+@pytest.fixture()
+def mock_device_service() -> DeviceService:
+    """Create a mock DeviceService, disconnected (device_info=None) by default."""
+    svc = MagicMock(spec=DeviceService)
+    svc.device_info = None
+    return svc
+
+
+@pytest.fixture()
+def api_client_with_device(
+    mock_config_service: ConfigService,
+    mock_relay_service: MagicMock,
+    mock_event_bridge: MagicMock,
+    mock_metrics_service: MetricsService,
+    mock_profile_store: ProfileStore,
+    mock_device_service: DeviceService,
+) -> TestClient:
+    """``api_client_with_services`` plus an overridable device service."""
+    from sp_rtk_base.services import (
+        get_config_service,
+        get_event_bridge,
+        get_metrics_service,
+        get_relay_service,
+    )
+
+    app = create_api_app()
+    app.dependency_overrides[get_config_service] = lambda: mock_config_service
+    app.dependency_overrides[get_relay_service] = lambda: mock_relay_service
+    app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
+    app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
+    app.dependency_overrides[get_profile_store] = lambda: mock_profile_store
+    app.dependency_overrides[get_device_service] = lambda: mock_device_service
+    return TestClient(app)
 
 
 def _profile_payload(name: str = "my-custom", **overrides: Any) -> dict[str, Any]:
@@ -231,3 +275,71 @@ class TestMalformedCustomFileDoesNotBreakListing:
         names = [item["profile"]["name"] for item in resp.json()["profiles"]]
         assert "good" in names
         assert len(names) == 2  # builtin + good; corrupt.yaml silently skipped
+
+
+class TestHardwareIdentityInListing:
+    """GET /api/profiles carries the resolved receiver identity and tags
+    each profile with compatibility against it (issue #60)."""
+
+    def test_no_device_is_unknown_with_no_default_and_incompatible_builtin(
+        self, api_client_with_device: TestClient
+    ) -> None:
+        resp = api_client_with_device.get("/api/profiles")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["hardware_target"] == "unknown"
+        assert data["hardware_confidence"] == "unknown"
+        assert data["default_selection"] is None
+
+        builtin = next(
+            item for item in data["profiles"] if item["profile"]["name"] == BUILTIN_NAME
+        )
+        assert builtin["compatible"] is False
+        assert builtin["incompatible_reason"] is not None
+
+    def test_confirmed_matching_device_defaults_to_it_and_is_compatible(
+        self,
+        api_client_with_device: TestClient,
+        mock_device_service: DeviceService,
+    ) -> None:
+        mock_device_service.device_info = DeviceInfo(  # type: ignore[misc]
+            vendor="u-blox",
+            model="ZED-F9P",
+            hardware_target="ZED-F9P",
+            hardware_confidence=HardwareConfidence.CONFIRMED,
+        )
+
+        resp = api_client_with_device.get("/api/profiles")
+        data = resp.json()
+        assert data["hardware_target"] == "ZED-F9P"
+        assert data["hardware_confidence"] == "confirmed"
+        assert data["default_selection"] == BUILTIN_NAME
+
+        builtin = next(
+            item for item in data["profiles"] if item["profile"]["name"] == BUILTIN_NAME
+        )
+        assert builtin["compatible"] is True
+        assert builtin["incompatible_reason"] is None
+
+    def test_inferred_identity_never_unlocks_a_specific_model_default(
+        self,
+        api_client_with_device: TestClient,
+        mock_device_service: DeviceService,
+    ) -> None:
+        mock_device_service.device_info = DeviceInfo(  # type: ignore[misc]
+            vendor="u-blox",
+            model="ZED-F9P",
+            hardware_target="ZED-F9P",
+            hardware_confidence=HardwareConfidence.INFERRED,
+        )
+
+        resp = api_client_with_device.get("/api/profiles")
+        data = resp.json()
+        assert data["hardware_confidence"] == "inferred"
+        assert data["default_selection"] is None
+
+        builtin = next(
+            item for item in data["profiles"] if item["profile"]["name"] == BUILTIN_NAME
+        )
+        assert builtin["compatible"] is False
+        assert "unconfirmed" in (builtin["incompatible_reason"] or "")

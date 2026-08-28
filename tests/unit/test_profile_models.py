@@ -215,8 +215,12 @@ class TestProfile:
         with pytest.raises(ValidationError, match="version"):
             Profile.model_validate(kwargs)
 
-    @pytest.mark.parametrize("hardware", ["ZED-F9P", "any"])
+    @pytest.mark.parametrize(
+        "hardware", ["ZED-F9P", "ZED-F9R", "NEO-M9N", "gen9", "any"]
+    )
     def test_known_hardware_tokens_accepted(self, hardware: str) -> None:
+        # The model/family catalog is owned by the hardware-detection
+        # ticket (#60) and re-exported from models.hardware_identity.
         kwargs = self._profile_kwargs()
         kwargs["hardware"] = hardware
         profile = Profile.model_validate(kwargs)
@@ -229,10 +233,10 @@ class TestProfile:
             Profile.model_validate(kwargs)
 
     def test_unregistered_family_token_rejected(self) -> None:
-        # No family tokens are registered yet — that catalog belongs to
-        # the (not-yet-built) hardware-detection ticket, not this schema.
+        # "gen10" has no shipped receiver or PROTVER range backing it yet
+        # (see hardware_identity.KNOWN_FAMILY_TOKENS) — not a valid target.
         kwargs = self._profile_kwargs()
-        kwargs["hardware"] = "gen9"
+        kwargs["hardware"] = "gen10"
         with pytest.raises(ValidationError, match="hardware"):
             Profile.model_validate(kwargs)
 

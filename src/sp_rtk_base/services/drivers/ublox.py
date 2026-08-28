@@ -47,6 +47,7 @@ from sp_rtk_base.models.device_models import (
     SurveyInProgress,
     UbxProtocol,
 )
+from sp_rtk_base.models.hardware_identity import resolve_hardware_identity
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 logger = logging.getLogger(__name__)
@@ -1737,18 +1738,12 @@ class UbloxDriver(GpsReceiverDriver):
         ser.reset_input_buffer()
         ser.write(poll_msg.serialize())
 
-        model = "Unknown"
         sw_version_str = ""
         fwver = ""
         protocol = ""
         hardware = ""
-
-        # Hardware version → model lookup for common u-blox receivers
-        _hw_model_map: dict[str, str] = {
-            "00190000": "ZED-F9P",
-            "001B0000": "ZED-F9R",
-            "00180000": "NEO-M9N",
-        }
+        mod = ""
+        explicit_model = ""
 
         deadline = time.monotonic() + self.CONNECT_TIMEOUT
 
@@ -1814,26 +1809,33 @@ class UbloxDriver(GpsReceiverDriver):
                                 # e.g. "PROTVER=27.31" → "27.31"
                                 protocol = ext_str.split("=", 1)[1].strip()
                             elif "MOD=" in ext_str:
-                                model = ext_str.split("=", 1)[1].strip()
+                                mod = ext_str.split("=", 1)[1].strip()
                             elif any(
                                 m in ext_str
                                 for m in ("ZED-", "NEO-", "MAX-", "SAM-", "LEA-")
                             ):
-                                model = ext_str.strip()
+                                explicit_model = ext_str.strip()
 
                         # Firmware: prefer FWVER (HPG version), fallback to swVersion
                         firmware = fwver if fwver else sw_version_str
 
-                        # Fallback: infer model from hardware version
-                        if model == "Unknown" and hardware in _hw_model_map:
-                            model = _hw_model_map[hardware]
-
-                        # Fallback: infer from firmware string
-                        if model == "Unknown":
-                            if "HPG" in firmware:
-                                model = "ZED-F9P"
-                            elif "ADR" in firmware:
-                                model = "ZED-F9R"
+                        # Confidence-tiered identity resolution — see
+                        # models.hardware_identity for the tier ladder.
+                        # A guessed model (tiers 4-5, `inferred`) is never
+                        # indistinguishable from a real read (tiers 1-3,
+                        # `confirmed`): both are surfaced, but only a
+                        # `confirmed` target can unlock a specific-model
+                        # profile match.
+                        identity = resolve_hardware_identity(
+                            mod=mod,
+                            explicit_model=explicit_model,
+                            hw_version=hardware,
+                            firmware=firmware,
+                            protocol_version=protocol,
+                        )
+                        model = (
+                            identity.target if identity.is_specific_model else "Unknown"
+                        )
 
                         return DeviceInfo(
                             vendor="u-blox",
@@ -1841,6 +1843,8 @@ class UbloxDriver(GpsReceiverDriver):
                             firmware_version=firmware,
                             protocol_version=protocol,
                             hardware_version=hardware,
+                            hardware_target=identity.target,
+                            hardware_confidence=identity.confidence,
                         )
             except Exception:
                 continue

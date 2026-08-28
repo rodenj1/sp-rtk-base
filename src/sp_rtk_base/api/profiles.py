@@ -19,8 +19,17 @@ from sp_rtk_base.models.api_models import (
     ProfileRenameRequest,
     RelayActionResponse,
 )
+from sp_rtk_base.models.hardware_identity import (
+    HARDWARE_UNKNOWN,
+    HardwareConfidence,
+    default_selection,
+    identity_from_target,
+    incompatible_reason,
+    is_compatible,
+)
 from sp_rtk_base.models.profile_models import Profile
-from sp_rtk_base.services import get_profile_store
+from sp_rtk_base.services import get_device_service, get_profile_store
+from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.profile_store import (
     ProfileBusinessRuleError,
     ProfileConflictError,
@@ -61,13 +70,39 @@ def _detail(store: ProfileStore, profile: Profile) -> ProfileDetailResponse:
 @router.get("", response_model=ProfileListResponse)
 async def list_profiles(
     store: ProfileStore = Depends(get_profile_store),
+    device: DeviceService = Depends(get_device_service),
 ) -> ProfileListResponse:
-    """List every profile, built-ins before customs, alphabetical within each."""
+    """List every profile, built-ins before customs, alphabetical within each.
+
+    Tags each profile with its compatibility against the connected
+    receiver's resolved hardware identity (see ``models.hardware_identity``)
+    and carries that identity plus the deterministic default pick.
+    """
+    info = device.device_info
+    identity = identity_from_target(
+        info.hardware_target if info else HARDWARE_UNKNOWN,
+        info.hardware_confidence if info else HardwareConfidence.UNKNOWN,
+    )
+
+    profiles = store.list_profiles()
     items = [
-        ProfileListItem(profile=p, is_builtin=store.is_builtin(p.name))
-        for p in store.list_profiles()
+        ProfileListItem(
+            profile=p,
+            is_builtin=store.is_builtin(p.name),
+            compatible=is_compatible(identity, p.hardware),
+            incompatible_reason=incompatible_reason(identity, p.hardware),
+        )
+        for p in profiles
     ]
-    return ProfileListResponse(profiles=items, count=len(items))
+    return ProfileListResponse(
+        profiles=items,
+        count=len(items),
+        hardware_target=identity.target,
+        hardware_confidence=identity.confidence,
+        default_selection=default_selection(
+            identity, [(p.name, p.hardware) for p in profiles]
+        ),
+    )
 
 
 @router.get("/{name}", response_model=ProfileDetailResponse)

@@ -231,6 +231,30 @@ class TestUbloxDriverConnect:
             exclusive=True,
         )
 
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_connect_reports_confirmed_hardware_identity(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+    ) -> None:
+        """MOD=ZED-F9P (tier 1) is a real read, not a guess."""
+        from sp_rtk_base.models.hardware_identity import HardwareConfidence
+
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        reader = MagicMock()
+        reader.read.return_value = (b"", _make_mon_ver_response())
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        info = driver.connect("/dev/ttyUSB0")
+
+        assert info.hardware_target == "ZED-F9P"
+        assert info.hardware_confidence == HardwareConfidence.CONFIRMED
+
     @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
     def test_connect_serial_exception(self, mock_serial_cls: MagicMock) -> None:
         import serial  # type: ignore[import-untyped]
@@ -1449,6 +1473,111 @@ class TestMonVerParsing:
         driver = UbloxDriver()
         info = driver.connect("/dev/ttyUSB0")
         assert info.model == "NEO-M9N"
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_mon_ver_hw_version_only_is_confirmed(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """No MOD=/explicit model — hwVersion tier-3 lookup still confirms."""
+        from sp_rtk_base.models.hardware_identity import HardwareConfidence
+
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        mon_ver = SimpleNamespace(
+            identity="MON-VER",
+            swVersion="EXT CORE 1.00",
+            hwVersion="00190000",
+            extension_00=None,
+        )
+
+        reader = MagicMock()
+        reader.read.return_value = (b"", mon_ver)
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        info = driver.connect("/dev/ttyUSB0")
+        assert info.model == "ZED-F9P"
+        assert info.hardware_target == "ZED-F9P"
+        assert info.hardware_confidence == HardwareConfidence.CONFIRMED
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_mon_ver_firmware_heuristic_is_inferred_not_confirmed(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """No MOD=, no explicit model, unrecognised hwVersion — only the
+        firmware-family heuristic hits, so the guess must be `inferred`,
+        never indistinguishable from a real read."""
+        from sp_rtk_base.models.hardware_identity import HardwareConfidence
+
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        mon_ver = SimpleNamespace(
+            identity="MON-VER",
+            swVersion="EXT CORE 1.00",
+            hwVersion="ffffffff",
+            extension_00="FWVER=HPG 1.32",
+            extension_01=None,
+        )
+
+        reader = MagicMock()
+        reader.read.return_value = (b"", mon_ver)
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        info = driver.connect("/dev/ttyUSB0")
+        # Displayed the same as a confirmed F9P, but confidence tells the
+        # truth — this is what unlocks/blocks a specific-model profile.
+        assert info.model == "ZED-F9P"
+        assert info.hardware_target == "ZED-F9P"
+        assert info.hardware_confidence == HardwareConfidence.INFERRED
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_mon_ver_nothing_resolves_is_unknown(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A receiver this app cannot identify at all — connect still
+        succeeds; identity comes back `unknown` rather than a bad guess."""
+        from sp_rtk_base.models.hardware_identity import HardwareConfidence
+
+        ser = MagicMock()
+        ser.is_open = True
+        mock_serial_cls.return_value = ser
+
+        mon_ver = SimpleNamespace(
+            identity="MON-VER",
+            swVersion="EXT CORE 1.00",
+            hwVersion="ffffffff",
+            extension_00=None,
+        )
+
+        reader = MagicMock()
+        reader.read.return_value = (b"", mon_ver)
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        info = driver.connect("/dev/ttyUSB0")
+        assert info.model == "Unknown"
+        assert info.hardware_target == "unknown"
+        assert info.hardware_confidence == HardwareConfidence.UNKNOWN
 
 
 class TestParseCfgTmode:

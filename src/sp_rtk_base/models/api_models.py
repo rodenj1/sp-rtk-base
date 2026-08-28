@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
 from sp_rtk_base.models.net_provision_models import ActiveLink
 from sp_rtk_base.models.profile_models import Profile
 
@@ -319,13 +320,23 @@ class ProfileListItem(BaseModel):
 
     profile: Profile
     is_builtin: bool
+    compatible: bool
+    incompatible_reason: str | None = None
 
 
 class ProfileListResponse(BaseModel):
-    """Every profile, built-ins before customs, alphabetical within each."""
+    """Every profile, built-ins before customs, alphabetical within each.
+
+    Also carries the connected receiver's resolved identity — see
+    ``models.hardware_identity`` — so the picker can grey out incompatible
+    profiles and suggest a default without re-deriving compatibility itself.
+    """
 
     profiles: list[ProfileListItem]
     count: int
+    hardware_target: HardwareTarget
+    hardware_confidence: HardwareConfidence
+    default_selection: str | None
 
 
 class ProfileDetailResponse(BaseModel):

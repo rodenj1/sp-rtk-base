@@ -565,6 +565,113 @@ class TestBaseConfig:
 
 
 # ---------------------------------------------------------------------------
+# Apply-config — the profile one-shot (issue #61)
+# ---------------------------------------------------------------------------
+
+_MINIMAL_APPLY_BODY: dict[str, object] = {
+    "data_link_port": ["UART1"],
+    "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+}
+
+
+class TestApplyConfig:
+    """Tests for POST /api/device/apply-config."""
+
+    def test_apply_config_ok(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.models.device_models import ApplyConfigResult
+
+        mock_device_service.apply_receiver_config = AsyncMock(
+            return_value=ApplyConfigResult(status="ok")
+        )
+        resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        assert resp.json()["diff"] == []
+
+    def test_apply_config_failed_with_diff(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.models.device_models import (
+            ApplyConfigCellDiff,
+            ApplyConfigResult,
+            PortId,
+            RtcmRowId,
+        )
+
+        mock_device_service.apply_receiver_config = AsyncMock(
+            return_value=ApplyConfigResult(
+                status="failed",
+                diff=[
+                    ApplyConfigCellDiff(
+                        row_id=RtcmRowId.RTCM_1005,
+                        port=PortId.UART1,
+                        expected=True,
+                        actual=False,
+                    )
+                ],
+            )
+        )
+        resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
+        # Read-back mismatch is still a 200 — writes are left in flash.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert body["diff"] == [
+            {
+                "row_id": "1005",
+                "port": "UART1",
+                "expected": True,
+                "actual": False,
+            }
+        ]
+
+    def test_apply_config_not_connected(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        mock_device_service.apply_receiver_config = AsyncMock(
+            side_effect=RuntimeError("Device not connected"),
+        )
+        resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
+        assert resp.status_code == 409
+
+    def test_apply_config_business_rule_refusal(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.services.device_service import ApplyConfigRefusedError
+
+        mock_device_service.apply_receiver_config = AsyncMock(
+            side_effect=ApplyConfigRefusedError(
+                "ubx_in_liveness", "ports.USB.in must keep UBX enabled"
+            ),
+        )
+        resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
+        assert resp.status_code == 400
+        assert "ubx_in_liveness" in resp.json()["detail"]
+
+    def test_apply_config_schema_violation(
+        self,
+        client: TestClient,
+    ) -> None:
+        """Missing ``data_link_port`` is a schema violation — 422,
+        handled entirely by pydantic before the service is called."""
+        resp = client.post(
+            "/api/device/apply-config",
+            json={"rtcm_stream": {"matrix": {"1005": {"UART1": True}}}},
+        )
+        assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # Handoff — device → relay
 # ---------------------------------------------------------------------------
 

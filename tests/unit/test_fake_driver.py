@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Unit tests for the in-memory ``FakeGpsDriver``.
 
 The fake driver is used by the Playwright e2e suite to drive UI paths
@@ -39,15 +40,18 @@ import pytest
 from sp_rtk_base.models.device_models import (
     BaseMode,
     DeviceCapability,
+    DynModel,
     FixedBaseConfig,
     GnssConfig,
     GnssConstellation,
     GnssSystemConfig,
     GpsFixType,
+    PortId,
     RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
+    UbxProtocol,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.fake import (
@@ -243,6 +247,46 @@ class TestDisconnectedGuards:
         with pytest.raises(ConnectionError):
             driver.get_base_config()
 
+    def test_configure_port_protocols_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.configure_port_protocols({}, {})
+
+    def test_configure_measurement_rate_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.configure_measurement_rate(1000)
+
+    def test_configure_dyn_model_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.configure_dyn_model(DynModel.STATIONARY)
+
+    def test_configure_tmode_mode_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.configure_tmode_mode(BaseMode.DISABLED)
+
+    def test_configure_optimisations_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.configure_optimisations(None, None, None)
+
+    def test_apply_rtcm_matrix_requires_connection(self, driver: FakeGpsDriver) -> None:
+        with pytest.raises(ConnectionError):
+            driver.apply_rtcm_matrix({})
+
+    def test_get_uart_baud_rates_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.get_uart_baud_rates()
+
 
 # ---------------------------------------------------------------------------
 # Configuration round-trips
@@ -349,6 +393,75 @@ class TestConfigurationRoundTrips:
     ) -> None:
         """save_to_flash returns without raising when connected."""
         connected_driver.save_to_flash()  # should not raise
+
+    def test_configure_port_protocols_only_touches_given_ports(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        before_uart2 = connected_driver.get_port_protocols().enabled_in(PortId.UART2)
+
+        connected_driver.configure_port_protocols(
+            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
+            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
+        )
+
+        after = connected_driver.get_port_protocols()
+        assert after.enabled_in(PortId.UART1) == [UbxProtocol.UBX]
+        assert after.enabled_out(PortId.UART1) == [UbxProtocol.RTCM3X]
+        assert after.enabled_in(PortId.UART2) == before_uart2
+
+    def test_configure_measurement_rate_stores_value(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_measurement_rate(333)
+        assert connected_driver._meas_period_ms == 333
+
+    def test_configure_dyn_model_stores_value(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_dyn_model(DynModel.STATIONARY)
+        assert connected_driver._dyn_model is DynModel.STATIONARY
+
+    def test_configure_tmode_mode_preserves_existing_position(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_fixed_base(
+            FixedBaseConfig(latitude=1.0, longitude=2.0, altitude_m=3.0)
+        )
+        connected_driver.configure_tmode_mode(BaseMode.DISABLED)
+
+        current = connected_driver.get_base_config()
+        assert current.mode is BaseMode.DISABLED
+        assert current.latitude == pytest.approx(1.0)
+        assert current.longitude == pytest.approx(2.0)
+
+    def test_configure_optimisations_partial_update(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_optimisations(
+            elevation_mask_deg=20, bds_b2_enabled=None, spi_enabled=None
+        )
+        assert connected_driver._elevation_mask_deg == 20
+        assert connected_driver._bds_b2_enabled is False  # unchanged default
+
+    def test_apply_rtcm_matrix_round_trip(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        matrix = {
+            RtcmRowId.RTCM_1005: {PortId.UART1: True, PortId.USB: False},
+        }
+        connected_driver.apply_rtcm_matrix(matrix)
+
+        out = connected_driver.get_rtcm_port_config()
+        assert out.messages[RtcmRowId.RTCM_1005]["UART1"] == 1
+        assert out.messages[RtcmRowId.RTCM_1005]["USB"] == 0
+        # A row not present in the matrix at all ends up off.
+        assert out.messages[RtcmRowId.RTCM_1230]["UART1"] == 0
+
+    def test_get_uart_baud_rates_returns_defaults(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        rates = connected_driver.get_uart_baud_rates()
+        assert rates == {PortId.UART1: 57600, PortId.UART2: 115200}
 
 
 # ---------------------------------------------------------------------------

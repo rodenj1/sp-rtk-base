@@ -31,6 +31,7 @@ from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
+    DynModel,
     FixedBaseConfig,
     GnssConfig,
     GnssConstellation,
@@ -142,6 +143,34 @@ def _protocol_key(
         protocol: Protocol to query.
     """
     return f"{_PROTOCOL_PORT_PREFIXES[port]}{direction}PROT_{protocol.value}"
+
+
+# ---------------------------------------------------------------------------
+# Apply-config primitives (issue #61)
+# ---------------------------------------------------------------------------
+
+# u-blox CFG_NAVSPG_DYNMODEL values. 1 is reserved/unused on the wire.
+_DYN_MODEL_VALUES: dict[DynModel, int] = {
+    DynModel.PORTABLE: 0,
+    DynModel.STATIONARY: 2,
+    DynModel.PEDESTRIAN: 3,
+    DynModel.AUTOMOTIVE: 4,
+    DynModel.SEA: 5,
+    DynModel.AIRBORNE_1G: 6,
+    DynModel.AIRBORNE_2G: 7,
+    DynModel.AIRBORNE_4G: 8,
+}
+
+# u-blox CFG_TMODE_MODE values — same mapping ``_parse_cfg_tmode`` reads back.
+_TMODE_MODE_VALUES: dict[BaseMode, int] = {
+    BaseMode.DISABLED: 0,
+    BaseMode.SURVEY_IN: 1,
+    BaseMode.FIXED: 2,
+}
+
+# Ports the RTCM matrix write covers — deliberately excludes I2C/SPI,
+# which the profile schema doesn't claim (see RtcmStreamConfig).
+_MATRIX_PORTS: tuple[PortId, ...] = (PortId.UART1, PortId.UART2, PortId.USB)
 
 
 class UbloxDriver(GpsReceiverDriver):
@@ -1206,6 +1235,148 @@ class UbloxDriver(GpsReceiverDriver):
             "GNSS constellations configured: %s",
             [c.value for c in enabled],
         )
+
+    # ------------------------------------------------------------------
+    # Apply-config primitives (issue #61)
+    # ------------------------------------------------------------------
+
+    def configure_port_protocols(
+        self,
+        in_protocols: dict[PortId, list[UbxProtocol]],
+        out_protocols: dict[PortId, list[UbxProtocol]],
+    ) -> None:
+        """Assertive per-port protocol write for exactly the ports given.
+
+        Only ports present in either mapping are touched. For a
+        touched port+direction, every one of the three protocol keys
+        is written explicitly (on and off) — this is what makes the
+        write assertive rather than additive.
+        """
+        cfg_data: list[tuple[str, int]] = []
+        for port in set(in_protocols) | set(out_protocols):
+            if port in in_protocols:
+                wanted_in = set(in_protocols[port])
+                for protocol in UbxProtocol:
+                    cfg_data.append(
+                        (
+                            _protocol_key(port, "IN", protocol),
+                            int(protocol in wanted_in),
+                        )
+                    )
+            if port in out_protocols:
+                wanted_out = set(out_protocols[port])
+                for protocol in UbxProtocol:
+                    cfg_data.append(
+                        (
+                            _protocol_key(port, "OUT", protocol),
+                            int(protocol in wanted_out),
+                        )
+                    )
+
+        if not cfg_data:
+            return
+        with self._lock:
+            self._write_and_verify_locked(
+                cfg_data, layer=5, label="Port protocol config"
+            )
+
+    def configure_measurement_rate(self, period_ms: int) -> None:
+        """Write ``CFG_RATE_MEAS=period_ms`` and pin ``CFG_RATE_NAV=1``.
+
+        ``period_ms`` is already the raw measurement period in
+        milliseconds — no Hz conversion happens here or anywhere else
+        on this path (the UI does that conversion for display only).
+        """
+        cfg_data = [("CFG_RATE_MEAS", period_ms), ("CFG_RATE_NAV", 1)]
+        with self._lock:
+            self._write_and_verify_locked(cfg_data, layer=5, label="Measurement rate")
+
+    def configure_dyn_model(self, model: DynModel) -> None:
+        """Write ``CFG_NAVSPG_DYNMODEL`` for an arbitrary dynamics class.
+
+        General-purpose sibling of ``_apply_stationary_dyn_model_locked``,
+        which stays as-is (hard-coded stationary) since it's called from
+        the survey-in/fixed-base transition paths that issue #38 covers.
+        """
+        with self._lock:
+            self._write_and_verify_locked(
+                [("CFG_NAVSPG_DYNMODEL", _DYN_MODEL_VALUES[model])],
+                layer=5,
+                label="Dynamics model",
+            )
+
+    def configure_tmode_mode(self, mode: BaseMode) -> None:
+        """Write ``CFG_TMODE_MODE`` directly, without touching position keys.
+
+        A plain mode assertion for apply-config's role-fields step —
+        NOT a full base-mode transition. Coordinate preconditions for
+        ``fixed`` mode are the caller's responsibility.
+        """
+        with self._lock:
+            self._write_and_verify_locked(
+                [("CFG_TMODE_MODE", _TMODE_MODE_VALUES[mode])],
+                layer=5,
+                label="TMODE mode",
+            )
+
+    def configure_optimisations(
+        self,
+        elevation_mask_deg: int | None,
+        bds_b2_enabled: bool | None,
+        spi_enabled: bool | None,
+    ) -> None:
+        """Write only the optimisation fields provided.
+
+        Each field is independently optional — ``None`` means leave
+        the receiver's current value untouched. Unlike ``ports`` and
+        ``apply_rtcm_matrix``, this write is NOT assertive.
+        """
+        cfg_data: list[tuple[str, int]] = []
+        if elevation_mask_deg is not None:
+            cfg_data.append(("CFG_NAVSPG_INFIL_MINELEV", elevation_mask_deg))
+        if bds_b2_enabled is not None:
+            cfg_data.append(("CFG_SIGNAL_BDS_B2_ENA", int(bds_b2_enabled)))
+        if spi_enabled is not None:
+            cfg_data.append(("CFG_SPI_ENABLED", int(spi_enabled)))
+
+        if not cfg_data:
+            return
+        with self._lock:
+            self._write_and_verify_locked(
+                cfg_data, layer=5, label="Optimisation settings"
+            )
+
+    def apply_rtcm_matrix(self, matrix: dict[RtcmRowId, dict[PortId, bool]]) -> None:
+        """Assertive write of all 36 cells (12 rows x UART1/UART2/USB).
+
+        Deliberately a single write with no internal retry-and-raise,
+        unlike this driver's other layer=5 writers: the apply-config
+        endpoint owns the read-back verify for this specific write as
+        a first-class part of its contract (a per-cell diff returned
+        to the caller with a 200, nothing rolled back) rather than
+        raising here.
+        """
+        cfg_data = [
+            (_rtcm_key(row, port.value), int(matrix.get(row, {}).get(port, False)))
+            for row in _ALL_RTCM_IDS
+            for port in _MATRIX_PORTS
+        ]
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=5)
+
+    def get_uart_baud_rates(self) -> dict[PortId, int]:
+        """Read the live UART1/UART2 baud rates.
+
+        Used only for apply-config's non-blocking throughput estimate.
+        """
+        with self._lock:
+            raw = self._read_cfg_keys_locked(
+                ["CFG_UART1_BAUDRATE", "CFG_UART2_BAUDRATE"]
+            )
+        return {
+            PortId.UART1: raw["CFG_UART1_BAUDRATE"],
+            PortId.UART2: raw["CFG_UART2_BAUDRATE"],
+        }
 
     def save_to_flash(self) -> None:
         """Save current RAM config to BBR + Flash (layers 7)."""

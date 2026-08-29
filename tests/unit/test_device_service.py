@@ -13,13 +13,26 @@ from sp_rtk_base.models.device_models import (
     DeviceCapability,
     DeviceConnectionState,
     DeviceInfo,
+    DynModel,
     FixedBaseConfig,
+    GnssConfig,
+    GnssConstellation,
+    GnssSystemConfig,
+    PortId,
     RtcmMessageConfig,
+    RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
-from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.models.profile_models import (
+    BaudConfig,
+    PortProtocolSet,
+    ReceiverConfig,
+    RtcmStreamConfig,
+)
+from sp_rtk_base.services.device_service import ApplyConfigRefusedError, DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 # ---------------------------------------------------------------------------
@@ -346,6 +359,330 @@ class TestConfiguration:
         assert connected_svc.state == DeviceConnectionState.CONNECTED
         status = connected_svc.get_status()
         assert status.last_error == "NAK"
+
+
+# ---------------------------------------------------------------------------
+# Tests: apply-config (issue #61)
+# ---------------------------------------------------------------------------
+
+
+def _minimal_config(**overrides: object) -> ReceiverConfig:
+    """A minimal valid ``ReceiverConfig`` — 1005 enabled on the one data-link port."""
+    defaults: dict[str, object] = {
+        "data_link_port": [PortId.UART1],
+        "rtcm_stream": RtcmStreamConfig(
+            matrix={RtcmRowId.RTCM_1005: {PortId.UART1: True}}
+        ),
+    }
+    defaults.update(overrides)
+    return ReceiverConfig(**defaults)  # type: ignore[arg-type]
+
+
+class TestApplyReceiverConfig:
+    """Tests for ``DeviceService.apply_receiver_config`` (issue #61)."""
+
+    @pytest.fixture()
+    def connected_svc(self) -> DeviceService:
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_base_config.return_value = CurrentBaseConfig(mode=BaseMode.DISABLED)
+        driver.get_gnss_config.return_value = GnssConfig(systems=[])
+        # Matches ``_minimal_config()``'s matrix by default so tests that
+        # don't care about the read-back diff see status="ok".
+        driver.get_rtcm_port_config.return_value = RtcmPortConfig(
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
+        )
+        driver.get_uart_baud_rates.return_value = {
+            PortId.UART1: 57600,
+            PortId.UART2: 115200,
+        }
+        svc.set_driver(driver)
+        svc._state = DeviceConnectionState.CONNECTED
+        svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
+        return svc
+
+    @pytest.mark.asyncio()
+    async def test_not_connected_raises(self) -> None:
+        svc = DeviceService()
+        svc.set_driver(_make_mock_driver())
+        with pytest.raises(RuntimeError, match="Device not connected"):
+            await svc.apply_receiver_config(_minimal_config())
+
+    @pytest.mark.asyncio()
+    async def test_baud_out_of_scope_refused_before_any_write(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        config = _minimal_config(baud=BaudConfig(uart1=57600))
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(config)
+
+        assert exc_info.value.rule == "baud_out_of_scope"
+        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_omitted_is_allowed(self, connected_svc: DeviceService) -> None:
+        result = await connected_svc.apply_receiver_config(
+            _minimal_config(baud=BaudConfig())
+        )
+        assert result.status == "ok"
+
+    @pytest.mark.asyncio()
+    async def test_ubx_in_liveness_guard_refuses_before_any_write(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        config = _minimal_config(
+            ports={PortId.USB: PortProtocolSet(**{"in": [UbxProtocol.NMEA], "out": []})}
+        )
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(config)
+
+        assert exc_info.value.rule == "ubx_in_liveness"
+        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+        connected_svc.driver.apply_rtcm_matrix.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_ubx_in_present_on_usb_is_allowed(
+        self, connected_svc: DeviceService
+    ) -> None:
+        config = _minimal_config(
+            ports={
+                PortId.USB: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.NMEA]}
+                )
+            }
+        )
+        result = await connected_svc.apply_receiver_config(config)
+        assert result.status == "ok"
+
+    @pytest.mark.asyncio()
+    async def test_tmode_fixed_without_coordinates_refused(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_base_config.return_value = CurrentBaseConfig(  # type: ignore[union-attr]
+            mode=BaseMode.DISABLED, latitude=0.0, longitude=0.0, altitude_m=0.0
+        )
+        config = _minimal_config(tmode_mode=BaseMode.FIXED)
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(config)
+
+        assert exc_info.value.rule == "tmode_fixed_requires_coordinates"
+        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_tmode_fixed_with_coordinates_succeeds(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_base_config.return_value = CurrentBaseConfig(  # type: ignore[union-attr]
+            mode=BaseMode.FIXED, latitude=47.0, longitude=8.0, altitude_m=400.0
+        )
+        config = _minimal_config(tmode_mode=BaseMode.FIXED)
+
+        result = await connected_svc.apply_receiver_config(config)
+
+        assert result.status == "ok"
+        connected_svc.driver.configure_tmode_mode.assert_called_once_with(  # type: ignore[union-attr]
+            BaseMode.FIXED
+        )
+
+    @pytest.mark.asyncio()
+    async def test_write_order_matches_the_specified_sequence(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        config = _minimal_config(
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+                )
+            },
+            constellations=[GnssConstellation.GPS],
+            elevation_mask_deg=10,
+            dyn_model=DynModel.STATIONARY,
+            tmode_mode=BaseMode.DISABLED,
+        )
+
+        await connected_svc.apply_receiver_config(config)
+
+        write_methods = {
+            "configure_measurement_rate",
+            "configure_port_protocols",
+            "configure_gnss",
+            "configure_optimisations",
+            "configure_dyn_model",
+            "configure_tmode_mode",
+            "apply_rtcm_matrix",
+        }
+        order: list[str] = [
+            call[0]
+            for call in connected_svc.driver.method_calls  # type: ignore[union-attr]
+            if call[0] in write_methods
+        ]
+        assert order == [
+            "configure_measurement_rate",
+            "configure_port_protocols",
+            "configure_gnss",
+            "configure_optimisations",
+            "configure_dyn_model",
+            "configure_tmode_mode",
+            "apply_rtcm_matrix",
+        ]
+
+    @pytest.mark.asyncio()
+    async def test_ports_not_written_when_omitted(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_config())
+        connected_svc.driver.configure_port_protocols.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_constellations_flip_enabled_and_preserve_channels(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert isinstance(driver, MagicMock)
+        driver.get_gnss_config.return_value = GnssConfig(
+            systems=[
+                GnssSystemConfig(
+                    constellation=GnssConstellation.GPS,
+                    enabled=True,
+                    min_channels=8,
+                    max_channels=16,
+                ),
+                GnssSystemConfig(
+                    constellation=GnssConstellation.GALILEO,
+                    enabled=False,
+                    min_channels=4,
+                    max_channels=12,
+                ),
+            ]
+        )
+        config = _minimal_config(constellations=[GnssConstellation.GALILEO])
+
+        await connected_svc.apply_receiver_config(config)
+
+        written: GnssConfig = driver.configure_gnss.call_args[0][0]
+        by_constellation: dict[GnssConstellation, GnssSystemConfig] = {
+            s.constellation: s for s in written.systems
+        }
+        assert by_constellation[GnssConstellation.GPS].enabled is False
+        assert by_constellation[GnssConstellation.GALILEO].enabled is True
+        # Channel tuning is preserved from the live read, not clobbered.
+        assert by_constellation[GnssConstellation.GALILEO].min_channels == 4
+        assert by_constellation[GnssConstellation.GALILEO].max_channels == 12
+
+    @pytest.mark.asyncio()
+    async def test_dyn_model_and_tmode_mode_omitted_write_neither_key(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_config())
+        connected_svc.driver.configure_dyn_model.assert_not_called()  # type: ignore[union-attr]
+        connected_svc.driver.configure_tmode_mode.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_optimisations_always_invoked(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """The driver call always happens; per-field omission is the
+        driver's job (each ``None`` there means leave untouched)."""
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_config())
+        connected_svc.driver.configure_optimisations.assert_called_once_with(  # type: ignore[union-attr]
+            None, None, None
+        )
+
+    @pytest.mark.asyncio()
+    async def test_meas_period_ms_passed_through_unconverted(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_config(meas_period_ms=333))
+        connected_svc.driver.configure_measurement_rate.assert_called_once_with(  # type: ignore[union-attr]
+            333
+        )
+
+    @pytest.mark.asyncio()
+    async def test_read_back_match_returns_ok(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
+        )
+        result = await connected_svc.apply_receiver_config(_minimal_config())
+        assert result.status == "ok"
+        assert result.diff == []
+
+    @pytest.mark.asyncio()
+    async def test_read_back_mismatch_returns_failed_with_diff(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """A mismatch is a 200-with-diff outcome, not an exception —
+        the writes are left in flash, nothing is rolled back."""
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
+            messages={RtcmRowId.RTCM_1005: {"UART1": 0}}
+        )
+        result = await connected_svc.apply_receiver_config(_minimal_config())
+
+        assert result.status == "failed"
+        assert len(result.diff) == 1
+        cell = result.diff[0]
+        assert cell.row_id == RtcmRowId.RTCM_1005
+        assert cell.port == PortId.UART1
+        assert cell.expected is True
+        assert cell.actual is False
+
+    @pytest.mark.asyncio()
+    async def test_throughput_warning_when_over_threshold(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
+            PortId.UART1: 9600,
+            PortId.UART2: 115200,
+        }
+        heavy_matrix = RtcmStreamConfig(
+            matrix={
+                RtcmRowId.RTCM_1005: {PortId.UART1: True},
+                RtcmRowId.RTCM_1077: {PortId.UART1: True},
+                RtcmRowId.RTCM_1087: {PortId.UART1: True},
+                RtcmRowId.RTCM_1097: {PortId.UART1: True},
+            }
+        )
+        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
+            messages={
+                row: {"UART1": 1 if ports.get(PortId.UART1) else 0}
+                for row, ports in heavy_matrix.matrix.items()
+            }
+        )
+        config = _minimal_config(rtcm_stream=heavy_matrix)
+
+        result = await connected_svc.apply_receiver_config(config)
+
+        assert result.status == "ok"
+        assert len(result.warnings) == 1
+        assert "UART1" in result.warnings[0]
+
+    @pytest.mark.asyncio()
+    async def test_no_throughput_warning_under_threshold(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
+            PortId.UART1: 115200,
+            PortId.UART2: 115200,
+        }
+        result = await connected_svc.apply_receiver_config(_minimal_config())
+        assert result.warnings == []
 
 
 # ---------------------------------------------------------------------------

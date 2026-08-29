@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from sp_rtk_base.models.device_models import (
+    ApplyConfigCellDiff,
+    ApplyConfigResult,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
@@ -23,15 +25,106 @@ from sp_rtk_base.models.device_models import (
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
+    PortId,
     PortProtocolConfig,
     RtcmMessageConfig,
     RtcmPortConfig,
+    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    UbxProtocol,
 )
+from sp_rtk_base.models.device_models import (
+    BaseMode as TmodeMode,
+)
+from sp_rtk_base.models.profile_models import ReceiverConfig
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 logger = logging.getLogger(__name__)
+
+
+class ApplyConfigRefusedError(Exception):
+    """Business-rule refusal for ``apply_receiver_config`` — device-state guards.
+
+    Raised before any write when a live-receiver-state precondition
+    isn't met (issue #61): the UBX-in liveness guard or the
+    ``tmode_mode: fixed`` coordinate guard. Carries the failed rule
+    name so the API can surface it in a 400 response.
+    """
+
+    def __init__(self, rule: str, message: str) -> None:
+        self.rule = rule
+        super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking RTCM throughput estimate (issue #61)
+#
+# Approximate typical RTCM3 frame sizes in bytes at a moderate satellite
+# count. These are estimates for a heads-up warning only — not exact
+# wire measurements — so precision beyond "roughly right" isn't the
+# goal. MSM4/MSM7 sizes scale with tracked satellite count; the values
+# below assume a typical 8-12 satellites per constellation.
+# ---------------------------------------------------------------------------
+
+_APPROX_RTCM_FRAME_BYTES: dict[RtcmRowId, int] = {
+    RtcmRowId.RTCM_1005: 19,
+    RtcmRowId.RTCM_4072_0: 72,
+    RtcmRowId.RTCM_4072_1: 40,
+    RtcmRowId.RTCM_1074: 150,
+    RtcmRowId.RTCM_1077: 300,
+    RtcmRowId.RTCM_1084: 130,
+    RtcmRowId.RTCM_1087: 260,
+    RtcmRowId.RTCM_1094: 120,
+    RtcmRowId.RTCM_1097: 240,
+    RtcmRowId.RTCM_1124: 130,
+    RtcmRowId.RTCM_1127: 260,
+    RtcmRowId.RTCM_1230: 25,
+}
+
+# 8N1 serial framing: ~10 bits on the wire per payload byte (1 start +
+# 8 data + 1 stop), so baud / 10 approximates byte capacity per second.
+_BITS_PER_BYTE_ON_WIRE = 10.0
+
+# Warn once estimated RTCM throughput crosses this fraction of a
+# data-link port's baud capacity.
+_THROUGHPUT_WARN_THRESHOLD = 0.70
+
+
+def _throughput_warnings(
+    config: ReceiverConfig, baud_rates: dict[PortId, int]
+) -> list[str]:
+    """Non-blocking advisories when estimated RTCM output nears port capacity.
+
+    Takes the whole ``ReceiverConfig`` rather than its three relevant
+    fields individually — ``rtcm_stream.matrix``, ``data_link_port``
+    and ``meas_period_ms`` only ever travel together for this check,
+    and the config already bundles them.
+    """
+    matrix = config.rtcm_stream.matrix
+    hz = 1000.0 / config.meas_period_ms
+    warnings: list[str] = []
+    for port in config.data_link_port:
+        baud = baud_rates.get(port)
+        if not baud:
+            continue
+        bytes_per_sec = (
+            sum(
+                _APPROX_RTCM_FRAME_BYTES.get(row, 0)
+                for row, ports in matrix.items()
+                if ports.get(port, False)
+            )
+            * hz
+        )
+        capacity_bytes_per_sec = baud / _BITS_PER_BYTE_ON_WIRE
+        fraction = bytes_per_sec / capacity_bytes_per_sec
+        if fraction > _THROUGHPUT_WARN_THRESHOLD:
+            warnings.append(
+                f"Estimated RTCM throughput on {port.value} is "
+                f"~{round(fraction * 100)}% of its {baud} baud capacity "
+                "— consider a higher baud rate or fewer messages."
+            )
+    return warnings
 
 
 class DeviceService:
@@ -565,6 +658,171 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
             raise
+
+    # ------------------------------------------------------------------
+    # Apply-config — the profile one-shot (issue #61)
+    # ------------------------------------------------------------------
+
+    async def apply_receiver_config(self, config: ReceiverConfig) -> ApplyConfigResult:
+        """Apply a bare ``ReceiverConfig`` as an ordered series of layer=5 writes.
+
+        Sequence: guards -> measurement rate -> ports -> constellations
+        -> optimisations -> role fields (dyn_model, then tmode_mode) ->
+        the full RTCM matrix -> read-back verify. Baud is out of scope
+        here entirely — a submitted non-null ``ReceiverConfig.baud`` is
+        rejected pre-write rather than silently ignored (see the follow-up
+        ticket for baud support).
+
+        Guards run before any write and refuse with nothing written:
+
+        - **Baud out of scope.** A non-null ``baud`` with either UART
+          value set is refused — applying it would mean reopening the
+          serial link this very request is using, which is explicitly
+          the follow-up ticket's job, not this one's.
+        - **UBX-in liveness.** This console always manages the receiver
+          over its own USB connection — UART1/UART2 are reserved for
+          RTCM data-link output (``ReceiverConfig`` only allows those
+          two as ``data_link_port``). So "the connected port" is
+          always ``PortId.USB``; a submitted ``ports`` section that
+          would turn UBX off on USB IN is refused, since it would cut
+          the console's own control channel with nothing left to
+          write it back with.
+        - **Coordinate guard.** ``tmode_mode: fixed`` is refused unless
+          the receiver already holds a valid, non-zero position —
+          otherwise a fresh receiver becomes a base broadcasting 1005
+          from ECEF/LLH 0,0,0.
+
+        After the writes land, a non-blocking throughput estimate
+        checks each ``data_link_port`` against its live baud rate, and
+        a final read-back of the full RTCM matrix decides ``status``:
+        a mismatch returns ``status="failed"`` with a per-cell diff
+        (writes are left in flash, nothing is rolled back); a match
+        returns ``status="ok"``.
+
+        Raises:
+            RuntimeError: If not connected or relay is running.
+            ApplyConfigRefusedError: If a device-state guard rejects the
+                config before any write.
+        """
+        driver = self._require_connected()
+
+        if config.baud is not None and (
+            config.baud.uart1 is not None or config.baud.uart2 is not None
+        ):
+            raise ApplyConfigRefusedError(
+                "baud_out_of_scope",
+                "baud is out of scope for apply-config — it would disturb "
+                "the console's own link; leave it unset",
+            )
+
+        if config.ports is not None:
+            usb_ports = config.ports.get(PortId.USB)
+            if usb_ports is not None and UbxProtocol.UBX not in usb_ports.in_:
+                raise ApplyConfigRefusedError(
+                    "ubx_in_liveness",
+                    "ports.USB.in must keep UBX enabled — the console manages "
+                    "the receiver over its own USB connection",
+                )
+
+        if config.tmode_mode == TmodeMode.FIXED:
+            current_base = await asyncio.to_thread(driver.get_base_config)
+            if (
+                current_base.latitude == 0.0
+                and current_base.longitude == 0.0
+                and current_base.altitude_m == 0.0
+            ):
+                raise ApplyConfigRefusedError(
+                    "tmode_fixed_requires_coordinates",
+                    "tmode_mode=fixed requires the receiver to already hold a "
+                    "valid, non-zero position — survey-in or restore a saved "
+                    "position first",
+                )
+
+        self._state = DeviceConnectionState.CONFIGURING
+        try:
+            await asyncio.to_thread(
+                driver.configure_measurement_rate, config.meas_period_ms
+            )
+
+            if config.ports:
+                in_map = {port: cfg.in_ for port, cfg in config.ports.items()}
+                out_map = {port: cfg.out for port, cfg in config.ports.items()}
+                await asyncio.to_thread(
+                    driver.configure_port_protocols, in_map, out_map
+                )
+
+            if config.constellations is not None:
+                current_gnss = await asyncio.to_thread(driver.get_gnss_config)
+                wanted = set(config.constellations)
+                updated_gnss = GnssConfig(
+                    systems=[
+                        system.model_copy(
+                            update={"enabled": system.constellation in wanted}
+                        )
+                        for system in current_gnss.systems
+                    ]
+                )
+                await asyncio.to_thread(driver.configure_gnss, updated_gnss)
+
+            await asyncio.to_thread(
+                driver.configure_optimisations,
+                config.elevation_mask_deg,
+                config.bds_b2_enabled,
+                config.spi_enabled,
+            )
+
+            if config.dyn_model is not None:
+                await asyncio.to_thread(driver.configure_dyn_model, config.dyn_model)
+            if config.tmode_mode is not None:
+                await asyncio.to_thread(driver.configure_tmode_mode, config.tmode_mode)
+
+            await asyncio.to_thread(driver.apply_rtcm_matrix, config.rtcm_stream.matrix)
+
+            self._state = DeviceConnectionState.CONNECTED
+        except Exception as exc:
+            self._state = DeviceConnectionState.CONNECTED
+            self._last_error = str(exc)
+            raise
+
+        baud_rates = await asyncio.to_thread(driver.get_uart_baud_rates)
+        warnings = _throughput_warnings(config, baud_rates)
+
+        actual_rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
+        diff = self._diff_rtcm_matrix(config.rtcm_stream.matrix, actual_rtcm)
+        if diff:
+            logger.warning(
+                "apply-config read-back mismatch: %d cell(s) differ", len(diff)
+            )
+            return ApplyConfigResult(status="failed", diff=diff, warnings=warnings)
+
+        logger.info("apply-config applied and read-back verified")
+        return ApplyConfigResult(status="ok", warnings=warnings)
+
+    @staticmethod
+    def _diff_rtcm_matrix(
+        expected: dict[RtcmRowId, dict[PortId, bool]],
+        actual: RtcmPortConfig,
+    ) -> list[ApplyConfigCellDiff]:
+        """Diff the intended RTCM matrix against a live read-back.
+
+        Covers all 36 cells (12 rows x UART1/UART2/USB) — the same
+        scope ``apply_rtcm_matrix`` writes.
+        """
+        diffs: list[ApplyConfigCellDiff] = []
+        for row in RtcmRowId:
+            for port in (PortId.UART1, PortId.UART2, PortId.USB):
+                expected_on = expected.get(row, {}).get(port, False)
+                actual_on = actual.messages.get(row, {}).get(port.value, 0) > 0
+                if expected_on != actual_on:
+                    diffs.append(
+                        ApplyConfigCellDiff(
+                            row_id=row,
+                            port=port,
+                            expected=expected_on,
+                            actual=actual_on,
+                        )
+                    )
+        return diffs
 
     # ------------------------------------------------------------------
     # Status polling

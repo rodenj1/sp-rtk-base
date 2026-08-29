@@ -15,14 +15,13 @@ coordinate guard are service-level and belong to the apply ticket.
 
 from __future__ import annotations
 
-import enum
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
 )
 from sp_rtk_base.models.device_models import (
+    DynModel,
     GnssConstellation,
     PortId,
     RtcmRowId,
@@ -69,19 +68,6 @@ _SANE_BAUD_MAX = 921600
 # or declared by a profile. Port protocols reuse ``device_models.UbxProtocol``
 # for the same reason.
 # ---------------------------------------------------------------------------
-
-
-class DynModel(str, enum.Enum):
-    """``CFG_NAVSPG_DYNMODEL`` — the receiver's dynamics platform model."""
-
-    STATIONARY = "stationary"
-    PORTABLE = "portable"
-    PEDESTRIAN = "pedestrian"
-    AUTOMOTIVE = "automotive"
-    SEA = "sea"
-    AIRBORNE_1G = "airborne_1g"
-    AIRBORNE_2G = "airborne_2g"
-    AIRBORNE_4G = "airborne_4g"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -161,6 +162,19 @@ class BaseMode(str, enum.Enum):
     DISABLED = "disabled"
     SURVEY_IN = "survey_in"
     FIXED = "fixed"
+
+
+class DynModel(str, enum.Enum):
+    """``CFG_NAVSPG_DYNMODEL`` — the receiver's dynamics platform model."""
+
+    STATIONARY = "stationary"
+    PORTABLE = "portable"
+    PEDESTRIAN = "pedestrian"
+    AUTOMOTIVE = "automotive"
+    SEA = "sea"
+    AIRBORNE_1G = "airborne_1g"
+    AIRBORNE_2G = "airborne_2g"
+    AIRBORNE_4G = "airborne_4g"
 
 
 class CurrentBaseConfig(BaseModel):
@@ -339,6 +353,37 @@ class UbxProtocol(str, enum.Enum):
     UBX = "UBX"
     NMEA = "NMEA"
     RTCM3X = "RTCM3X"
+
+
+# ---------------------------------------------------------------------------
+# Apply-config read-back verify (issue #61)
+# ---------------------------------------------------------------------------
+
+
+class ApplyConfigCellDiff(BaseModel):
+    """One mismatched cell from the post-apply RTCM matrix read-back."""
+
+    row_id: RtcmRowId
+    port: PortId
+    expected: bool
+    actual: bool
+
+
+class ApplyConfigResult(BaseModel):
+    """Response for ``POST /api/device/apply-config``.
+
+    ``status="failed"`` means the post-apply read-back of the RTCM
+    matrix didn't match what was written — the writes are left in
+    flash (nothing is rolled back); ``diff`` lists every mismatched
+    cell. ``warnings`` carries non-blocking advisories (e.g. the
+    estimated-throughput check) that never affect ``status``.
+    """
+
+    status: Literal["ok", "failed"]
+    diff: list[ApplyConfigCellDiff] = Field(
+        default_factory=lambda: list[ApplyConfigCellDiff]()
+    )
+    warnings: list[str] = Field(default_factory=lambda: list[str]())
 
 
 class PortProtocolConfig(BaseModel):

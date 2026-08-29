@@ -40,7 +40,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
@@ -88,35 +87,6 @@ def _rtcm_key(msg_id: RtcmRowId, port: str) -> str:
     return f"{_RTCM_KEY_BASES[msg_id]}_{port}"
 
 
-# Legacy USB-only mapping (backward compat)
-_RTCM_USB_KEYS: dict[RtcmRowId, str] = {
-    msg_id: _rtcm_key(msg_id, "USB") for msg_id in _RTCM_KEY_BASES
-}
-
-# RTCM-only output profile applied to UART1/UART2 on every base-mode
-# transition (survey-in or fixed).  Silences NMEA/UBX output so a base
-# station doesn't flood rover data links with traffic they don't need —
-# see issue #40.  UBX *input* protocols and USB output are deliberately
-# left untouched: input must stay enabled for the app to manage the
-# receiver, and USB is used for local diagnostics.
-_BASE_OUTPUT_PROFILE: dict[str, int] = {
-    "CFG_UART1OUTPROT_NMEA": 0,
-    "CFG_UART1OUTPROT_UBX": 0,
-    "CFG_UART1OUTPROT_RTCM3X": 1,
-    "CFG_UART2OUTPROT_NMEA": 0,
-    "CFG_UART2OUTPROT_UBX": 0,
-    "CFG_UART2OUTPROT_RTCM3X": 1,
-}
-
-# u-blox dynamics-model class for a fixed-mount base station (issue #38).
-# 2 = stationary — tightens the position filter and suppresses
-# velocity/heading estimation, which is the correct nav class for a
-# receiver that never moves.  The receiver defaults to 0 (portable),
-# which is wrong for every base in this fleet, so it's applied
-# unconditionally on every base-mode transition rather than left as an
-# operator-configurable setting.
-_STATIONARY_DYN_MODEL: int = 2
-
 # CFG key prefix for each port covered by the live port-protocol read
 # (issue #57) — UART1/UART2 use a numbered prefix, USB does not.
 _PROTOCOL_PORT_PREFIXES: dict[PortId, str] = {
@@ -160,6 +130,9 @@ _DYN_MODEL_VALUES: dict[DynModel, int] = {
     DynModel.AIRBORNE_2G: 7,
     DynModel.AIRBORNE_4G: 8,
 }
+
+# Reverse of ``_DYN_MODEL_VALUES`` — for ``get_dyn_model``'s read-back.
+_DYN_MODEL_NAMES: dict[int, DynModel] = {v: k for k, v in _DYN_MODEL_VALUES.items()}
 
 # u-blox CFG_TMODE_MODE values — same mapping ``_parse_cfg_tmode`` reads back.
 _TMODE_MODE_VALUES: dict[BaseMode, int] = {
@@ -583,15 +556,15 @@ class UbloxDriver(GpsReceiverDriver):
                     "reset to 0."
                 )
 
-            # Apply the RTCM-only output profile as a separate layer=5
-            # (RAM+Flash) VALSET — independent of the survey write
-            # above (also layer=5 as of issue #42).  Silences NMEA
-            # for the whole survey, not just once a fixed base is
-            # later saved.
-            self._apply_base_output_profile_locked()
-            # Force stationary dynamics for the whole survey (issue
-            # #38) — see ``_apply_stationary_dyn_model_locked``.
-            self._apply_stationary_dyn_model_locked()
+            # Issue #63: this used to force-apply an RTCM-only UART1/
+            # UART2 output profile and stationary dynamics here on
+            # every transition (issues #40/#38). That made this method
+            # a competing writer that would silently overwrite an
+            # operator-applied ``ReceiverConfig`` profile the next time
+            # a survey-in started. Those invariants now live only in
+            # the built-in profile and are surfaced as a non-blocking
+            # pre-flight warning (``DeviceService.check_base_invariants``)
+            # instead of being force-written here.
         logger.info(
             "Survey-in configured: %ds min, %dmm accuracy",
             config.min_duration_seconds,
@@ -734,13 +707,9 @@ class UbloxDriver(GpsReceiverDriver):
                         "or power-cycle the receiver."
                     )
 
-            # Apply the RTCM-only output profile as a separate layer=5
-            # VALSET, same as configure_survey_in — see that method's
-            # comment for why this isn't merged into the write above.
-            self._apply_base_output_profile_locked()
-            # Force stationary dynamics (issue #38) — see
-            # ``_apply_stationary_dyn_model_locked``.
-            self._apply_stationary_dyn_model_locked()
+            # Issue #63: no longer force-applies the RTCM-only output
+            # profile / stationary dynamics here — see the matching
+            # comment in ``configure_survey_in``.
         logger.info(
             "Fixed base configured: %.7f, %.7f, %.2fm (ECEF cm: %d, %d, %d)",
             config.latitude,
@@ -751,104 +720,11 @@ class UbloxDriver(GpsReceiverDriver):
             ecef_z,
         )
 
-    # ------------------------------------------------------------------
-    # Base station output profile (issue #40)
-    # ------------------------------------------------------------------
-
-    def _apply_stationary_dyn_model_locked(self) -> None:
-        """Write and verify ``CFG_NAVSPG_DYNMODEL=2`` (stationary).
-
-        Must hold ``self._lock``.  Called from both ``configure_survey_in``
-        and ``configure_fixed_base`` after their mode-specific VALSET (and
-        the base output profile) has already succeeded — issue #38.
-
-        Written to layer=5 (RAM+Flash) rather than the RAM-only layer the
-        issue's original write-up suggested, matching the layer
-        ``configure_survey_in``'s own SVIN params already use since issue
-        #42: a RAM-only write reverts to the last-flashed value on reboot
-        or port reopen, which would fail this issue's own "after a reboot,
-        the value is still 2" acceptance criterion for the survey-in path.
-
-        Reuses ``_write_and_verify_locked``, so a read-back mismatch
-        retries once before raising — same pattern as every other durable
-        CFG-VALSET write in this driver.
-        """
-        self._write_and_verify_locked(
-            [("CFG_NAVSPG_DYNMODEL", _STATIONARY_DYN_MODEL)],
-            layer=5,
-            label="Dynamics model",
-        )
-        logger.info(
-            "Dynamics model set to stationary (CFG_NAVSPG_DYNMODEL=%d)",
-            _STATIONARY_DYN_MODEL,
-        )
-
-    def _apply_base_output_profile_locked(self) -> None:
-        """Write and verify the RTCM-only UART1/UART2 output profile.
-
-        Must hold ``self._lock``. Called from both ``configure_survey_in``
-        and ``configure_fixed_base`` after their mode-specific VALSET has
-        already succeeded. Always writes unconditionally — no pre-read
-        to skip an already-correct profile — since that keeps this
-        simple and guarantees convergence even after a prior partial
-        failure.
-
-        Verify-and-retry: matches ``disable_base_mode``'s pattern, since
-        the ACK can lie when the receiver is under load. A read-back
-        mismatch that survives one retry is a hard failure — the
-        RTCM-only profile is a required end-state per issue #40's
-        acceptance criteria, not best-effort, so a soft failure here
-        would silently reintroduce the exact NMEA-flooding bug this
-        exists to fix.
-        """
-        cfg_data = list(_BASE_OUTPUT_PROFILE.items())
-
-        self._send_cfg_valset_locked(cfg_data, layer=5)
-        if self._read_base_output_profile_locked() == _BASE_OUTPUT_PROFILE:
-            return
-
-        logger.warning("Base output profile mismatch after first write — retrying")
-        self._send_cfg_valset_locked(cfg_data, layer=5)
-        actual = self._read_base_output_profile_locked()
-        if actual != _BASE_OUTPUT_PROFILE:
-            raise RuntimeError(
-                "Base output profile did not take effect: receiver "
-                f"reports {actual}, expected {_BASE_OUTPUT_PROFILE} "
-                "after two write attempts. Try disconnecting and "
-                "reconnecting, or power-cycle the receiver."
-            )
-
-    def _read_base_output_profile_locked(self) -> dict[str, int]:
-        """Poll the six UART1/UART2 OUTPROT keys (must hold ``self._lock``)."""
-        ser, reader = self._require_connection()
-
-        keys: list[str | int] = list(_BASE_OUTPUT_PROFILE.keys())
-        msg = UBXMessage.config_poll(0, 0, keys)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        for _ in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    continue
-                identity = getattr(parsed, "identity", "")
-                if identity == "CFG-VALGET":
-                    return {
-                        key: int(getattr(parsed, key, -1))
-                        for key in _BASE_OUTPUT_PROFILE
-                    }
-            except Exception:
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for base output profile")
-
     def _read_cfg_keys_locked(self, keys: list[str]) -> dict[str, int]:
         """Poll arbitrary CFG keys and return them as a dict (must hold ``self._lock``).
 
         Used to verify a CFG-VALSET write actually took effect — same
-        read-back pattern as ``_read_ecef_locked`` /
-        ``_read_base_output_profile_locked``, generalised to an
+        read-back pattern as ``_read_ecef_locked``, generalised to an
         arbitrary key list (issue #42).
         """
         ser, reader = self._require_connection()
@@ -902,84 +778,6 @@ class UbloxDriver(GpsReceiverDriver):
                 "disconnecting and reconnecting, or power-cycle the "
                 "receiver."
             )
-
-    def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
-        cfg_data: list[tuple[str, int]] = []
-
-        # First disable all known RTCM messages
-        for key_name in _RTCM_USB_KEYS.values():
-            cfg_data.append((key_name, 0))
-
-        # Then enable requested messages at the specified rate
-        for msg_id in config.message_ids:
-            cfg_data.append((_RTCM_USB_KEYS[msg_id], config.rate_hz))
-
-        with self._lock:
-            # Issue #42: this used to write RAM only (layer=1), so the
-            # message selection reverted to whatever was last flashed
-            # as soon as the receiver rebooted or the port was
-            # reopened. Write RAM+Flash (layer=5) and verify the
-            # read-back, mirroring the ECEF verify-and-retry pattern
-            # added for issue #39.
-            self._write_and_verify_locked(
-                cfg_data, layer=5, label="RTCM message config"
-            )
-        logger.info(
-            "RTCM messages configured: %s @ %dHz",
-            config.message_id_values,
-            config.rate_hz,
-        )
-
-    def get_rtcm_config(self) -> RtcmMessageConfig:
-        """Read the current RTCM USB output configuration from the receiver.
-
-        Polls ``CFG_MSGOUT_RTCM_3X_TYPE*_USB`` keys and returns which
-        messages are enabled (rate > 0) and the most common rate.
-        """
-        with self._lock:
-            return self._get_rtcm_config_locked()
-
-    def _get_rtcm_config_locked(self) -> RtcmMessageConfig:
-        """Read RTCM config (must hold self._lock)."""
-        ser, reader = self._require_connection()
-
-        keys: list[str | int] = list(_RTCM_USB_KEYS.values())
-        msg = UBXMessage.config_poll(0, 0, keys)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        for _ in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    continue
-                identity = getattr(parsed, "identity", "")
-                if identity == "CFG-VALGET":
-                    return self._parse_rtcm_valget(parsed)
-            except Exception:
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for RTCM config")
-
-    @staticmethod
-    def _parse_rtcm_valget(parsed: object) -> RtcmMessageConfig:
-        """Parse a CFG-VALGET response containing RTCM message rates."""
-        enabled_ids: list[RtcmRowId] = []
-        rates: list[int] = []
-
-        for msg_id, key_name in _RTCM_USB_KEYS.items():
-            rate = int(getattr(parsed, key_name, 0))
-            if rate > 0:
-                enabled_ids.append(msg_id)
-                rates.append(rate)
-
-        # Use the most common rate, defaulting to 1
-        common_rate = max(set(rates), key=rates.count) if rates else 1
-
-        return RtcmMessageConfig(
-            message_ids=enabled_ids,
-            rate_hz=common_rate,
-        )
 
     # ------------------------------------------------------------------
     # Multi-port RTCM configuration
@@ -1040,8 +838,9 @@ class UbloxDriver(GpsReceiverDriver):
         """Apply multi-port RTCM output configuration to the receiver.
 
         Sends a CFG-VALSET with rates for each message on each port,
-        writes to RAM+Flash (layer=5), and verifies the read-back —
-        see ``configure_rtcm_messages`` for why (issue #42).
+        writes to RAM+Flash (layer=5), and verifies the read-back — a
+        RAM-only write reverted to the last-flashed message selection
+        on reboot / reconnect (issue #42).
         """
         cfg_data: list[tuple[str, int]] = []
 
@@ -1066,9 +865,8 @@ class UbloxDriver(GpsReceiverDriver):
         """Read live in/out protocol state for UART1, UART2 and USB.
 
         Polls all ``CFG_{PORT}{IN,OUT}PROT_{UBX,NMEA,RTCM3X}`` keys —
-        the driver previously only polled the six UART OUTPROT keys
-        (``_read_base_output_profile_locked``); this covers INPROT and
-        USB too (issue #57).
+        the driver previously only polled the six UART OUTPROT keys;
+        this covers INPROT and USB too (issue #57).
         """
         with self._lock:
             return self._get_port_protocols_locked()
@@ -1292,18 +1090,19 @@ class UbloxDriver(GpsReceiverDriver):
             self._write_and_verify_locked(cfg_data, layer=5, label="Measurement rate")
 
     def configure_dyn_model(self, model: DynModel) -> None:
-        """Write ``CFG_NAVSPG_DYNMODEL`` for an arbitrary dynamics class.
-
-        General-purpose sibling of ``_apply_stationary_dyn_model_locked``,
-        which stays as-is (hard-coded stationary) since it's called from
-        the survey-in/fixed-base transition paths that issue #38 covers.
-        """
+        """Write ``CFG_NAVSPG_DYNMODEL`` for an arbitrary dynamics class."""
         with self._lock:
             self._write_and_verify_locked(
                 [("CFG_NAVSPG_DYNMODEL", _DYN_MODEL_VALUES[model])],
                 layer=5,
                 label="Dynamics model",
             )
+
+    def get_dyn_model(self) -> DynModel:
+        """Read the receiver's current ``CFG_NAVSPG_DYNMODEL``."""
+        with self._lock:
+            actual = self._read_cfg_keys_locked(["CFG_NAVSPG_DYNMODEL"])
+        return _DYN_MODEL_NAMES[actual["CFG_NAVSPG_DYNMODEL"]]
 
     def configure_tmode_mode(self, mode: BaseMode) -> None:
         """Write ``CFG_TMODE_MODE`` directly, without touching position keys.

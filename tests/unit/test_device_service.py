@@ -19,7 +19,6 @@ from sp_rtk_base.models.device_models import (
     GnssConstellation,
     GnssSystemConfig,
     PortId,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -276,22 +275,31 @@ class TestConfiguration:
         connected_svc.driver.configure_survey_in.assert_called_once_with(config)  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
+    async def test_configure_survey_in_does_not_touch_applied_profile(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Regression test for issue #63.
+
+        Starting a survey-in must not re-write the port protocols or
+        dynamics model an operator-applied ``ReceiverConfig`` profile
+        set — that's exactly the competing-writer bug #40/#38's
+        force-applies caused before they were retired.
+        """
+        config = SurveyInConfig(min_duration_seconds=300, accuracy_limit_mm=20000)
+        await connected_svc.configure_survey_in(config)
+
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.configure_port_protocols.assert_not_called()  # type: ignore[union-attr]
+        driver.configure_dyn_model.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
     async def test_configure_fixed_base(self, connected_svc: DeviceService) -> None:
         config = FixedBaseConfig(latitude=47.0, longitude=-122.0, altitude_m=100.0)
         await connected_svc.configure_fixed_base(config)
 
         assert connected_svc.state == DeviceConnectionState.CONNECTED
         connected_svc.driver.configure_fixed_base.assert_called_once_with(config)  # type: ignore[union-attr]
-
-    @pytest.mark.asyncio()
-    async def test_configure_rtcm_messages(self, connected_svc: DeviceService) -> None:
-        config = RtcmMessageConfig(
-            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=2
-        )
-        await connected_svc.configure_rtcm_messages(config)
-
-        assert connected_svc.state == DeviceConnectionState.CONNECTED
-        connected_svc.driver.configure_rtcm_messages.assert_called_once_with(config)  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_save_to_flash(self, connected_svc: DeviceService) -> None:
@@ -822,6 +830,148 @@ class TestApplyReceiverConfig:
         }
         result = await connected_svc.apply_receiver_config(_minimal_config())
         assert result.warnings == []
+
+
+class TestSurveyInPreservesAppliedProfile:
+    """Regression test for issue #63's acceptance criterion:
+
+    "apply a profile, then start a survey-in, and the applied
+    port/dyn-model config is unchanged."
+
+    Uses the real ``FakeGpsDriver`` rather than a mock so this proves
+    the actual outcome (read-back after survey-in still matches what
+    was applied), not just which driver methods got called.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_survey_in_does_not_revert_an_applied_profile(self) -> None:
+        from sp_rtk_base.services.drivers.fake import FakeGpsDriver
+
+        driver = FakeGpsDriver()
+        driver.connect("FAKE", 115200)
+        svc = DeviceService()
+        svc.set_driver(driver)
+        svc._state = DeviceConnectionState.CONNECTED
+        svc._info = DeviceInfo(vendor="Fake", model="FAKE-F9P")
+
+        # Deliberately not the built-in profile's values, so a
+        # regression that force-re-applies the built-in's stationary
+        # dyn model / RTCM-only ports would be caught.
+        applied = _minimal_config(
+            data_link_port=[PortId.UART1, PortId.UART2],
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    in_=[UbxProtocol.UBX], out=[UbxProtocol.RTCM3X, UbxProtocol.NMEA]
+                ),
+                PortId.UART2: PortProtocolSet(
+                    in_=[UbxProtocol.UBX], out=[UbxProtocol.RTCM3X]
+                ),
+            },
+            dyn_model=DynModel.PORTABLE,
+            rtcm_stream=RtcmStreamConfig(
+                matrix={
+                    RtcmRowId.RTCM_1005: {PortId.UART1: True, PortId.UART2: True},
+                }
+            ),
+        )
+        apply_result = await svc.apply_receiver_config(applied)
+        assert apply_result.status == "ok"
+
+        await svc.configure_survey_in(
+            SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
+        )
+
+        assert driver.get_dyn_model() is DynModel.PORTABLE
+        protocols = driver.get_port_protocols()
+        assert protocols.enabled_out(PortId.UART1) == [
+            UbxProtocol.RTCM3X,
+            UbxProtocol.NMEA,
+        ]
+        assert protocols.enabled_out(PortId.UART2) == [UbxProtocol.RTCM3X]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Base invariants pre-flight check + one-click remedy (issue #63)
+# ---------------------------------------------------------------------------
+
+
+class TestBaseInvariants:
+    """Tests for ``check_base_invariants`` / ``apply_base_invariants``."""
+
+    @pytest.fixture()
+    def connected_svc(self) -> DeviceService:
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_dyn_model.return_value = DynModel.STATIONARY
+        driver.get_rtcm_port_config.return_value = RtcmPortConfig(
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1, "UART2": 1}}
+        )
+        svc.set_driver(driver)
+        svc._state = DeviceConnectionState.CONNECTED
+        svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
+        return svc
+
+    @pytest.mark.asyncio()
+    async def test_not_connected_raises(self) -> None:
+        svc = DeviceService()
+        svc.set_driver(_make_mock_driver())
+        with pytest.raises(RuntimeError, match="Device not connected"):
+            await svc.check_base_invariants()
+
+    @pytest.mark.asyncio()
+    async def test_no_warnings_when_matching_builtin(
+        self, connected_svc: DeviceService
+    ) -> None:
+        result = await connected_svc.check_base_invariants()
+        assert result.warnings == []
+
+    @pytest.mark.asyncio()
+    async def test_warns_on_wrong_dyn_model(self, connected_svc: DeviceService) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_dyn_model.return_value = DynModel.PORTABLE  # type: ignore[union-attr]
+
+        result = await connected_svc.check_base_invariants()
+
+        assert len(result.warnings) == 1
+        assert "portable" in result.warnings[0]
+
+    @pytest.mark.asyncio()
+    async def test_warns_on_no_rtcm_on_data_link_ports(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig()  # type: ignore[union-attr]
+
+        result = await connected_svc.check_base_invariants()
+
+        # The built-in profile's data_link_port is [UART1, UART2] — both
+        # lack any enabled row, so both are called out by name.
+        assert len(result.warnings) == 2
+        assert any("UART1" in w for w in result.warnings)
+        assert any("UART2" in w for w in result.warnings)
+
+    @pytest.mark.asyncio()
+    async def test_apply_delegates_to_apply_receiver_config_with_builtin_profile(
+        self, connected_svc: DeviceService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from sp_rtk_base.models.device_models import ApplyConfigResult
+        from sp_rtk_base.profiles import BUILTIN_PROFILES
+
+        mock_apply = AsyncMock(return_value=ApplyConfigResult(status="ok"))
+        monkeypatch.setattr(connected_svc, "apply_receiver_config", mock_apply)
+
+        result = await connected_svc.apply_base_invariants()
+
+        applied_config = mock_apply.call_args[0][0]
+        builtin = BUILTIN_PROFILES["ublox-f9p-base-standard"]
+        # Everything except baud must match the built-in profile
+        # verbatim — baud is deliberately stripped so this one-click
+        # remedy can never strand the console's own link.
+        assert applied_config == builtin.model_copy(update={"baud": None})
+        assert applied_config.baud is None
+        assert result.status == "ok"
 
 
 # ---------------------------------------------------------------------------

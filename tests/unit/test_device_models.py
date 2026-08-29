@@ -6,12 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from sp_rtk_base.models.device_models import (
+    BaseInvariantsCheck,
     DeviceCapability,
     DeviceConnectionState,
     DeviceInfo,
     DeviceStatus,
     FixedBaseConfig,
-    RtcmMessageConfig,
     RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
@@ -124,38 +124,15 @@ class TestFixedBaseConfig:
             FixedBaseConfig(latitude=0.0, longitude=181.0, altitude_m=0.0)
 
 
-class TestRtcmMessageConfig:
-    """Tests for RtcmMessageConfig model."""
+class TestBaseInvariantsCheck:
+    """Tests for BaseInvariantsCheck model (issue #63)."""
 
-    def test_defaults(self) -> None:
-        cfg = RtcmMessageConfig()
-        assert cfg.message_ids == [
-            RtcmRowId.RTCM_1005,
-            RtcmRowId.RTCM_1077,
-            RtcmRowId.RTCM_1087,
-            RtcmRowId.RTCM_1097,
-            RtcmRowId.RTCM_1127,
-            RtcmRowId.RTCM_1230,
-        ]
-        assert cfg.rate_hz == 1
+    def test_defaults_to_no_warnings(self) -> None:
+        assert BaseInvariantsCheck().warnings == []
 
-    def test_custom_messages(self) -> None:
-        cfg = RtcmMessageConfig(
-            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=5
-        )
-        assert len(cfg.message_ids) == 2
-        assert cfg.rate_hz == 5
-
-    def test_rate_out_of_range(self) -> None:
-        with pytest.raises(ValidationError):
-            RtcmMessageConfig(rate_hz=0)
-        with pytest.raises(ValidationError):
-            RtcmMessageConfig(rate_hz=11)
-
-    def test_rejects_unknown_row_id(self) -> None:
-        """message_ids only accepts the 12 known RtcmRowId values."""
-        with pytest.raises(ValidationError):
-            RtcmMessageConfig(message_ids=["9999"])  # type: ignore[list-item]
+    def test_carries_warnings(self) -> None:
+        check = BaseInvariantsCheck(warnings=["a", "b"])
+        assert check.warnings == ["a", "b"]
 
 
 class TestRtcmRowId:

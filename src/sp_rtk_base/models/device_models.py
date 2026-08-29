@@ -221,47 +221,16 @@ class RtcmRowId(str, enum.Enum):
     RTCM_1230 = "1230"
 
 
-class RtcmMessageConfig(BaseModel):
-    """RTCM message output selection (simple, single-port).
+class BaseInvariantsCheck(BaseModel):
+    """Result of the pre-flight base-invariants check (issue #63).
 
-    Standard RTCM 3.x rows for base station operation:
-    - 1005: Station ARP (position)
-    - 1077: GPS MSM7
-    - 1087: GLONASS MSM7
-    - 1097: Galileo MSM7
-    - 1127: BeiDou MSM7
-    - 1230: GLONASS code-phase biases
+    Non-blocking advisories only — ``warnings`` never prevents a
+    survey-in from starting. Empty means the live receiver config
+    already matches the built-in base profile's dynamics-model and
+    RTCM-on-data-link-port invariants.
     """
 
-    message_ids: list[RtcmRowId] = Field(
-        default_factory=lambda: [
-            RtcmRowId.RTCM_1005,
-            RtcmRowId.RTCM_1077,
-            RtcmRowId.RTCM_1087,
-            RtcmRowId.RTCM_1097,
-            RtcmRowId.RTCM_1127,
-            RtcmRowId.RTCM_1230,
-        ],
-        description="RTCM row IDs to enable on the receiver",
-    )
-    rate_hz: int = Field(
-        default=1,
-        ge=1,
-        le=10,
-        description="Output rate in Hz (messages per second)",
-    )
-
-    @property
-    def message_id_values(self) -> list[str]:
-        """Plain string values, for logging/display.
-
-        A bare f-string/list of ``RtcmRowId`` members renders via
-        ``repr()`` (e.g. ``<RtcmRowId.RTCM_1005: '1005'>``) rather than
-        the enum's string value, since Python only special-cases the
-        mixed-in ``__str__`` for a single member, not one nested in a
-        list.
-        """
-        return [m.value for m in self.message_ids]
+    warnings: list[str] = Field(default_factory=lambda: list[str]())
 
 
 class RtcmOutputPort(str, enum.Enum):

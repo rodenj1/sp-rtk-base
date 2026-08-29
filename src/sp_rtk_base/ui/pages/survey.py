@@ -1045,6 +1045,54 @@ def survey_page() -> None:
                     "your accuracy target."
                 ).classes("text-grey-4 q-mt-sm")
 
+                # Non-blocking pre-flight check (issue #63): a receiver
+                # missing the base invariants (stationary dynamics, RTCM
+                # on its data-link ports) still gets a warning here, but
+                # Start Survey below is never disabled — the operator's
+                # decision to proceed anyway is the whole point.
+                invariants_warning = ui.column().classes("w-full")
+
+                async def _refresh_invariants_warning() -> None:
+                    invariants_warning.clear()
+                    try:
+                        check = await svc.check_base_invariants()
+                    except Exception:
+                        # Best-effort only — a failed pre-flight check
+                        # must never block Start.
+                        return
+                    if not check.warnings:
+                        return
+                    with invariants_warning:
+                        with (
+                            ui.card()
+                            .classes("w-full q-pa-sm q-mt-sm")
+                            .style("background-color: #3a2a10")
+                        ):
+                            for warning in check.warnings:
+                                ui.label(f"⚠ {warning}").classes(
+                                    "text-warning text-caption"
+                                )
+
+                            async def _apply_invariants_now() -> None:
+                                try:
+                                    await svc.apply_base_invariants()
+                                    ui.notify(
+                                        "Base invariants applied", type="positive"
+                                    )
+                                except Exception as exc:
+                                    ui.notify(
+                                        f"Failed to apply base invariants: {exc}",
+                                        type="negative",
+                                    )
+                                await _refresh_invariants_warning()
+
+                            ui.button(
+                                "Apply Base Invariants Now",
+                                on_click=_apply_invariants_now,
+                            ).props("flat dense color=warning")
+
+                await _refresh_invariants_warning()
+
                 with ui.row().classes("gap-2 q-mt-md justify-end"):
                     ui.button("Cancel", on_click=dlg.close).props("flat")
 

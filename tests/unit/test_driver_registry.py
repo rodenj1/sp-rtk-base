@@ -15,7 +15,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -63,12 +62,6 @@ class StubDriver(GpsReceiverDriver):
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
         pass
 
-    def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
-        pass
-
-    def get_rtcm_config(self) -> RtcmMessageConfig:
-        return RtcmMessageConfig(message_ids=[], rate_hz=1)
-
     def get_rtcm_port_config(self) -> RtcmPortConfig:
         return RtcmPortConfig()
 
@@ -114,6 +107,9 @@ class StubDriver(GpsReceiverDriver):
 
     def configure_dyn_model(self, model: DynModel) -> None:
         pass
+
+    def get_dyn_model(self) -> DynModel:
+        return DynModel.PORTABLE
 
     def configure_tmode_mode(self, mode: BaseMode) -> None:
         pass

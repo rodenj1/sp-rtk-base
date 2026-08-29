@@ -47,7 +47,6 @@ from sp_rtk_base.models.device_models import (
     GnssSystemConfig,
     GpsFixType,
     PortId,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -189,16 +188,6 @@ class TestDisconnectedGuards:
                 FixedBaseConfig(latitude=32.0, longitude=-117.0, altitude_m=10.0)
             )
 
-    def test_configure_rtcm_messages_requires_connection(
-        self, driver: FakeGpsDriver
-    ) -> None:
-        with pytest.raises(ConnectionError):
-            driver.configure_rtcm_messages(RtcmMessageConfig())
-
-    def test_get_rtcm_config_requires_connection(self, driver: FakeGpsDriver) -> None:
-        with pytest.raises(ConnectionError):
-            driver.get_rtcm_config()
-
     def test_get_rtcm_port_config_requires_connection(
         self, driver: FakeGpsDriver
     ) -> None:
@@ -265,6 +254,10 @@ class TestDisconnectedGuards:
         with pytest.raises(ConnectionError):
             driver.configure_dyn_model(DynModel.STATIONARY)
 
+    def test_get_dyn_model_requires_connection(self, driver: FakeGpsDriver) -> None:
+        with pytest.raises(ConnectionError):
+            driver.get_dyn_model()
+
     def test_configure_tmode_mode_requires_connection(
         self, driver: FakeGpsDriver
     ) -> None:
@@ -311,17 +304,6 @@ class TestConfigurationRoundTrips:
         assert current.longitude == pytest.approx(-117.2362788)
         assert current.altitude_m == pytest.approx(27.940)
         assert current.accuracy_mm == 47308
-
-    def test_rtcm_messages_round_trip(self, connected_driver: FakeGpsDriver) -> None:
-        cfg = RtcmMessageConfig(
-            message_ids=[RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1077], rate_hz=2
-        )
-        connected_driver.configure_rtcm_messages(cfg)
-        assert connected_driver.get_rtcm_config().message_ids == [
-            RtcmRowId.RTCM_1005,
-            RtcmRowId.RTCM_1077,
-        ]
-        assert connected_driver.get_rtcm_config().rate_hz == 2
 
     def test_rtcm_ports_round_trip(self, connected_driver: FakeGpsDriver) -> None:
         cfg = RtcmPortConfig(
@@ -420,6 +402,10 @@ class TestConfigurationRoundTrips:
     ) -> None:
         connected_driver.configure_dyn_model(DynModel.STATIONARY)
         assert connected_driver._dyn_model is DynModel.STATIONARY
+
+    def test_get_dyn_model_round_trip(self, connected_driver: FakeGpsDriver) -> None:
+        connected_driver.configure_dyn_model(DynModel.STATIONARY)
+        assert connected_driver.get_dyn_model() is DynModel.STATIONARY
 
     def test_configure_tmode_mode_preserves_existing_position(
         self, connected_driver: FakeGpsDriver

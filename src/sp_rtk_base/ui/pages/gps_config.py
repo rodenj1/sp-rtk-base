@@ -1,8 +1,16 @@
-"""Advanced GPS Configuration page — RTCM, GNSS, save-to-flash, handoff.
+"""Advanced GPS Configuration page — profile picker, live-seeded form, handoff.
 
-Provides advanced GPS receiver configuration including RTCM message
-output ports, GNSS constellation selection, save to flash, and
-relay handoff.
+Provides the profile-based GPS receiver setup flow (issue #54): a
+profile picker tagged with hardware compatibility, a read-only
+receiver-configuration view seeded from the live device (RTCM matrix,
+port protocols, GNSS constellations), save-to-flash, and relay
+handoff.
+
+This is the read-only shell (issue #64) — no Apply, no Save-as yet.
+Selecting a profile is rendering-only: it does not write into the
+form. That wiring, plus the shave-by-shave RTCM/GNSS editing this page
+used to have, lands in a later ticket via the profile Apply pipeline
+(``POST /api/device/apply-config``).
 """
 
 # pyright: reportUnknownMemberType=false
@@ -14,21 +22,41 @@ relay handoff.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from nicegui import ui
 
 from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
+    ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
     DeviceCapability,
     DeviceConnectionState,
+    GnssConfig,
+    PortId,
+    PortProtocolConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
 )
-from sp_rtk_base.services import get_config_service, get_device_service
+from sp_rtk_base.models.hardware_identity import (
+    HARDWARE_UNKNOWN,
+    HardwareConfidence,
+    HardwareIdentity,
+    default_selection,
+    identity_from_target,
+    incompatible_reason,
+    is_compatible,
+)
+from sp_rtk_base.models.profile_models import Profile
+from sp_rtk_base.services import (
+    get_config_service,
+    get_device_service,
+    get_profile_store,
+)
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
@@ -36,13 +64,105 @@ logger = logging.getLogger(__name__)
 BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 DEFAULT_BAUD = 115200
 
-# Ports to show in the RTCM table (SPI is excluded — rarely used)
-VISIBLE_PORTS: list[RtcmOutputPort] = [
-    RtcmOutputPort.USB,
-    RtcmOutputPort.UART1,
-    RtcmOutputPort.UART2,
-    RtcmOutputPort.I2C,
+# GNSS constellations shown in the read-only form, in display order.
+_GNSS_DISPLAY: list[tuple[str, str]] = [
+    ("gps", "GPS"),
+    ("glonass", "GLONASS"),
+    ("galileo", "Galileo"),
+    ("beidou", "BeiDou"),
+    ("sbas", "SBAS"),
+    ("qzss", "QZSS"),
 ]
+
+#: Ports the boolean RTCM matrix covers — matches
+#: ``RtcmStreamConfig.matrix``'s column set (``PortId``), not the full
+#: 5-port live read-back.
+MATRIX_PORTS: list[PortId] = [PortId.UART1, PortId.UART2, PortId.USB]
+
+#: Data-link-capable ports — highlighted matrix columns. Mirrors
+#: ``profile_models._DATA_LINK_CANDIDATE_PORTS`` (USB excluded).
+DATA_LINK_PORTS: frozenset[PortId] = frozenset({PortId.UART1, PortId.UART2})
+
+#: Ports the matrix doesn't manage. A nonzero cell here in the live
+#: read-back means the receiver has RTCM enabled somewhere the
+#: profile form can't see or control.
+_ADVISORY_PORTS: tuple[RtcmOutputPort, ...] = (RtcmOutputPort.I2C, RtcmOutputPort.SPI)
+
+#: The one row every base profile must carry on a data-link port.
+REQUIRED_RTCM_ROW: RtcmRowId = RtcmRowId.RTCM_1005
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers — extracted for unit testing (see test_gps_config_helpers.py).
+# The page-rendering closure itself drives NiceGUI elements and can't be
+# meaningfully unit-tested without a full browser harness (tests/e2e).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProfilePickerEntry:
+    """One row in the profile picker, tagged with everything it needs to render."""
+
+    profile: Profile
+    is_builtin: bool
+    compatible: bool
+    incompatible_reason: str | None
+    is_default: bool
+
+
+def resolve_identity(
+    hardware_target: str | None, hardware_confidence: HardwareConfidence | None
+) -> HardwareIdentity:
+    """Build a :class:`HardwareIdentity` from device info, or the unknown sentinel."""
+    if hardware_target is None or hardware_confidence is None:
+        return identity_from_target(HARDWARE_UNKNOWN, HardwareConfidence.UNKNOWN)
+    return identity_from_target(hardware_target, hardware_confidence)
+
+
+def build_picker_entries(
+    profiles: list[Profile],
+    store: ProfileStore,
+    identity: HardwareIdentity,
+) -> list[ProfilePickerEntry]:
+    """Tag every profile with builtin/compatibility/default state for the picker.
+
+    Mirrors ``api/profiles.py:list_profiles`` — the UI reads the same
+    ``ProfileStore`` + ``hardware_identity`` primitives directly rather
+    than round-tripping through its own REST API. *profiles* is assumed
+    already ordered (built-ins before customs, alphabetical within
+    each group — ``ProfileStore.list_profiles`` guarantees this).
+    """
+    default_name = default_selection(identity, [(p.name, p.hardware) for p in profiles])
+    return [
+        ProfilePickerEntry(
+            profile=p,
+            is_builtin=store.is_builtin(p.name),
+            compatible=is_compatible(identity, p.hardware),
+            incompatible_reason=incompatible_reason(identity, p.hardware),
+            is_default=p.name == default_name,
+        )
+        for p in profiles
+    ]
+
+
+def matrix_cell_on(rtcm: RtcmPortConfig, row: RtcmRowId, port: PortId) -> bool:
+    """Whether *row* is enabled on *port* in the live read-back."""
+    return rtcm.is_enabled(row, RtcmOutputPort(port.value))
+
+
+def i2c_spi_advisory_rows(rtcm: RtcmPortConfig) -> list[RtcmRowId]:
+    """Row IDs with nonzero RTCM output on a port the matrix doesn't manage."""
+    return [
+        row_id
+        for row_id in ALL_RTCM_MESSAGE_IDS
+        if any(rtcm.is_enabled(row_id, p) for p in _ADVISORY_PORTS)
+    ]
+
+
+def row_slug(row_id: RtcmRowId) -> str:
+    """A CSS-class-safe token for *row_id* (``"4072.0"`` -> ``"4072_0"``) — a
+    stable hook the e2e suite uses to target a specific matrix row/cell."""
+    return row_id.value.replace(".", "_")
 
 
 @ui.page("/gps-config")
@@ -50,6 +170,7 @@ def gps_config_page() -> None:
     """Render the advanced GPS configuration page."""
     svc = get_device_service()
     config_svc = get_config_service()
+    profile_store = get_profile_store()
 
     with page_layout("Advanced GPS"):
         ui.label("Advanced GPS Configuration").classes("text-h4 text-white q-mb-md")
@@ -111,176 +232,61 @@ def gps_config_page() -> None:
             info_card.set_visibility(False)
 
         # ================================================================
-        # Section B: RTCM Message Output (hidden until connected)
+        # Section B: Profile picker (hidden until connected)
         # ================================================================
-        rtcm_section = ui.column().classes("w-full gap-4 q-mt-md")
-        rtcm_section.set_visibility(False)
+        profile_card = ui.card().classes("w-full q-pa-md q-mt-md")
+        profile_card.set_visibility(False)
 
-        with rtcm_section:
-            with ui.card().classes("w-full q-pa-md"):
-                ui.label("RTCM Message Output").classes("text-h6 text-white")
-                ui.separator()
-                ui.label(
-                    "Enable RTCM messages per output port. "
-                    "Rate is messages per navigation epoch (1 = every epoch)."
-                ).classes("text-grey-4 q-mt-xs text-caption")
-
-                # Build checkbox grid: rtcm_port_checks[msg_id][port] = checkbox
-                rtcm_port_checks: dict[RtcmRowId, dict[str, ui.checkbox]] = {}
-
-                with ui.column().classes("q-mt-sm gap-0 w-full"):
-                    # Header row
-                    with (
-                        ui.row()
-                        .classes("items-center w-full gap-0")
-                        .style("border-bottom: 1px solid #333; padding-bottom: 4px")
-                    ):
-                        ui.label("Group").classes("text-caption text-grey-5").style(
-                            "width: 100px; flex-shrink: 0"
-                        )
-                        ui.label("Message").classes("text-caption text-grey-5").style(
-                            "width: 180px; flex-shrink: 0"
-                        )
-                        for port in VISIBLE_PORTS:
-                            ui.label(port.value).classes(
-                                "text-caption text-grey-5 text-center"
-                            ).style("width: 65px; flex-shrink: 0")
-
-                    # Message rows grouped
-                    for group_name, messages in RTCM_MESSAGE_GROUPS:
-                        for idx, (msg_id, msg_desc) in enumerate(messages):
-                            with (
-                                ui.row()
-                                .classes("items-center w-full gap-0")
-                                .style("border-bottom: 1px solid #222; padding: 2px 0")
-                            ):
-                                # Group label (only on first row)
-                                if idx == 0:
-                                    ui.label(group_name).classes(
-                                        "text-white text-caption"
-                                    ).style("width: 100px; flex-shrink: 0")
-                                else:
-                                    ui.label("").style("width: 100px; flex-shrink: 0")
-
-                                # Message ID + description
-                                ui.label(f"{msg_id} {msg_desc}").classes(
-                                    "text-grey-3 text-caption"
-                                ).style("width: 180px; flex-shrink: 0")
-
-                                # Per-port checkboxes
-                                rtcm_port_checks[msg_id] = {}
-                                for port in VISIBLE_PORTS:
-                                    cb = ui.checkbox(
-                                        "",
-                                        value=False,
-                                    ).style("width: 65px; flex-shrink: 0")
-                                    rtcm_port_checks[msg_id][port.value] = cb
-
-                # Rate selector + quick actions + buttons
-                with ui.row().classes("gap-4 q-mt-md items-center flex-wrap"):
-                    rtcm_rate = (
-                        ui.number(
-                            "Rate",
-                            value=1,
-                            min=1,
-                            max=10,
-                            step=1,
-                        )
-                        .classes("w-24")
-                        .props("dense")
-                    )
-
-                    ui.label("|").classes("text-grey-6")
-
-                    # Quick-select per-port buttons
-                    for qp in VISIBLE_PORTS:
-                        _qp_val = qp.value
-
-                        def _toggle_port(
-                            p: str = _qp_val,
-                        ) -> None:
-                            """Toggle all msgs for a port."""
-                            any_on = any(
-                                cb.value
-                                for cbs in rtcm_port_checks.values()
-                                for k, cb in cbs.items()
-                                if k == p
-                            )
-                            for cbs in rtcm_port_checks.values():
-                                if p in cbs:
-                                    cbs[p].value = not any_on
-
-                        ui.button(
-                            qp.value,
-                            on_click=_toggle_port,
-                        ).props("dense flat size=sm color=grey-5")
-
-                    def _clear_all() -> None:
-                        for cbs in rtcm_port_checks.values():
-                            for cb in cbs.values():
-                                cb.value = False
-
-                    ui.button(
-                        "Clear All",
-                        icon="clear",
-                        on_click=_clear_all,
-                    ).props("dense flat size=sm color=grey-5")
-
-                with ui.row().classes("gap-4 q-mt-sm items-center"):
-                    rtcm_load_btn = ui.button(
-                        "Load from Device", icon="download"
-                    ).props("color=info outlined")
-                    rtcm_apply_btn = ui.button("Apply RTCM Config", icon="send").props(
-                        "color=primary"
-                    )
-                # Persistent status label beside the buttons.  The
-                # ``ui.notify`` toast fires on apply but fades in
-                # ~5s; operators in the e2e tour reported "no
-                # feedback" because they checked the page after the
-                # toast had vanished.  This label keeps the last
-                # apply result visible until the next attempt.
-                rtcm_apply_status = ui.label("").classes("text-caption q-mt-xs")
-                rtcm_apply_status.set_visibility(False)
-
-        # ================================================================
-        # Section C: GNSS Constellations (hidden until connected + capable)
-        # ================================================================
-        gnss_card = ui.card().classes("w-full q-pa-md q-mt-md")
-        gnss_card.set_visibility(False)
-
-        with gnss_card:
-            ui.label("GNSS Constellations").classes("text-h6 text-white")
+        with profile_card:
+            ui.label("Profile").classes("text-h6 text-white")
             ui.separator()
-            ui.label(
-                "Enable/disable satellite systems. At least one must remain enabled."
-            ).classes("text-grey-4 q-mt-xs text-caption")
-
-            _GNSS_DISPLAY: list[tuple[str, str, str]] = [
-                ("gps", "GPS", "🇺🇸 USA"),
-                ("glonass", "GLONASS", "🇷🇺 Russia"),
-                ("galileo", "Galileo", "🇪🇺 Europe"),
-                ("beidou", "BeiDou", "🇨🇳 China"),
-                ("sbas", "SBAS", "Augmentation"),
-                ("qzss", "QZSS", "🇯🇵 Japan"),
-            ]
-
-            gnss_toggles: dict[str, ui.switch] = {}
-            with ui.column().classes("q-mt-sm gap-2"):
-                for c_val, c_name, c_region in _GNSS_DISPLAY:
-                    with ui.row().classes("items-center gap-2"):
-                        sw = ui.switch(c_name, value=True)
-                        ui.label(c_region).classes("text-caption text-grey-5")
-                        gnss_toggles[c_val] = sw
-
-            with ui.row().classes("gap-4 q-mt-sm items-center"):
-                gnss_load_btn = ui.button("Load from Device", icon="download").props(
-                    "color=info outlined"
+            identity_label = ui.label("").classes("text-caption text-grey-4 q-mt-xs")
+            unconfirmed_banner = (
+                ui.label(
+                    "Unconfirmed hardware — only family- or any-tagged profiles are "
+                    "enabled, and no profile is suggested."
                 )
-                gnss_apply_btn = ui.button(
-                    "Apply GNSS Config", icon="satellite_alt"
-                ).props("color=primary")
-            gnss_apply_status = ui.label("").classes("text-caption q-mt-xs")
-            gnss_apply_status.set_visibility(False)
+                .classes("text-warning text-caption q-mt-xs q-pa-sm")
+                .style("border: 1px solid #5a4520; border-radius: 4px")
+            )
+            unconfirmed_banner.set_visibility(False)
+            picker_list = ui.column().classes("q-mt-sm gap-1 w-full")
+
+        # ================================================================
+        # Section C: Receiver configuration — read-only, seeded from the
+        # live receiver (hidden until connected)
+        # ================================================================
+        config_card = ui.card().classes("w-full q-pa-md q-mt-md")
+        config_card.set_visibility(False)
+
+        with config_card:
+            ui.label("Receiver Configuration").classes("text-h6 text-white")
+            ui.label(
+                "Read-only — reflects what is actually on the receiver right "
+                "now, not a saved profile."
+            ).classes("text-grey-4 q-mt-xs text-caption")
+            ui.separator()
+
+            ui.label("Port Protocols").classes("text-subtitle2 text-white q-mt-sm")
+            ports_view = ui.column().classes("q-mt-xs gap-1 w-full")
+
+            ui.label("GNSS Constellations").classes("text-subtitle2 text-white q-mt-md")
+            gnss_view = ui.row().classes("q-mt-xs gap-2 flex-wrap")
+
+            ui.label("RTCM Stream").classes("text-subtitle2 text-white q-mt-md")
+            ui.label(
+                "Boolean matrix — on/off per message x port. "
+                "Highlighted columns are data-link ports (where rovers read "
+                "corrections); USB is local diagnostics only."
+            ).classes("text-grey-4 q-mt-xs text-caption")
+            matrix_view = ui.column().classes("q-mt-sm gap-0 w-full")
+
+            advisory_label = (
+                ui.label("")
+                .classes("text-warning text-caption q-mt-sm q-pa-sm")
+                .style("border: 1px solid #5a4520; border-radius: 4px")
+            )
+            advisory_label.set_visibility(False)
 
         # ================================================================
         # Section D: Save to Flash (hidden until connected + capable)
@@ -358,6 +364,49 @@ def gps_config_page() -> None:
             except Exception:
                 pass  # Non-critical
 
+        def _render_picker() -> None:
+            """Render the profile picker from the current device identity."""
+            info = svc.device_info
+            identity = resolve_identity(
+                info.hardware_target if info else None,
+                info.hardware_confidence if info else None,
+            )
+            identity_label.text = (
+                f"Connected receiver hardware: {identity.target} "
+                f"({identity.confidence.value})"
+            )
+            unconfirmed_banner.set_visibility(
+                identity.confidence != HardwareConfidence.CONFIRMED
+            )
+
+            entries = build_picker_entries(
+                profile_store.list_profiles(), profile_store, identity
+            )
+
+            picker_list.clear()
+            with picker_list:
+                for entry in entries:
+                    row_classes = f"profile-row profile-row-{entry.profile.name} items-center gap-2 q-py-xs"
+                    with ui.row().classes(row_classes) as row:
+                        name_classes = (
+                            "text-white" if entry.compatible else "text-grey-6"
+                        )
+                        ui.label(entry.profile.name).classes(
+                            f"profile-name {name_classes}"
+                        )
+                        ui.badge("built-in" if entry.is_builtin else "custom").props(
+                            "outline color=grey"
+                        )
+                        if entry.is_default:
+                            ui.badge("Suggested").classes(
+                                "profile-suggested-badge"
+                            ).props("color=primary")
+                        if not entry.compatible and entry.incompatible_reason:
+                            row.classes("opacity-60")
+                            ui.icon("info").classes(
+                                "profile-incompatible-icon text-grey-5"
+                            ).tooltip(entry.incompatible_reason)
+
         def _update_ui_state() -> None:
             """Update UI visibility and button states based on device state."""
             state = svc.state
@@ -405,15 +454,16 @@ def gps_config_page() -> None:
                                 ui.badge(c.value).props("color=primary outline")
 
             # Section visibility
-            rtcm_section.set_visibility(
-                connected and DeviceCapability.RTCM_MESSAGE_SELECT in caps
-            )
-            gnss_card.set_visibility(connected and DeviceCapability.GNSS_SELECT in caps)
+            profile_card.set_visibility(connected)
+            config_card.set_visibility(connected)
             flash_card.set_visibility(
                 connected and DeviceCapability.SAVE_TO_FLASH in caps
             )
             handoff_card.set_visibility(connected)
             reload_device_btn.set_visibility(connected)
+
+            if connected:
+                _render_picker()
 
             # Error display
             status = svc.get_status()
@@ -422,6 +472,113 @@ def gps_config_page() -> None:
                 error_label.set_visibility(True)
             else:
                 error_label.set_visibility(False)
+
+        def _render_ports_table(ports: PortProtocolConfig) -> None:
+            ports_view.clear()
+            with ports_view:
+                for port_id in (PortId.UART1, PortId.UART2, PortId.USB):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label(port_id.value).classes("text-white").style(
+                            "width: 60px; flex-shrink: 0"
+                        )
+                        ui.label("IN").classes("text-caption text-grey-5")
+                        for proto in ports.enabled_in(port_id):
+                            ui.badge(proto.value).props("outline color=grey")
+                        ui.label("OUT").classes("text-caption text-grey-5 q-ml-md")
+                        for proto in ports.enabled_out(port_id):
+                            ui.badge(proto.value).props("outline color=primary")
+
+        def _render_gnss(gnss: GnssConfig) -> None:
+            enabled_map: dict[str, bool] = {
+                sys_cfg.constellation.value: sys_cfg.enabled for sys_cfg in gnss.systems
+            }
+            gnss_view.clear()
+            with gnss_view:
+                for c_val, c_name in _GNSS_DISPLAY:
+                    enabled = enabled_map.get(c_val, False)
+                    ui.badge(c_name).props(
+                        "color=positive" if enabled else "outline color=grey"
+                    )
+
+        def _render_matrix(rtcm: RtcmPortConfig) -> None:
+            matrix_view.clear()
+            with matrix_view:
+                # Header row
+                with (
+                    ui.row()
+                    .classes("items-center w-full gap-0")
+                    .style("border-bottom: 1px solid #333; padding-bottom: 4px")
+                ):
+                    ui.label("Message").classes("text-caption text-grey-5").style(
+                        "width: 220px; flex-shrink: 0"
+                    )
+                    for port in MATRIX_PORTS:
+                        header_classes = (
+                            f"rtcm-col-header rtcm-col-header-{port.value} "
+                            "text-caption text-center q-px-sm"
+                            + (
+                                " text-primary"
+                                if port in DATA_LINK_PORTS
+                                else " text-grey-5"
+                            )
+                        )
+                        ui.label(port.value).classes(header_classes).style(
+                            "width: 70px; flex-shrink: 0"
+                        )
+
+                for _group_name, messages in RTCM_MESSAGE_GROUPS:
+                    for msg_id, msg_desc in messages:
+                        slug = row_slug(msg_id)
+                        with (
+                            ui.row()
+                            .classes(
+                                f"rtcm-row rtcm-row-{slug} items-center w-full gap-0"
+                            )
+                            .style("border-bottom: 1px solid #222; padding: 2px 0")
+                        ):
+                            with (
+                                ui.row()
+                                .classes("items-center gap-1")
+                                .style("width: 220px; flex-shrink: 0")
+                            ):
+                                ui.label(f"{msg_id.value} {msg_desc}").classes(
+                                    "text-grey-3 text-caption"
+                                )
+                                if msg_id == REQUIRED_RTCM_ROW:
+                                    ui.badge("Required").props("outline color=warning")
+
+                            for port in MATRIX_PORTS:
+                                on = matrix_cell_on(rtcm, msg_id, port)
+                                cell_classes = (
+                                    f"rtcm-cell rtcm-cell-{slug}-{port.value} "
+                                    "text-center"
+                                    + (" text-positive" if on else " text-grey-7")
+                                )
+                                ui.label("✓" if on else "-").classes(
+                                    cell_classes
+                                ).style("width: 70px; flex-shrink: 0")
+
+        def _render_advisory(rtcm: RtcmPortConfig) -> None:
+            rows = i2c_spi_advisory_rows(rtcm)
+            if rows:
+                names = ", ".join(r.value for r in rows)
+                advisory_label.text = (
+                    f"RTCM enabled on I2C/SPI for {names} — this profile "
+                    "doesn't manage those ports."
+                )
+                advisory_label.set_visibility(True)
+            else:
+                advisory_label.set_visibility(False)
+
+        async def _load_receiver_config_form() -> None:
+            """Seed the read-only form from the live receiver."""
+            rtcm = await svc.get_rtcm_port_config()
+            ports = await svc.get_port_protocols()
+            gnss = await svc.get_gnss_config()
+            _render_ports_table(ports)
+            _render_gnss(gnss)
+            _render_matrix(rtcm)
+            _render_advisory(rtcm)
 
         async def _connect() -> None:
             """Connect to the selected device."""
@@ -455,16 +612,12 @@ def gps_config_page() -> None:
 
             _update_ui_state()
 
-            # Auto-load configs after connect
+            # Auto-load the receiver-config form after connect
             if svc.is_connected:
                 try:
-                    await _load_rtcm_config()
+                    await _load_receiver_config_form()
                 except Exception:
-                    logger.warning("Failed to read RTCM config on connect")
-                try:
-                    await _load_gnss_config()
-                except Exception:
-                    logger.warning("Failed to read GNSS config on connect")
+                    logger.warning("Failed to load receiver config on connect")
 
         def _cancel_connect() -> None:
             """Cancel an in-progress connect attempt."""
@@ -477,112 +630,6 @@ def gps_config_page() -> None:
             await svc.disconnect()
             ui.notify("Disconnected", type="info")
             _update_ui_state()
-
-        async def _apply_rtcm() -> None:
-            """Apply multi-port RTCM message configuration."""
-            rate = int(rtcm_rate.value or 1)
-            messages: dict[RtcmRowId, dict[str, int]] = {}
-
-            any_enabled = False
-            for msg_id, port_cbs in rtcm_port_checks.items():
-                port_rates: dict[str, int] = {}
-                for port_name, cb in port_cbs.items():
-                    val = rate if cb.value else 0
-                    port_rates[port_name] = val
-                    if val > 0:
-                        any_enabled = True
-                port_rates.setdefault("SPI", 0)
-                messages[msg_id] = port_rates
-
-            if not any_enabled:
-                ui.notify(
-                    "Enable at least one message on one port",
-                    type="warning",
-                )
-                return
-
-            try:
-                await svc.configure_rtcm_ports(RtcmPortConfig(messages=messages))
-                ui.notify("RTCM config applied ✓", type="positive")
-                rtcm_apply_status.text = "✓ RTCM config applied"
-                rtcm_apply_status.classes(replace="text-positive text-caption q-mt-xs")
-                rtcm_apply_status.set_visibility(True)
-            except Exception as exc:
-                ui.notify(f"RTCM config failed: {exc}", type="negative")
-                rtcm_apply_status.text = f"✗ RTCM config failed: {exc}"
-                rtcm_apply_status.classes(replace="text-negative text-caption q-mt-xs")
-                rtcm_apply_status.set_visibility(True)
-
-        async def _load_rtcm_config() -> None:
-            """Load current RTCM multi-port config from the device."""
-            try:
-                config = await svc.get_rtcm_port_config()
-
-                for msg_id, port_cbs in rtcm_port_checks.items():
-                    device_ports = config.messages.get(msg_id, {})
-                    for port_name, cb in port_cbs.items():
-                        cb.value = device_ports.get(port_name, 0) > 0
-
-                for port_rates in config.messages.values():
-                    for r in port_rates.values():
-                        if r > 0:
-                            rtcm_rate.value = r
-                            break
-                    else:
-                        continue
-                    break
-
-                ui.notify("RTCM config loaded from device", type="positive")
-            except Exception as exc:
-                ui.notify(f"Load RTCM failed: {exc}", type="negative")
-
-        async def _load_gnss_config() -> None:
-            """Load current GNSS constellation config from the device."""
-            try:
-                config = await svc.get_gnss_config()
-                enabled_map: dict[str, bool] = {}
-                for sys_cfg in config.systems:
-                    enabled_map[sys_cfg.constellation.value] = sys_cfg.enabled
-                for c_val, sw in gnss_toggles.items():
-                    sw.value = enabled_map.get(c_val, False)
-                ui.notify("GNSS config loaded from device", type="positive")
-            except Exception as exc:
-                ui.notify(f"Load GNSS failed: {exc}", type="negative")
-
-        async def _apply_gnss_config() -> None:
-            """Apply GNSS constellation configuration to the device."""
-            from sp_rtk_base.models.device_models import (
-                GnssConfig,
-                GnssConstellation,
-                GnssSystemConfig,
-            )
-
-            enabled_count = sum(1 for sw in gnss_toggles.values() if sw.value)
-            if enabled_count == 0:
-                ui.notify("At least one constellation must be enabled", type="warning")
-                return
-
-            systems: list[GnssSystemConfig] = []
-            for c_val, sw in gnss_toggles.items():
-                systems.append(
-                    GnssSystemConfig(
-                        constellation=GnssConstellation(c_val),
-                        enabled=bool(sw.value),
-                    )
-                )
-
-            try:
-                await svc.configure_gnss(GnssConfig(systems=systems))
-                enabled = [c_val for c_val, sw in gnss_toggles.items() if sw.value]
-                ui.notify(f"GNSS config applied: {enabled}", type="positive")
-                gnss_apply_status.text = f"✓ GNSS config applied: {enabled}"
-                gnss_apply_status.classes(replace="text-positive text-caption q-mt-xs")
-                gnss_apply_status.set_visibility(True)
-            except Exception as exc:
-                ui.notify(f"GNSS config failed: {exc}", type="negative")
-                gnss_apply_status.text = f"✗ GNSS config failed: {exc}"
-                gnss_apply_status.classes(replace="text-negative text-caption q-mt-xs")
-                gnss_apply_status.set_visibility(True)
 
         async def _save_flash() -> None:
             """Save configuration to device flash."""
@@ -612,20 +659,16 @@ def gps_config_page() -> None:
             _update_ui_state()
 
         async def _reload_device_config() -> None:
-            """Re-read all configs from the connected device."""
+            """Re-read the profile picker and receiver-config form."""
             if not svc.is_connected:
                 ui.notify("Not connected", type="warning")
                 return
             ui.notify("Reloading device config...", type="info")
             _update_ui_state()
             try:
-                await _load_rtcm_config()
+                await _load_receiver_config_form()
             except Exception:
-                logger.debug("Reload RTCM config failed")
-            try:
-                await _load_gnss_config()
-            except Exception:
-                logger.debug("Reload GNSS config failed")
+                logger.debug("Reload receiver config failed")
 
         # ---- Wire up event handlers ----
         connect_btn.on_click(_connect)
@@ -633,26 +676,18 @@ def gps_config_page() -> None:
         cancel_btn.on_click(lambda: _cancel_connect())
         refresh_btn.on_click(lambda: _refresh_ports())
         reload_device_btn.on_click(_reload_device_config)
-        rtcm_load_btn.on_click(_load_rtcm_config)
-        rtcm_apply_btn.on_click(_apply_rtcm)
-        gnss_load_btn.on_click(_load_gnss_config)
-        gnss_apply_btn.on_click(_apply_gnss_config)
         save_flash_btn.on_click(_save_flash)
         handoff_btn.on_click(_handoff_to_relay)
 
         # ---- Auto-load if already connected (navigated from another page) ----
         async def _on_page_load() -> None:
-            """If device is already connected, auto-load RTCM and GNSS configs."""
+            """If device is already connected, auto-load the receiver-config form."""
             if svc.is_connected:
                 _update_ui_state()
                 try:
-                    await _load_rtcm_config()
+                    await _load_receiver_config_form()
                 except Exception:
-                    logger.debug("Auto-load RTCM config failed on page load")
-                try:
-                    await _load_gnss_config()
-                except Exception:
-                    logger.debug("Auto-load GNSS config failed on page load")
+                    logger.debug("Auto-load receiver config failed on page load")
 
         # ---- Initial load ----
         _refresh_ports()

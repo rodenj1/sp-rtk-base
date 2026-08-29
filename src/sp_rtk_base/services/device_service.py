@@ -92,15 +92,19 @@ _THROUGHPUT_WARN_THRESHOLD = 0.70
 
 
 def _throughput_warnings(
-    matrix: dict[RtcmRowId, dict[PortId, bool]],
-    data_link_ports: list[PortId],
-    meas_period_ms: int,
-    baud_rates: dict[PortId, int],
+    config: ReceiverConfig, baud_rates: dict[PortId, int]
 ) -> list[str]:
-    """Non-blocking advisories when estimated RTCM output nears port capacity."""
-    hz = 1000.0 / meas_period_ms
+    """Non-blocking advisories when estimated RTCM output nears port capacity.
+
+    Takes the whole ``ReceiverConfig`` rather than its three relevant
+    fields individually — ``rtcm_stream.matrix``, ``data_link_port``
+    and ``meas_period_ms`` only ever travel together for this check,
+    and the config already bundles them.
+    """
+    matrix = config.rtcm_stream.matrix
+    hz = 1000.0 / config.meas_period_ms
     warnings: list[str] = []
-    for port in data_link_ports:
+    for port in config.data_link_port:
         baud = baud_rates.get(port)
         if not baud:
             continue
@@ -665,11 +669,16 @@ class DeviceService:
         Sequence: guards -> measurement rate -> ports -> constellations
         -> optimisations -> role fields (dyn_model, then tmode_mode) ->
         the full RTCM matrix -> read-back verify. Baud is out of scope
-        here entirely — ``ReceiverConfig.baud`` is never read by this
-        method.
+        here entirely — a submitted non-null ``ReceiverConfig.baud`` is
+        rejected pre-write rather than silently ignored (see the follow-up
+        ticket for baud support).
 
         Guards run before any write and refuse with nothing written:
 
+        - **Baud out of scope.** A non-null ``baud`` with either UART
+          value set is refused — applying it would mean reopening the
+          serial link this very request is using, which is explicitly
+          the follow-up ticket's job, not this one's.
         - **UBX-in liveness.** This console always manages the receiver
           over its own USB connection — UART1/UART2 are reserved for
           RTCM data-link output (``ReceiverConfig`` only allows those
@@ -696,6 +705,15 @@ class DeviceService:
                 config before any write.
         """
         driver = self._require_connected()
+
+        if config.baud is not None and (
+            config.baud.uart1 is not None or config.baud.uart2 is not None
+        ):
+            raise ApplyConfigRefusedError(
+                "baud_out_of_scope",
+                "baud is out of scope for apply-config — it would disturb "
+                "the console's own link; leave it unset",
+            )
 
         if config.ports is not None:
             usb_ports = config.ports.get(PortId.USB)
@@ -767,12 +785,7 @@ class DeviceService:
             raise
 
         baud_rates = await asyncio.to_thread(driver.get_uart_baud_rates)
-        warnings = _throughput_warnings(
-            config.rtcm_stream.matrix,
-            config.data_link_port,
-            config.meas_period_ms,
-            baud_rates,
-        )
+        warnings = _throughput_warnings(config, baud_rates)
 
         actual_rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
         diff = self._diff_rtcm_matrix(config.rtcm_stream.matrix, actual_rtcm)

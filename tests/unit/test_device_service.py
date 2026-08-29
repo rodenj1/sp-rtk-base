@@ -27,6 +27,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.profile_models import (
+    BaudConfig,
     PortProtocolSet,
     ReceiverConfig,
     RtcmStreamConfig,
@@ -406,6 +407,26 @@ class TestApplyReceiverConfig:
         svc.set_driver(_make_mock_driver())
         with pytest.raises(RuntimeError, match="Device not connected"):
             await svc.apply_receiver_config(_minimal_config())
+
+    @pytest.mark.asyncio()
+    async def test_baud_out_of_scope_refused_before_any_write(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        config = _minimal_config(baud=BaudConfig(uart1=57600))
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(config)
+
+        assert exc_info.value.rule == "baud_out_of_scope"
+        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_omitted_is_allowed(self, connected_svc: DeviceService) -> None:
+        result = await connected_svc.apply_receiver_config(
+            _minimal_config(baud=BaudConfig())
+        )
+        assert result.status == "ok"
 
     @pytest.mark.asyncio()
     async def test_ubx_in_liveness_guard_refuses_before_any_write(

@@ -1,16 +1,17 @@
-"""Advanced GPS Configuration page — profile picker, live-seeded form, handoff.
+"""Advanced GPS Configuration page — profile picker, live-seeded form, Apply, handoff.
 
 Provides the profile-based GPS receiver setup flow (issue #54): a
-profile picker tagged with hardware compatibility, a read-only
-receiver-configuration view seeded from the live device (RTCM matrix,
-port protocols, GNSS constellations), save-to-flash, and relay
-handoff.
+profile picker tagged with hardware compatibility, a receiver-
+configuration view seeded from the live device (RTCM matrix, port
+protocols, GNSS constellations), save-to-flash, and relay handoff.
 
-This is the read-only shell (issue #64) — no Apply, no Save-as yet.
-Selecting a profile is rendering-only: it does not write into the
-form. That wiring, plus the shave-by-shave RTCM/GNSS editing this page
-used to have, lands in a later ticket via the profile Apply pipeline
-(``POST /api/device/apply-config``).
+Issue #64 shipped the read-only shell; issue #65 (this revision) makes
+the RTCM matrix and data-link port(s) editable and wires them to
+``POST /api/device/apply-config`` via ``DeviceService.apply_receiver_config``,
+plus the "receiver out of sync" indicator (form vs. live receiver,
+cleared only by a successful apply). Selecting a profile is still
+rendering-only — it does not write into the form; that wiring, plus
+editing ports/GNSS/role fields, lands in a later ticket (#66).
 """
 
 # pyright: reportUnknownMemberType=false
@@ -25,11 +26,13 @@ import logging
 from dataclasses import dataclass
 
 from nicegui import ui
+from pydantic import ValidationError
 
 from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
+    ApplyConfigCellDiff,
     DeviceCapability,
     DeviceConnectionState,
     GnssConfig,
@@ -48,11 +51,15 @@ from sp_rtk_base.models.hardware_identity import (
     incompatible_reason,
     is_compatible,
 )
-from sp_rtk_base.models.profile_models import Profile
+from sp_rtk_base.models.profile_models import Profile, ReceiverConfig, RtcmStreamConfig
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
     get_profile_store,
+)
+from sp_rtk_base.services.device_service import (
+    ApplyConfigLinkLostError,
+    ApplyConfigRefusedError,
 )
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -159,6 +166,94 @@ def i2c_spi_advisory_rows(rtcm: RtcmPortConfig) -> list[RtcmRowId]:
     ]
 
 
+def rtcm_config_to_matrix(
+    rtcm: RtcmPortConfig,
+) -> dict[RtcmRowId, dict[PortId, bool]]:
+    """Seed the editable boolean matrix from a live ``RtcmPortConfig`` read-back.
+
+    Every catalog row x :data:`MATRIX_PORTS` cell is present (default
+    off) so the result compares by plain equality against another
+    matrix built the same way — that equality is how the "receiver out
+    of sync" indicator works.
+    """
+    return {
+        row_id: {port: matrix_cell_on(rtcm, row_id, port) for port in MATRIX_PORTS}
+        for row_id in ALL_RTCM_MESSAGE_IDS
+    }
+
+
+def infer_data_link_ports(matrix: dict[RtcmRowId, dict[PortId, bool]]) -> list[PortId]:
+    """UART ports already carrying at least one enabled RTCM row.
+
+    ``data_link_port`` has no CFG key of its own — it can't be read
+    back from the receiver — so it's inferred from which UART already
+    emits RTCM rather than guessed (issue #54's usage-driven
+    revision). USB is never a candidate. An empty result means the
+    inference is empty (a factory receiver with no RTCM anywhere) and
+    the operator must pick explicitly.
+    """
+    return [
+        port
+        for port in (PortId.UART1, PortId.UART2)
+        if any(row.get(port, False) for row in matrix.values())
+    ]
+
+
+def apply_blocked_reason(data_link_port: list[PortId]) -> str | None:
+    """Why Apply is disabled right now, or ``None`` if it isn't."""
+    if not data_link_port:
+        return (
+            "No data-link port could be inferred — select at least one "
+            "UART port below before applying."
+        )
+    return None
+
+
+def build_apply_config(
+    matrix: dict[RtcmRowId, dict[PortId, bool]],
+    data_link_port: list[PortId],
+) -> ReceiverConfig:
+    """Build the ``ReceiverConfig`` Apply pushes from the editable form state.
+
+    Only the RTCM matrix and the data-link ports are editable on this
+    page (issue #65) — every other field is left at its schema default
+    / ``None`` so Apply never touches ports, GNSS, role fields or baud
+    that this page doesn't yet expose for editing.
+
+    Raises:
+        pydantic.ValidationError: If the resulting config fails a
+            context-free rule (e.g. 1005 missing from every chosen
+            data-link port) — a client-side pre-write refusal, nothing
+            is sent to the receiver.
+    """
+    return ReceiverConfig(
+        data_link_port=data_link_port,
+        rtcm_stream=RtcmStreamConfig(matrix=matrix),
+    )
+
+
+def copy_matrix(
+    matrix: dict[RtcmRowId, dict[PortId, bool]],
+) -> dict[RtcmRowId, dict[PortId, bool]]:
+    """Deep-copy a row x port matrix so the copy can diverge independently.
+
+    A shallow ``dict(matrix)`` shares the per-row inner dicts with the
+    original — mutating one cell would silently mutate both the form
+    and the "last known live" snapshot, breaking the out-of-sync
+    comparison.
+    """
+    return {row: dict(ports) for row, ports in matrix.items()}
+
+
+def format_cell_diff(diff: ApplyConfigCellDiff) -> str:
+    """Render one post-apply read-back mismatch as a human-readable line."""
+    expected = "on" if diff.expected else "off"
+    actual = "on" if diff.actual else "off"
+    return (
+        f"{diff.row_id.value} on {diff.port.value}: expected {expected}, got {actual}"
+    )
+
+
 def row_slug(row_id: RtcmRowId) -> str:
     """A CSS-class-safe token for *row_id* (``"4072.0"`` -> ``"4072_0"``) — a
     stable hook the e2e suite uses to target a specific matrix row/cell."""
@@ -262,8 +357,9 @@ def gps_config_page() -> None:
         with config_card:
             ui.label("Receiver Configuration").classes("text-h6 text-white")
             ui.label(
-                "Read-only — reflects what is actually on the receiver right "
-                "now, not a saved profile."
+                "Port protocols and GNSS reflect the receiver and aren't "
+                "editable here yet. The RTCM matrix and data-link port(s) "
+                "below are — edit, then Apply."
             ).classes("text-grey-4 q-mt-xs text-caption")
             ui.separator()
 
@@ -275,9 +371,9 @@ def gps_config_page() -> None:
 
             ui.label("RTCM Stream").classes("text-subtitle2 text-white q-mt-md")
             ui.label(
-                "Boolean matrix — on/off per message x port. "
-                "Highlighted columns are data-link ports (where rovers read "
-                "corrections); USB is local diagnostics only."
+                "Boolean matrix — on/off per message x port. Click a cell to "
+                "toggle it. Highlighted columns are data-link ports (where "
+                "rovers read corrections); USB is local diagnostics only."
             ).classes("text-grey-4 q-mt-xs text-caption")
             matrix_view = ui.column().classes("q-mt-sm gap-0 w-full")
 
@@ -287,6 +383,30 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #5a4520; border-radius: 4px")
             )
             advisory_label.set_visibility(False)
+
+            ui.label("Data-Link Port(s)").classes("text-subtitle2 text-white q-mt-md")
+            data_link_hint = ui.label("").classes(
+                "data-link-hint text-grey-4 q-mt-xs text-caption"
+            )
+            data_link_blocked_label = (
+                ui.label("")
+                .classes("data-link-blocked text-warning text-caption q-mt-xs q-pa-sm")
+                .style("border: 1px solid #5a4520; border-radius: 4px")
+            )
+            data_link_blocked_label.set_visibility(False)
+            data_link_picker = ui.row().classes("data-link-picker q-mt-xs gap-4")
+
+            with ui.row().classes("items-center gap-3 q-mt-md"):
+                apply_btn = ui.button("Apply", icon="bolt").props("color=primary")
+                sync_badge = ui.badge("").classes("sync-badge").props("color=positive")
+
+            apply_result_label = (
+                ui.label("")
+                .classes("apply-result text-caption q-mt-sm q-pa-sm")
+                .style("border: 1px solid #333; border-radius: 4px")
+            )
+            apply_result_label.set_visibility(False)
+            apply_diff_list = ui.column().classes("apply-diff-list q-mt-xs gap-0")
 
         # ================================================================
         # Section D: Save to Flash (hidden until connected + capable)
@@ -473,6 +593,18 @@ def gps_config_page() -> None:
             else:
                 error_label.set_visibility(False)
 
+        # Editable form state (issue #65) — seeded from the live receiver on
+        # every load/reload/reconnect, then mutated by matrix clicks and the
+        # data-link checkboxes until the next Apply or reseed.
+        form_matrix: dict[RtcmRowId, dict[PortId, bool]] = rtcm_config_to_matrix(
+            RtcmPortConfig()
+        )
+        live_matrix: dict[RtcmRowId, dict[PortId, bool]] = copy_matrix(form_matrix)
+        form_data_link_ports: list[PortId] = []
+
+        def _out_of_sync() -> bool:
+            return form_matrix != live_matrix
+
         def _render_ports_table(ports: PortProtocolConfig) -> None:
             ports_view.clear()
             with ports_view:
@@ -500,7 +632,12 @@ def gps_config_page() -> None:
                         "color=positive" if enabled else "outline color=grey"
                     )
 
-        def _render_matrix(rtcm: RtcmPortConfig) -> None:
+        def _toggle_matrix_cell(msg_id: RtcmRowId, port: PortId) -> None:
+            form_matrix[msg_id][port] = not form_matrix[msg_id][port]
+            _render_matrix()
+            _on_form_changed()
+
+        def _render_matrix() -> None:
             matrix_view.clear()
             with matrix_view:
                 # Header row
@@ -548,15 +685,144 @@ def gps_config_page() -> None:
                                     ui.badge("Required").props("outline color=warning")
 
                             for port in MATRIX_PORTS:
-                                on = matrix_cell_on(rtcm, msg_id, port)
+                                on = form_matrix[msg_id][port]
                                 cell_classes = (
                                     f"rtcm-cell rtcm-cell-{slug}-{port.value} "
-                                    "text-center"
+                                    "text-center cursor-pointer"
                                     + (" text-positive" if on else " text-grey-7")
                                 )
                                 ui.label("✓" if on else "-").classes(
                                     cell_classes
-                                ).style("width: 70px; flex-shrink: 0")
+                                ).style("width: 70px; flex-shrink: 0").on(
+                                    "click",
+                                    lambda _, m=msg_id, p=port: _toggle_matrix_cell(
+                                        m, p
+                                    ),
+                                )
+
+        def _render_data_link_picker() -> None:
+            inferred = infer_data_link_ports(form_matrix)
+            data_link_hint.text = (
+                f"Inferred from current RTCM state: "
+                f"{', '.join(p.value for p in inferred)}"
+                if inferred
+                else "Nothing inferred yet — pick below."
+            )
+
+            data_link_picker.clear()
+            with data_link_picker:
+                for port in (PortId.UART1, PortId.UART2):
+                    ui.checkbox(
+                        port.value,
+                        value=port in form_data_link_ports,
+                        on_change=lambda e, p=port: _toggle_data_link_port(
+                            p, bool(e.value)
+                        ),
+                    ).classes(f"data-link-checkbox-{port.value}")
+
+        def _toggle_data_link_port(port: PortId, checked: bool) -> None:
+            if checked and port not in form_data_link_ports:
+                form_data_link_ports.append(port)
+            elif not checked and port in form_data_link_ports:
+                form_data_link_ports.remove(port)
+            _on_form_changed()
+
+        def _render_sync_indicator() -> None:
+            if _out_of_sync():
+                sync_badge.text = "Receiver out of sync"
+                sync_badge.props("color=warning")
+            else:
+                sync_badge.text = "In sync"
+                sync_badge.props("color=positive")
+
+        def _render_apply_gate() -> None:
+            reason = apply_blocked_reason(form_data_link_ports)
+            apply_btn.set_enabled(reason is None)
+            data_link_blocked_label.text = reason or ""
+            data_link_blocked_label.set_visibility(reason is not None)
+
+        def _on_form_changed() -> None:
+            """Recompute every reactive bit of the form after an edit.
+
+            Includes the data-link picker so its "inferred from current
+            RTCM state" hint stays current after a matrix toggle, not
+            just after a reseed.
+            """
+            _render_data_link_picker()
+            _render_sync_indicator()
+            _render_apply_gate()
+
+        def _set_apply_result(text: str, *, ok: bool) -> None:
+            apply_diff_list.clear()
+            apply_result_label.text = text
+            apply_result_label.classes(
+                remove="text-negative" if ok else "text-positive",
+                add="text-positive" if ok else "text-negative",
+            )
+            apply_result_label.set_visibility(True)
+
+        def _clear_apply_result() -> None:
+            apply_result_label.set_visibility(False)
+            apply_diff_list.clear()
+
+        def _show_apply_diff(diff: list[ApplyConfigCellDiff]) -> None:
+            apply_diff_list.clear()
+            with apply_diff_list:
+                for cell in diff:
+                    ui.label(format_cell_diff(cell)).classes(
+                        "text-caption text-warning"
+                    )
+
+        async def _apply() -> None:
+            """Push the current form (matrix + data-link ports) to the receiver."""
+            nonlocal live_matrix
+            try:
+                config = build_apply_config(form_matrix, form_data_link_ports)
+            except ValidationError as exc:
+                _set_apply_result(
+                    f"Apply refused: {exc.errors()[0]['msg']} — nothing was written.",
+                    ok=False,
+                )
+                return
+
+            try:
+                result = await svc.apply_receiver_config(config)
+            except ApplyConfigRefusedError as exc:
+                _set_apply_result(
+                    f"Apply refused ({exc.rule}): {exc} — nothing was written.",
+                    ok=False,
+                )
+                return
+            except ApplyConfigLinkLostError as exc:
+                _set_apply_result(str(exc), ok=False)
+                return
+            except Exception as exc:
+                ui.notify(f"Apply failed: {exc}", type="negative")
+                logger.exception("apply-config failed")
+                return
+
+            if result.status == "ok":
+                live_matrix = copy_matrix(form_matrix)
+                _set_apply_result("Applied and verified ✓", ok=True)
+                ui.notify("Applied and verified ✓", type="positive")
+            else:
+                # The writes landed but the read-back disagrees — reflect
+                # the receiver's *actual* state so "out of sync" stays
+                # honest even though only a successful apply clears it.
+                for cell in result.diff:
+                    live_matrix[cell.row_id][cell.port] = cell.actual
+                _set_apply_result(
+                    "Applied, but verification found mismatches — nothing "
+                    "was rolled back.",
+                    ok=False,
+                )
+                _show_apply_diff(result.diff)
+                ui.notify("Verification found mismatches", type="warning")
+
+            if result.warnings:
+                ui.notify(" ".join(result.warnings), type="warning")
+
+            _on_form_changed()
 
         def _render_advisory(rtcm: RtcmPortConfig) -> None:
             rows = i2c_spi_advisory_rows(rtcm)
@@ -571,14 +837,28 @@ def gps_config_page() -> None:
                 advisory_label.set_visibility(False)
 
         async def _load_receiver_config_form() -> None:
-            """Seed the read-only form from the live receiver."""
+            """Seed the form from the live receiver.
+
+            The RTCM matrix and data-link ports are freshly inferred here
+            every time — on connect, reload, and reconnect — so the form
+            starts in sync by construction (issue #65), matching the rest
+            of this page's existing live-seeding behaviour.
+            """
+            nonlocal form_matrix, live_matrix, form_data_link_ports
             rtcm = await svc.get_rtcm_port_config()
             ports = await svc.get_port_protocols()
             gnss = await svc.get_gnss_config()
+
+            form_matrix = rtcm_config_to_matrix(rtcm)
+            live_matrix = copy_matrix(form_matrix)
+            form_data_link_ports = infer_data_link_ports(form_matrix)
+
             _render_ports_table(ports)
             _render_gnss(gnss)
-            _render_matrix(rtcm)
+            _render_matrix()
             _render_advisory(rtcm)
+            _clear_apply_result()
+            _on_form_changed()
 
         async def _connect() -> None:
             """Connect to the selected device."""
@@ -676,6 +956,7 @@ def gps_config_page() -> None:
         cancel_btn.on_click(lambda: _cancel_connect())
         refresh_btn.on_click(lambda: _refresh_ports())
         reload_device_btn.on_click(_reload_device_config)
+        apply_btn.on_click(_apply)
         save_flash_btn.on_click(_save_flash)
         handoff_btn.on_click(_handoff_to_relay)
 

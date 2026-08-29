@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.models.device_models import (
+    ApplyConfigCellDiff,
     PortId,
     RtcmOutputPort,
     RtcmPortConfig,
@@ -28,12 +29,18 @@ from sp_rtk_base.models.hardware_identity import (
 from sp_rtk_base.models.profile_models import Profile
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.ui.pages.gps_config import (
+    MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
+    apply_blocked_reason,
+    build_apply_config,
     build_picker_entries,
+    format_cell_diff,
     i2c_spi_advisory_rows,
+    infer_data_link_ports,
     matrix_cell_on,
     resolve_identity,
     row_slug,
+    rtcm_config_to_matrix,
 )
 
 
@@ -188,3 +195,109 @@ class TestI2cSpiAdvisoryRows:
             }
         )
         assert i2c_spi_advisory_rows(rtcm) == [RtcmRowId.RTCM_1005, RtcmRowId.RTCM_1097]
+
+
+class TestRtcmConfigToMatrix:
+    """Seeds the editable boolean matrix from a live ``RtcmPortConfig`` read-back."""
+
+    def test_covers_every_catalog_row_and_matrix_port(self) -> None:
+        matrix = rtcm_config_to_matrix(RtcmPortConfig(messages={}))
+        assert set(matrix.keys()) == {
+            RtcmRowId.RTCM_1005,
+            RtcmRowId.RTCM_1077,
+            RtcmRowId.RTCM_1087,
+            RtcmRowId.RTCM_1097,
+            RtcmRowId.RTCM_1127,
+            RtcmRowId.RTCM_1230,
+            RtcmRowId.RTCM_1074,
+            RtcmRowId.RTCM_1084,
+            RtcmRowId.RTCM_1094,
+            RtcmRowId.RTCM_1124,
+            RtcmRowId.RTCM_4072_0,
+            RtcmRowId.RTCM_4072_1,
+        }
+        for row in matrix.values():
+            assert set(row.keys()) == set(MATRIX_PORTS)
+
+    def test_reflects_live_enabled_cells(self) -> None:
+        rtcm = RtcmPortConfig(
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1, "UART2": 0, "USB": 1}}
+        )
+        matrix = rtcm_config_to_matrix(rtcm)
+        assert matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
+        assert matrix[RtcmRowId.RTCM_1005][PortId.UART2] is False
+        assert matrix[RtcmRowId.RTCM_1005][PortId.USB] is True
+        assert matrix[RtcmRowId.RTCM_1077][PortId.UART1] is False
+
+
+class TestInferDataLinkPorts:
+    """The spec-mandated inference: a UART carrying any RTCM row qualifies."""
+
+    def test_empty_matrix_infers_nothing(self) -> None:
+        matrix = rtcm_config_to_matrix(RtcmPortConfig(messages={}))
+        assert infer_data_link_ports(matrix) == []
+
+    def test_uart_with_a_row_on_is_inferred(self) -> None:
+        matrix = rtcm_config_to_matrix(
+            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
+        )
+        assert infer_data_link_ports(matrix) == [PortId.UART1]
+
+    def test_usb_only_traffic_infers_nothing(self) -> None:
+        """USB can never be a data-link port — it's excluded even if it carries RTCM."""
+        matrix = rtcm_config_to_matrix(
+            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"USB": 1}})
+        )
+        assert infer_data_link_ports(matrix) == []
+
+    def test_both_uarts_inferred_in_enum_order(self) -> None:
+        matrix = rtcm_config_to_matrix(
+            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1, "UART2": 1}})
+        )
+        assert infer_data_link_ports(matrix) == [PortId.UART1, PortId.UART2]
+
+
+class TestApplyBlockedReason:
+    def test_no_data_link_port_blocks_with_a_reason(self) -> None:
+        reason = apply_blocked_reason([])
+        assert reason is not None
+        assert "data-link port" in reason
+
+    def test_a_chosen_data_link_port_unblocks(self) -> None:
+        assert apply_blocked_reason([PortId.UART1]) is None
+
+
+class TestBuildApplyConfig:
+    def test_builds_a_valid_receiver_config(self) -> None:
+        matrix = rtcm_config_to_matrix(
+            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
+        )
+        config = build_apply_config(matrix, [PortId.UART1])
+        assert config.data_link_port == [PortId.UART1]
+        assert config.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
+        # Fields this page doesn't make editable are left untouched.
+        assert config.ports is None
+        assert config.constellations is None
+        assert config.dyn_model is None
+        assert config.tmode_mode is None
+        assert config.baud is None
+
+    def test_raises_when_1005_missing_from_every_data_link_port(self) -> None:
+        matrix = rtcm_config_to_matrix(RtcmPortConfig(messages={}))
+        with pytest.raises(ValueError, match="1005"):
+            build_apply_config(matrix, [PortId.UART1])
+
+
+class TestFormatCellDiff:
+    def test_names_row_port_and_the_mismatch(self) -> None:
+        diff = ApplyConfigCellDiff(
+            row_id=RtcmRowId.RTCM_1005,
+            port=PortId.UART1,
+            expected=True,
+            actual=False,
+        )
+        text = format_cell_diff(diff)
+        assert "1005" in text
+        assert "UART1" in text
+        assert "on" in text
+        assert "off" in text

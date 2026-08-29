@@ -104,6 +104,13 @@ FAKE_PORT_LABEL: str = "FAKE"
 # "unconfirmed hardware" picker banner without real hardware.
 FAKE_UNKNOWN_HW_PORT: str = "FAKE-UNKNOWN-HW"
 
+# Sentinel ``port`` value the e2e suite can pass to ``connect()`` to make
+# the fake driver report a factory-fresh RTCM state (no message enabled
+# on any port) instead of its normal pre-configured base profile — the
+# only way to reach the GPS page's "data-link port cannot be inferred"
+# prompt without real hardware.
+FAKE_FACTORY_PORT: str = "FAKE-FACTORY"
+
 
 class FakeGpsDriver(GpsReceiverDriver):
     """In-memory GPS receiver driver for E2E + dev-mode testing.
@@ -305,6 +312,8 @@ class FakeGpsDriver(GpsReceiverDriver):
                     "hardware_confidence": HardwareConfidence.UNKNOWN,
                 }
             )
+        elif port == FAKE_FACTORY_PORT:
+            self._rtcm_ports = RtcmPortConfig()
         return self._device_info
 
     def disconnect(self) -> None:

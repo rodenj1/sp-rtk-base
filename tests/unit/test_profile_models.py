@@ -134,6 +134,22 @@ class TestReceiverConfig:
     def test_baud_has_no_usb_field(self) -> None:
         assert "usb" not in {f.lower() for f in ReceiverConfig.model_fields}
 
+    def test_baud_usb_key_rejected(self) -> None:
+        """USB CDC has no baud rate — ``BaudConfig`` forbids the key
+        outright rather than silently ignoring it (issue #62)."""
+        kwargs = _base_kwargs()
+        kwargs["baud"] = {"uart1": 57600, "usb": 9600}
+        with pytest.raises(ValidationError):
+            ReceiverConfig.model_validate(kwargs)
+
+    def test_baud_uart2_only_accepted(self) -> None:
+        kwargs = _base_kwargs()
+        kwargs["baud"] = {"uart2": 38400}
+        config = ReceiverConfig.model_validate(kwargs)
+        assert config.baud is not None
+        assert config.baud.uart1 is None
+        assert config.baud.uart2 == 38400
+
     @pytest.mark.parametrize("elevation_mask_deg", [-1, 91])
     def test_elevation_mask_deg_out_of_range_rejected(
         self, elevation_mask_deg: int

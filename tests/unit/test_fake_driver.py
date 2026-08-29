@@ -463,6 +463,24 @@ class TestConfigurationRoundTrips:
         rates = connected_driver.get_uart_baud_rates()
         assert rates == {PortId.UART1: 57600, PortId.UART2: 115200}
 
+    def test_configure_baud_stores_only_provided_fields(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_baud(115200, None)
+        rates = connected_driver.get_uart_baud_rates()
+        assert rates == {PortId.UART1: 115200, PortId.UART2: 115200}
+
+        connected_driver.configure_baud(None, 38400)
+        rates = connected_driver.get_uart_baud_rates()
+        assert rates == {PortId.UART1: 115200, PortId.UART2: 38400}
+
+    def test_reconnect_at_baud_updates_baud_and_returns_device_info(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        info = connected_driver.reconnect_at_baud(115200)
+        assert info.model == "FAKE-F9P"
+        assert connected_driver._baud_rate == 115200
+
 
 # ---------------------------------------------------------------------------
 # Position fixture

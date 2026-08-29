@@ -1378,6 +1378,48 @@ class UbloxDriver(GpsReceiverDriver):
             PortId.UART2: raw["CFG_UART2_BAUDRATE"],
         }
 
+    def configure_baud(self, uart1: int | None, uart2: int | None) -> None:
+        """Write only the UART baud fields provided (issue #62).
+
+        Deliberately the last apply-config write — see the module's
+        write-ordering rationale in ``DeviceService.apply_receiver_config``.
+        """
+        cfg_data: list[tuple[str, int]] = []
+        if uart1 is not None:
+            cfg_data.append(("CFG_UART1_BAUDRATE", uart1))
+        if uart2 is not None:
+            cfg_data.append(("CFG_UART2_BAUDRATE", uart2))
+
+        if not cfg_data:
+            return
+        with self._lock:
+            self._send_cfg_valset_locked(cfg_data, layer=5)
+
+    def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
+        """Reopen the serial port at ``baud_rate`` without resetting the receiver.
+
+        Unlike ``reset_and_reconnect``, this doesn't touch the chip.
+        A baud write's ACK goes out over the wire at the *old* baud,
+        just before the UART peripheral itself switches — by the time
+        ``configure_baud`` returns, the receiver side is already done.
+        Only the host's own pyserial handle needs to reopen at the
+        new rate and redo the MON-VER handshake to confirm the link
+        is live (issue #62).
+
+        Raises:
+            RuntimeError: If the driver was never connected (no saved
+                port to reopen).
+        """
+        if self._port is None:
+            raise RuntimeError(
+                "Cannot reopen at a new baud — driver was never connected "
+                "(no saved port to reopen)."
+            )
+        port = self._port
+        with self._lock:
+            self._cleanup()
+        return self.connect(port, baud_rate)
+
     def save_to_flash(self) -> None:
         """Save current RAM config to BBR + Flash (layers 7)."""
         # CFG-CFG: save current config to all non-volatile layers

@@ -670,6 +670,24 @@ class TestApplyConfig:
         )
         assert resp.status_code == 422
 
+    def test_apply_config_link_lost(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        """A UART1 baud write that strands the console's own link is a
+        distinct 502 — not a generic apply failure (issue #62)."""
+        from sp_rtk_base.services.device_service import ApplyConfigLinkLostError
+
+        mock_device_service.apply_receiver_config = AsyncMock(
+            side_effect=ApplyConfigLinkLostError(previous_baud=57600, new_baud=115200),
+        )
+        resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert "57600" in detail
+        assert "115200" in detail
+
 
 # ---------------------------------------------------------------------------
 # Handoff — device → relay

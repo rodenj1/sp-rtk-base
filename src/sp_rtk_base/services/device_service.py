@@ -57,6 +57,30 @@ class ApplyConfigRefusedError(Exception):
         super().__init__(message)
 
 
+class ApplyConfigLinkLostError(Exception):
+    """The receiver was reconfigured but its own management link couldn't be reopened.
+
+    Raised by ``apply_receiver_config`` (issue #62) when a UART1 baud
+    write lands but reopening the console's own connection at the new
+    baud fails, and a single retry at the previous baud also can't
+    restore contact. The flash write stands — nothing is rolled back,
+    since writing the old baud back would fight the write that just
+    landed, and retrying the old rate forever would just hang. Carries
+    both bauds so the caller can name a concrete recovery step: power-
+    cycle the receiver, or reconnect manually at ``new_baud``.
+    """
+
+    def __init__(self, previous_baud: int, new_baud: int) -> None:
+        self.previous_baud = previous_baud
+        self.new_baud = new_baud
+        super().__init__(
+            "Receiver reconfigured but link lost — could not reopen the "
+            f"console's connection at the new baud ({new_baud}) or the "
+            f"previous baud ({previous_baud}). Power-cycle the receiver "
+            "or reconnect manually at the new baud rate."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Non-blocking RTCM throughput estimate (issue #61)
 #
@@ -668,17 +692,14 @@ class DeviceService:
 
         Sequence: guards -> measurement rate -> ports -> constellations
         -> optimisations -> role fields (dyn_model, then tmode_mode) ->
-        the full RTCM matrix -> read-back verify. Baud is out of scope
-        here entirely — a submitted non-null ``ReceiverConfig.baud`` is
-        rejected pre-write rather than silently ignored (see the follow-up
-        ticket for baud support).
+        the full RTCM matrix -> baud -> reopen (if UART1's baud changed)
+        -> read-back verify. Baud is written **last**, after every other
+        key has landed, and only once every other write's ACK is safely
+        in — a baud change is the one write that can move the console's
+        own management link out from under this very request (issue #62).
 
         Guards run before any write and refuse with nothing written:
 
-        - **Baud out of scope.** A non-null ``baud`` with either UART
-          value set is refused — applying it would mean reopening the
-          serial link this very request is using, which is explicitly
-          the follow-up ticket's job, not this one's.
         - **UBX-in liveness.** This console always manages the receiver
           over its own USB connection — UART1/UART2 are reserved for
           RTCM data-link output (``ReceiverConfig`` only allows those
@@ -692,6 +713,25 @@ class DeviceService:
           otherwise a fresh receiver becomes a base broadcasting 1005
           from ECEF/LLH 0,0,0.
 
+        ``config.baud.uart1`` is treated as the port the console's own
+        management link is on, per the documented deployment (FTDI ->
+        UART1 at 57600, see docs/zed-f9p-base-station-config-reference.md)
+        — a separate, narrower premise from the UBX-in guard's "always
+        USB" one above; the two guard different concerns (which named
+        port must keep UBX in, vs. which physical serial link this
+        process itself has open) and issue #62 doesn't ask for them to
+        be reconciled. When ``uart1`` is set, this reopens the
+        connection at the new baud once the write lands, before
+        anything else runs. Reopening is deterministic — the baud was
+        just written — so one attempt normally suffices; a failure
+        retries once at the previous baud purely to leave the caller
+        with *some* link back, then raises ``ApplyConfigLinkLostError``
+        regardless of that retry's outcome: the flash write stands
+        either way (rolling it back would fight the write that just
+        landed, and retrying the old rate forever would hang).
+        ``config.baud.uart2`` never triggers a reopen — it isn't the
+        port this console is on.
+
         After the writes land, a non-blocking throughput estimate
         checks each ``data_link_port`` against its live baud rate, and
         a final read-back of the full RTCM matrix decides ``status``:
@@ -703,17 +743,11 @@ class DeviceService:
             RuntimeError: If not connected or relay is running.
             ApplyConfigRefusedError: If a device-state guard rejects the
                 config before any write.
+            ApplyConfigLinkLostError: If a UART1 baud write lands but
+                reopening the console's own link fails at both the new
+                and the previous baud.
         """
         driver = self._require_connected()
-
-        if config.baud is not None and (
-            config.baud.uart1 is not None or config.baud.uart2 is not None
-        ):
-            raise ApplyConfigRefusedError(
-                "baud_out_of_scope",
-                "baud is out of scope for apply-config — it would disturb "
-                "the console's own link; leave it unset",
-            )
 
         if config.ports is not None:
             usb_ports = config.ports.get(PortId.USB)
@@ -778,11 +812,21 @@ class DeviceService:
 
             await asyncio.to_thread(driver.apply_rtcm_matrix, config.rtcm_stream.matrix)
 
+            if config.baud is not None and (
+                config.baud.uart1 is not None or config.baud.uart2 is not None
+            ):
+                await asyncio.to_thread(
+                    driver.configure_baud, config.baud.uart1, config.baud.uart2
+                )
+
             self._state = DeviceConnectionState.CONNECTED
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
             raise
+
+        if config.baud is not None and config.baud.uart1 is not None:
+            await self._reopen_after_baud_write(driver, config.baud.uart1)
 
         baud_rates = await asyncio.to_thread(driver.get_uart_baud_rates)
         warnings = _throughput_warnings(config, baud_rates)
@@ -797,6 +841,59 @@ class DeviceService:
 
         logger.info("apply-config applied and read-back verified")
         return ApplyConfigResult(status="ok", warnings=warnings)
+
+    async def _reopen_after_baud_write(
+        self, driver: GpsReceiverDriver, new_baud: int
+    ) -> None:
+        """Reopen the console's own link after a UART1 baud write (issue #62).
+
+        Reopening is deterministic — the new baud was just written —
+        so a single attempt normally suffices. A failure retries once
+        at the previous baud purely to leave the caller with *some*
+        link back if possible, then raises ``ApplyConfigLinkLostError``
+        regardless of whether that retry itself succeeded: the flash
+        write stands either way, since writing the old baud back would
+        fight the write that just landed, and retrying the old rate
+        forever would hang.
+        """
+        previous_baud = self._baud_rate
+        assert (
+            previous_baud is not None
+        )  # set by connect(), which _require_connected() guarantees ran
+
+        try:
+            info = await asyncio.to_thread(driver.reconnect_at_baud, new_baud)
+            self._baud_rate = new_baud
+            self._info = info
+            return
+        except Exception as exc:
+            logger.warning(
+                "apply-config: reopen at new baud %d failed (%s), retrying "
+                "once at previous baud %d",
+                new_baud,
+                exc,
+                previous_baud,
+            )
+
+        try:
+            info = await asyncio.to_thread(driver.reconnect_at_baud, previous_baud)
+            self._baud_rate = previous_baud
+            self._info = info
+            self._state = DeviceConnectionState.CONNECTED
+        except Exception as exc:
+            logger.warning(
+                "apply-config: retry at previous baud %d also failed (%s)",
+                previous_baud,
+                exc,
+            )
+            self._state = DeviceConnectionState.DISCONNECTED
+
+        self._last_error = (
+            f"Receiver reconfigured but link lost — could not reopen at "
+            f"the new baud ({new_baud}) or the previous baud ({previous_baud})"
+        )
+        logger.error(self._last_error)
+        raise ApplyConfigLinkLostError(previous_baud, new_baud)
 
     @staticmethod
     def _diff_rtcm_matrix(

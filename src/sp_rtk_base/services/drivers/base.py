@@ -314,8 +314,9 @@ class GpsReceiverDriver(abc.ABC):
     def get_uart_baud_rates(self) -> dict[PortId, int]:
         """Read the live UART1/UART2 baud rates.
 
-        Used only for the non-blocking apply-config throughput
-        estimate — baud itself is never written by apply-config.
+        Used for the non-blocking apply-config throughput estimate,
+        and as the "previous baud" to fall back to if a baud write's
+        reopen fails (issue #62).
 
         Returns:
             Baud rate for UART1 and UART2 (USB has no baud rate).
@@ -323,6 +324,41 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
             RuntimeError: If the read fails.
+        """
+
+    @abc.abstractmethod
+    def configure_baud(self, uart1: int | None, uart2: int | None) -> None:
+        """Write only the UART baud fields provided; ``None`` means leave untouched.
+
+        Written last by the apply-config service, after every other
+        key — a baud change on the port the console's own management
+        link uses (UART1, per the documented FTDI deployment) must
+        not disturb the ACK of any earlier write still in flight
+        (issue #62). USB has no baud rate and isn't a parameter here.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
+        """Reopen the serial connection on the same port at a new baud rate.
+
+        Called immediately after a ``configure_baud`` write changes
+        UART1's baud — the port this console's own management link
+        uses — so the read-back verify that follows has a live link
+        to run against (issue #62).
+
+        Returns:
+            Refreshed device identity from the reconnected receiver.
+
+        Raises:
+            RuntimeError: If the driver was never connected (no saved
+                port to reopen).
+            ConnectionError: If the device doesn't respond at the
+                given baud.
+            TimeoutError: If the device doesn't respond in time.
         """
 
     # ------------------------------------------------------------------

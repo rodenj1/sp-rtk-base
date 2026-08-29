@@ -2392,3 +2392,134 @@ class TestGetUartBaudRates:
         result = driver.get_uart_baud_rates()
 
         assert result == {PortId.UART1: 57600, PortId.UART2: 115200}
+
+
+class TestConfigureBaud:
+    """Tests for ``UbloxDriver.configure_baud`` (issue #62)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_only_uart1_when_uart2_omitted(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_ack_response()]
+        )
+
+        driver.configure_baud(115200, None)
+
+        layer, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert layer == 5
+        assert dict(cfg_data) == {"CFG_UART1_BAUDRATE": 115200}
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_writes_both_fields_when_both_provided(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_ack_response()]
+        )
+
+        driver.configure_baud(115200, 38400)
+
+        _, _, cfg_data = mock_ubx_msg.config_set.call_args[0]
+        assert dict(cfg_data) == {
+            "CFG_UART1_BAUDRATE": 115200,
+            "CFG_UART2_BAUDRATE": 38400,
+        }
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_no_write_when_both_omitted(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+
+        driver.configure_baud(None, None)
+
+        mock_ubx_msg.config_set.assert_not_called()
+
+
+class TestReconnectAtBaud:
+    """Tests for ``UbloxDriver.reconnect_at_baud`` (issue #62)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_reopens_same_port_at_new_baud(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Does not touch the chip — closes and reopens the host's own
+        serial handle, then redoes the MON-VER handshake."""
+        first_ser = MagicMock()
+        first_ser.is_open = True
+        second_ser = MagicMock()
+        second_ser.is_open = True
+        mock_serial_cls.side_effect = [first_ser, second_ser]
+
+        reader = MagicMock()
+        reader.read.side_effect = [
+            (b"", _make_mon_ver_response()),
+            (b"", _make_mon_ver_response()),
+        ]
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0", 57600)
+
+        info = driver.reconnect_at_baud(115200)
+
+        assert info.model == "ZED-F9P"
+        first_ser.close.assert_called_once()
+        mock_serial_cls.assert_called_with(
+            port="/dev/ttyUSB0",
+            baudrate=115200,
+            timeout=3.0,
+            exclusive=True,
+        )
+        assert driver.is_connected is True
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_reopen_failure_raises_connection_error(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+    ) -> None:
+        first_ser = MagicMock()
+        first_ser.is_open = True
+        mock_serial_cls.side_effect = [first_ser, ConnectionError("no response")]
+
+        reader = MagicMock()
+        reader.read.return_value = (b"", _make_mon_ver_response())
+        mock_reader_cls.return_value = reader
+
+        driver = UbloxDriver()
+        driver.connect("/dev/ttyUSB0", 57600)
+
+        with pytest.raises(ConnectionError):
+            driver.reconnect_at_baud(115200)
+        assert driver.is_connected is False
+
+    def test_never_connected_raises_runtime_error(self) -> None:
+        driver = UbloxDriver()
+        with pytest.raises(RuntimeError, match="never connected"):
+            driver.reconnect_at_baud(115200)

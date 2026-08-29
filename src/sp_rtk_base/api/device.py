@@ -18,13 +18,13 @@ from sp_rtk_base.models.config_models import (
 )
 from sp_rtk_base.models.device_models import (
     ApplyConfigResult,
+    BaseInvariantsCheck,
     CurrentBaseConfig,
     DeviceStatus,
     FixedBaseConfig,
     GnssConfig,
     GpsPosition,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmPortConfig,
     SerialPortInfo,
     SurveyInConfig,
@@ -226,21 +226,42 @@ async def configure_fixed_base(
     )
 
 
-@router.post("/configure/rtcm", response_model=DeviceActionResponse)
-async def configure_rtcm_messages(
-    config: RtcmMessageConfig,
+@router.get("/base-invariants", response_model=BaseInvariantsCheck)
+async def check_base_invariants(
     svc: DeviceService = Depends(get_device_service),
-) -> DeviceActionResponse:
-    """Configure RTCM message output on the receiver."""
+) -> BaseInvariantsCheck:
+    """Pre-flight check for the base invariants (issue #63).
+
+    Non-blocking: an empty ``warnings`` list means the live receiver
+    already matches the built-in base profile's dynamics-model and
+    RTCM-on-data-link-port invariants. A non-empty list is advisory
+    only — it never refuses a survey-in start.
+    """
     try:
-        await svc.configure_rtcm_messages(config)
+        return await svc.check_base_invariants()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return DeviceActionResponse(
-        status="ok",
-        message=f"RTCM messages configured: {config.message_id_values}",
-    )
+
+@router.post("/apply-base-invariants", response_model=ApplyConfigResult)
+async def apply_base_invariants(
+    svc: DeviceService = Depends(get_device_service),
+) -> ApplyConfigResult:
+    """One-click remedy for a ``check_base_invariants`` warning (issue #63).
+
+    Applies the built-in base profile via the same
+    ``apply_receiver_config`` pipeline as ``POST /apply-config``, minus
+    baud (see ``DeviceService.apply_base_invariants``) — so this can
+    never trigger the 502 link-lost case ``POST /apply-config`` can.
+    Same status contract otherwise: 409 not connected/relay running,
+    400 business-rule refusal.
+    """
+    try:
+        return await svc.apply_base_invariants()
+    except ApplyConfigRefusedError as exc:
+        raise HTTPException(status_code=400, detail=f"{exc.rule}: {exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/save", response_model=DeviceActionResponse)

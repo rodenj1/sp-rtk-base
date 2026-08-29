@@ -409,26 +409,6 @@ class TestConfigureFixedBase:
         assert resp.status_code == 422  # Pydantic validation
 
 
-class TestConfigureRtcm:
-    """Tests for POST /api/device/configure/rtcm."""
-
-    def test_rtcm_success(
-        self,
-        client: TestClient,
-        mock_device_service: MagicMock,
-    ) -> None:
-        mock_device_service.configure_rtcm_messages = AsyncMock()
-        resp = client.post(
-            "/api/device/configure/rtcm",
-            json={
-                "message_ids": ["1005", "1077", "1087"],
-                "rate_hz": 1,
-            },
-        )
-        assert resp.status_code == 200
-        assert "RTCM messages configured" in resp.json()["message"]
-
-
 class TestSaveToFlash:
     """Tests for POST /api/device/save."""
 
@@ -687,6 +667,101 @@ class TestApplyConfig:
         detail = resp.json()["detail"]
         assert "57600" in detail
         assert "115200" in detail
+
+
+# ---------------------------------------------------------------------------
+# Base invariants pre-flight check + one-click remedy (issue #63)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckBaseInvariants:
+    """Tests for GET /api/device/base-invariants."""
+
+    def test_no_warnings(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.models.device_models import BaseInvariantsCheck
+
+        mock_device_service.check_base_invariants = AsyncMock(
+            return_value=BaseInvariantsCheck(warnings=[])
+        )
+        resp = client.get("/api/device/base-invariants")
+        assert resp.status_code == 200
+        assert resp.json()["warnings"] == []
+
+    def test_returns_warnings(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.models.device_models import BaseInvariantsCheck
+
+        mock_device_service.check_base_invariants = AsyncMock(
+            return_value=BaseInvariantsCheck(
+                warnings=["Dynamics model is portable, not stationary"]
+            )
+        )
+        resp = client.get("/api/device/base-invariants")
+        assert resp.status_code == 200
+        assert resp.json()["warnings"] == ["Dynamics model is portable, not stationary"]
+
+    def test_not_connected(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        mock_device_service.check_base_invariants = AsyncMock(
+            side_effect=RuntimeError("Device not connected"),
+        )
+        resp = client.get("/api/device/base-invariants")
+        assert resp.status_code == 409
+
+
+class TestApplyBaseInvariants:
+    """Tests for POST /api/device/apply-base-invariants."""
+
+    def test_ok(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.models.device_models import ApplyConfigResult
+
+        mock_device_service.apply_base_invariants = AsyncMock(
+            return_value=ApplyConfigResult(status="ok")
+        )
+        resp = client.post("/api/device/apply-base-invariants")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_not_connected(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        mock_device_service.apply_base_invariants = AsyncMock(
+            side_effect=RuntimeError("Device not connected"),
+        )
+        resp = client.post("/api/device/apply-base-invariants")
+        assert resp.status_code == 409
+
+    def test_business_rule_refusal(
+        self,
+        client: TestClient,
+        mock_device_service: MagicMock,
+    ) -> None:
+        from sp_rtk_base.services.device_service import ApplyConfigRefusedError
+
+        mock_device_service.apply_base_invariants = AsyncMock(
+            side_effect=ApplyConfigRefusedError(
+                "ubx_in_liveness", "ports.USB.in must keep UBX enabled"
+            ),
+        )
+        resp = client.post("/api/device/apply-base-invariants")
+        assert resp.status_code == 400
+        assert "ubx_in_liveness" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SerialPortInfo,
@@ -133,30 +132,6 @@ class GpsReceiverDriver(abc.ABC):
         """
 
     @abc.abstractmethod
-    def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
-        """Enable/disable RTCM message outputs on the receiver.
-
-        Args:
-            config: RTCM message selection and rate.
-
-        Raises:
-            ConnectionError: If not connected.
-            RuntimeError: If configuration fails.
-        """
-
-    @abc.abstractmethod
-    def get_rtcm_config(self) -> RtcmMessageConfig:
-        """Read the current RTCM message output configuration.
-
-        Returns:
-            Current RTCM message selection and rate.
-
-        Raises:
-            ConnectionError: If not connected.
-            RuntimeError: If the read fails.
-        """
-
-    @abc.abstractmethod
     def get_rtcm_port_config(self) -> RtcmPortConfig:
         """Read RTCM output config for all ports (USB, UART1, etc.).
 
@@ -255,6 +230,18 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
             RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def get_dyn_model(self) -> DynModel:
+        """Read the receiver's current dynamics platform model.
+
+        Used by the survey-in pre-flight check (issue #63) to detect
+        a receiver that hasn't had the base invariants applied.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the read fails.
         """
 
     @abc.abstractmethod

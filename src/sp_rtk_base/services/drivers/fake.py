@@ -64,7 +64,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SerialPortInfo,
@@ -144,7 +143,6 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._survey_min_duration_s: int = 60
 
         # RTCM configuration — initialised with sensible defaults.
-        self._rtcm_msgs: RtcmMessageConfig = RtcmMessageConfig()
         self._rtcm_ports: RtcmPortConfig = RtcmPortConfig(
             messages={
                 msg_id: {"USB": 1, "UART1": 1, "UART2": 0, "I2C": 0, "SPI": 0}
@@ -353,16 +351,6 @@ class FakeGpsDriver(GpsReceiverDriver):
             accuracy_mm=0,
         )
 
-    def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
-        """Store the simple RTCM message config in memory."""
-        self._ensure_connected()
-        self._rtcm_msgs = config
-
-    def get_rtcm_config(self) -> RtcmMessageConfig:
-        """Return the most recently stored simple RTCM config."""
-        self._ensure_connected()
-        return self._rtcm_msgs
-
     def get_rtcm_port_config(self) -> RtcmPortConfig:
         """Return the most recently stored per-port RTCM config."""
         self._ensure_connected()
@@ -420,6 +408,11 @@ class FakeGpsDriver(GpsReceiverDriver):
         """Store the dynamics model in memory."""
         self._ensure_connected()
         self._dyn_model = model
+
+    def get_dyn_model(self) -> DynModel:
+        """Return the most recently stored dynamics model."""
+        self._ensure_connected()
+        return self._dyn_model
 
     def configure_tmode_mode(self, mode: BaseMode) -> None:
         """Store the TMODE mode, leaving any existing position untouched."""

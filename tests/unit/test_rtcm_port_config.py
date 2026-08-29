@@ -184,13 +184,6 @@ class TestRtcmKeyMapping:
             == "CFG_MSGOUT_RTCM_3X_TYPE4072_1_UART2"
         )
 
-    def test_legacy_usb_keys_match(self) -> None:
-        from sp_rtk_base.services.drivers.ublox import _RTCM_KEY_BASES, _RTCM_USB_KEYS
-
-        for msg_id, expected in _RTCM_USB_KEYS.items():
-            base = _RTCM_KEY_BASES[msg_id]
-            assert expected == f"{base}_USB"
-
 
 # ---------------------------------------------------------------------------
 # Driver parse tests

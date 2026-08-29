@@ -58,27 +58,6 @@ def _make_ack() -> SimpleNamespace:
     return SimpleNamespace(identity="ACK-ACK")
 
 
-def _make_profile_valget() -> SimpleNamespace:
-    """CFG-VALGET response matching the RTCM-only base output profile."""
-    return SimpleNamespace(
-        identity="CFG-VALGET",
-        CFG_UART1OUTPROT_NMEA=0,
-        CFG_UART1OUTPROT_UBX=0,
-        CFG_UART1OUTPROT_RTCM3X=1,
-        CFG_UART2OUTPROT_NMEA=0,
-        CFG_UART2OUTPROT_UBX=0,
-        CFG_UART2OUTPROT_RTCM3X=1,
-    )
-
-
-def _make_dyn_model_valget(value: int = 2) -> SimpleNamespace:
-    """CFG-VALGET response for CFG_NAVSPG_DYNMODEL (issue #38).
-
-    Defaults to 2 (stationary).
-    """
-    return SimpleNamespace(identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=value)
-
-
 # ---------------------------------------------------------------------------
 # FakeGpsDriver.disable_base_mode
 # ---------------------------------------------------------------------------
@@ -229,13 +208,6 @@ class TestUbloxDisableBaseMode:
                     obs=1,
                 ),
             ),
-            (b"", _make_ack()),  # base output profile write (issue #40)
-            (b"", _make_profile_valget()),  # read-back matches
-            (b"", _make_ack()),  # dyn model write (issue #38)
-            (
-                b"",
-                _make_dyn_model_valget(),
-            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -250,10 +222,10 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=120, accuracy_limit_mm=50000)
             )
 
-        # Four config_sets: full-layer disable, RAM+Flash enable, the
-        # layer=5 base output profile (issue #40), and the layer=5
-        # dyn model write (issue #38).
-        assert mock_ubx_msg.config_set.call_count == 4
+        # Issue #63: only two config_sets now — full-layer disable and
+        # the RAM+Flash enable. The base output profile / dyn model
+        # force-applies (issues #40/#38) were retired.
+        assert mock_ubx_msg.config_set.call_count == 2
         disable = mock_ubx_msg.config_set.call_args_list[0]
         enable = mock_ubx_msg.config_set.call_args_list[1]
         assert disable[0][2] == [("CFG_TMODE_MODE", 0)]
@@ -413,13 +385,6 @@ class TestUbloxDisableBaseMode:
             ),  # enable read-back — matches (issue #42)
             (b"", nav_svin_fresh_before),  # before-snapshot
             (b"", nav_svin_fresh_after),  # after-snapshot
-            (b"", _make_ack()),  # base output profile write (issue #40)
-            (b"", _make_profile_valget()),  # read-back matches
-            (b"", _make_ack()),  # dyn model write (issue #38)
-            (
-                b"",
-                _make_dyn_model_valget(),
-            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -441,12 +406,11 @@ class TestUbloxDisableBaseMode:
 
         # No rollback path triggered — the pre-reset cleared the
         # stale state, and the post-write verify saw a fresh
-        # (dur=0 -> dur=3) progression.  4 CFG-VALSETs fire:
-        # layer=7 disable, layer=5 enable, layer=5 output profile,
-        # layer=5 dyn model (issue #38).
-        assert mock_ubx_msg.config_set.call_count == 4
+        # (dur=0 -> dur=3) progression. Issue #63: only two
+        # CFG-VALSETs fire now — layer=7 disable, layer=5 enable.
+        assert mock_ubx_msg.config_set.call_count == 2
         layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
-        assert layers == [7, 5, 5, 5]
+        assert layers == [7, 5]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
@@ -490,13 +454,6 @@ class TestUbloxDisableBaseMode:
             ),  # read-back — matches on retry
             (b"", nav_svin_idle),  # before-snapshot
             (b"", nav_svin_progressed),  # after-snapshot
-            (b"", _make_ack()),  # base output profile write
-            (b"", _make_profile_valget()),  # read-back matches
-            (b"", _make_ack()),  # dyn model write (issue #38)
-            (
-                b"",
-                _make_dyn_model_valget(),
-            ),  # dyn model read-back matches
         ]
         mock_reader_cls.return_value = reader
 
@@ -511,11 +468,12 @@ class TestUbloxDisableBaseMode:
                 SurveyInConfig(min_duration_seconds=60, accuracy_limit_mm=50000)
             )  # must not raise
 
-        # disable(7) + enable(5) + retried enable(5) + profile(5) +
-        # dyn model(5) = 5 VALSETs.
-        assert mock_ubx_msg.config_set.call_count == 5
+        # Issue #63: disable(7) + enable(5) + retried enable(5) = 3
+        # VALSETs — the base output profile / dyn model force-applies
+        # (issues #40/#38) were retired.
+        assert mock_ubx_msg.config_set.call_count == 3
         layers = [c[0][0] for c in mock_ubx_msg.config_set.call_args_list]
-        assert layers == [7, 5, 5, 5, 5]
+        assert layers == [7, 5, 5]
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")

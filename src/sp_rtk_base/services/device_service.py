@@ -17,6 +17,7 @@ from typing import Protocol
 from sp_rtk_base.models.device_models import (
     ApplyConfigCellDiff,
     ApplyConfigResult,
+    BaseInvariantsCheck,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
@@ -27,7 +28,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
-    RtcmMessageConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -38,6 +38,7 @@ from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
 )
 from sp_rtk_base.models.profile_models import ReceiverConfig
+from sp_rtk_base.profiles import BUILTIN_PROFILES
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,14 @@ _BITS_PER_BYTE_ON_WIRE = 10.0
 # Warn once estimated RTCM throughput crosses this fraction of a
 # data-link port's baud capacity.
 _THROUGHPUT_WARN_THRESHOLD = 0.70
+
+# The built-in profile whose ``ports``/``dyn_model``/``rtcm_stream``
+# values define "the base invariants" for the survey-in pre-flight
+# check (issue #63) and its one-click remedy. There is exactly one
+# built-in today (see test_builtin_profiles.py's
+# test_imports_cleanly_with_exactly_one_builtin) and it is the base
+# station reference profile.
+_BASE_INVARIANTS_PROFILE_NAME = "ublox-f9p-base-standard"
 
 
 def _throughput_warnings(
@@ -411,6 +420,70 @@ class DeviceService:
                     )
             raise
 
+    async def check_base_invariants(self) -> BaseInvariantsCheck:
+        """Non-blocking pre-flight check for the base invariants (issue #63).
+
+        Compares the live receiver against the two invariants that used
+        to be force-applied on every base-mode transition (issues #38
+        and #40, retired in #63): stationary dynamics, and at least one
+        RTCM row enabled on every data-link port of the built-in base
+        profile (:data:`_BASE_INVARIANTS_PROFILE_NAME`). Never raises
+        for a mismatch — callers (the Survey-In confirmation dialog)
+        show the warnings but let Start proceed regardless; use
+        :meth:`apply_base_invariants` for the one-click remedy.
+
+        Raises:
+            RuntimeError: If not connected or relay is running.
+        """
+        driver = self._require_connected()
+        profile = BUILTIN_PROFILES[_BASE_INVARIANTS_PROFILE_NAME]
+
+        live_dyn_model = await asyncio.to_thread(driver.get_dyn_model)
+        live_rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
+
+        warnings: list[str] = []
+        if profile.dyn_model is not None and live_dyn_model != profile.dyn_model:
+            warnings.append(
+                f"Dynamics model is {live_dyn_model.value}, not "
+                f"{profile.dyn_model.value} — a base station should run "
+                "stationary dynamics."
+            )
+
+        for port in profile.data_link_port:
+            has_rtcm = any(
+                rates.get(port.value, 0) > 0 for rates in live_rtcm.messages.values()
+            )
+            if not has_rtcm:
+                warnings.append(
+                    f"No RTCM messages are enabled on {port.value} — this "
+                    "data-link port would broadcast no corrections."
+                )
+
+        return BaseInvariantsCheck(warnings=warnings)
+
+    async def apply_base_invariants(self) -> ApplyConfigResult:
+        """Apply the built-in base profile as the one-click remedy for issue #63.
+
+        Reuses :meth:`apply_receiver_config` — the built-in profile
+        (:data:`_BASE_INVARIANTS_PROFILE_NAME`) already specifies the
+        port protocols, dynamics model and RTCM matrix that satisfy
+        :meth:`check_base_invariants`. ``baud`` is stripped from the
+        profile before applying: the two invariants this remedy exists
+        for (dynamics model, RTCM-on-data-link-port) never touch baud,
+        so a one-click warning fix should not risk stranding the
+        console's own link on a UART1 baud change the operator didn't
+        ask for.
+
+        Raises:
+            RuntimeError: If not connected or relay is running.
+            ApplyConfigRefusedError: If a device-state guard rejects the
+                profile before any write.
+        """
+        profile = BUILTIN_PROFILES[_BASE_INVARIANTS_PROFILE_NAME]
+        return await self.apply_receiver_config(
+            profile.model_copy(update={"baud": None})
+        )
+
     async def send_cfg_rst_diagnostic(
         self,
         reset_mode: int,
@@ -538,42 +611,6 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
             raise
-
-    async def configure_rtcm_messages(self, config: RtcmMessageConfig) -> None:
-        """Enable/disable RTCM message outputs.
-
-        Args:
-            config: RTCM message selection.
-
-        Raises:
-            RuntimeError: If not connected or relay is running.
-        """
-        driver = self._require_connected()
-        self._state = DeviceConnectionState.CONFIGURING
-        try:
-            await asyncio.to_thread(driver.configure_rtcm_messages, config)
-            self._state = DeviceConnectionState.CONNECTED
-            logger.info(
-                "RTCM messages configured: %s @ %dHz",
-                config.message_id_values,
-                config.rate_hz,
-            )
-        except Exception as exc:
-            self._state = DeviceConnectionState.CONNECTED
-            self._last_error = str(exc)
-            raise
-
-    async def get_rtcm_config(self) -> RtcmMessageConfig:
-        """Read the current RTCM message output configuration.
-
-        Returns:
-            Current RTCM message selection and rate.
-
-        Raises:
-            RuntimeError: If not connected.
-        """
-        driver = self._require_connected()
-        return await asyncio.to_thread(driver.get_rtcm_config)
 
     async def get_rtcm_port_config(self) -> RtcmPortConfig:
         """Read RTCM output config for all ports (USB, UART1, etc.).

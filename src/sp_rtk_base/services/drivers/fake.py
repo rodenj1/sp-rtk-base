@@ -463,6 +463,20 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._ensure_connected()
         return dict(self._uart_baud_rates)
 
+    def configure_baud(self, uart1: int | None, uart2: int | None) -> None:
+        """Store only the UART baud fields provided (issue #62)."""
+        self._ensure_connected()
+        if uart1 is not None:
+            self._uart_baud_rates[PortId.UART1] = uart1
+        if uart2 is not None:
+            self._uart_baud_rates[PortId.UART2] = uart2
+
+    def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
+        """Simulate reopening at a new baud — no I/O, always succeeds."""
+        self._ensure_connected()
+        self._baud_rate = baud_rate
+        return self._device_info
+
     # ------------------------------------------------------------------
     # GNSS constellation configuration
     # ------------------------------------------------------------------

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, call
 
 import pytest
 
@@ -32,7 +32,11 @@ from sp_rtk_base.models.profile_models import (
     ReceiverConfig,
     RtcmStreamConfig,
 )
-from sp_rtk_base.services.device_service import ApplyConfigRefusedError, DeviceService
+from sp_rtk_base.services.device_service import (
+    ApplyConfigLinkLostError,
+    ApplyConfigRefusedError,
+    DeviceService,
+)
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 # ---------------------------------------------------------------------------
@@ -399,6 +403,7 @@ class TestApplyReceiverConfig:
         svc.set_driver(driver)
         svc._state = DeviceConnectionState.CONNECTED
         svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
+        svc._baud_rate = 57600
         return svc
 
     @pytest.mark.asyncio()
@@ -409,24 +414,158 @@ class TestApplyReceiverConfig:
             await svc.apply_receiver_config(_minimal_config())
 
     @pytest.mark.asyncio()
-    async def test_baud_out_of_scope_refused_before_any_write(
-        self, connected_svc: DeviceService
-    ) -> None:
-        assert connected_svc.driver is not None
-        config = _minimal_config(baud=BaudConfig(uart1=57600))
-
-        with pytest.raises(ApplyConfigRefusedError) as exc_info:
-            await connected_svc.apply_receiver_config(config)
-
-        assert exc_info.value.rule == "baud_out_of_scope"
-        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
-
-    @pytest.mark.asyncio()
     async def test_baud_omitted_is_allowed(self, connected_svc: DeviceService) -> None:
         result = await connected_svc.apply_receiver_config(
             _minimal_config(baud=BaudConfig())
         )
         assert result.status == "ok"
+
+    @pytest.mark.asyncio()
+    async def test_baud_written_last_after_every_other_key(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
+            vendor="MockVendor", model="MockModel"
+        )
+        config = _minimal_config(
+            baud=BaudConfig(uart1=115200),
+            dyn_model=DynModel.STATIONARY,
+            tmode_mode=BaseMode.DISABLED,
+        )
+
+        await connected_svc.apply_receiver_config(config)
+
+        write_methods = {
+            "configure_measurement_rate",
+            "configure_optimisations",
+            "configure_dyn_model",
+            "configure_tmode_mode",
+            "apply_rtcm_matrix",
+            "configure_baud",
+        }
+        order: list[str] = [
+            call_[0]
+            for call_ in driver.method_calls  # type: ignore[union-attr]
+            if call_[0] in write_methods
+        ]
+        assert order[-1] == "configure_baud"
+        driver.configure_baud.assert_called_once_with(115200, None)  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart1_and_uart2_both_written(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
+            vendor="MockVendor", model="MockModel"
+        )
+        config = _minimal_config(baud=BaudConfig(uart1=115200, uart2=38400))
+
+        await connected_svc.apply_receiver_config(config)
+
+        driver.configure_baud.assert_called_once_with(115200, 38400)  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart2_only_does_not_reopen(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """UART2 isn't the port this console's own link is on — no reopen."""
+        driver = connected_svc.driver
+        assert driver is not None
+        config = _minimal_config(baud=BaudConfig(uart2=38400))
+
+        result = await connected_svc.apply_receiver_config(config)
+
+        assert result.status == "ok"
+        driver.configure_baud.assert_called_once_with(None, 38400)  # type: ignore[union-attr]
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart1_reopens_before_read_back_verify(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
+            vendor="MockVendor", model="MockModel"
+        )
+        config = _minimal_config(baud=BaudConfig(uart1=115200))
+
+        result = await connected_svc.apply_receiver_config(config)
+
+        assert result.status == "ok"
+        driver.reconnect_at_baud.assert_called_once_with(115200)  # type: ignore[union-attr]
+        order = [
+            call_[0]
+            for call_ in driver.method_calls  # type: ignore[union-attr]
+            if call_[0] in {"reconnect_at_baud", "get_rtcm_port_config"}
+        ]
+        assert order == ["reconnect_at_baud", "get_rtcm_port_config"]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart1_reopen_success_updates_tracked_baud(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
+            vendor="MockVendor", model="MockModel"
+        )
+        config = _minimal_config(baud=BaudConfig(uart1=115200))
+
+        await connected_svc.apply_receiver_config(config)
+
+        assert connected_svc._baud_rate == 115200  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart1_reopen_failure_retries_at_previous_baud_then_raises(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        driver.reconnect_at_baud.side_effect = ConnectionError(  # type: ignore[union-attr]
+            "no response"
+        )
+        config = _minimal_config(baud=BaudConfig(uart1=115200))
+
+        with pytest.raises(ApplyConfigLinkLostError) as exc_info:
+            await connected_svc.apply_receiver_config(config)
+
+        assert exc_info.value.previous_baud == 57600
+        assert exc_info.value.new_baud == 115200
+        driver.reconnect_at_baud.assert_has_calls(  # type: ignore[union-attr]
+            [call(115200), call(57600)]
+        )
+        assert connected_svc.state == DeviceConnectionState.DISCONNECTED
+        driver.get_rtcm_port_config.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_baud_uart1_reopen_retry_recovers_link_but_still_raises(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Even a successful previous-baud retry still surfaces the
+        distinct error — the flash write stands and the caller must
+        act, not just silently limp along at the stale baud."""
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        driver.reconnect_at_baud.side_effect = [  # type: ignore[union-attr]
+            ConnectionError("no response at new baud"),
+            DeviceInfo(vendor="MockVendor", model="MockModel"),
+        ]
+        config = _minimal_config(baud=BaudConfig(uart1=115200))
+
+        with pytest.raises(ApplyConfigLinkLostError):
+            await connected_svc.apply_receiver_config(config)
+
+        assert connected_svc.state == DeviceConnectionState.CONNECTED
+        assert connected_svc._baud_rate == 57600  # pyright: ignore[reportPrivateUsage]
+        driver.get_rtcm_port_config.assert_not_called()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_ubx_in_liveness_guard_refuses_before_any_write(

@@ -132,6 +132,12 @@ class StubDriver(GpsReceiverDriver):
     def get_uart_baud_rates(self) -> dict[PortId, int]:
         return {}
 
+    def configure_baud(self, uart1: int | None, uart2: int | None) -> None:
+        pass
+
+    def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
+        return DeviceInfo(vendor="StubVendor", model="StubModel")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

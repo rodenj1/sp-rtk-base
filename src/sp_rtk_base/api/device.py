@@ -37,7 +37,11 @@ from sp_rtk_base.services import (
     get_relay_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.device_service import ApplyConfigRefusedError, DeviceService
+from sp_rtk_base.services.device_service import (
+    ApplyConfigLinkLostError,
+    ApplyConfigRefusedError,
+    DeviceService,
+)
 from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
 
@@ -301,10 +305,16 @@ async def apply_config(
     Status contract: 409 if not connected or the relay is running;
     422 for a schema violation (handled automatically by the
     ``ReceiverConfig`` body validation); 400 for a business-rule
-    refusal, with the failed rule named and nothing written.
+    refusal, with the failed rule named and nothing written; 502 if a
+    UART1 baud write lands but the console's own link can't be
+    reopened at the new baud or the previous one (issue #62) — the
+    receiver's flash write stands, only the console's own connection
+    needs a power-cycle or manual reconnect at the new baud rate.
     """
     try:
         return await svc.apply_receiver_config(config)
+    except ApplyConfigLinkLostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ApplyConfigRefusedError as exc:
         raise HTTPException(status_code=400, detail=f"{exc.rule}: {exc}") from exc
     except RuntimeError as exc:

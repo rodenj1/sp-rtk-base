@@ -13,9 +13,11 @@ Buttons covered here:
 2. **Save to Flash** → Quasar ``Saved to flash!`` toast → REST
    confirms (the fake driver's ``save_to_flash`` is a no-op that
    succeeds, so we only assert the toast appears).
-3. **Load from Device** (GNSS card) → ``GNSS config loaded`` toast.
-4. **Apply GNSS Config** → ``GNSS config applied`` toast → REST
-   read-back returns the expected enabled-systems list.
+
+The shave-by-shave RTCM/GNSS editing controls (checkboxes, switches,
+their own Load/Apply buttons) this page used to have were replaced by
+the read-only profile picker + live-seeded form (issue #64) — see
+``test_gps_profile_picker.py`` for that coverage.
 
 The **Connect** button is intentionally *not* tested through the UI
 here because the ``connected_gps`` fixture already calls
@@ -89,128 +91,3 @@ def test_save_to_flash_button_emits_success_toast(
     save_btn.click()
 
     expect(page.locator("text=Saved to flash!").first).to_be_visible(timeout=10_000)
-
-
-@pytest.mark.e2e
-def test_load_gnss_button_pulls_config_from_device(
-    page: Page,
-    base_url: str,
-    connected_gps: None,
-) -> None:
-    """**Load from Device** (GNSS card) → ``GNSS config loaded`` toast.
-
-    The button is rendered with a leading ``icon="download"`` and the
-    label "Load from Device".  There is only one such button on the
-    page (the RTCM card uses the same label, so we scope by parent
-    section to disambiguate).
-    """
-    page.goto(f"{base_url}/gps-config")
-    expect(page.locator("text=Advanced GPS Configuration").first).to_be_visible(
-        timeout=15_000
-    )
-
-    # Both the RTCM and GNSS cards have a "Load from Device" button.
-    # Scope to the GNSS card by looking inside the section that
-    # contains the "GNSS Constellations" heading.
-    gnss_card = page.locator(".q-card:has(:text('GNSS Constellations'))").first
-    expect(gnss_card).to_be_visible(timeout=10_000)
-
-    load_btn = gnss_card.get_by_role("button", name="Load from Device")
-    expect(load_btn).to_be_visible(timeout=10_000)
-    load_btn.click()
-
-    expect(page.locator("text=GNSS config loaded from device").first).to_be_visible(
-        timeout=10_000
-    )
-
-
-@pytest.mark.e2e
-def test_apply_gnss_button_writes_configuration(
-    page: Page,
-    base_url: str,
-    api_base_url: str,
-    connected_gps: None,
-) -> None:
-    """**Apply GNSS Config** click reaches the handler and writes to device.
-
-    The browser-level assertion is the success toast.  A REST-level
-    read-back proves the click triggered the underlying
-    :meth:`DeviceService.configure_gnss` call (the fake driver
-    overwrites its stored config wholesale on apply, so the
-    ``min_channels`` / ``max_channels`` values in the read-back will
-    drop to the form's defaults — that's a stable observable side-
-    effect that doesn't depend on the user's specific toggle
-    pattern, which Quasar switches don't always honour reliably from
-    Playwright clicks).
-    """
-    page.goto(f"{base_url}/gps-config")
-    expect(page.locator("text=Advanced GPS Configuration").first).to_be_visible(
-        timeout=15_000
-    )
-
-    # Seed a known channel count so the comparison after Apply is
-    # unambiguous.  The fake driver's default for GPS is
-    # ``min_channels=8, max_channels=16`` — picking different
-    # numbers gives us a clear delta.
-    seed_systems = [
-        {
-            "constellation": "gps",
-            "enabled": True,
-            "min_channels": 8,
-            "max_channels": 16,
-            "sig_cfg_mask": 1,
-        },
-        {
-            "constellation": "glonass",
-            "enabled": True,
-            "min_channels": 8,
-            "max_channels": 14,
-            "sig_cfg_mask": 1,
-        },
-        {
-            "constellation": "galileo",
-            "enabled": True,
-            "min_channels": 4,
-            "max_channels": 12,
-            "sig_cfg_mask": 33,
-        },
-        {
-            "constellation": "beidou",
-            "enabled": True,
-            "min_channels": 8,
-            "max_channels": 16,
-            "sig_cfg_mask": 17,
-        },
-    ]
-    seed = page.request.put(
-        f"{api_base_url}/api/device/gnss",
-        data={"systems": seed_systems},
-    )
-    assert seed.status < 500, seed.text()
-
-    # Click Apply.
-    gnss_card = page.locator(".q-card:has(:text('GNSS Constellations'))").first
-    expect(gnss_card).to_be_visible(timeout=10_000)
-    apply_btn = gnss_card.get_by_role("button", name="Apply GNSS Config")
-    expect(apply_btn).to_be_visible(timeout=10_000)
-    apply_btn.click()
-
-    # Toast — message is "GNSS config applied: ..." with the list of
-    # enabled systems appended; substring match is enough.
-    expect(page.locator("text=GNSS config applied").first).to_be_visible(timeout=10_000)
-
-    # REST read-back: at least one numeric field must have changed
-    # from the seeded values — proving the click *did* trigger a
-    # write rather than being a no-op.
-    after = page.request.get(f"{api_base_url}/api/device/gnss")
-    assert after.ok, after.text()
-    after_payload: dict[str, Any] = after.json()
-    systems_after = list(after_payload.get("systems", []))
-    seeded_max = sum(int(s["max_channels"]) for s in seed_systems)
-    actual_max = sum(
-        int(s.get("max_channels", 0)) for s in systems_after if isinstance(s, dict)
-    )
-    assert seeded_max != actual_max, (
-        "Apply GNSS Config click did not write to the device — "
-        f"channel totals unchanged at {actual_max} (seeded {seeded_max})"
-    )

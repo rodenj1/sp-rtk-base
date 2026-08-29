@@ -71,6 +71,7 @@ from sp_rtk_base.models.device_models import (
     SurveyInProgress,
     UbxProtocol,
 )
+from sp_rtk_base.models.hardware_identity import HARDWARE_UNKNOWN, HardwareConfidence
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,12 @@ _SURVEY_FAST_COMPLETE_SECONDS: float = 3.0
 # Identifier the UI uses to find the fake "serial port".
 FAKE_PORT_LABEL: str = "FAKE"
 
+# Sentinel ``port`` value the e2e suite can pass to ``connect()`` to make
+# the fake driver report an unresolved hardware identity instead of its
+# normal confirmed ZED-F9P — the only way to reach the GPS page's
+# "unconfirmed hardware" picker banner without real hardware.
+FAKE_UNKNOWN_HW_PORT: str = "FAKE-UNKNOWN-HW"
+
 
 class FakeGpsDriver(GpsReceiverDriver):
     """In-memory GPS receiver driver for E2E + dev-mode testing.
@@ -117,6 +124,12 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._baud_rate: int | None = None
 
         # Identity returned by ``connect()`` / ``get_device_info()``.
+        # hardware_target/confidence default to a *confirmed* ZED-F9P —
+        # this driver already mirrors that receiver's reference RTCM/port
+        # profile (see class docstring), and the GPS page's profile
+        # picker needs a confirmed identity to exercise its "suggested
+        # default" path. ``connect(FAKE_UNKNOWN_HW_PORT, ...)`` overrides
+        # this to unknown/unknown for the picker's other e2e path.
         self._device_info: DeviceInfo = DeviceInfo(
             vendor="Fake",
             model="FAKE-F9P",
@@ -124,6 +137,8 @@ class FakeGpsDriver(GpsReceiverDriver):
             protocol_version="27.99",
             hardware_version="FAKE-HW",
             serial_number="FAKE-0001",
+            hardware_target="ZED-F9P",
+            hardware_confidence=HardwareConfidence.CONFIRMED,
         )
 
         # Base config — starts disabled.  Switches to SURVEY_IN /
@@ -283,6 +298,13 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._connected = True
         self._port = port
         self._baud_rate = baud_rate
+        if port == FAKE_UNKNOWN_HW_PORT:
+            self._device_info = self._device_info.model_copy(
+                update={
+                    "hardware_target": HARDWARE_UNKNOWN,
+                    "hardware_confidence": HardwareConfidence.UNKNOWN,
+                }
+            )
         return self._device_info
 
     def disconnect(self) -> None:

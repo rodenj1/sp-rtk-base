@@ -1,9 +1,16 @@
-"""Advanced GPS Configuration page — profile picker, live-seeded form, Apply, handoff.
+"""Advanced GPS Configuration page — profile picker, live-seeded form, Apply.
 
 Provides the profile-based GPS receiver setup flow (issue #54): a
 profile picker tagged with hardware compatibility, a receiver-
 configuration view seeded from the live device (RTCM matrix, port
-protocols, GNSS constellations), save-to-flash, and relay handoff.
+protocols, GNSS constellations), and save-to-flash.
+
+Issue #67 dropped Handoff-to-relay from this page (device-session
+concerns live on the Dashboard/Outputs pages, not here). Cancel-
+survey-in and Reset GPS were already Survey-page-only, alongside the
+rest of the positioning workflow, and stay untouched by that issue —
+neither is a profile concern. Save-to-flash stays too: see the
+comment on ``flash_card`` below for why it's still load-bearing.
 
 Issue #64 shipped the read-only shell; issue #65 made the RTCM matrix
 and data-link port(s) editable, wired to
@@ -753,6 +760,22 @@ def gps_config_page() -> None:
 
         # ================================================================
         # Section D: Save to Flash (hidden until connected + capable)
+        #
+        # Issue #67 removed Handoff-to-relay from this page and looked at
+        # dropping this control too, on the premise (stated in the issue)
+        # that every profile write is already layer=5 (RAM+Flash). That
+        # premise is false for one field: ``apply_receiver_config`` writes
+        # ``ReceiverConfig.constellations`` via ``UbloxDriver.configure_gnss()``,
+        # which sends the legacy UBX-CFG-GNSS SET message — a RAM-only
+        # write with no layer concept, unlike every CFG-VALSET writer
+        # elsewhere in that same apply sequence. (The standalone, UI-less
+        # ``PUT /api/device/gnss`` endpoint shares the same RAM-only
+        # method, so it has the identical gap.) So a constellation change
+        # — made through Apply on this very page — is unpersisted across
+        # a reset or reconnect without an explicit flash, and this
+        # control stays load-bearing until GNSS constellation selection
+        # is migrated to CFG-VALSET (e.g. per-constellation
+        # ``CFG_SIGNAL_*_ENA`` keys).
         # ================================================================
         flash_card = ui.card().classes("w-full q-pa-md q-mt-md")
         flash_card.set_visibility(False)
@@ -765,25 +788,6 @@ def gps_config_page() -> None:
                 ui.label(
                     "Persist current receiver configuration to non-volatile memory"
                 ).classes("text-grey-4")
-
-        # ================================================================
-        # Section E: Handoff to Relay
-        # ================================================================
-        handoff_card = ui.card().classes("w-full q-pa-md q-mt-md")
-        handoff_card.set_visibility(False)
-
-        with handoff_card:
-            ui.label("Handoff to Relay").classes("text-h6 text-white")
-            ui.separator()
-            ui.label(
-                "Disconnect the device driver, configure the relay input "
-                "with the same serial port, and start the relay engine."
-            ).classes("text-grey-4 q-mt-sm")
-            handoff_btn = (
-                ui.button("Handoff & Start Relay", icon="swap_horiz")
-                .props("color=positive")
-                .classes("q-mt-sm")
-            )
 
         # ================================================================
         # Event handlers
@@ -1108,7 +1112,6 @@ def gps_config_page() -> None:
             flash_card.set_visibility(
                 connected and DeviceCapability.SAVE_TO_FLASH in caps
             )
-            handoff_card.set_visibility(connected)
             reload_device_btn.set_visibility(connected)
 
             if connected:
@@ -1527,25 +1530,6 @@ def gps_config_page() -> None:
             except Exception as exc:
                 ui.notify(f"Save failed: {exc}", type="negative")
 
-        async def _handoff_to_relay() -> None:
-            """Disconnect device and hand off serial port to the relay."""
-            import httpx
-
-            try:
-                async with httpx.AsyncClient(
-                    base_url="http://localhost:8080"
-                ) as client:
-                    resp = await client.post("/api/device/handoff", timeout=15.0)
-                    if resp.status_code == 200:
-                        ui.notify("Handed off to relay! ✓", type="positive")
-                        ui.navigate.to("/")
-                    else:
-                        detail = resp.json().get("detail", resp.text)
-                        ui.notify(f"Handoff failed: {detail}", type="negative")
-            except Exception as exc:
-                ui.notify(f"Handoff error: {exc}", type="negative")
-            _update_ui_state()
-
         async def _reload_device_config() -> None:
             """Re-read the profile picker and receiver-config form."""
             if not svc.is_connected:
@@ -1570,7 +1554,6 @@ def gps_config_page() -> None:
         rename_confirm_btn.on_click(_confirm_rename)
         delete_confirm_btn.on_click(_confirm_delete)
         save_flash_btn.on_click(_save_flash)
-        handoff_btn.on_click(_handoff_to_relay)
 
         # ---- Auto-load if already connected (navigated from another page) ----
         async def _on_page_load() -> None:

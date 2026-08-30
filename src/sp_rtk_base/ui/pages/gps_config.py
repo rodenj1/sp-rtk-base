@@ -5,13 +5,25 @@ profile picker tagged with hardware compatibility, a receiver-
 configuration view seeded from the live device (RTCM matrix, port
 protocols, GNSS constellations), save-to-flash, and relay handoff.
 
-Issue #64 shipped the read-only shell; issue #65 (this revision) makes
-the RTCM matrix and data-link port(s) editable and wires them to
+Issue #64 shipped the read-only shell; issue #65 made the RTCM matrix
+and data-link port(s) editable, wired to
 ``POST /api/device/apply-config`` via ``DeviceService.apply_receiver_config``,
 plus the "receiver out of sync" indicator (form vs. live receiver,
-cleared only by a successful apply). Selecting a profile is still
-rendering-only — it does not write into the form; that wiring, plus
-editing ports/GNSS/role fields, lands in a later ticket (#66).
+cleared only by a successful apply).
+
+Issue #66 (this revision) makes picking a profile actually write into
+the form — the whole ``ReceiverConfig`` shape (ports, GNSS,
+baud/measurement-rate, role fields, optimisations, plus the matrix and
+data-link ports), not just the matrix — and adds the second,
+independent "modified from X" indicator (form vs. *selected profile*,
+gating Save-as) alongside the existing "out of sync" one (form vs.
+*live receiver*, gating Apply). Save-as, rename, delete and export
+round out the custom-profile lifecycle. The ports/GNSS/baud/role
+section remains a read-only *display* of form state rather than a
+click-to-edit grid — the driver has no read-back for most of those
+fields (baud excepted), so there's nothing yet to reconcile an edit
+against; turning that into an editable grid is future work, same as
+#65 deferred it.
 """
 
 # pyright: reportUnknownMemberType=false
@@ -22,6 +34,7 @@ editing ports/GNSS/role fields, lands in a later ticket (#66).
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -35,15 +48,22 @@ from sp_rtk_base.models.device_models import (
     ApplyConfigCellDiff,
     DeviceCapability,
     DeviceConnectionState,
+    DynModel,
     GnssConfig,
+    GnssConstellation,
     PortId,
     PortProtocolConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
 )
+from sp_rtk_base.models.device_models import (
+    BaseMode as TmodeMode,
+)
 from sp_rtk_base.models.hardware_identity import (
+    HARDWARE_ANY,
     HARDWARE_UNKNOWN,
+    KNOWN_FAMILY_TOKENS,
     HardwareConfidence,
     HardwareIdentity,
     default_selection,
@@ -51,7 +71,13 @@ from sp_rtk_base.models.hardware_identity import (
     incompatible_reason,
     is_compatible,
 )
-from sp_rtk_base.models.profile_models import Profile, ReceiverConfig, RtcmStreamConfig
+from sp_rtk_base.models.profile_models import (
+    BaudConfig,
+    PortProtocolSet,
+    Profile,
+    ReceiverConfig,
+    RtcmStreamConfig,
+)
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
@@ -63,7 +89,7 @@ from sp_rtk_base.services.device_service import (
 )
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
-from sp_rtk_base.services.profile_store import ProfileStore
+from sp_rtk_base.services.profile_store import ProfileStore, ProfileStoreError
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
@@ -209,16 +235,43 @@ def apply_blocked_reason(data_link_port: list[PortId]) -> str | None:
     return None
 
 
+@dataclass
+class FormExtras:
+    """The hardware-section fields beyond the matrix and data-link ports.
+
+    Not editable via any widget on this page yet (see the module
+    docstring) — this only carries values a *profile pick* pre-fills,
+    so Apply can push them and Save-as / "modified from X" can compare
+    against them. ``None`` mirrors ``ReceiverConfig``'s own "leave
+    untouched" semantics for every field except ``meas_period_ms``,
+    which ``ReceiverConfig`` itself always defaults to ``1000``.
+    """
+
+    ports: dict[PortId, PortProtocolSet] | None = None
+    constellations: list[GnssConstellation] | None = None
+    baud: BaudConfig | None = None
+    meas_period_ms: int = 1000
+    dyn_model: DynModel | None = None
+    tmode_mode: TmodeMode | None = None
+    elevation_mask_deg: int | None = None
+    bds_b2_enabled: bool | None = None
+    spi_enabled: bool | None = None
+
+
 def build_apply_config(
     matrix: dict[RtcmRowId, dict[PortId, bool]],
     data_link_port: list[PortId],
+    extras: FormExtras | None = None,
 ) -> ReceiverConfig:
-    """Build the ``ReceiverConfig`` Apply pushes from the editable form state.
+    """Build a ``ReceiverConfig`` from the form state.
 
-    Only the RTCM matrix and the data-link ports are editable on this
-    page (issue #65) — every other field is left at its schema default
-    / ``None`` so Apply never touches ports, GNSS, role fields or baud
-    that this page doesn't yet expose for editing.
+    *extras* defaults to an all-``None`` :class:`FormExtras` — nothing
+    but the matrix and data-link ports set. ``_apply()`` always uses
+    that default (Apply stays scoped to the matrix + data-link ports,
+    per #65 — the other fields have no live read-back to verify a
+    write against). Save-as and the "modified from X" comparison pass
+    the real *extras* through, since those only compare in-form state
+    and never touch the receiver.
 
     Raises:
         pydantic.ValidationError: If the resulting config fails a
@@ -226,10 +279,232 @@ def build_apply_config(
             data-link port) — a client-side pre-write refusal, nothing
             is sent to the receiver.
     """
+    extras = extras or FormExtras()
     return ReceiverConfig(
+        ports=extras.ports,
+        constellations=extras.constellations,
+        baud=extras.baud,
+        meas_period_ms=extras.meas_period_ms,
+        dyn_model=extras.dyn_model,
+        tmode_mode=extras.tmode_mode,
+        elevation_mask_deg=extras.elevation_mask_deg,
+        bds_b2_enabled=extras.bds_b2_enabled,
+        spi_enabled=extras.spi_enabled,
         data_link_port=data_link_port,
         rtcm_stream=RtcmStreamConfig(matrix=matrix),
     )
+
+
+def profile_matrix_to_form_matrix(
+    profile: Profile,
+) -> dict[RtcmRowId, dict[PortId, bool]]:
+    """Normalize a profile's sparse matrix to the full catalog x port grid.
+
+    Mirrors :func:`rtcm_config_to_matrix` — the form's out-of-sync
+    comparison relies on every matrix always covering every catalog
+    row x :data:`MATRIX_PORTS` cell, whether it was seeded from a live
+    read-back or, here, a profile pick.
+    """
+    matrix = profile.rtcm_stream.matrix
+    return {
+        row_id: {port: matrix.get(row_id, {}).get(port, False) for port in MATRIX_PORTS}
+        for row_id in ALL_RTCM_MESSAGE_IDS
+    }
+
+
+def profile_to_form_extras(profile: Profile) -> FormExtras:
+    """Everything a profile pick writes into the form besides matrix/data-link."""
+    return FormExtras(
+        ports=profile.ports,
+        constellations=profile.constellations,
+        baud=profile.baud,
+        meas_period_ms=profile.meas_period_ms,
+        dyn_model=profile.dyn_model,
+        tmode_mode=profile.tmode_mode,
+        elevation_mask_deg=profile.elevation_mask_deg,
+        bds_b2_enabled=profile.bds_b2_enabled,
+        spi_enabled=profile.spi_enabled,
+    )
+
+
+def receiver_config_from_profile(profile: Profile) -> ReceiverConfig:
+    """The ``ReceiverConfig`` a profile carries, with identity stripped.
+
+    Used to compare "the form" against "the selected profile" as the
+    same type — a ``Profile`` is a ``ReceiverConfig`` plus identity
+    fields, and those must not participate in the "modified from X"
+    equality check.
+
+    Deliberately built through :func:`build_apply_config` with the
+    same :func:`profile_matrix_to_form_matrix`/:func:`profile_to_form_extras`
+    normalization :func:`_select_profile` (in the page closure) uses to
+    seed the form from this same profile — a stored profile's matrix is
+    *sparse* (absent cell = off), while the form's is always *dense*
+    (every catalog row x port present). Comparing a freshly-picked,
+    untouched form against ``ReceiverConfig(**profile.model_dump())``
+    would almost always report "modified" — the same on/off state,
+    represented as two differently-shaped dicts that don't compare
+    equal — unless both sides go through the identical normalization.
+    """
+    return build_apply_config(
+        profile_matrix_to_form_matrix(profile),
+        list(profile.data_link_port),
+        profile_to_form_extras(profile),
+    )
+
+
+def is_modified_from_profile(
+    form_config: ReceiverConfig, profile: Profile | None
+) -> bool:
+    """Whether *form_config* diverges from *profile* — the second, independent
+    indicator (form vs. selected profile), distinct from "out of sync" (form
+    vs. live receiver). ``False`` when no profile is selected — there is
+    nothing to have diverged from."""
+    if profile is None:
+        return False
+    return form_config != receiver_config_from_profile(profile)
+
+
+def save_as_enabled(
+    form_config: ReceiverConfig | None, profile: Profile | None
+) -> bool:
+    """Save-as is available whenever the form is valid, suppressed only when
+    a *selected* profile still exactly equals the form."""
+    if form_config is None:
+        return False
+    return profile is None or is_modified_from_profile(form_config, profile)
+
+
+def suggest_profile_name(profile: Profile | None, hardware_target: str) -> str:
+    """Auto-suggested Save-as name.
+
+    ``"<source> (copy)"`` when forked from a profile, a
+    hardware-derived name when capturing a bare live config — both
+    sanitized to the store's filesystem-safe slug charset
+    (``^[A-Za-z0-9_-]+$``, see ``profile_store._SAFE_NAME_RE``), since
+    a name containing a space or parentheses would fail validation
+    the instant an operator hits Save without editing it.
+    """
+    if profile is not None:
+        return f"{profile.name}-copy"
+    return f"{hardware_target.lower()}-captured"
+
+
+def resolve_save_hardware(profile: Profile | None, identity: HardwareIdentity) -> str:
+    """The ``hardware`` tag a newly-saved profile should carry.
+
+    A fork keeps its source profile's tag unchanged. A bare capture
+    (no profile selected) tags itself with the connected receiver's
+    resolved identity when that's a valid profile-hardware token
+    (a confirmed specific model, or any family token — ``is_specific_model``
+    isn't checked here, since a family token is just as valid a target as a
+    specific model) — falling back to :data:`HARDWARE_ANY` only when identity
+    hasn't resolved to a usable token at all (``unknown``, or an ``inferred``
+    guess of a specific model that a family token can't stand in for).
+    """
+    if profile is not None:
+        return profile.hardware
+    if identity.confidence == HardwareConfidence.CONFIRMED:
+        return identity.target
+    if identity.target in KNOWN_FAMILY_TOKENS:
+        return identity.target
+    return HARDWARE_ANY
+
+
+def build_saved_profile(
+    name: str,
+    form_config: ReceiverConfig,
+    hardware: str,
+    forked_from: str | None,
+) -> Profile:
+    """Construct the ``Profile`` document Save-as persists."""
+    return Profile(
+        **form_config.model_dump(),
+        name=name,
+        version=1,
+        hardware=hardware,
+        forked_from=forked_from,
+    )
+
+
+def resolve_ports_display(
+    live: PortProtocolConfig,
+    form_ports: dict[PortId, PortProtocolSet] | None,
+) -> dict[PortId, tuple[list[str], list[str]]]:
+    """Per-port (in, out) protocol name lists the "Port Protocols" display
+    renders — the live read-back, unless a profile pick set *form_ports*, in
+    which case the form is the source of truth (issue #66)."""
+    if form_ports is not None:
+        empty = PortProtocolSet()
+        return {
+            port: (
+                [p.value for p in form_ports.get(port, empty).in_],
+                [p.value for p in form_ports.get(port, empty).out],
+            )
+            for port in (PortId.UART1, PortId.UART2, PortId.USB)
+        }
+    return {
+        port: (
+            [p.value for p in live.enabled_in(port)],
+            [p.value for p in live.enabled_out(port)],
+        )
+        for port in (PortId.UART1, PortId.UART2, PortId.USB)
+    }
+
+
+def resolve_gnss_display(
+    live: GnssConfig,
+    form_constellations: list[GnssConstellation] | None,
+) -> dict[str, bool]:
+    """Constellation -> enabled map the "GNSS Constellations" display
+    renders — the live read-back, unless a profile pick set
+    *form_constellations*, in which case only those are enabled."""
+    if form_constellations is not None:
+        wanted = set(form_constellations)
+        return {c.value: c in wanted for c in GnssConstellation}
+    return {sys_cfg.constellation.value: sys_cfg.enabled for sys_cfg in live.systems}
+
+
+def _tri_state_text(value: bool | None) -> str:
+    """``"on"``/``"off"``/``"unchanged"`` for an optional bool form field."""
+    return "unchanged" if value is None else ("on" if value else "off")
+
+
+def hw_extras_display(extras: FormExtras) -> list[tuple[str, str, str]]:
+    """(css-class, label, value) triples the "Hardware Section" display
+    renders — every :class:`FormExtras` field the matrix/ports/GNSS views
+    don't already cover."""
+    baud_parts: list[str] = []
+    if extras.baud is not None:
+        if extras.baud.uart1 is not None:
+            baud_parts.append(f"UART1={extras.baud.uart1}")
+        if extras.baud.uart2 is not None:
+            baud_parts.append(f"UART2={extras.baud.uart2}")
+
+    hz = 1000 / extras.meas_period_ms
+    return [
+        ("hw-field-meas-rate", "Measurement Rate", f"{hz:g} Hz"),
+        ("hw-field-baud", "Baud", ", ".join(baud_parts) or "unchanged"),
+        (
+            "hw-field-dyn-model",
+            "Dynamics Model",
+            extras.dyn_model.value if extras.dyn_model else "unchanged",
+        ),
+        (
+            "hw-field-tmode",
+            "Time Mode",
+            extras.tmode_mode.value if extras.tmode_mode else "unchanged",
+        ),
+        (
+            "hw-field-elevation-mask",
+            "Elevation Mask",
+            f"{extras.elevation_mask_deg}°"
+            if extras.elevation_mask_deg is not None
+            else "unchanged",
+        ),
+        ("hw-field-bds-b2", "BeiDou B2", _tri_state_text(extras.bds_b2_enabled)),
+        ("hw-field-spi", "SPI", _tri_state_text(extras.spi_enabled)),
+    ]
 
 
 def copy_matrix(
@@ -357,9 +632,10 @@ def gps_config_page() -> None:
         with config_card:
             ui.label("Receiver Configuration").classes("text-h6 text-white")
             ui.label(
-                "Port protocols and GNSS reflect the receiver and aren't "
-                "editable here yet. The RTCM matrix and data-link port(s) "
-                "below are — edit, then Apply."
+                "Port protocols, GNSS and the fields below reflect the live "
+                "receiver, or a picked profile once one's selected — this "
+                "display isn't click-to-edit yet. The RTCM matrix and "
+                "data-link port(s) further down are — edit, then Apply."
             ).classes("text-grey-4 q-mt-xs text-caption")
             ui.separator()
 
@@ -368,6 +644,9 @@ def gps_config_page() -> None:
 
             ui.label("GNSS Constellations").classes("text-subtitle2 text-white q-mt-md")
             gnss_view = ui.row().classes("q-mt-xs gap-2 flex-wrap")
+
+            ui.label("Hardware Section").classes("text-subtitle2 text-white q-mt-md")
+            hw_extras_view = ui.row().classes("hw-extras-view q-mt-xs gap-4 flex-wrap")
 
             ui.label("RTCM Stream").classes("text-subtitle2 text-white q-mt-md")
             ui.label(
@@ -399,6 +678,15 @@ def gps_config_page() -> None:
             with ui.row().classes("items-center gap-3 q-mt-md"):
                 apply_btn = ui.button("Apply", icon="bolt").props("color=primary")
                 sync_badge = ui.badge("").classes("sync-badge").props("color=positive")
+                save_as_btn = (
+                    ui.button("Save as…", icon="save")
+                    .classes("save-as-btn")
+                    .props("color=secondary outline")
+                )
+                modified_badge = (
+                    ui.badge("").classes("modified-badge").props("color=warning")
+                )
+                modified_badge.set_visibility(False)
 
             apply_result_label = (
                 ui.label("")
@@ -407,6 +695,61 @@ def gps_config_page() -> None:
             )
             apply_result_label.set_visibility(False)
             apply_diff_list = ui.column().classes("apply-diff-list q-mt-xs gap-0")
+
+        # ---- Save-as dialog ----
+        with ui.dialog() as save_as_dialog, ui.card().classes("q-pa-md"):
+            ui.label("Save as new profile").classes("text-h6 text-white")
+            ui.separator()
+            save_as_name_input = ui.input("Name").classes("save-as-name w-full q-mt-sm")
+            save_as_from_label = ui.label("").classes(
+                "save-as-from text-caption text-grey-4 q-mt-xs"
+            )
+            save_as_error_label = ui.label("").classes(
+                "save-as-error text-negative text-caption q-mt-xs"
+            )
+            save_as_error_label.set_visibility(False)
+            with ui.row().classes("justify-end gap-2 q-mt-md"):
+                ui.button("Cancel", on_click=save_as_dialog.close).props("flat")
+                save_as_confirm_btn = (
+                    ui.button("Create")
+                    .classes("save-as-confirm-btn")
+                    .props("color=primary")
+                )
+
+        # ---- Rename dialog (customs only) ----
+        with ui.dialog() as rename_dialog, ui.card().classes("q-pa-md"):
+            ui.label("Rename profile").classes("text-h6 text-white")
+            ui.separator()
+            rename_name_input = ui.input("New name").classes(
+                "rename-name w-full q-mt-sm"
+            )
+            rename_error_label = ui.label("").classes(
+                "rename-error text-negative text-caption q-mt-xs"
+            )
+            rename_error_label.set_visibility(False)
+            with ui.row().classes("justify-end gap-2 q-mt-md"):
+                ui.button("Cancel", on_click=rename_dialog.close).props("flat")
+                rename_confirm_btn = (
+                    ui.button("Rename")
+                    .classes("rename-confirm-btn")
+                    .props("color=primary")
+                )
+
+        # ---- Delete confirm dialog (customs only) ----
+        with ui.dialog() as delete_dialog, ui.card().classes("q-pa-md"):
+            ui.label("Delete profile?").classes("text-h6 text-white")
+            ui.separator()
+            delete_confirm_label = ui.label("").classes("q-mt-sm")
+            ui.label("This cannot be undone. The live receiver is untouched.").classes(
+                "text-caption text-grey-4 q-mt-xs"
+            )
+            with ui.row().classes("justify-end gap-2 q-mt-md"):
+                ui.button("Cancel", on_click=delete_dialog.close).props("flat")
+                delete_confirm_btn = (
+                    ui.button("Delete")
+                    .classes("delete-confirm-btn")
+                    .props("color=negative")
+                )
 
         # ================================================================
         # Section D: Save to Flash (hidden until connected + capable)
@@ -486,11 +829,7 @@ def gps_config_page() -> None:
 
         def _render_picker() -> None:
             """Render the profile picker from the current device identity."""
-            info = svc.device_info
-            identity = resolve_identity(
-                info.hardware_target if info else None,
-                info.hardware_confidence if info else None,
-            )
+            identity = _current_identity()
             identity_label.text = (
                 f"Connected receiver hardware: {identity.target} "
                 f"({identity.confidence.value})"
@@ -506,26 +845,216 @@ def gps_config_page() -> None:
             picker_list.clear()
             with picker_list:
                 for entry in entries:
-                    row_classes = f"profile-row profile-row-{entry.profile.name} items-center gap-2 q-py-xs"
+                    is_selected = (
+                        selected_profile is not None
+                        and selected_profile.name == entry.profile.name
+                    )
+                    is_incompatible = (
+                        not entry.compatible and entry.incompatible_reason is not None
+                    )
+                    row_classes = f"profile-row profile-row-{entry.profile.name} items-center gap-2 q-py-xs justify-between"
+                    if is_selected:
+                        row_classes += " profile-row-selected"
                     with ui.row().classes(row_classes) as row:
                         name_classes = (
                             "text-white" if entry.compatible else "text-grey-6"
                         )
-                        ui.label(entry.profile.name).classes(
-                            f"profile-name {name_classes}"
+                        # The clickable "select" target is its own inner
+                        # row so the rename/delete/export icons — siblings
+                        # inside the outer row, not descendants of this one
+                        # — never bubble a click into profile selection.
+                        select_classes = "items-center gap-2" + (
+                            " cursor-pointer" if entry.compatible else ""
                         )
-                        ui.badge("built-in" if entry.is_builtin else "custom").props(
-                            "outline color=grey"
-                        )
-                        if entry.is_default:
-                            ui.badge("Suggested").classes(
-                                "profile-suggested-badge"
-                            ).props("color=primary")
-                        if not entry.compatible and entry.incompatible_reason:
+                        with ui.row().classes(select_classes) as select_area:
+                            if entry.compatible:
+                                select_area.on(
+                                    "click",
+                                    lambda _, p=entry.profile: _select_profile(p),
+                                )
+                            if is_selected:
+                                ui.icon("check_circle").classes(
+                                    "profile-selected-icon text-primary"
+                                )
+                            ui.label(entry.profile.name).classes(
+                                f"profile-name {name_classes}"
+                            )
+                            ui.badge(
+                                "built-in" if entry.is_builtin else "custom"
+                            ).props("outline color=grey")
+                            if entry.is_default:
+                                ui.badge("Suggested").classes(
+                                    "profile-suggested-badge"
+                                ).props("color=primary")
+                            if entry.incompatible_reason:
+                                ui.icon("info").classes(
+                                    "profile-incompatible-icon text-grey-5"
+                                ).tooltip(entry.incompatible_reason)
+
+                        if is_incompatible:
                             row.classes("opacity-60")
-                            ui.icon("info").classes(
-                                "profile-incompatible-icon text-grey-5"
-                            ).tooltip(entry.incompatible_reason)
+
+                        if not entry.is_builtin:
+                            with ui.row().classes("gap-2 items-center"):
+                                ui.icon("edit").classes(
+                                    "profile-rename-icon text-grey-4 cursor-pointer"
+                                ).on(
+                                    "click",
+                                    lambda _, n=entry.profile.name: _open_rename_dialog(
+                                        n
+                                    ),
+                                ).tooltip("Rename")
+                                ui.icon("delete").classes(
+                                    "profile-delete-icon text-grey-4 cursor-pointer"
+                                ).on(
+                                    "click",
+                                    lambda _, n=entry.profile.name: _open_delete_dialog(
+                                        n
+                                    ),
+                                ).tooltip("Delete")
+                                ui.icon("download").classes(
+                                    "profile-export-icon text-grey-4 cursor-pointer"
+                                ).on(
+                                    "click",
+                                    lambda _, n=entry.profile.name: _export_profile(n),
+                                ).tooltip("Export")
+
+        def _select_profile(profile: Profile) -> None:
+            """Pick a profile — pre-fills the whole form (issue #66).
+
+            This is expected to put the form out of sync with the
+            receiver (per spec that's correct and legible, precisely
+            what Apply is for) — ``_on_form_changed`` recomputes that
+            indicator same as any other edit. The form remains the
+            source of truth afterwards: further matrix/data-link edits
+            mutate it same as before, independent of the profile pick.
+            """
+            nonlocal selected_profile, form_matrix, form_data_link_ports, form_extras
+            selected_profile = profile
+            form_matrix = profile_matrix_to_form_matrix(profile)
+            form_data_link_ports = list(profile.data_link_port)
+            form_extras = profile_to_form_extras(profile)
+
+            _render_matrix()
+            _render_ports_view()
+            _render_gnss_view()
+            _render_hw_extras_view()
+            _render_picker()
+            _on_form_changed()
+
+        def _current_identity() -> HardwareIdentity:
+            info = svc.device_info
+            return resolve_identity(
+                info.hardware_target if info else None,
+                info.hardware_confidence if info else None,
+            )
+
+        def _open_save_as_dialog() -> None:
+            identity = _current_identity()
+            save_as_name_input.value = suggest_profile_name(
+                selected_profile, identity.target
+            )
+            save_as_from_label.text = (
+                f"Forked from: {selected_profile.name}" if selected_profile else ""
+            )
+            save_as_from_label.set_visibility(selected_profile is not None)
+            save_as_error_label.set_visibility(False)
+            save_as_dialog.open()
+
+        def _confirm_save_as() -> None:
+            nonlocal selected_profile
+            name = (save_as_name_input.value or "").strip()
+            if not name:
+                save_as_error_label.text = "Name is required"
+                save_as_error_label.set_visibility(True)
+                return
+
+            form_config = _current_form_config()
+            if form_config is None:
+                save_as_error_label.text = (
+                    "The form doesn't currently validate — fix the RTCM "
+                    "matrix / data-link ports before saving."
+                )
+                save_as_error_label.set_visibility(True)
+                return
+
+            hardware = resolve_save_hardware(selected_profile, _current_identity())
+            forked_from = selected_profile.name if selected_profile else None
+
+            try:
+                profile = build_saved_profile(name, form_config, hardware, forked_from)
+                created = profile_store.create_profile(profile)
+            except (ValidationError, ProfileStoreError) as exc:
+                save_as_error_label.text = str(exc)
+                save_as_error_label.set_visibility(True)
+                return
+
+            selected_profile = created
+            save_as_dialog.close()
+            ui.notify(f"Saved profile '{created.name}'", type="positive")
+            _render_picker()
+            _on_form_changed()
+
+        def _open_rename_dialog(name: str) -> None:
+            nonlocal rename_target
+            rename_target = name
+            rename_name_input.value = name
+            rename_error_label.set_visibility(False)
+            rename_dialog.open()
+
+        def _confirm_rename() -> None:
+            nonlocal selected_profile
+            if rename_target is None:
+                return
+            new_name = (rename_name_input.value or "").strip()
+            try:
+                renamed = profile_store.rename_profile(rename_target, new_name)
+            except ProfileStoreError as exc:
+                rename_error_label.text = str(exc)
+                rename_error_label.set_visibility(True)
+                return
+
+            if selected_profile is not None and selected_profile.name == rename_target:
+                selected_profile = renamed
+            rename_dialog.close()
+            ui.notify(f"Renamed to '{renamed.name}'", type="positive")
+            _render_picker()
+            _on_form_changed()
+
+        def _open_delete_dialog(name: str) -> None:
+            nonlocal delete_target
+            delete_target = name
+            delete_confirm_label.text = f"Delete custom profile '{name}'?"
+            delete_dialog.open()
+
+        def _confirm_delete() -> None:
+            nonlocal selected_profile
+            if delete_target is None:
+                return
+            try:
+                profile_store.delete_profile(delete_target)
+            except ProfileStoreError as exc:
+                ui.notify(str(exc), type="negative")
+                delete_dialog.close()
+                return
+
+            if selected_profile is not None and selected_profile.name == delete_target:
+                selected_profile = None
+            delete_dialog.close()
+            ui.notify(f"Deleted '{delete_target}'", type="positive")
+            _render_picker()
+            _on_form_changed()
+
+        def _export_profile(name: str) -> None:
+            try:
+                profile = profile_store.export_profile(name)
+            except ProfileStoreError as exc:
+                ui.notify(str(exc), type="negative")
+                return
+            data = json.dumps(
+                profile.model_dump(mode="json", exclude_none=True), indent=2
+            )
+            ui.download(data.encode("utf-8"), filename=f"{name}.json")
 
         def _update_ui_state() -> None:
             """Update UI visibility and button states based on device state."""
@@ -602,35 +1131,67 @@ def gps_config_page() -> None:
         live_matrix: dict[RtcmRowId, dict[PortId, bool]] = copy_matrix(form_matrix)
         form_data_link_ports: list[PortId] = []
 
+        # Issue #66 additions — the rest of the "hardware section" (ports,
+        # GNSS, baud, role fields, optimisations), the profile a pick
+        # selected (None = no pick, the default/transient state), and the
+        # live ports/GNSS read-backs the "Port Protocols"/"GNSS
+        # Constellations" display falls back to when no profile is picked.
+        form_extras = FormExtras()
+        selected_profile: Profile | None = None
+        live_ports = PortProtocolConfig()
+        live_gnss = GnssConfig()
+        rename_target: str | None = None
+        delete_target: str | None = None
+
         def _out_of_sync() -> bool:
             return form_matrix != live_matrix
 
-        def _render_ports_table(ports: PortProtocolConfig) -> None:
+        def _current_form_config() -> ReceiverConfig | None:
+            """The form as a ``ReceiverConfig``, or ``None`` if it doesn't
+            currently validate (e.g. no data-link port selected)."""
+            try:
+                return build_apply_config(
+                    form_matrix, form_data_link_ports, form_extras
+                )
+            except ValidationError:
+                return None
+
+        def _render_ports_view() -> None:
             ports_view.clear()
             with ports_view:
+                display = resolve_ports_display(live_ports, form_extras.ports)
                 for port_id in (PortId.UART1, PortId.UART2, PortId.USB):
+                    in_names, out_names = display[port_id]
                     with ui.row().classes("items-center gap-2"):
                         ui.label(port_id.value).classes("text-white").style(
                             "width: 60px; flex-shrink: 0"
                         )
                         ui.label("IN").classes("text-caption text-grey-5")
-                        for proto in ports.enabled_in(port_id):
-                            ui.badge(proto.value).props("outline color=grey")
+                        for name in in_names:
+                            ui.badge(name).props("outline color=grey")
                         ui.label("OUT").classes("text-caption text-grey-5 q-ml-md")
-                        for proto in ports.enabled_out(port_id):
-                            ui.badge(proto.value).props("outline color=primary")
+                        for name in out_names:
+                            ui.badge(name).props("outline color=primary")
 
-        def _render_gnss(gnss: GnssConfig) -> None:
-            enabled_map: dict[str, bool] = {
-                sys_cfg.constellation.value: sys_cfg.enabled for sys_cfg in gnss.systems
-            }
+        def _render_gnss_view() -> None:
             gnss_view.clear()
             with gnss_view:
+                enabled_map = resolve_gnss_display(
+                    live_gnss, form_extras.constellations
+                )
                 for c_val, c_name in _GNSS_DISPLAY:
                     enabled = enabled_map.get(c_val, False)
                     ui.badge(c_name).props(
                         "color=positive" if enabled else "outline color=grey"
                     )
+
+        def _render_hw_extras_view() -> None:
+            hw_extras_view.clear()
+            with hw_extras_view:
+                for css_class, label, value in hw_extras_display(form_extras):
+                    with ui.column().classes(f"{css_class} gap-0"):
+                        ui.label(label).classes("text-caption text-grey-5")
+                        ui.label(value).classes("text-white")
 
         def _toggle_matrix_cell(msg_id: RtcmRowId, port: PortId) -> None:
             form_matrix[msg_id][port] = not form_matrix[msg_id][port]
@@ -741,6 +1302,28 @@ def gps_config_page() -> None:
             data_link_blocked_label.text = reason or ""
             data_link_blocked_label.set_visibility(reason is not None)
 
+        def _render_modified_indicator() -> None:
+            """The second, independent indicator — form vs. *selected
+            profile*, distinct from "out of sync" (form vs. live receiver).
+            Hidden when no profile is selected: nothing to have diverged
+            from."""
+            form_config = _current_form_config()
+            if selected_profile is None or form_config is None:
+                modified_badge.set_visibility(False)
+                return
+            modified_badge.set_visibility(True)
+            if is_modified_from_profile(form_config, selected_profile):
+                modified_badge.text = f"Modified from {selected_profile.name}"
+                modified_badge.props("color=warning")
+            else:
+                modified_badge.text = f"Matches {selected_profile.name}"
+                modified_badge.props("color=positive")
+
+        def _render_save_as_gate() -> None:
+            save_as_btn.set_enabled(
+                save_as_enabled(_current_form_config(), selected_profile)
+            )
+
         def _on_form_changed() -> None:
             """Recompute every reactive bit of the form after an edit.
 
@@ -751,6 +1334,8 @@ def gps_config_page() -> None:
             _render_data_link_picker()
             _render_sync_indicator()
             _render_apply_gate()
+            _render_modified_indicator()
+            _render_save_as_gate()
 
         def _set_apply_result(text: str, *, ok: bool) -> None:
             apply_diff_list.clear()
@@ -774,7 +1359,18 @@ def gps_config_page() -> None:
                     )
 
         async def _apply() -> None:
-            """Push the current form (matrix + data-link ports) to the receiver."""
+            """Push the current form (matrix + data-link ports) to the receiver.
+
+            Deliberately excludes ``form_extras`` (issue #66 review):
+            those fields have no live read-back, so a profile-populated
+            value pushed through Apply could never be verified by the
+            read-back-diff below, unlike the matrix. Extending Apply to
+            the full hardware section is out of #66's scope — it isn't
+            in the acceptance criteria, and #65 deliberately scoped
+            Apply to "only the RTCM matrix and the data-link ports".
+            ``form_extras`` is still used for Save-as/"modified from X",
+            which compare in-form state and never touch the receiver.
+            """
             nonlocal live_matrix
             try:
                 config = build_apply_config(form_matrix, form_data_link_ports)
@@ -842,9 +1438,15 @@ def gps_config_page() -> None:
             The RTCM matrix and data-link ports are freshly inferred here
             every time — on connect, reload, and reconnect — so the form
             starts in sync by construction (issue #65), matching the rest
-            of this page's existing live-seeding behaviour.
+            of this page's existing live-seeding behaviour. This is also
+            the reset point for the transient profile-pick buffer (issue
+            #66): unsaved form state, including which profile (if any) is
+            selected, is discarded on nav / reload / reconnect / restart,
+            per spec — the form always re-seeds from the live receiver,
+            never from the last-loaded profile.
             """
             nonlocal form_matrix, live_matrix, form_data_link_ports
+            nonlocal form_extras, selected_profile, live_ports, live_gnss
             rtcm = await svc.get_rtcm_port_config()
             ports = await svc.get_port_protocols()
             gnss = await svc.get_gnss_config()
@@ -852,13 +1454,19 @@ def gps_config_page() -> None:
             form_matrix = rtcm_config_to_matrix(rtcm)
             live_matrix = copy_matrix(form_matrix)
             form_data_link_ports = infer_data_link_ports(form_matrix)
+            form_extras = FormExtras()
+            selected_profile = None
+            live_ports = ports
+            live_gnss = gnss
 
-            _render_ports_table(ports)
-            _render_gnss(gnss)
+            _render_ports_view()
+            _render_gnss_view()
+            _render_hw_extras_view()
             _render_matrix()
             _render_advisory(rtcm)
             _clear_apply_result()
             _on_form_changed()
+            _render_picker()
 
         async def _connect() -> None:
             """Connect to the selected device."""
@@ -957,6 +1565,10 @@ def gps_config_page() -> None:
         refresh_btn.on_click(lambda: _refresh_ports())
         reload_device_btn.on_click(_reload_device_config)
         apply_btn.on_click(_apply)
+        save_as_btn.on_click(_open_save_as_dialog)
+        save_as_confirm_btn.on_click(_confirm_save_as)
+        rename_confirm_btn.on_click(_confirm_rename)
+        delete_confirm_btn.on_click(_confirm_delete)
         save_flash_btn.on_click(_save_flash)
         handoff_btn.on_click(_handoff_to_relay)
 

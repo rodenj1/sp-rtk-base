@@ -22,6 +22,8 @@ coordinate guard are service-level and belong to the apply ticket.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sp_rtk_base.models.device_models import (
@@ -130,7 +132,16 @@ class RtcmStreamConfig(BaseModel):
 
 
 class ReceiverConfig(BaseModel):
-    """Everything writable to a receiver. No ``name`` — see ``Profile``."""
+    """Everything writable to a receiver. No ``name`` — see ``Profile``.
+
+    ``data_link_port`` deliberately isn't a field here (issue #98): it
+    has no CFG key and is re-inferred from the matrix on every load,
+    so there is no receiver-side counterpart a ``ReceiverConfig``
+    could ever be out of sync with. It lives on ``Profile`` (a saved
+    profile does want to remember which ports were the data-link
+    ports) and on ``ReceiverApplyRequest`` (Apply's envelope, where
+    it's purely an input to the cross-field validators below).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -138,7 +149,6 @@ class ReceiverConfig(BaseModel):
     meas_period_ms: int = Field(default=1000, ge=100, le=60000)
     constellations: list[GnssConstellation] | None = Field(default=None)
     ports: dict[PortId, PortProtocolSet] | None = Field(default=None)
-    data_link_port: list[PortId] = Field(min_length=1)
     dyn_model: DynModel | None = Field(default=None)
     tmode_mode: TmodeMode | None = Field(default=None)
     elevation_mask_deg: int | None = Field(default=None, ge=0, le=90)
@@ -146,39 +156,50 @@ class ReceiverConfig(BaseModel):
     spi_enabled: bool | None = Field(default=None)
     rtcm_stream: RtcmStreamConfig = Field(default_factory=RtcmStreamConfig)
 
-    @model_validator(mode="after")
-    def _validate_data_link_ports_are_uart(self) -> ReceiverConfig:
-        invalid_ports = [
-            p for p in self.data_link_port if p not in _DATA_LINK_CANDIDATE_PORTS
-        ]
-        if invalid_ports:
-            raise ValueError(
-                f"data_link_port: {[p.value for p in invalid_ports]} cannot be a "
-                "data-link port — only UART1/UART2 are valid"
-            )
-        return self
 
-    @model_validator(mode="after")
-    def _validate_1005_on_a_data_link_port(self) -> ReceiverConfig:
-        rows_on_1005 = self.rtcm_stream.matrix.get(RtcmRowId.RTCM_1005, {})
-        if not any(rows_on_1005.get(port, False) for port in self.data_link_port):
-            raise ValueError(
-                "1005 (Station ARP) must be enabled on at least one data_link_port"
-            )
-        return self
+# ---------------------------------------------------------------------------
+# Shared data-link-port cross-field rules
+#
+# Three context-free rules that need both a ``data_link_port`` selection
+# and an RTCM matrix to check. Neither ``ReceiverConfig`` nor
+# ``ReceiverAssertion`` carries ``data_link_port`` (issue #98 — it has no
+# CFG key of its own), so these rules apply wherever the two are bundled
+# together: ``Profile`` (its own ``data_link_port`` field, alongside the
+# ``rtcm_stream`` it inherits from ``ReceiverConfig``) and
+# ``ReceiverApplyRequest`` (Apply's envelope). Extracted as free functions
+# so both call sites validate identically without one inheriting the
+# other's fields.
+# ---------------------------------------------------------------------------
 
-    @model_validator(mode="after")
-    def _validate_every_data_link_port_has_a_row_on(self) -> ReceiverConfig:
-        matrix = self.rtcm_stream.matrix
-        for port in self.data_link_port:
-            has_any_row_on = any(
-                ports_for_row.get(port, False) for ports_for_row in matrix.values()
-            )
-            if not has_any_row_on:
-                raise ValueError(
-                    f"data_link_port {port.value}: has zero RTCM rows enabled"
-                )
-        return self
+
+def _check_data_link_ports_are_uart(data_link_port: list[PortId]) -> None:
+    invalid_ports = [p for p in data_link_port if p not in _DATA_LINK_CANDIDATE_PORTS]
+    if invalid_ports:
+        raise ValueError(
+            f"data_link_port: {[p.value for p in invalid_ports]} cannot be a "
+            "data-link port — only UART1/UART2 are valid"
+        )
+
+
+def _check_1005_on_a_data_link_port(
+    data_link_port: list[PortId], matrix: dict[RtcmRowId, dict[PortId, bool]]
+) -> None:
+    rows_on_1005 = matrix.get(RtcmRowId.RTCM_1005, {})
+    if not any(rows_on_1005.get(port, False) for port in data_link_port):
+        raise ValueError(
+            "1005 (Station ARP) must be enabled on at least one data_link_port"
+        )
+
+
+def _check_every_data_link_port_has_a_row_on(
+    data_link_port: list[PortId], matrix: dict[RtcmRowId, dict[PortId, bool]]
+) -> None:
+    for port in data_link_port:
+        has_any_row_on = any(
+            ports_for_row.get(port, False) for ports_for_row in matrix.values()
+        )
+        if not has_any_row_on:
+            raise ValueError(f"data_link_port {port.value}: has zero RTCM rows enabled")
 
 
 # ---------------------------------------------------------------------------
@@ -187,13 +208,38 @@ class ReceiverConfig(BaseModel):
 
 
 class Profile(ReceiverConfig):
-    """A saved, named, hardware-tagged receiver configuration."""
+    """A saved, named, hardware-tagged receiver configuration.
 
+    Unlike ``ReceiverAssertion``, a saved profile *does* want to
+    remember which ports were the data-link ports — that's part of
+    what makes it worth saving — so ``data_link_port`` lives here as
+    ``Profile``'s own field rather than on ``ReceiverConfig`` (issue
+    #98).
+    """
+
+    data_link_port: list[PortId] = Field(min_length=1)
     name: str = Field(min_length=1)
     version: int
     hardware: str
     forked_from: str | None = Field(default=None)
     display_name: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _validate_data_link_ports_are_uart(self) -> Profile:
+        _check_data_link_ports_are_uart(self.data_link_port)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_1005_on_a_data_link_port(self) -> Profile:
+        _check_1005_on_a_data_link_port(self.data_link_port, self.rtcm_stream.matrix)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_every_data_link_port_has_a_row_on(self) -> Profile:
+        _check_every_data_link_port_has_a_row_on(
+            self.data_link_port, self.rtcm_stream.matrix
+        )
+        return self
 
     @model_validator(mode="after")
     def _validate_identity(self) -> Profile:
@@ -255,6 +301,254 @@ class ReceiverAssertion(BaseModel):
     bds_b2_enabled: bool
     spi_enabled: bool
     rtcm_stream: RtcmStreamConfig
+
+
+# ---------------------------------------------------------------------------
+# ReceiverApplyRequest — Apply's envelope (issue #98)
+# ---------------------------------------------------------------------------
+
+
+class ReceiverApplyRequest(BaseModel):
+    """The envelope Apply sends: the whole asserted receiver state plus
+    the data-link port selection.
+
+    ``data_link_port`` cannot live on ``ReceiverAssertion`` itself — it
+    has no CFG key and is re-inferred from the matrix on every load, so
+    there is no receiver-side counterpart it could ever be out of sync
+    with. Here it is purely an input to the three cross-field
+    validators below; it is never counted or marked in a diff (see
+    :func:`diff_receiver_assertions`, which never looks at it) — an
+    Apply where only the data-link port selection changed compares
+    equal on ``assertion`` and so correctly reports nothing to do.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    assertion: ReceiverAssertion
+    data_link_port: list[PortId] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_data_link_ports_are_uart(self) -> ReceiverApplyRequest:
+        _check_data_link_ports_are_uart(self.data_link_port)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_1005_on_a_data_link_port(self) -> ReceiverApplyRequest:
+        _check_1005_on_a_data_link_port(
+            self.data_link_port, self.assertion.rtcm_stream.matrix
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_every_data_link_port_has_a_row_on(self) -> ReceiverApplyRequest:
+        _check_every_data_link_port_has_a_row_on(
+            self.data_link_port, self.assertion.rtcm_stream.matrix
+        )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Per-leaf, path-keyed diff — verify and sync collapse to one call (issue #98)
+# ---------------------------------------------------------------------------
+
+
+class ApplyDiffEntry(BaseModel):
+    """One leaf-level mismatch between two ``ReceiverAssertion`` values.
+
+    *path* identifies the exact widget a future inline marker would
+    highlight — a single matrix cell (``rtcm.1005.UART1``), one port's
+    one protocol direction (``ports.UART1.out.RTCM3X``), one
+    constellation (``constellations.gps``), or a plain scalar field
+    (``meas_period_ms``). Every leaf is a scalar, so *expected*/*actual*
+    stay simply typed rather than needing a union of composite shapes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    expected: bool | int | str
+    actual: bool | int | str
+
+
+def diff_receiver_assertions(
+    expected: ReceiverAssertion, actual: ReceiverAssertion
+) -> list[ApplyDiffEntry]:
+    """Per-leaf, path-keyed differences between two ``ReceiverAssertion``s.
+
+    One entry per scalar leaf — matrix cells, per-port per-protocol
+    in/out membership, per-constellation membership, baud, and every
+    other scalar field — never a whole-field comparison: the per-cell
+    resolution is load-bearing for the UI (a single toggled cell must
+    render as exactly one diff line, not "the matrix differs"), every
+    leaf being a scalar keeps *expected*/*actual* simply typed, and
+    *path* is the join key a future inline marker will need to
+    highlight the mismatched widget.
+
+    This one expression is the comparison this app uses everywhere two
+    receiver states need diffing: Apply's post-write read-back verify
+    (sent vs. read-back) and the Advanced GPS page's "receiver out of
+    sync" indicator (form vs. live) both call this — verify and sync
+    collapse to the same call on the same type.
+
+    Deliberately never mentions ``data_link_port`` — neither operand is
+    a ``ReceiverApplyRequest`` — so the data-link port selection can
+    never appear as a difference.
+    """
+    diffs: list[ApplyDiffEntry] = []
+
+    if expected.baud.uart1 != actual.baud.uart1:
+        diffs.append(
+            ApplyDiffEntry(
+                path="baud.uart1",
+                expected=expected.baud.uart1,
+                actual=actual.baud.uart1,
+            )
+        )
+    if expected.baud.uart2 != actual.baud.uart2:
+        diffs.append(
+            ApplyDiffEntry(
+                path="baud.uart2",
+                expected=expected.baud.uart2,
+                actual=actual.baud.uart2,
+            )
+        )
+
+    if expected.meas_period_ms != actual.meas_period_ms:
+        diffs.append(
+            ApplyDiffEntry(
+                path="meas_period_ms",
+                expected=expected.meas_period_ms,
+                actual=actual.meas_period_ms,
+            )
+        )
+
+    expected_constellations = set(expected.constellations)
+    actual_constellations = set(actual.constellations)
+    for constellation in GnssConstellation:
+        exp_on = constellation in expected_constellations
+        act_on = constellation in actual_constellations
+        if exp_on != act_on:
+            diffs.append(
+                ApplyDiffEntry(
+                    path=f"constellations.{constellation.value}",
+                    expected=exp_on,
+                    actual=act_on,
+                )
+            )
+
+    empty_ports = PortProtocolSet()
+    for port in PortId:
+        expected_port = expected.ports.get(port, empty_ports)
+        actual_port = actual.ports.get(port, empty_ports)
+        expected_in = set(expected_port.in_)
+        actual_in = set(actual_port.in_)
+        expected_out = set(expected_port.out)
+        actual_out = set(actual_port.out)
+        for protocol in UbxProtocol:
+            exp_in_on = protocol in expected_in
+            act_in_on = protocol in actual_in
+            if exp_in_on != act_in_on:
+                diffs.append(
+                    ApplyDiffEntry(
+                        path=f"ports.{port.value}.in.{protocol.value}",
+                        expected=exp_in_on,
+                        actual=act_in_on,
+                    )
+                )
+            exp_out_on = protocol in expected_out
+            act_out_on = protocol in actual_out
+            if exp_out_on != act_out_on:
+                diffs.append(
+                    ApplyDiffEntry(
+                        path=f"ports.{port.value}.out.{protocol.value}",
+                        expected=exp_out_on,
+                        actual=act_out_on,
+                    )
+                )
+
+    if expected.dyn_model != actual.dyn_model:
+        diffs.append(
+            ApplyDiffEntry(
+                path="dyn_model",
+                expected=expected.dyn_model.value,
+                actual=actual.dyn_model.value,
+            )
+        )
+
+    if expected.tmode_mode != actual.tmode_mode:
+        diffs.append(
+            ApplyDiffEntry(
+                path="tmode_mode",
+                expected=expected.tmode_mode.value,
+                actual=actual.tmode_mode.value,
+            )
+        )
+
+    if expected.elevation_mask_deg != actual.elevation_mask_deg:
+        diffs.append(
+            ApplyDiffEntry(
+                path="elevation_mask_deg",
+                expected=expected.elevation_mask_deg,
+                actual=actual.elevation_mask_deg,
+            )
+        )
+
+    if expected.bds_b2_enabled != actual.bds_b2_enabled:
+        diffs.append(
+            ApplyDiffEntry(
+                path="bds_b2_enabled",
+                expected=expected.bds_b2_enabled,
+                actual=actual.bds_b2_enabled,
+            )
+        )
+
+    if expected.spi_enabled != actual.spi_enabled:
+        diffs.append(
+            ApplyDiffEntry(
+                path="spi_enabled",
+                expected=expected.spi_enabled,
+                actual=actual.spi_enabled,
+            )
+        )
+
+    for row_id in ALL_RTCM_MESSAGE_IDS:
+        expected_row = expected.rtcm_stream.matrix.get(row_id, {})
+        actual_row = actual.rtcm_stream.matrix.get(row_id, {})
+        for port in MATRIX_PORTS:
+            exp_on = expected_row.get(port, False)
+            act_on = actual_row.get(port, False)
+            if exp_on != act_on:
+                diffs.append(
+                    ApplyDiffEntry(
+                        path=f"rtcm.{row_id.value}.{port.value}",
+                        expected=exp_on,
+                        actual=act_on,
+                    )
+                )
+
+    return diffs
+
+
+class ApplyConfigResult(BaseModel):
+    """Response for ``POST /api/device/apply-config``.
+
+    ``status="failed"`` means the post-apply read-back didn't match
+    what was sent — the writes are left in flash (nothing is rolled
+    back); ``diff`` lists every mismatched leaf, path-keyed (see
+    :func:`diff_receiver_assertions`). ``read_back`` is the full
+    post-apply assertion read — callers (the Advanced GPS page) sync
+    their live state from it whether ``status`` is ``"ok"`` or
+    ``"failed"``, since the writes land either way. ``warnings``
+    carries non-blocking advisories (e.g. the estimated-throughput
+    check) that never affect ``status``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok", "failed"]
+    read_back: ReceiverAssertion
+    diff: list[ApplyDiffEntry] = Field(default_factory=lambda: list[ApplyDiffEntry]())
+    warnings: list[str] = Field(default_factory=lambda: list[str]())
 
 
 def _dense_matrix(

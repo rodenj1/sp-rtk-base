@@ -18,26 +18,39 @@ and data-link port(s) editable, wired to
 plus the "receiver out of sync" indicator (form vs. live receiver,
 cleared only by a successful apply).
 
-Issue #66 (this revision) makes picking a profile actually write into
-the form — the whole ``ReceiverConfig`` shape (ports, GNSS,
-baud/measurement-rate, role fields, optimisations, plus the matrix and
-data-link ports), not just the matrix — and adds the second,
-independent "modified from X" indicator (form vs. *selected profile*,
-gating Save-as) alongside the existing "out of sync" one (form vs.
-*live receiver*, gating Apply). Save-as, rename, delete and export
-round out the custom-profile lifecycle. The ports/GNSS/baud/role
-section remains a read-only *display* of form state rather than a
-click-to-edit grid — the driver has no read-back for most of those
-fields (baud excepted), so there's nothing yet to reconcile an edit
-against; turning that into an editable grid is future work, same as
-#65 deferred it.
+Issue #66 makes picking a profile actually write into the form — the
+whole ``ReceiverAssertion`` shape (ports, GNSS, baud/measurement-rate,
+role fields, optimisations, plus the matrix and data-link ports), not
+just the matrix — and adds the second, independent "modified from X"
+indicator (form vs. *selected profile*, gating Save-as) alongside the
+existing "out of sync" one (form vs. *live receiver*, gating Apply).
+Save-as, rename, delete and export round out the custom-profile
+lifecycle. The ports/GNSS/baud/role section remains a read-only
+*display* of form state rather than a click-to-edit grid.
+
+Issue #98 (this revision) makes Apply push the *whole* form, not just
+the matrix and data-link ports — it now sends a ``ReceiverApplyRequest``
+(the whole ``form`` :class:`~sp_rtk_base.models.profile_models.ReceiverAssertion`
+plus ``form_data_link_ports``), and both "out of sync" and the post-apply
+verify go through the one shared
+:func:`~sp_rtk_base.models.profile_models.diff_receiver_assertions`
+per-leaf, path-keyed comparison. This also fixes a standing bug by
+construction: ``form`` is always live-seeded, so measurement rate can
+no longer silently default to 1 Hz on every Apply press.
 """
 
 # pyright: reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false
 # pyright: reportOptionalMemberAccess=false
 # pyright: reportOptionalIterable=false
-# NiceGUI elements have partially unknown types.
+# pyright: reportPrivateUsage=false
+# NiceGUI elements have partially unknown types. reportPrivateUsage is
+# disabled because the profile-picker dropdown (issue #105) writes
+# directly to a raw ``q-select`` element's ``_props['options']`` — the
+# public ``ui.select``/``ChoiceElement`` options API rebuilds that prop
+# from a plain ``{value: label}`` mapping on every ``update()``, with
+# no room for the per-option disable/tooltip/highlight fields its
+# ``option`` scoped slot needs (see the comment beside ``picker_select``).
 
 from __future__ import annotations
 
@@ -52,7 +65,6 @@ from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
-    ApplyConfigCellDiff,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
@@ -80,13 +92,14 @@ from sp_rtk_base.models.hardware_identity import (
 )
 from sp_rtk_base.models.profile_models import (
     MATRIX_PORTS,
+    ApplyDiffEntry,
     BaudAssertion,
-    BaudConfig,
     PortProtocolSet,
     Profile,
+    ReceiverApplyRequest,
     ReceiverAssertion,
-    ReceiverConfig,
     RtcmStreamConfig,
+    diff_receiver_assertions,
     merge_profile_into_assertion,
 )
 from sp_rtk_base.services import (
@@ -253,98 +266,68 @@ def apply_blocked_reason(data_link_port: list[PortId]) -> str | None:
     return None
 
 
-def build_apply_config(
-    matrix: dict[RtcmRowId, dict[PortId, bool]],
-    data_link_port: list[PortId],
-    assertion: ReceiverAssertion | None = None,
-) -> ReceiverConfig:
-    """Build a ``ReceiverConfig`` from the form state.
+def build_apply_request(
+    form: ReceiverAssertion, data_link_port: list[PortId]
+) -> ReceiverApplyRequest:
+    """Build the whole-form Apply envelope (issue #98).
 
-    *assertion* defaults to ``None`` — nothing but the matrix and
-    data-link ports set. ``_apply()`` always uses that default (Apply
-    stays scoped to the matrix + data-link ports, per #65 — the other
-    fields have no live read-back to verify a write against). Save-as
-    and the "modified from X" comparison pass the current ``form``
-    :class:`ReceiverAssertion` through, since those only compare
-    in-form state and never touch the receiver. *matrix* is always
-    passed explicitly, even when it's the same value as
-    ``assertion.rtcm_stream.matrix`` — every caller that has an
-    *assertion* happens to derive *matrix* from it directly beforehand,
-    so the two never actually diverge in practice.
+    Apply now sends the entire form — the matrix-only default this
+    used to have (issue #65/#66) is gone; every caller (the actual
+    Apply call, Save-as, and the "modified from X" comparison) passes
+    the current ``form`` :class:`ReceiverAssertion` through.
 
     Raises:
-        pydantic.ValidationError: If the resulting config fails a
+        pydantic.ValidationError: If the resulting request fails a
             context-free rule (e.g. 1005 missing from every chosen
             data-link port) — a client-side pre-write refusal, nothing
             is sent to the receiver.
     """
-    if assertion is None:
-        return ReceiverConfig(
-            data_link_port=data_link_port,
-            rtcm_stream=RtcmStreamConfig(matrix=matrix),
-        )
-    return ReceiverConfig(
-        ports=assertion.ports,
-        constellations=assertion.constellations,
-        baud=BaudConfig(uart1=assertion.baud.uart1, uart2=assertion.baud.uart2),
-        meas_period_ms=assertion.meas_period_ms,
-        dyn_model=assertion.dyn_model,
-        tmode_mode=assertion.tmode_mode,
-        elevation_mask_deg=assertion.elevation_mask_deg,
-        bds_b2_enabled=assertion.bds_b2_enabled,
-        spi_enabled=assertion.spi_enabled,
-        data_link_port=data_link_port,
-        rtcm_stream=RtcmStreamConfig(matrix=matrix),
-    )
+    return ReceiverApplyRequest(assertion=form, data_link_port=data_link_port)
 
 
 def receiver_config_from_profile(
     profile: Profile, live: ReceiverAssertion
-) -> ReceiverConfig:
-    """The ``ReceiverConfig`` picking *profile* against *live* would produce,
-    with identity stripped.
+) -> ReceiverApplyRequest:
+    """The ``ReceiverApplyRequest`` picking *profile* against *live* would
+    produce.
 
     Used to compare "the form" against "the selected profile" as the
-    same type — a ``Profile`` is a ``ReceiverConfig`` plus identity
-    fields, and those must not participate in the "modified from X"
-    equality check.
-
-    Deliberately built through the same :func:`merge_profile_into_assertion`
-    resolution :func:`_select_profile` (in the page closure) uses to seed
-    the form from this same profile against the current *live* state —
-    a stored profile's matrix is *sparse* (absent cell = off) and its
-    optional fields mean "leave the live value alone", while the form
-    is always fully populated. Comparing a freshly-picked, untouched
-    form against a bare ``profile.model_dump()`` would almost always
-    report "modified" unless both sides go through the identical
-    resolution.
+    same type. Deliberately built through the same
+    :func:`merge_profile_into_assertion` resolution
+    :func:`_select_profile` (in the page closure) uses to seed the form
+    from this same profile against the current *live* state — a stored
+    profile's matrix is *sparse* (absent cell = off) and its optional
+    fields mean "leave the live value alone", while the form is always
+    fully populated. Comparing a freshly-picked, untouched form against
+    a bare ``profile.model_dump()`` would almost always report
+    "modified" unless both sides go through the identical resolution.
     """
     merged = merge_profile_into_assertion(profile, live)
-    return build_apply_config(
-        merged.rtcm_stream.matrix, list(profile.data_link_port), merged
-    )
+    return build_apply_request(merged, list(profile.data_link_port))
 
 
 def is_modified_from_profile(
-    form_config: ReceiverConfig, profile: Profile | None, live: ReceiverAssertion
+    form_request: ReceiverApplyRequest, profile: Profile | None, live: ReceiverAssertion
 ) -> bool:
-    """Whether *form_config* diverges from *profile* — the second, independent
-    indicator (form vs. selected profile), distinct from "out of sync" (form
-    vs. live receiver). ``False`` when no profile is selected — there is
-    nothing to have diverged from."""
+    """Whether *form_request* diverges from *profile* — the second,
+    independent indicator (form vs. selected profile), distinct from "out
+    of sync" (form vs. live receiver). ``False`` when no profile is
+    selected — there is nothing to have diverged from."""
     if profile is None:
         return False
-    return form_config != receiver_config_from_profile(profile, live)
+    return form_request != receiver_config_from_profile(profile, live)
 
 
 def save_as_enabled(
-    form_config: ReceiverConfig | None, profile: Profile | None, live: ReceiverAssertion
+    form_request: ReceiverApplyRequest | None,
+    profile: Profile | None,
+    live: ReceiverAssertion,
 ) -> bool:
     """Save-as is available whenever the form is valid, suppressed only when
     a *selected* profile still exactly equals the form."""
-    if form_config is None:
+    if form_request is None:
         return False
-    return profile is None or is_modified_from_profile(form_config, profile, live)
+    return profile is None or is_modified_from_profile(form_request, profile, live)
 
 
 def suggest_profile_name(profile: Profile | None, hardware_target: str) -> str:
@@ -385,13 +368,21 @@ def resolve_save_hardware(profile: Profile | None, identity: HardwareIdentity) -
 
 def build_saved_profile(
     name: str,
-    form_config: ReceiverConfig,
+    form_request: ReceiverApplyRequest,
     hardware: str,
     forked_from: str | None,
 ) -> Profile:
-    """Construct the ``Profile`` document Save-as persists."""
+    """Construct the ``Profile`` document Save-as persists.
+
+    Flattens *form_request*'s envelope — ``assertion``'s fields plus
+    ``data_link_port`` — onto ``Profile``'s own field layout (issue
+    #98: ``data_link_port`` moved off ``ReceiverConfig``, so it's no
+    longer part of ``assertion.model_dump()`` and must be passed
+    separately).
+    """
     return Profile(
-        **form_config.model_dump(),
+        **form_request.assertion.model_dump(),
+        data_link_port=form_request.data_link_port,
         name=name,
         version=1,
         hardware=hardware,
@@ -451,19 +442,6 @@ def hw_extras_display(assertion: ReceiverAssertion) -> list[tuple[str, str, str]
     ]
 
 
-def copy_matrix(
-    matrix: dict[RtcmRowId, dict[PortId, bool]],
-) -> dict[RtcmRowId, dict[PortId, bool]]:
-    """Deep-copy a row x port matrix so the copy can diverge independently.
-
-    A shallow ``dict(matrix)`` shares the per-row inner dicts with the
-    original — mutating one cell would silently mutate both the form
-    and the "last known live" snapshot, breaking the out-of-sync
-    comparison.
-    """
-    return {row: dict(ports) for row, ports in matrix.items()}
-
-
 def placeholder_assertion() -> ReceiverAssertion:
     """An empty ``ReceiverAssertion`` for the page's pre-connect state,
     before any live receiver read has happened."""
@@ -481,12 +459,22 @@ def placeholder_assertion() -> ReceiverAssertion:
     )
 
 
-def format_cell_diff(diff: ApplyConfigCellDiff) -> str:
-    """Render one post-apply read-back mismatch as a human-readable line."""
-    expected = "on" if diff.expected else "off"
-    actual = "on" if diff.actual else "off"
+def _format_diff_value(value: bool | int | str) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def format_leaf_diff(diff: ApplyDiffEntry) -> str:
+    """Render one post-apply read-back mismatch as a human-readable line.
+
+    *diff.path* already names the exact leaf (a matrix cell, a port's
+    protocol, a constellation, or a plain scalar field) — see
+    :func:`sp_rtk_base.models.profile_models.diff_receiver_assertions`.
+    """
     return (
-        f"{diff.row_id.value} on {diff.port.value}: expected {expected}, got {actual}"
+        f"{diff.path}: expected {_format_diff_value(diff.expected)}, "
+        f"got {_format_diff_value(diff.actual)}"
     )
 
 
@@ -644,7 +632,132 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #5a4520; border-radius: 4px")
             )
             unconfirmed_banner.set_visibility(False)
-            picker_list = ui.column().classes("q-mt-sm gap-1 w-full")
+
+            # The dropdown (issue #105 — replaces the #64/#65/#66 card
+            # list). Built as a raw Quasar ``q-select`` via ``ui.element``
+            # rather than NiceGUI's ``ui.select`` wrapper: the wrapper's
+            # ``ChoiceElement`` maps options to plain ``{value, label}``
+            # pairs and rebuilds that list itself on every ``update()``,
+            # leaving nowhere to hang the extra per-option
+            # disable/tooltip/highlight fields the ``option`` scoped slot
+            # below needs. Working against the raw element keeps full
+            # control of the ``options`` prop's shape.
+            with ui.row().classes("items-center gap-2 q-mt-sm flex-wrap"):
+                picker_select = (
+                    ui.element("q-select")
+                    .props(
+                        "label='Select profile' emit-value map-options "
+                        "option-value=value option-label=label "
+                        "options-dense dense outlined behavior=menu"
+                    )
+                    .classes("profile-picker")
+                    .style("min-width: 320px")
+                )
+                # Custom ``option`` slot: Quasar's own ``option-disable``
+                # prop would set the native ``disable`` prop on the
+                # rendered ``q-item``, which sets ``pointer-events:none``
+                # and silently kills hover — exactly what the tooltip
+                # explaining *why* a profile is disabled needs. So
+                # selection is gated by hand (``props.opt.disable`` guards
+                # the click) instead, keeping the item hoverable.
+                #
+                # NB: NiceGUI's own slot-template wrapper (see
+                # ``renderRecursively`` in its bundled ``nicegui.js``)
+                # exposes the Quasar scoped-slot object as a template
+                # variable named ``props`` — *not* Quasar's own docs
+                # convention ``scope`` — regardless of which slot this
+                # is, so every reference below is ``props.*``.
+                picker_select.add_slot(
+                    "option",
+                    r"""
+                    <q-item
+                      v-bind:clickable="!props.opt.disable"
+                      v-bind:class="[
+                        'profile-option',
+                        'profile-option-' + props.opt.value,
+                        props.opt.disable ? 'profile-option-disabled' : '',
+                        props.opt.highlighted ? 'profile-option-suggested bg-primary-1' : '',
+                      ]"
+                      v-on:click="() => { if (!props.opt.disable) props.toggleOption(props.opt) }"
+                    >
+                      <q-item-section>
+                        <q-item-label v-bind:class="props.opt.disable ? 'text-grey-6' : ''">
+                          {{ props.opt.label }}
+                          <q-badge
+                            v-if="props.opt.highlighted"
+                            color="primary"
+                            class="profile-suggested-badge q-ml-sm"
+                          >Suggested</q-badge>
+                          <q-badge
+                            outline
+                            color="grey"
+                            class="profile-builtin-badge q-ml-sm"
+                          >{{ props.opt.builtin ? 'built-in' : 'custom' }}</q-badge>
+                        </q-item-label>
+                      </q-item-section>
+                      <q-tooltip
+                        v-if="props.opt.disable"
+                        class="profile-option-tooltip"
+                      >{{ props.opt.tooltip }}</q-tooltip>
+                    </q-item>
+                    """,
+                )
+                picker_select.on(
+                    "update:model-value",
+                    lambda e: _select_profile_by_name(e.args),
+                )
+
+                picker_rename_icon = (
+                    ui.icon("edit")
+                    .classes("profile-rename-icon text-grey-4 cursor-pointer")
+                    .tooltip("Rename")
+                )
+                picker_delete_icon = (
+                    ui.icon("delete")
+                    .classes("profile-delete-icon text-grey-4 cursor-pointer")
+                    .tooltip("Delete")
+                )
+                picker_export_icon = (
+                    ui.icon("download")
+                    .classes("profile-export-icon text-grey-4 cursor-pointer")
+                    .tooltip("Export")
+                )
+                picker_rename_icon.on(
+                    "click",
+                    lambda: (
+                        _open_rename_dialog(selected_profile)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+                picker_delete_icon.on(
+                    "click",
+                    lambda: (
+                        _open_delete_dialog(selected_profile)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+                picker_export_icon.on(
+                    "click",
+                    lambda: (
+                        _export_profile(selected_profile.name)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+
+                # The profile-relation indicator (issue #105 — moved out
+                # of the action row, where it sat as a same-weight
+                # sibling of receiver status and used warning colour for
+                # "modified from X". It answers "should I save this?",
+                # never "something's wrong", so it renders here next to
+                # the control that resolves it, always in a neutral
+                # colour — see ``_render_modified_indicator``.
+                modified_badge = (
+                    ui.badge("").classes("modified-badge").props("color=grey-7 outline")
+                )
+                modified_badge.set_visibility(False)
 
         # ================================================================
         # Section C: Receiver configuration — read-only, seeded from the
@@ -707,10 +820,6 @@ def gps_config_page() -> None:
                     .classes("save-as-btn")
                     .props("color=secondary outline")
                 )
-                modified_badge = (
-                    ui.badge("").classes("modified-badge").props("color=warning")
-                )
-                modified_badge.set_visibility(False)
 
             apply_result_label = (
                 ui.label("")
@@ -906,7 +1015,16 @@ def gps_config_page() -> None:
                 pass  # Non-critical
 
         def _render_picker() -> None:
-            """Render the profile picker from the current device identity."""
+            """Render the profile picker dropdown from the current device identity.
+
+            Populates the raw ``q-select``'s ``options`` prop directly
+            (each entry a dict carrying ``value``/``label`` plus the
+            ``disable``/``tooltip``/``highlighted``/``builtin`` fields the
+            ``option`` scoped slot renders) rather than going through
+            NiceGUI's ``ui.select`` options API, which has no room for
+            those extra fields — see the comment where ``picker_select``
+            is built.
+            """
             identity = _current_identity()
             identity_label.text = (
                 f"Connected receiver hardware: {identity.target} "
@@ -920,78 +1038,48 @@ def gps_config_page() -> None:
                 profile_store.list_profiles(), profile_store, identity
             )
 
-            picker_list.clear()
-            with picker_list:
-                for entry in entries:
-                    is_selected = (
-                        selected_profile is not None
-                        and selected_profile.name == entry.profile.name
-                    )
-                    is_incompatible = (
-                        not entry.compatible and entry.incompatible_reason is not None
-                    )
-                    row_classes = f"profile-row profile-row-{entry.profile.name} items-center gap-2 q-py-xs justify-between"
-                    if is_selected:
-                        row_classes += " profile-row-selected"
-                    with ui.row().classes(row_classes) as row:
-                        name_classes = (
-                            "text-white" if entry.compatible else "text-grey-6"
-                        )
-                        # The clickable "select" target is its own inner
-                        # row so the rename/delete/export icons — siblings
-                        # inside the outer row, not descendants of this one
-                        # — never bubble a click into profile selection.
-                        select_classes = "items-center gap-2" + (
-                            " cursor-pointer" if entry.compatible else ""
-                        )
-                        with ui.row().classes(select_classes) as select_area:
-                            if entry.compatible:
-                                select_area.on(
-                                    "click",
-                                    lambda _, p=entry.profile: _select_profile(p),
-                                )
-                            if is_selected:
-                                ui.icon("check_circle").classes(
-                                    "profile-selected-icon text-primary"
-                                )
-                            ui.label(display_label(entry.profile)).classes(
-                                f"profile-name {name_classes}"
-                            )
-                            ui.badge(
-                                "built-in" if entry.is_builtin else "custom"
-                            ).props("outline color=grey")
-                            if entry.is_default:
-                                ui.badge("Suggested").classes(
-                                    "profile-suggested-badge"
-                                ).props("color=primary")
-                            if entry.incompatible_reason:
-                                ui.icon("info").classes(
-                                    "profile-incompatible-icon text-grey-5"
-                                ).tooltip(entry.incompatible_reason)
+            picker_select._props["options"] = [
+                {
+                    "value": entry.profile.name,
+                    "label": display_label(entry.profile),
+                    "disable": not entry.compatible,
+                    "tooltip": entry.incompatible_reason or "",
+                    "highlighted": entry.is_default,
+                    "builtin": entry.is_builtin,
+                }
+                for entry in entries
+            ]
+            picker_select._props["model-value"] = (
+                selected_profile.name if selected_profile is not None else None
+            )
+            picker_select.update()
 
-                        if is_incompatible:
-                            row.classes("opacity-60")
+            # Rename/delete/export act on whichever profile is currently
+            # selected (issue #105) — customs-only, same as before.
+            is_custom_selected = selected_profile is not None and not (
+                profile_store.is_builtin(selected_profile.name)
+            )
+            for icon in (
+                picker_rename_icon,
+                picker_delete_icon,
+                picker_export_icon,
+            ):
+                icon.set_visibility(is_custom_selected)
 
-                        if not entry.is_builtin:
-                            with ui.row().classes("gap-2 items-center"):
-                                ui.icon("edit").classes(
-                                    "profile-rename-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, p=entry.profile: _open_rename_dialog(p),
-                                ).tooltip("Rename")
-                                ui.icon("delete").classes(
-                                    "profile-delete-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, p=entry.profile: _open_delete_dialog(p),
-                                ).tooltip("Delete")
-                                ui.icon("download").classes(
-                                    "profile-export-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, n=entry.profile.name: _export_profile(n),
-                                ).tooltip("Export")
+        def _select_profile_by_name(name: str | None) -> None:
+            """``update:model-value`` handler for the picker dropdown.
+
+            Looks the picked value back up as a :class:`Profile` and
+            delegates to :func:`_select_profile` — the dropdown emits the
+            profile's slug (``option-value=value``/``emit-value``), not
+            the object itself.
+            """
+            if not name:
+                return
+            profile = profile_store.get_profile(name)
+            if profile is None:
+                return
+            _select_profile(profile)
 
         def _select_profile(profile: Profile) -> None:
             """Pick a profile — pre-fills the whole form (issue #66).
@@ -1044,8 +1132,8 @@ def gps_config_page() -> None:
                 save_as_error_label.set_visibility(True)
                 return
 
-            form_config = _current_form_config()
-            if form_config is None:
+            form_request = _current_form_request()
+            if form_request is None:
                 save_as_error_label.text = (
                     "The form doesn't currently validate — fix the RTCM "
                     "matrix / data-link ports before saving."
@@ -1057,7 +1145,7 @@ def gps_config_page() -> None:
             forked_from = selected_profile.name if selected_profile else None
 
             try:
-                profile = build_saved_profile(name, form_config, hardware, forked_from)
+                profile = build_saved_profile(name, form_request, hardware, forked_from)
                 created = profile_store.create_profile(profile)
             except (ValidationError, ProfileStoreError) as exc:
                 save_as_error_label.text = str(exc)
@@ -1218,17 +1306,18 @@ def gps_config_page() -> None:
         delete_target_label: str = ""
 
         def _out_of_sync() -> bool:
-            """Matrix-only, matching what Apply actually pushes (#65/#66) —
-            the rest of ``form`` has no live read-back to verify against."""
-            return form.rtcm_stream.matrix != live.rtcm_stream.matrix
+            """Whole-form comparison (issue #98) — the same per-leaf
+            ``diff_receiver_assertions`` call Apply's read-back verify
+            uses, applied here to form vs. live. Never mentions
+            ``data_link_port`` (it isn't part of either operand), so a
+            data-link-port-only change never shows as out of sync."""
+            return bool(diff_receiver_assertions(form, live))
 
-        def _current_form_config() -> ReceiverConfig | None:
-            """The form as a ``ReceiverConfig``, or ``None`` if it doesn't
-            currently validate (e.g. no data-link port selected)."""
+        def _current_form_request() -> ReceiverApplyRequest | None:
+            """The form as a ``ReceiverApplyRequest``, or ``None`` if it
+            doesn't currently validate (e.g. no data-link port selected)."""
             try:
-                return build_apply_config(
-                    form.rtcm_stream.matrix, form_data_link_ports, form
-                )
+                return build_apply_request(form, form_data_link_ports)
             except ValidationError:
                 return None
 
@@ -1382,22 +1471,31 @@ def gps_config_page() -> None:
             """The second, independent indicator — form vs. *selected
             profile*, distinct from "out of sync" (form vs. live receiver).
             Hidden when no profile is selected: nothing to have diverged
-            from."""
-            form_config = _current_form_config()
-            if selected_profile is None or form_config is None:
+            from.
+
+            Renders in a neutral colour either way (issue #105) — this
+            answers "should I save this?", not "something's wrong", so
+            neither state ever borrows the warning/positive colours that
+            train an operator to read amber as trouble. "Modified from
+            X" and "Matches X" are told apart by an outline vs. filled
+            treatment of the same neutral grey, not by hue.
+            """
+            form_request = _current_form_request()
+            if selected_profile is None or form_request is None:
                 modified_badge.set_visibility(False)
                 return
             modified_badge.set_visibility(True)
-            if is_modified_from_profile(form_config, selected_profile, live):
+            if is_modified_from_profile(form_request, selected_profile, live):
                 modified_badge.text = f"Modified from {display_label(selected_profile)}"
-                modified_badge.props("color=warning")
+                modified_badge.props(remove="outline")
+                modified_badge.props("color=grey-7")
             else:
                 modified_badge.text = f"Matches {display_label(selected_profile)}"
-                modified_badge.props("color=positive")
+                modified_badge.props("color=grey-7 outline")
 
         def _render_save_as_gate() -> None:
             save_as_btn.set_enabled(
-                save_as_enabled(_current_form_config(), selected_profile, live)
+                save_as_enabled(_current_form_request(), selected_profile, live)
             )
 
         def _on_form_changed() -> None:
@@ -1426,33 +1524,30 @@ def gps_config_page() -> None:
             apply_result_label.set_visibility(False)
             apply_diff_list.clear()
 
-        def _show_apply_diff(diff: list[ApplyConfigCellDiff]) -> None:
+        def _show_apply_diff(diff: list[ApplyDiffEntry]) -> None:
             apply_diff_list.clear()
             with apply_diff_list:
-                for cell in diff:
-                    ui.label(format_cell_diff(cell)).classes(
+                for leaf in diff:
+                    ui.label(format_leaf_diff(leaf)).classes(
                         "text-caption text-warning"
                     )
 
         async def _apply() -> None:
-            """Push the current form (matrix + data-link ports) to the receiver.
+            """Push the whole current form to the receiver (issue #98).
 
-            Deliberately excludes the rest of ``form`` (issue #66
-            review): those fields have no live read-back, so a
-            profile-populated value pushed through Apply could never be
-            verified by the read-back-diff below, unlike the matrix.
-            Extending Apply to the full hardware section is out of
-            #66's scope — it isn't in the acceptance criteria, and #65
-            deliberately scoped Apply to "only the RTCM matrix and the
-            data-link ports". The rest of ``form`` is still used for
-            Save-as/"modified from X", which compare in-form state and
-            never touch the receiver.
+            Apply now sends every receiver field, not just the RTCM
+            matrix — ``build_apply_request`` wraps the full ``form``
+            plus the data-link port selection into the envelope
+            ``svc.apply_receiver_config`` takes. ``live`` is replaced
+            wholesale from ``result.read_back`` — the fresh full
+            read-back the service always returns, whichever ``status``
+            — rather than patched field-by-field, so every display
+            (matrix, ports, GNSS, hardware section) stays honest after
+            both a clean apply and a partial-mismatch one.
             """
             nonlocal live
             try:
-                config = build_apply_config(
-                    form.rtcm_stream.matrix, form_data_link_ports
-                )
+                request = build_apply_request(form, form_data_link_ports)
             except ValidationError as exc:
                 _set_apply_result(
                     f"Apply refused: {exc.errors()[0]['msg']} — nothing was written.",
@@ -1461,7 +1556,7 @@ def gps_config_page() -> None:
                 return
 
             try:
-                result = await svc.apply_receiver_config(config)
+                result = await svc.apply_receiver_config(request)
             except ApplyConfigRefusedError as exc:
                 _set_apply_result(
                     f"Apply refused ({exc.rule}): {exc} — nothing was written.",
@@ -1476,26 +1571,12 @@ def gps_config_page() -> None:
                 logger.exception("apply-config failed")
                 return
 
+            live = result.read_back
+
             if result.status == "ok":
-                live = live.model_copy(
-                    update={
-                        "rtcm_stream": RtcmStreamConfig(
-                            matrix=copy_matrix(form.rtcm_stream.matrix)
-                        )
-                    }
-                )
                 _set_apply_result("Applied and verified ✓", ok=True)
                 ui.notify("Applied and verified ✓", type="positive")
             else:
-                # The writes landed but the read-back disagrees — reflect
-                # the receiver's *actual* state so "out of sync" stays
-                # honest even though only a successful apply clears it.
-                new_matrix = copy_matrix(live.rtcm_stream.matrix)
-                for cell in result.diff:
-                    new_matrix[cell.row_id][cell.port] = cell.actual
-                live = live.model_copy(
-                    update={"rtcm_stream": RtcmStreamConfig(matrix=new_matrix)}
-                )
                 _set_apply_result(
                     "Applied, but verification found mismatches — nothing "
                     "was rolled back.",

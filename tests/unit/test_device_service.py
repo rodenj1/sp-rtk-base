@@ -28,9 +28,11 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.profile_models import (
-    BaudConfig,
+    ApplyConfigResult,
+    BaudAssertion,
     PortProtocolSet,
-    ReceiverConfig,
+    ReceiverApplyRequest,
+    ReceiverAssertion,
     RtcmStreamConfig,
 )
 from sp_rtk_base.services.device_service import (
@@ -508,20 +510,99 @@ class TestGetReceiverAssertion:
 # ---------------------------------------------------------------------------
 
 
-def _minimal_config(**overrides: object) -> ReceiverConfig:
-    """A minimal valid ``ReceiverConfig`` — 1005 enabled on the one data-link port."""
+def _minimal_assertion(**overrides: object) -> ReceiverAssertion:
+    """A fully-populated, minimal-but-valid assertion — 1005 enabled on
+    UART1, everything else at an unambiguous, easy-to-assert-on default.
+
+    Matches ``TestApplyReceiverConfig.connected_svc``'s default driver
+    reads exactly (baud, meas rate, dyn model, tmode mode, optimisation
+    fields) — so a request built from this with no overrides round-trips
+    through a mocked apply as ``status="ok"`` with nothing rewritten,
+    and any single overridden field is the one and only thing that
+    differs from "the receiver's current state" for that test.
+    """
     defaults: dict[str, object] = {
-        "data_link_port": [PortId.UART1],
+        "baud": BaudAssertion(uart1=57600, uart2=115200),
+        "meas_period_ms": 1000,
+        "constellations": [],
+        "ports": {},
+        "dyn_model": DynModel.PORTABLE,
+        "tmode_mode": BaseMode.DISABLED,
+        "elevation_mask_deg": 0,
+        "bds_b2_enabled": False,
+        "spi_enabled": False,
         "rtcm_stream": RtcmStreamConfig(
             matrix={RtcmRowId.RTCM_1005: {PortId.UART1: True}}
         ),
     }
     defaults.update(overrides)
-    return ReceiverConfig(**defaults)  # type: ignore[arg-type]
+    return ReceiverAssertion(**defaults)  # type: ignore[arg-type]
+
+
+def _minimal_request(
+    *, data_link_port: list[PortId] | None = None, **assertion_overrides: object
+) -> ReceiverApplyRequest:
+    """The envelope ``apply_receiver_config`` takes — wraps
+    :func:`_minimal_assertion` with a one-UART data-link selection by
+    default."""
+    return ReceiverApplyRequest(
+        assertion=_minimal_assertion(**assertion_overrides),
+        data_link_port=(
+            data_link_port if data_link_port is not None else [PortId.UART1]
+        ),
+    )
+
+
+def _scalars_for(assertion: ReceiverAssertion) -> ReceiverScalarConfig:
+    """The ``ReceiverScalarConfig`` a driver read would need to return
+    for :func:`build_receiver_assertion` to reconstruct *assertion*'s
+    scalar fields exactly."""
+    return ReceiverScalarConfig(
+        uart1_baud=assertion.baud.uart1,
+        uart2_baud=assertion.baud.uart2,
+        meas_period_ms=assertion.meas_period_ms,
+        dyn_model=assertion.dyn_model,
+        tmode_mode=assertion.tmode_mode,
+        elevation_mask_deg=assertion.elevation_mask_deg,
+        bds_b2_enabled=assertion.bds_b2_enabled,
+        spi_enabled=assertion.spi_enabled,
+    )
+
+
+def _mock_read_back_matches(driver: MagicMock, assertion: ReceiverAssertion) -> None:
+    """Point every read-back driver method at values that reconstruct
+    exactly *assertion* via ``build_receiver_assertion`` — used by tests
+    that apply a request and then assert ``status == "ok"`` even though
+    the request deliberately diverges from the fixture's defaults.
+
+    Sets ``get_receiver_scalars.return_value`` too — fine for tests
+    that don't care whether the pre-write skip-decision "current"
+    reads the new or old scalars, but tests exercising the meas-rate/
+    baud unchanged-skip explicitly override ``.side_effect`` afterwards
+    (this function's `.return_value`` is then ignored).
+    """
+    driver.get_rtcm_port_config.return_value = RtcmPortConfig(
+        messages={
+            row: {port.value: int(on) for port, on in ports.items()}
+            for row, ports in assertion.rtcm_stream.matrix.items()
+        }
+    )
+    driver.get_port_protocols.return_value = PortProtocolConfig(
+        in_protocols={port: cfg.in_ for port, cfg in assertion.ports.items()},
+        out_protocols={port: cfg.out for port, cfg in assertion.ports.items()},
+    )
+    wanted = set(assertion.constellations)
+    driver.get_gnss_config.return_value = GnssConfig(
+        systems=[
+            GnssSystemConfig(constellation=c, enabled=c in wanted)
+            for c in GnssConstellation
+        ]
+    )
+    driver.get_receiver_scalars.return_value = _scalars_for(assertion)
 
 
 class TestApplyReceiverConfig:
-    """Tests for ``DeviceService.apply_receiver_config`` (issue #61)."""
+    """Tests for ``DeviceService.apply_receiver_config`` (issue #98)."""
 
     @pytest.fixture()
     def connected_svc(self) -> DeviceService:
@@ -529,11 +610,15 @@ class TestApplyReceiverConfig:
         driver = _make_mock_driver()
         driver.get_base_config.return_value = CurrentBaseConfig(mode=BaseMode.DISABLED)
         driver.get_gnss_config.return_value = GnssConfig(systems=[])
-        # Matches ``_minimal_config()``'s matrix by default so tests that
-        # don't care about the read-back diff see status="ok".
+        # Matches ``_minimal_assertion()`` exactly by default, so tests
+        # that don't care about the read-back diff see status="ok" and
+        # the meas-rate/baud unchanged-skip fires for anything that
+        # doesn't deliberately override those fields.
         driver.get_rtcm_port_config.return_value = RtcmPortConfig(
             messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
         )
+        driver.get_port_protocols.return_value = PortProtocolConfig()
+        driver.get_receiver_scalars.return_value = _scalars_for(_minimal_assertion())
         driver.get_uart_baud_rates.return_value = {
             PortId.UART1: 57600,
             PortId.UART2: 115200,
@@ -549,14 +634,38 @@ class TestApplyReceiverConfig:
         svc = DeviceService()
         svc.set_driver(_make_mock_driver())
         with pytest.raises(RuntimeError, match="Device not connected"):
-            await svc.apply_receiver_config(_minimal_config())
+            await svc.apply_receiver_config(_minimal_request())
 
     @pytest.mark.asyncio()
-    async def test_baud_omitted_is_allowed(self, connected_svc: DeviceService) -> None:
-        result = await connected_svc.apply_receiver_config(
-            _minimal_config(baud=BaudConfig())
+    async def test_meas_period_ms_unchanged_is_not_rewritten(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Issue #98 acceptance criterion: applying with an unchanged
+        measurement rate no longer rewrites it."""
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_request())
+        connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_meas_period_ms_changed_is_rewritten(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        await connected_svc.apply_receiver_config(_minimal_request(meas_period_ms=333))
+        connected_svc.driver.configure_measurement_rate.assert_called_once_with(  # type: ignore[union-attr]
+            333
         )
+
+    @pytest.mark.asyncio()
+    async def test_baud_unchanged_is_not_rewritten(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        result = await connected_svc.apply_receiver_config(_minimal_request())
         assert result.status == "ok"
+        driver.configure_baud.assert_not_called()  # type: ignore[union-attr]
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_baud_written_last_after_every_other_key(
@@ -567,13 +676,9 @@ class TestApplyReceiverConfig:
         driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
             vendor="MockVendor", model="MockModel"
         )
-        config = _minimal_config(
-            baud=BaudConfig(uart1=115200),
-            dyn_model=DynModel.STATIONARY,
-            tmode_mode=BaseMode.DISABLED,
-        )
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
 
-        await connected_svc.apply_receiver_config(config)
+        await connected_svc.apply_receiver_config(request)
 
         write_methods = {
             "configure_measurement_rate",
@@ -600,9 +705,9 @@ class TestApplyReceiverConfig:
         driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
             vendor="MockVendor", model="MockModel"
         )
-        config = _minimal_config(baud=BaudConfig(uart1=115200, uart2=38400))
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=38400))
 
-        await connected_svc.apply_receiver_config(config)
+        await connected_svc.apply_receiver_config(request)
 
         driver.configure_baud.assert_called_once_with(115200, 38400)  # type: ignore[union-attr]
 
@@ -613,9 +718,14 @@ class TestApplyReceiverConfig:
         """UART2 isn't the port this console's own link is on — no reopen."""
         driver = connected_svc.driver
         assert driver is not None
-        config = _minimal_config(baud=BaudConfig(uart2=38400))
+        request = _minimal_request(baud=BaudAssertion(uart1=57600, uart2=38400))
+        _mock_read_back_matches(driver, request.assertion)
+        driver.get_receiver_scalars.side_effect = [
+            _scalars_for(_minimal_assertion()),
+            _scalars_for(request.assertion),
+        ]
 
-        result = await connected_svc.apply_receiver_config(config)
+        result = await connected_svc.apply_receiver_config(request)
 
         assert result.status == "ok"
         driver.configure_baud.assert_called_once_with(None, 38400)  # type: ignore[union-attr]
@@ -630,9 +740,14 @@ class TestApplyReceiverConfig:
         driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
             vendor="MockVendor", model="MockModel"
         )
-        config = _minimal_config(baud=BaudConfig(uart1=115200))
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
+        _mock_read_back_matches(driver, request.assertion)
+        driver.get_receiver_scalars.side_effect = [
+            _scalars_for(_minimal_assertion()),
+            _scalars_for(request.assertion),
+        ]
 
-        result = await connected_svc.apply_receiver_config(config)
+        result = await connected_svc.apply_receiver_config(request)
 
         assert result.status == "ok"
         driver.reconnect_at_baud.assert_called_once_with(115200)  # type: ignore[union-attr]
@@ -653,9 +768,9 @@ class TestApplyReceiverConfig:
         driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
             vendor="MockVendor", model="MockModel"
         )
-        config = _minimal_config(baud=BaudConfig(uart1=115200))
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
 
-        await connected_svc.apply_receiver_config(config)
+        await connected_svc.apply_receiver_config(request)
 
         assert connected_svc._baud_rate == 115200  # pyright: ignore[reportPrivateUsage]
 
@@ -669,10 +784,10 @@ class TestApplyReceiverConfig:
         driver.reconnect_at_baud.side_effect = ConnectionError(  # type: ignore[union-attr]
             "no response"
         )
-        config = _minimal_config(baud=BaudConfig(uart1=115200))
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
 
         with pytest.raises(ApplyConfigLinkLostError) as exc_info:
-            await connected_svc.apply_receiver_config(config)
+            await connected_svc.apply_receiver_config(request)
 
         assert exc_info.value.previous_baud == 57600
         assert exc_info.value.new_baud == 115200
@@ -696,10 +811,10 @@ class TestApplyReceiverConfig:
             ConnectionError("no response at new baud"),
             DeviceInfo(vendor="MockVendor", model="MockModel"),
         ]
-        config = _minimal_config(baud=BaudConfig(uart1=115200))
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
 
         with pytest.raises(ApplyConfigLinkLostError):
-            await connected_svc.apply_receiver_config(config)
+            await connected_svc.apply_receiver_config(request)
 
         assert connected_svc.state == DeviceConnectionState.CONNECTED
         assert connected_svc._baud_rate == 57600  # pyright: ignore[reportPrivateUsage]
@@ -710,12 +825,12 @@ class TestApplyReceiverConfig:
         self, connected_svc: DeviceService
     ) -> None:
         assert connected_svc.driver is not None
-        config = _minimal_config(
+        request = _minimal_request(
             ports={PortId.USB: PortProtocolSet(**{"in": [UbxProtocol.NMEA], "out": []})}
         )
 
         with pytest.raises(ApplyConfigRefusedError) as exc_info:
-            await connected_svc.apply_receiver_config(config)
+            await connected_svc.apply_receiver_config(request)
 
         assert exc_info.value.rule == "ubx_in_liveness"
         connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
@@ -725,14 +840,18 @@ class TestApplyReceiverConfig:
     async def test_ubx_in_present_on_usb_is_allowed(
         self, connected_svc: DeviceService
     ) -> None:
-        config = _minimal_config(
+        driver = connected_svc.driver
+        assert driver is not None
+        request = _minimal_request(
             ports={
                 PortId.USB: PortProtocolSet(
                     **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.NMEA]}
                 )
             }
         )
-        result = await connected_svc.apply_receiver_config(config)
+        _mock_read_back_matches(driver, request.assertion)
+
+        result = await connected_svc.apply_receiver_config(request)
         assert result.status == "ok"
 
     @pytest.mark.asyncio()
@@ -743,10 +862,10 @@ class TestApplyReceiverConfig:
         connected_svc.driver.get_base_config.return_value = CurrentBaseConfig(  # type: ignore[union-attr]
             mode=BaseMode.DISABLED, latitude=0.0, longitude=0.0, altitude_m=0.0
         )
-        config = _minimal_config(tmode_mode=BaseMode.FIXED)
+        request = _minimal_request(tmode_mode=BaseMode.FIXED)
 
         with pytest.raises(ApplyConfigRefusedError) as exc_info:
-            await connected_svc.apply_receiver_config(config)
+            await connected_svc.apply_receiver_config(request)
 
         assert exc_info.value.rule == "tmode_fixed_requires_coordinates"
         connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
@@ -755,25 +874,25 @@ class TestApplyReceiverConfig:
     async def test_tmode_fixed_with_coordinates_succeeds(
         self, connected_svc: DeviceService
     ) -> None:
-        assert connected_svc.driver is not None
-        connected_svc.driver.get_base_config.return_value = CurrentBaseConfig(  # type: ignore[union-attr]
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.get_base_config.return_value = CurrentBaseConfig(
             mode=BaseMode.FIXED, latitude=47.0, longitude=8.0, altitude_m=400.0
         )
-        config = _minimal_config(tmode_mode=BaseMode.FIXED)
+        request = _minimal_request(tmode_mode=BaseMode.FIXED)
+        _mock_read_back_matches(driver, request.assertion)
 
-        result = await connected_svc.apply_receiver_config(config)
+        result = await connected_svc.apply_receiver_config(request)
 
         assert result.status == "ok"
-        connected_svc.driver.configure_tmode_mode.assert_called_once_with(  # type: ignore[union-attr]
-            BaseMode.FIXED
-        )
+        driver.configure_tmode_mode.assert_called_once_with(BaseMode.FIXED)
 
     @pytest.mark.asyncio()
     async def test_write_order_matches_the_specified_sequence(
         self, connected_svc: DeviceService
     ) -> None:
         assert connected_svc.driver is not None
-        config = _minimal_config(
+        request = _minimal_request(
             ports={
                 PortId.UART1: PortProtocolSet(
                     **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
@@ -783,9 +902,13 @@ class TestApplyReceiverConfig:
             elevation_mask_deg=10,
             dyn_model=DynModel.STATIONARY,
             tmode_mode=BaseMode.DISABLED,
+            # Differs from the fixture's default current scalars so
+            # ``configure_measurement_rate`` actually fires and can be
+            # asserted first in the order below.
+            meas_period_ms=333,
         )
 
-        await connected_svc.apply_receiver_config(config)
+        await connected_svc.apply_receiver_config(request)
 
         write_methods = {
             "configure_measurement_rate",
@@ -812,12 +935,12 @@ class TestApplyReceiverConfig:
         ]
 
     @pytest.mark.asyncio()
-    async def test_ports_not_written_when_omitted(
-        self, connected_svc: DeviceService
-    ) -> None:
+    async def test_ports_always_written(self, connected_svc: DeviceService) -> None:
+        """Issue #98: every field is sent on every Apply — ``ports`` is no
+        longer conditionally omitted."""
         assert connected_svc.driver is not None
-        await connected_svc.apply_receiver_config(_minimal_config())
-        connected_svc.driver.configure_port_protocols.assert_not_called()  # type: ignore[union-attr]
+        await connected_svc.apply_receiver_config(_minimal_request())
+        connected_svc.driver.configure_port_protocols.assert_called_once()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_constellations_flip_enabled_and_preserve_channels(
@@ -841,9 +964,9 @@ class TestApplyReceiverConfig:
                 ),
             ]
         )
-        config = _minimal_config(constellations=[GnssConstellation.GALILEO])
+        request = _minimal_request(constellations=[GnssConstellation.GALILEO])
 
-        await connected_svc.apply_receiver_config(config)
+        await connected_svc.apply_receiver_config(request)
 
         written: GnssConfig = driver.configure_gnss.call_args[0][0]
         by_constellation: dict[GnssConstellation, GnssSystemConfig] = {
@@ -856,34 +979,30 @@ class TestApplyReceiverConfig:
         assert by_constellation[GnssConstellation.GALILEO].max_channels == 12
 
     @pytest.mark.asyncio()
-    async def test_dyn_model_and_tmode_mode_omitted_write_neither_key(
+    async def test_dyn_model_and_tmode_mode_always_written(
         self, connected_svc: DeviceService
     ) -> None:
+        """Issue #98: every field is sent on every Apply — ``dyn_model``/
+        ``tmode_mode`` are no longer conditionally omitted. Plain
+        reassertion of the same value is safe here (not the edge-
+        triggered survey-in path — see ``UbloxDriver.configure_tmode_mode``)."""
         assert connected_svc.driver is not None
-        await connected_svc.apply_receiver_config(_minimal_config())
-        connected_svc.driver.configure_dyn_model.assert_not_called()  # type: ignore[union-attr]
-        connected_svc.driver.configure_tmode_mode.assert_not_called()  # type: ignore[union-attr]
+        await connected_svc.apply_receiver_config(_minimal_request())
+        connected_svc.driver.configure_dyn_model.assert_called_once_with(  # type: ignore[union-attr]
+            DynModel.PORTABLE
+        )
+        connected_svc.driver.configure_tmode_mode.assert_called_once_with(  # type: ignore[union-attr]
+            BaseMode.DISABLED
+        )
 
     @pytest.mark.asyncio()
     async def test_optimisations_always_invoked(
         self, connected_svc: DeviceService
     ) -> None:
-        """The driver call always happens; per-field omission is the
-        driver's job (each ``None`` there means leave untouched)."""
         assert connected_svc.driver is not None
-        await connected_svc.apply_receiver_config(_minimal_config())
+        await connected_svc.apply_receiver_config(_minimal_request())
         connected_svc.driver.configure_optimisations.assert_called_once_with(  # type: ignore[union-attr]
-            None, None, None
-        )
-
-    @pytest.mark.asyncio()
-    async def test_meas_period_ms_passed_through_unconverted(
-        self, connected_svc: DeviceService
-    ) -> None:
-        assert connected_svc.driver is not None
-        await connected_svc.apply_receiver_config(_minimal_config(meas_period_ms=333))
-        connected_svc.driver.configure_measurement_rate.assert_called_once_with(  # type: ignore[union-attr]
-            333
+            0, False, False
         )
 
     @pytest.mark.asyncio()
@@ -891,12 +1010,12 @@ class TestApplyReceiverConfig:
         self, connected_svc: DeviceService
     ) -> None:
         assert connected_svc.driver is not None
-        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
-            messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
-        )
-        result = await connected_svc.apply_receiver_config(_minimal_config())
+        result = await connected_svc.apply_receiver_config(_minimal_request())
         assert result.status == "ok"
         assert result.diff == []
+        from sp_rtk_base.models.profile_models import diff_receiver_assertions
+
+        assert diff_receiver_assertions(result.read_back, _minimal_assertion()) == []
 
     @pytest.mark.asyncio()
     async def test_read_back_mismatch_returns_failed_with_diff(
@@ -908,15 +1027,14 @@ class TestApplyReceiverConfig:
         connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
             messages={RtcmRowId.RTCM_1005: {"UART1": 0}}
         )
-        result = await connected_svc.apply_receiver_config(_minimal_config())
+        result = await connected_svc.apply_receiver_config(_minimal_request())
 
         assert result.status == "failed"
         assert len(result.diff) == 1
-        cell = result.diff[0]
-        assert cell.row_id == RtcmRowId.RTCM_1005
-        assert cell.port == PortId.UART1
-        assert cell.expected is True
-        assert cell.actual is False
+        leaf = result.diff[0]
+        assert leaf.path == "rtcm.1005.UART1"
+        assert leaf.expected is True
+        assert leaf.actual is False
 
     @pytest.mark.asyncio()
     async def test_throughput_warning_when_over_threshold(
@@ -941,9 +1059,9 @@ class TestApplyReceiverConfig:
                 for row, ports in heavy_matrix.matrix.items()
             }
         )
-        config = _minimal_config(rtcm_stream=heavy_matrix)
+        request = _minimal_request(rtcm_stream=heavy_matrix)
 
-        result = await connected_svc.apply_receiver_config(config)
+        result = await connected_svc.apply_receiver_config(request)
 
         assert result.status == "ok"
         assert len(result.warnings) == 1
@@ -958,7 +1076,7 @@ class TestApplyReceiverConfig:
             PortId.UART1: 115200,
             PortId.UART2: 115200,
         }
-        result = await connected_svc.apply_receiver_config(_minimal_config())
+        result = await connected_svc.apply_receiver_config(_minimal_request())
         assert result.warnings == []
 
 
@@ -984,25 +1102,37 @@ class TestSurveyInPreservesAppliedProfile:
         svc._state = DeviceConnectionState.CONNECTED
         svc._info = DeviceInfo(vendor="Fake", model="FAKE-F9P")
 
-        # Deliberately not the built-in profile's values, so a
-        # regression that force-re-applies the built-in's stationary
-        # dyn model / RTCM-only ports would be caught.
-        applied = _minimal_config(
-            data_link_port=[PortId.UART1, PortId.UART2],
-            ports={
-                PortId.UART1: PortProtocolSet(
-                    in_=[UbxProtocol.UBX], out=[UbxProtocol.RTCM3X, UbxProtocol.NMEA]
+        # Live-seed the whole envelope (issue #98: Apply sends the whole
+        # form), then override only the fields this regression cares
+        # about — mirroring how the real UI builds ``form`` from
+        # ``live`` and mutates specific fields. Deliberately keeps
+        # ``dyn_model: portable`` (the fake driver's own live default),
+        # not the built-in profile's ``stationary``, so a regression
+        # that force-re-applies the built-in's dynamics model would be
+        # caught.
+        live = (await svc.get_receiver_assertion()).assertion
+        applied_assertion = live.model_copy(
+            update={
+                "dyn_model": DynModel.PORTABLE,
+                "ports": {
+                    **live.ports,
+                    PortId.UART1: PortProtocolSet(
+                        in_=[UbxProtocol.UBX],
+                        out=[UbxProtocol.RTCM3X, UbxProtocol.NMEA],
+                    ),
+                    PortId.UART2: PortProtocolSet(
+                        in_=[UbxProtocol.UBX], out=[UbxProtocol.RTCM3X]
+                    ),
+                },
+                "rtcm_stream": RtcmStreamConfig(
+                    matrix={
+                        RtcmRowId.RTCM_1005: {PortId.UART1: True, PortId.UART2: True},
+                    }
                 ),
-                PortId.UART2: PortProtocolSet(
-                    in_=[UbxProtocol.UBX], out=[UbxProtocol.RTCM3X]
-                ),
-            },
-            dyn_model=DynModel.PORTABLE,
-            rtcm_stream=RtcmStreamConfig(
-                matrix={
-                    RtcmRowId.RTCM_1005: {PortId.UART1: True, PortId.UART2: True},
-                }
-            ),
+            }
+        )
+        applied = ReceiverApplyRequest(
+            assertion=applied_assertion, data_link_port=[PortId.UART1, PortId.UART2]
         )
         apply_result = await svc.apply_receiver_config(applied)
         assert apply_result.status == "ok"
@@ -1035,6 +1165,24 @@ class TestBaseInvariants:
         driver.get_dyn_model.return_value = DynModel.STATIONARY
         driver.get_rtcm_port_config.return_value = RtcmPortConfig(
             messages={RtcmRowId.RTCM_1005: {"UART1": 1, "UART2": 1}}
+        )
+        # ``apply_base_invariants`` now reads a full live assertion via
+        # ``get_receiver_assertion()`` before merging the built-in
+        # profile onto it (issue #98) — deliberately distinct from the
+        # built-in's own values wherever it sets one explicitly, so a
+        # regression that used the built-in's value instead of live (or
+        # vice versa) is caught by ``test_apply_delegates_...`` below.
+        driver.get_port_protocols.return_value = PortProtocolConfig()
+        driver.get_gnss_config.return_value = GnssConfig(systems=[])
+        driver.get_receiver_scalars.return_value = ReceiverScalarConfig(
+            uart1_baud=9600,
+            uart2_baud=9600,
+            meas_period_ms=250,
+            dyn_model=DynModel.PORTABLE,
+            tmode_mode=BaseMode.SURVEY_IN,
+            elevation_mask_deg=45,
+            bds_b2_enabled=True,
+            spi_enabled=False,
         )
         svc.set_driver(driver)
         svc._state = DeviceConnectionState.CONNECTED
@@ -1086,21 +1234,44 @@ class TestBaseInvariants:
     ) -> None:
         from unittest.mock import AsyncMock
 
-        from sp_rtk_base.models.device_models import ApplyConfigResult
         from sp_rtk_base.profiles import BUILTIN_PROFILES
 
-        mock_apply = AsyncMock(return_value=ApplyConfigResult(status="ok"))
+        mock_apply = AsyncMock(
+            return_value=ApplyConfigResult(status="ok", read_back=_minimal_assertion())
+        )
         monkeypatch.setattr(connected_svc, "apply_receiver_config", mock_apply)
 
         result = await connected_svc.apply_base_invariants()
 
-        applied_config = mock_apply.call_args[0][0]
+        applied_request: ReceiverApplyRequest = mock_apply.call_args[0][0]
         builtin = BUILTIN_PROFILES["ublox-f9p-base-standard"]
-        # Everything except baud must match the built-in profile
-        # verbatim — baud is deliberately stripped so this one-click
-        # remedy can never strand the console's own link.
-        assert applied_config == builtin.model_copy(update={"baud": None})
-        assert applied_config.baud is None
+
+        # data_link_port comes straight from the built-in profile.
+        assert applied_request.data_link_port == list(builtin.data_link_port)
+
+        # Fields the built-in profile sets explicitly win over live —
+        # proven by the fixture's live scalars deliberately disagreeing
+        # with every one of them.
+        assert applied_request.assertion.dyn_model == builtin.dyn_model
+        assert applied_request.assertion.elevation_mask_deg == (
+            builtin.elevation_mask_deg
+        )
+        assert applied_request.assertion.bds_b2_enabled == builtin.bds_b2_enabled
+        assert applied_request.assertion.spi_enabled == builtin.spi_enabled
+        assert applied_request.assertion.constellations == builtin.constellations
+        assert applied_request.assertion.ports[PortId.UART1].out == [UbxProtocol.RTCM3X]
+
+        # baud is deliberately stripped from the profile copy before
+        # merging, so this one-click remedy can never strand the
+        # console's own link on a baud change the operator didn't ask
+        # for — it falls back to the live baud (9600/9600 in the
+        # fixture), not the built-in's own 57600/115200.
+        assert applied_request.assertion.baud == BaudAssertion(uart1=9600, uart2=9600)
+
+        # tmode_mode is omitted by the built-in profile — falls back to
+        # live (survey_in in the fixture).
+        assert applied_request.assertion.tmode_mode == BaseMode.SURVEY_IN
+
         assert result.status == "ok"
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -325,34 +324,13 @@ class UbxProtocol(str, enum.Enum):
 
 
 # ---------------------------------------------------------------------------
-# Apply-config read-back verify (issue #61)
+# Apply-config's read-back-verify diff/result types now live on
+# ``models.profile_models`` (``ApplyDiffEntry`` / ``ApplyConfigResult`` /
+# ``diff_receiver_assertions`` — issue #98), since they compare
+# ``ReceiverAssertion`` values and this module can't import that without
+# a circular dependency. The old matrix-only ``ApplyConfigCellDiff`` /
+# ``ApplyConfigResult`` pair that lived here is gone — no parallel type.
 # ---------------------------------------------------------------------------
-
-
-class ApplyConfigCellDiff(BaseModel):
-    """One mismatched cell from the post-apply RTCM matrix read-back."""
-
-    row_id: RtcmRowId
-    port: PortId
-    expected: bool
-    actual: bool
-
-
-class ApplyConfigResult(BaseModel):
-    """Response for ``POST /api/device/apply-config``.
-
-    ``status="failed"`` means the post-apply read-back of the RTCM
-    matrix didn't match what was written — the writes are left in
-    flash (nothing is rolled back); ``diff`` lists every mismatched
-    cell. ``warnings`` carries non-blocking advisories (e.g. the
-    estimated-throughput check) that never affect ``status``.
-    """
-
-    status: Literal["ok", "failed"]
-    diff: list[ApplyConfigCellDiff] = Field(
-        default_factory=lambda: list[ApplyConfigCellDiff]()
-    )
-    warnings: list[str] = Field(default_factory=lambda: list[str]())
 
 
 class PortProtocolConfig(BaseModel):

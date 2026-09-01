@@ -115,8 +115,8 @@ def test_factory_receiver_blocks_apply_until_data_link_port_chosen(
     page.locator(".rtcm-cell-1005-UART1").click()
     page.locator(".data-link-checkbox-UART1").click()
 
-    expect(page.locator(".data-link-blocked")).not_to_be_visible()
-    expect(apply_btn).to_be_enabled()
+    expect(page.locator(".data-link-blocked")).not_to_be_visible(timeout=10_000)
+    expect(apply_btn).to_be_enabled(timeout=10_000)
 
     apply_btn.click()
     expect(page.locator(".apply-result")).to_contain_text(

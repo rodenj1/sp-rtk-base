@@ -1,4 +1,5 @@
-"""Tests for the GPS receiver profile schema (ReceiverConfig + Profile).
+"""Tests for the GPS receiver profile schema (ReceiverConfig + Profile) and
+the Apply envelope / per-leaf diff introduced by issue #98.
 
 Covers only context-free validation — rules that need no live device
 state. The UBX-in liveness guard and the tmode_mode=fixed coordinate
@@ -17,15 +18,19 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.profile_models import (
+    ApplyConfigResult,
+    ApplyDiffEntry,
     BaudAssertion,
     BaudConfig,
     DynModel,
     PortProtocolSet,
     Profile,
+    ReceiverApplyRequest,
     ReceiverAssertion,
     ReceiverConfig,
     RtcmStreamConfig,
     TmodeMode,
+    diff_receiver_assertions,
     merge_profile_into_assertion,
 )
 
@@ -40,17 +45,20 @@ def _matrix_ok() -> dict[RtcmRowId, dict[PortId, bool]]:
 def _base_kwargs() -> dict[str, object]:
     """Minimal kwargs for a valid ReceiverConfig."""
     return {
-        "data_link_port": [PortId.UART1],
         "rtcm_stream": {"matrix": _matrix_ok()},
     }
 
 
 class TestReceiverConfig:
-    """ReceiverConfig is what Apply takes — no name field."""
+    """ReceiverConfig is what Apply's envelope wraps — no name field, and
+    (issue #98) no ``data_link_port`` either: that field has no CFG key
+    and lives on ``Profile``/``ReceiverApplyRequest`` instead."""
+
+    def test_has_no_data_link_port_field(self) -> None:
+        assert "data_link_port" not in ReceiverConfig.model_fields
 
     def test_minimal_valid_config(self) -> None:
         config = ReceiverConfig.model_validate(_base_kwargs())
-        assert config.data_link_port == [PortId.UART1]
         assert config.meas_period_ms == 1000
 
     def test_has_no_name_field(self) -> None:
@@ -68,50 +76,6 @@ class TestReceiverConfig:
         config = ReceiverConfig.model_validate(kwargs)
         assert config.dyn_model == DynModel.STATIONARY
         assert config.tmode_mode == TmodeMode.FIXED
-
-    def test_missing_data_link_port_rejected(self) -> None:
-        kwargs = _base_kwargs()
-        del kwargs["data_link_port"]
-        with pytest.raises(ValidationError, match="data_link_port"):
-            ReceiverConfig.model_validate(kwargs)
-
-    def test_empty_data_link_port_rejected(self) -> None:
-        kwargs = _base_kwargs()
-        kwargs["data_link_port"] = []
-        with pytest.raises(ValidationError, match="data_link_port"):
-            ReceiverConfig.model_validate(kwargs)
-
-    def test_data_link_port_usb_rejected(self) -> None:
-        kwargs = _base_kwargs()
-        kwargs["data_link_port"] = [PortId.USB]
-        with pytest.raises(ValidationError):
-            ReceiverConfig.model_validate(kwargs)
-
-    def test_1005_not_on_any_data_link_port_rejected(self) -> None:
-        kwargs = _base_kwargs()
-        kwargs["rtcm_stream"] = {"matrix": {RtcmRowId.RTCM_1074: {PortId.UART1: True}}}
-        with pytest.raises(ValidationError, match="1005"):
-            ReceiverConfig.model_validate(kwargs)
-
-    def test_1005_on_a_non_data_link_port_is_not_enough(self) -> None:
-        kwargs = _base_kwargs()
-        kwargs["data_link_port"] = [PortId.UART1, PortId.UART2]
-        kwargs["rtcm_stream"] = {
-            "matrix": {
-                RtcmRowId.RTCM_1005: {PortId.UART2: False, PortId.UART1: False},
-                RtcmRowId.RTCM_1074: {PortId.UART1: True, PortId.UART2: True},
-            }
-        }
-        with pytest.raises(ValidationError, match="1005"):
-            ReceiverConfig.model_validate(kwargs)
-
-    def test_data_link_port_with_zero_rows_on_rejected(self) -> None:
-        kwargs = _base_kwargs()
-        kwargs["data_link_port"] = [PortId.UART1, PortId.UART2]
-        # UART2 is a data-link port but has nothing routed to it.
-        kwargs["rtcm_stream"] = {"matrix": {RtcmRowId.RTCM_1005: {PortId.UART1: True}}}
-        with pytest.raises(ValidationError, match="UART2"):
-            ReceiverConfig.model_validate(kwargs)
 
     @pytest.mark.parametrize("meas_period_ms", [99, 60001])
     def test_meas_period_ms_out_of_range_rejected(self, meas_period_ms: int) -> None:
@@ -208,14 +172,60 @@ class TestReceiverConfig:
 
 
 class TestProfile:
-    """Profile = ReceiverConfig + name, version, hardware, forked_from."""
+    """Profile = ReceiverConfig + its own ``data_link_port`` (issue #98) +
+    name, version, hardware, forked_from."""
 
     def _profile_kwargs(self) -> dict[str, object]:
         kwargs = _base_kwargs()
+        kwargs["data_link_port"] = [PortId.UART1]
         kwargs["name"] = "custom-test-profile"
         kwargs["version"] = 1
         kwargs["hardware"] = "ZED-F9P"
         return kwargs
+
+    def test_missing_data_link_port_rejected(self) -> None:
+        kwargs = self._profile_kwargs()
+        del kwargs["data_link_port"]
+        with pytest.raises(ValidationError, match="data_link_port"):
+            Profile.model_validate(kwargs)
+
+    def test_empty_data_link_port_rejected(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["data_link_port"] = []
+        with pytest.raises(ValidationError, match="data_link_port"):
+            Profile.model_validate(kwargs)
+
+    def test_data_link_port_usb_rejected(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["data_link_port"] = [PortId.USB]
+        with pytest.raises(ValidationError):
+            Profile.model_validate(kwargs)
+
+    def test_1005_not_on_any_data_link_port_rejected(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["rtcm_stream"] = {"matrix": {RtcmRowId.RTCM_1074: {PortId.UART1: True}}}
+        with pytest.raises(ValidationError, match="1005"):
+            Profile.model_validate(kwargs)
+
+    def test_1005_on_a_non_data_link_port_is_not_enough(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["data_link_port"] = [PortId.UART1, PortId.UART2]
+        kwargs["rtcm_stream"] = {
+            "matrix": {
+                RtcmRowId.RTCM_1005: {PortId.UART2: False, PortId.UART1: False},
+                RtcmRowId.RTCM_1074: {PortId.UART1: True, PortId.UART2: True},
+            }
+        }
+        with pytest.raises(ValidationError, match="1005"):
+            Profile.model_validate(kwargs)
+
+    def test_data_link_port_with_zero_rows_on_rejected(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["data_link_port"] = [PortId.UART1, PortId.UART2]
+        # UART2 is a data-link port but has nothing routed to it.
+        kwargs["rtcm_stream"] = {"matrix": {RtcmRowId.RTCM_1005: {PortId.UART1: True}}}
+        with pytest.raises(ValidationError, match="UART2"):
+            Profile.model_validate(kwargs)
 
     def test_minimal_valid_profile(self) -> None:
         profile = Profile.model_validate(self._profile_kwargs())
@@ -497,3 +507,225 @@ class TestMergeProfileIntoAssertion:
 
         assert merged.meas_period_ms == bare.meas_period_ms
         assert merged.meas_period_ms != live.meas_period_ms
+
+
+# ---------------------------------------------------------------------------
+# ReceiverApplyRequest — Apply's envelope (issue #98)
+# ---------------------------------------------------------------------------
+
+
+def _base_assertion() -> ReceiverAssertion:
+    """A fully-populated, minimal-but-valid assertion for envelope/diff tests."""
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=57600, uart2=115200),
+        meas_period_ms=1000,
+        constellations=[GnssConstellation.GPS],
+        ports={
+            PortId.UART1: PortProtocolSet(**{"in": ["UBX"], "out": ["RTCM3X"]}),
+            PortId.UART2: PortProtocolSet(**{"in": ["UBX"], "out": []}),
+            PortId.USB: PortProtocolSet(
+                **{"in": ["UBX", "NMEA"], "out": ["UBX", "NMEA"]}
+            ),
+        },
+        dyn_model=DynModel.STATIONARY,
+        tmode_mode=TmodeMode.DISABLED,
+        elevation_mask_deg=10,
+        bds_b2_enabled=False,
+        spi_enabled=False,
+        rtcm_stream=RtcmStreamConfig(
+            matrix={RtcmRowId.RTCM_1005: {PortId.UART1: True}}
+        ),
+    )
+
+
+class TestReceiverApplyRequest:
+    """Apply's envelope (issue #98): the whole asserted state plus the
+    data-link port selection, with the three cross-field validators that
+    used to live on ``ReceiverConfig``."""
+
+    def test_minimal_valid_request(self) -> None:
+        request = ReceiverApplyRequest(
+            assertion=_base_assertion(), data_link_port=[PortId.UART1]
+        )
+        assert request.data_link_port == [PortId.UART1]
+
+    def test_missing_data_link_port_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="data_link_port"):
+            ReceiverApplyRequest.model_validate({"assertion": _base_assertion()})
+
+    def test_empty_data_link_port_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="data_link_port"):
+            ReceiverApplyRequest(assertion=_base_assertion(), data_link_port=[])
+
+    def test_data_link_port_usb_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ReceiverApplyRequest(
+                assertion=_base_assertion(), data_link_port=[PortId.USB]
+            )
+
+    def test_1005_not_on_any_data_link_port_rejected(self) -> None:
+        assertion = _base_assertion().model_copy(
+            update={
+                "rtcm_stream": RtcmStreamConfig(
+                    matrix={RtcmRowId.RTCM_1074: {PortId.UART1: True}}
+                )
+            }
+        )
+        with pytest.raises(ValidationError, match="1005"):
+            ReceiverApplyRequest(assertion=assertion, data_link_port=[PortId.UART1])
+
+    def test_data_link_port_with_zero_rows_on_rejected(self) -> None:
+        # UART2 is a chosen data-link port but has nothing routed to it.
+        with pytest.raises(ValidationError, match="UART2"):
+            ReceiverApplyRequest(
+                assertion=_base_assertion(),
+                data_link_port=[PortId.UART1, PortId.UART2],
+            )
+
+    def test_extra_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ReceiverApplyRequest(
+                assertion=_base_assertion(),
+                data_link_port=[PortId.UART1],
+                bogus_field="nope",
+            )
+
+
+# ---------------------------------------------------------------------------
+# diff_receiver_assertions — per-leaf, path-keyed diff (issue #98)
+# ---------------------------------------------------------------------------
+
+
+class TestDiffReceiverAssertions:
+    def test_identical_assertions_produce_no_diff(self) -> None:
+        assert diff_receiver_assertions(_base_assertion(), _base_assertion()) == []
+
+    def test_baud_uart1_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"baud": BaudAssertion(uart1=115200, uart2=115200)})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="baud.uart1", expected=57600, actual=115200)
+        ]
+
+    def test_baud_uart2_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"baud": BaudAssertion(uart1=57600, uart2=38400)})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="baud.uart2", expected=115200, actual=38400)
+        ]
+
+    def test_meas_period_ms_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"meas_period_ms": 200})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="meas_period_ms", expected=1000, actual=200)
+        ]
+
+    def test_constellation_added_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(
+            update={
+                "constellations": [GnssConstellation.GPS, GnssConstellation.GLONASS]
+            }
+        )
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="constellations.glonass", expected=False, actual=True)
+        ]
+
+    def test_port_out_protocol_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        new_ports = dict(a.ports)
+        new_ports[PortId.UART1] = PortProtocolSet(
+            **{"in": ["UBX"], "out": ["RTCM3X", "NMEA"]}
+        )
+        b = a.model_copy(update={"ports": new_ports})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="ports.UART1.out.NMEA", expected=False, actual=True)
+        ]
+
+    def test_port_in_protocol_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        new_ports = dict(a.ports)
+        new_ports[PortId.UART2] = PortProtocolSet(**{"in": [], "out": []})
+        b = a.model_copy(update={"ports": new_ports})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="ports.UART2.in.UBX", expected=True, actual=False)
+        ]
+
+    def test_dyn_model_mismatch_uses_string_values(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"dyn_model": DynModel.PORTABLE})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="dyn_model", expected="stationary", actual="portable")
+        ]
+
+    def test_tmode_mode_mismatch_uses_string_values(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"tmode_mode": TmodeMode.FIXED})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="tmode_mode", expected="disabled", actual="fixed")
+        ]
+
+    def test_elevation_mask_deg_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"elevation_mask_deg": 20})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="elevation_mask_deg", expected=10, actual=20)
+        ]
+
+    def test_bds_b2_enabled_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"bds_b2_enabled": True})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="bds_b2_enabled", expected=False, actual=True)
+        ]
+
+    def test_spi_enabled_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"spi_enabled": True})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="spi_enabled", expected=False, actual=True)
+        ]
+
+    def test_matrix_cell_mismatch_is_one_leaf(self) -> None:
+        a = _base_assertion()
+        new_matrix = {row: dict(ports) for row, ports in a.rtcm_stream.matrix.items()}
+        new_matrix.setdefault(RtcmRowId.RTCM_1077, {})[PortId.UART2] = True
+        b = a.model_copy(update={"rtcm_stream": RtcmStreamConfig(matrix=new_matrix)})
+        assert diff_receiver_assertions(a, b) == [
+            ApplyDiffEntry(path="rtcm.1077.UART2", expected=False, actual=True)
+        ]
+
+    def test_multiple_mismatches_all_reported(self) -> None:
+        a = _base_assertion()
+        b = a.model_copy(update={"meas_period_ms": 200, "spi_enabled": True})
+        diffs = diff_receiver_assertions(a, b)
+        assert {d.path for d in diffs} == {"meas_period_ms", "spi_enabled"}
+
+    def test_data_link_port_is_not_a_parameter(self) -> None:
+        """The function signature alone guarantees the data-link port
+        selection can never appear as a difference — it never sees a
+        ``ReceiverApplyRequest``, only two ``ReceiverAssertion``s."""
+        import inspect
+
+        params = inspect.signature(diff_receiver_assertions).parameters
+        assert set(params) == {"expected", "actual"}
+
+
+# ---------------------------------------------------------------------------
+# ApplyConfigResult (issue #98)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyConfigResult:
+    def test_ok_result_defaults_diff_and_warnings_empty(self) -> None:
+        result = ApplyConfigResult(status="ok", read_back=_base_assertion())
+        assert result.diff == []
+        assert result.warnings == []
+
+    def test_failed_result_carries_the_diff(self) -> None:
+        entry = ApplyDiffEntry(path="meas_period_ms", expected=1000, actual=200)
+        result = ApplyConfigResult(
+            status="failed", read_back=_base_assertion(), diff=[entry]
+        )
+        assert result.diff == [entry]

@@ -53,6 +53,7 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
     ApplyConfigCellDiff,
+    CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
     DynModel,
@@ -63,6 +64,7 @@ from sp_rtk_base.models.device_models import (
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
+    SurveyInProgress,
 )
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
@@ -554,6 +556,69 @@ def row_slug(row_id: RtcmRowId) -> str:
     return row_id.value.replace(".", "_")
 
 
+# ---------------------------------------------------------------------------
+# Fixed Position three-step card (issue #96) — deliberately separate from
+# the profile-form helpers above. This card's state is derived entirely
+# from live receiver polls (``CurrentBaseConfig`` + ``SurveyInProgress``),
+# never from the selected/applied profile — a profile has no position
+# field, per the card's own "not part of the profile" copy.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FixedPositionStepState:
+    """Which step of Apply -> survey-in -> fixed-position the receiver is
+    currently at, plus the per-step status text the card renders.
+
+    ``current_step`` is 1 (apply profile), 2 (run survey-in) or 3 (fixed
+    position set) — steps before it are "done", steps after are "pending".
+    """
+
+    current_step: int
+    survey_state_text: str
+    fixed_pos_text: str
+
+
+def fixed_position_step_state(
+    base_config: CurrentBaseConfig, survey: SurveyInProgress
+) -> FixedPositionStepState:
+    """Derive the three-step card's current step + status text.
+
+    Step 3 (fixed position set) is current once the receiver reports
+    ``BaseMode.FIXED`` — a promoted survey-in and a manually restored
+    position both land here identically, and survey-in's own state is
+    irrelevant once fixed mode is reached. Step 2 (run survey-in) is
+    current while the receiver is in ``BaseMode.SURVEY_IN`` *or* the
+    survey-in poll reports ``active`` (covers a receiver mid-survey
+    whose TMODE read-back hasn't caught up yet). Anything else is step
+    1 (apply profile) — the baseline a freshly-applied, not-yet-surveyed
+    base sits in.
+    """
+    if base_config.mode == TmodeMode.FIXED:
+        return FixedPositionStepState(
+            current_step=3,
+            survey_state_text="— complete" if survey.valid else "— done",
+            fixed_pos_text=(
+                f"{base_config.latitude:.7f}°, {base_config.longitude:.7f}° "
+                f"± {base_config.accuracy_mm} mm"
+            ),
+        )
+    if base_config.mode == TmodeMode.SURVEY_IN or survey.active:
+        return FixedPositionStepState(
+            current_step=2,
+            survey_state_text=(
+                f"— running ({survey.duration_seconds}s, "
+                f"{survey.mean_accuracy_mm:.0f} mm, {survey.observations} obs)"
+            ),
+            fixed_pos_text="— none",
+        )
+    return FixedPositionStepState(
+        current_step=1,
+        survey_state_text="— not started",
+        fixed_pos_text="— none",
+    )
+
+
 @ui.page("/gps-config")
 def gps_config_page() -> None:
     """Render the advanced GPS configuration page."""
@@ -800,6 +865,63 @@ def gps_config_page() -> None:
                 ui.label(
                     "Persist current receiver configuration to non-volatile memory"
                 ).classes("text-grey-4")
+
+        # ================================================================
+        # Section E: Fixed Position — three-step Apply -> survey-in ->
+        # fixed-position card (issue #96). Hidden until connected, like
+        # every other card but Connection. Deliberately NOT part of the
+        # Profile section above — a profile has no position field, and
+        # the card says so explicitly. Survey-in and position-setting
+        # stay owned by the Survey page; this card only links there
+        # rather than duplicating those controls (issue #96 acceptance
+        # criteria).
+        # ================================================================
+        fixed_position_card = ui.card().classes(
+            "fixed-position-card w-full q-pa-md q-mt-md"
+        )
+        fixed_position_card.set_visibility(False)
+
+        with fixed_position_card:
+            with ui.row().classes("items-center gap-2"):
+                ui.label("Fixed Position").classes("text-h6 text-white")
+                ui.badge("separate operator step — not part of the profile").classes(
+                    "fixed-position-not-in-profile"
+                ).props("outline color=grey")
+            ui.separator()
+            ui.label(
+                "A profile has no position field. After Apply, the base is a "
+                "correctly-configured fixed-mode receiver still without a "
+                "fixed point — positioning is your deliberate step, "
+                "unchanged from today's Survey-In page."
+            ).classes("text-grey-4 q-mt-xs text-caption")
+
+            with ui.row().classes(
+                "fixed-position-steps items-center gap-2 q-mt-md flex-wrap"
+            ):
+                fp_step1_label = ui.label("").classes("fixed-position-step-1 q-pa-xs")
+                ui.icon("arrow_forward").classes("text-grey-6")
+                fp_step2_label = ui.label("").classes("fixed-position-step-2 q-pa-xs")
+                ui.icon("arrow_forward").classes("text-grey-6")
+                fp_step3_label = ui.label("").classes("fixed-position-step-3 q-pa-xs")
+
+            with ui.row().classes("items-center gap-2 q-mt-md"):
+                ui.button("Run survey-in", icon="open_in_new").classes(
+                    "fixed-position-survey-link"
+                ).props("outline color=primary").on(
+                    "click", lambda: ui.navigate.to("/survey")
+                )
+                ui.button("Set fixed position", icon="open_in_new").classes(
+                    "fixed-position-manual-link"
+                ).props("outline color=primary").on(
+                    "click", lambda: ui.navigate.to("/survey")
+                )
+
+            ui.label(
+                "Survey-in is a live observation session (see Survey) — "
+                "this step is shown here only to make the apply -> "
+                "position sequence legible at a glance. It never blocks "
+                "Apply, and the profile never carries it."
+            ).classes("text-grey-5 q-mt-sm text-caption")
 
         # ================================================================
         # Event handlers
@@ -1125,6 +1247,7 @@ def gps_config_page() -> None:
             flash_card.set_visibility(
                 connected and DeviceCapability.SAVE_TO_FLASH in caps
             )
+            fixed_position_card.set_visibility(connected)
             reload_device_btn.set_visibility(connected)
 
             if connected:
@@ -1449,6 +1572,55 @@ def gps_config_page() -> None:
             else:
                 advisory_label.set_visibility(False)
 
+        def _render_fixed_position_step(
+            label: ui.label, step_index: int, current_step: int, text: str
+        ) -> None:
+            label.text = text
+            if step_index == current_step:
+                modifier = "is-current"
+            elif step_index < current_step:
+                modifier = "is-done"
+            else:
+                modifier = "is-pending"
+            label.classes(
+                remove="is-current is-done is-pending",
+                add=modifier,
+            )
+
+        async def _render_fixed_position() -> None:
+            """Refresh the Fixed Position card's three-step state (issue #96).
+
+            Polls the live receiver directly — ``get_base_config`` /
+            ``get_survey_in_status`` — never the profile-seeded form
+            state above. Called alongside the rest of the live-seeding
+            refresh flow in ``_load_receiver_config_form``, so it stays
+            current on connect, reload/reconnect, and page (re)load
+            while already connected.
+            """
+            try:
+                base_config = await svc.get_base_config()
+                survey = await svc.get_survey_in_status()
+            except Exception:
+                logger.debug("Failed to read fixed-position step state")
+                return
+
+            state = fixed_position_step_state(base_config, survey)
+            _render_fixed_position_step(
+                fp_step1_label, 1, state.current_step, "① Apply profile"
+            )
+            _render_fixed_position_step(
+                fp_step2_label,
+                2,
+                state.current_step,
+                f"② Run survey-in {state.survey_state_text}",
+            )
+            _render_fixed_position_step(
+                fp_step3_label,
+                3,
+                state.current_step,
+                f"③ Fixed position set {state.fixed_pos_text}",
+            )
+
         async def _load_receiver_config_form() -> None:
             """Seed the form from the live receiver.
 
@@ -1484,6 +1656,7 @@ def gps_config_page() -> None:
             _clear_apply_result()
             _on_form_changed()
             _render_picker()
+            await _render_fixed_position()
 
         async def _connect() -> None:
             """Connect to the selected device."""

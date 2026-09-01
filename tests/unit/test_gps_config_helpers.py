@@ -15,6 +15,7 @@ import pytest
 
 from sp_rtk_base.models.device_models import (
     ApplyConfigCellDiff,
+    CurrentBaseConfig,
     DynModel,
     GnssConfig,
     GnssConstellation,
@@ -24,6 +25,7 @@ from sp_rtk_base.models.device_models import (
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
+    SurveyInProgress,
     UbxProtocol,
 )
 from sp_rtk_base.models.device_models import (
@@ -45,6 +47,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     build_apply_config,
     build_picker_entries,
     build_saved_profile,
+    fixed_position_step_state,
     format_cell_diff,
     hw_extras_display,
     i2c_spi_advisory_rows,
@@ -636,3 +639,67 @@ class TestHwExtrasDisplay:
         assert rows["Elevation Mask"] == "15°"
         assert rows["BeiDou B2"] == "off"
         assert rows["SPI"] == "on"
+
+
+class TestFixedPositionStepState:
+    """Step derivation for the Fixed Position three-step card (issue #96)."""
+
+    def test_disabled_mode_and_no_survey_is_step_1(self) -> None:
+        state = fixed_position_step_state(
+            CurrentBaseConfig(mode=TmodeMode.DISABLED),
+            SurveyInProgress(active=False, valid=False),
+        )
+        assert state.current_step == 1
+        assert state.survey_state_text == "— not started"
+        assert state.fixed_pos_text == "— none"
+
+    def test_survey_in_mode_is_step_2(self) -> None:
+        state = fixed_position_step_state(
+            CurrentBaseConfig(mode=TmodeMode.SURVEY_IN),
+            SurveyInProgress(
+                active=True,
+                valid=False,
+                duration_seconds=42,
+                mean_accuracy_mm=1234.5,
+                observations=168,
+            ),
+        )
+        assert state.current_step == 2
+        assert "42s" in state.survey_state_text
+        assert "1234 mm" in state.survey_state_text
+        assert "168 obs" in state.survey_state_text
+        assert state.fixed_pos_text == "— none"
+
+    def test_active_survey_poll_is_step_2_even_if_mode_lags(self) -> None:
+        """``survey.active`` alone is enough — covers a receiver mid-survey
+        whose ``CurrentBaseConfig`` read-back hasn't caught up yet."""
+        state = fixed_position_step_state(
+            CurrentBaseConfig(mode=TmodeMode.DISABLED),
+            SurveyInProgress(active=True, valid=False),
+        )
+        assert state.current_step == 2
+
+    def test_fixed_mode_is_step_3(self) -> None:
+        state = fixed_position_step_state(
+            CurrentBaseConfig(
+                mode=TmodeMode.FIXED,
+                latitude=32.7329015,
+                longitude=-117.2362788,
+                altitude_m=27.94,
+                accuracy_mm=47308,
+            ),
+            SurveyInProgress(active=False, valid=True),
+        )
+        assert state.current_step == 3
+        assert "32.7329015" in state.fixed_pos_text
+        assert "-117.2362788" in state.fixed_pos_text
+        assert "47308 mm" in state.fixed_pos_text
+
+    def test_fixed_mode_wins_over_stale_active_survey_flag(self) -> None:
+        """Fixed mode is terminal — a stale ``active=True`` poll can't
+        regress the card back to step 2."""
+        state = fixed_position_step_state(
+            CurrentBaseConfig(mode=TmodeMode.FIXED, latitude=1.0, longitude=2.0),
+            SurveyInProgress(active=True, valid=False),
+        )
+        assert state.current_step == 3

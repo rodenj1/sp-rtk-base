@@ -388,6 +388,13 @@ class UbloxDriver(GpsReceiverDriver):
     # BBR pinned at TMODE=1 across host restarts.
     _TMODE_DISABLE_ALL_LAYERS: int = 7
 
+    # CFG-VALGET poll-layer enum — NOT the CFG-VALSET bitmask above.
+    # u-blox defines this field as 0=RAM, 1=BBR, 2=Flash, 7=Default,
+    # a plain enum rather than an OR-able bitmask. Default for
+    # ``_read_cfg_keys_locked`` (issue #94): every existing caller
+    # wants RAM, matching this method's pre-#94 hardcoded behaviour.
+    _CFG_LAYER_RAM: int = 0
+
     # How long to wait after a UBX-CFG-RST resetMode=0 (hardware
     # reset) for the chip to re-enumerate on USB and be ready to
     # accept a fresh serial connection.  Empirically ~2-3 s.  5 s
@@ -720,17 +727,33 @@ class UbloxDriver(GpsReceiverDriver):
             ecef_z,
         )
 
-    def _read_cfg_keys_locked(self, keys: list[str]) -> dict[str, int]:
-        """Poll arbitrary CFG keys and return them as a dict (must hold ``self._lock``).
+    def _read_cfg_keys_locked(
+        self, keys: list[str], layer: int = _CFG_LAYER_RAM
+    ) -> dict[str, int]:
+        """Poll arbitrary CFG keys at ``layer`` (must hold ``self._lock``).
 
         Used to verify a CFG-VALSET write actually took effect — same
         read-back pattern as ``_read_ecef_locked``, generalised to an
-        arbitrary key list (issue #42).
+        arbitrary key list (issue #42). Defaults to the RAM layer,
+        matching this method's behaviour before it accepted a layer
+        parameter (issue #94).
+
+        A key the receiver doesn't recognise — or that was never
+        written at ``layer`` — is simply absent from the returned
+        dict, distinguishable from a key that read back with an
+        unexpected value. Callers that previously relied on a
+        sentinel ``-1`` for "unknown key" must not: this method now
+        reports that state as key-not-present instead (issue #94).
+
+        Raises:
+            RuntimeError: if the receiver NAKs the poll (naming the
+                NAK), or if neither a CFG-VALGET nor an ACK-NAK
+                response arrives within the read budget.
         """
         ser, reader = self._require_connection()
 
         poll_keys: list[str | int] = list(keys)
-        msg = UBXMessage.config_poll(0, 0, poll_keys)
+        msg = UBXMessage.config_poll(layer, 0, poll_keys)
         ser.reset_input_buffer()
         ser.write(msg.serialize())  # type: ignore[union-attr]
 
@@ -741,7 +764,18 @@ class UbloxDriver(GpsReceiverDriver):
                     continue
                 identity = getattr(parsed, "identity", "")
                 if identity == "CFG-VALGET":
-                    return {key: int(getattr(parsed, key, -1)) for key in keys}
+                    result: dict[str, int] = {}
+                    for key in keys:
+                        val = getattr(parsed, key, None)
+                        if val is not None:
+                            result[key] = int(val)
+                    return result
+                if identity == "ACK-NAK":
+                    raise RuntimeError(
+                        f"Device rejected CFG-VALGET poll for {keys} (NAK)"
+                    )
+            except RuntimeError:
+                raise
             except Exception:
                 continue
 

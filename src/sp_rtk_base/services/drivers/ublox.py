@@ -185,6 +185,9 @@ class UbloxDriver(GpsReceiverDriver):
         # the hardware reset re-enumerates the USB.
         self._port: str | None = None
         self._baud_rate: int | None = None
+        # Advisories queued by ``_write_and_verify_locked`` for a flash
+        # divergence (issue #103) — drained by ``drain_warnings``.
+        self._warnings: list[str] = []
 
     # ------------------------------------------------------------------
     # Identity
@@ -412,6 +415,13 @@ class UbloxDriver(GpsReceiverDriver):
     # ``_read_cfg_keys_locked`` (issue #94): every existing caller
     # wants RAM, matching this method's pre-#94 hardcoded behaviour.
     _CFG_LAYER_RAM: int = 0
+    _CFG_LAYER_FLASH: int = 2
+
+    # The CFG-VALSET bitmask's Flash bit (see the layer comment above:
+    # 1=RAM, 2=BBR, 4=Flash). Gates the flash read-back in
+    # ``_write_and_verify_locked`` (issue #103) — a write that never
+    # targets flash has nothing durable to check.
+    _CFG_VALSET_FLASH_BIT: int = 4
 
     # How long to wait after a UBX-CFG-RST resetMode=0 (hardware
     # reset) for the chip to re-enumerate on USB and be ready to
@@ -810,17 +820,34 @@ class UbloxDriver(GpsReceiverDriver):
         the same read-back check ``configure_fixed_base`` established for
         ECEF (issue #39).
 
+        When ``layer`` includes the Flash bit, each attempt also polls
+        the flash layer itself (issue #103) — the RAM check above only
+        proves the receiver's *live* state is correct, not that it will
+        survive a power cycle. A flash divergence never fails the write:
+        RAM already matches, so the receiver is correctly configured
+        right now. It folds into this method's existing single retry
+        (a spurious first-attempt flash miss is re-written and re-polled
+        the same as a RAM mismatch) and, if it survives that retry,
+        queues an advisory on ``self._warnings`` naming the affected
+        keys and the failure shape instead of raising.
+
         Raises:
-            RuntimeError: if the read-back still doesn't match after one
-                retry.
+            RuntimeError: if the RAM read-back still doesn't match after
+                one retry.
         """
         expected = dict(cfg_data)
+        check_flash = bool(layer & self._CFG_VALSET_FLASH_BIT)
+
         self._send_cfg_valset_locked(cfg_data, layer=layer)
         actual = self._read_cfg_keys_locked(list(expected))
-        if actual == expected:
+        flash_divergence = (
+            self._flash_divergence_locked(expected) if check_flash else None
+        )
+        if actual == expected and flash_divergence is None:
             return
 
-        logger.warning("%s mismatch after first write — retrying", label)
+        if actual != expected:
+            logger.warning("%s mismatch after first write — retrying", label)
         self._send_cfg_valset_locked(cfg_data, layer=layer)
         actual = self._read_cfg_keys_locked(list(expected))
         if actual != expected:
@@ -830,6 +857,60 @@ class UbloxDriver(GpsReceiverDriver):
                 "disconnecting and reconnecting, or power-cycle the "
                 "receiver."
             )
+
+        if check_flash:
+            flash_divergence = self._flash_divergence_locked(expected)
+            if flash_divergence is not None:
+                message = f"{label}: {flash_divergence}"
+                logger.warning(
+                    "%s did not durably store the write after two attempts "
+                    "— RAM is correctly configured, but this will not "
+                    "survive a power cycle",
+                    label,
+                )
+                self._warnings.append(message)
+
+    def _flash_divergence_locked(self, expected: dict[str, int]) -> str | None:
+        """Poll ``expected``'s keys at the flash layer and describe any divergence.
+
+        Must hold ``self._lock``. Companion to ``_write_and_verify_locked``
+        (issue #103) — never raises for a divergence, only for a transport
+        failure: ``_read_cfg_keys_locked`` raises ``RuntimeError`` both for
+        an explicit ACK-NAK (one of the three divergence shapes this method
+        reports, caught below) and for no response at all within the read
+        budget (a genuine communication failure, not one of the shapes the
+        spec describes — left to propagate rather than softened into a
+        warning). Returns ``None`` when flash agrees with what was just
+        written to RAM, else a message naming the affected keys and which
+        of the three observed shapes occurred: a value differs from what
+        was written, the key comes back NAK'd, or it's silently omitted
+        from a partial batch response.
+        """
+        try:
+            flash_actual = self._read_cfg_keys_locked(
+                list(expected), layer=self._CFG_LAYER_FLASH
+            )
+        except RuntimeError as exc:
+            if "NAK" not in str(exc):
+                raise
+            return f"flash NAK'd the read-back for {list(expected)}: {exc}"
+
+        omitted = sorted(k for k in expected if k not in flash_actual)
+        differing = {
+            k: v for k, v in sorted(flash_actual.items()) if expected.get(k) != v
+        }
+        if not omitted and not differing:
+            return None
+
+        parts: list[str] = []
+        if differing:
+            mismatches = ", ".join(
+                f"{k}={v} (expected {expected[k]})" for k, v in differing.items()
+            )
+            parts.append(f"value differs at flash: {mismatches}")
+        if omitted:
+            parts.append(f"omitted from flash read-back: {', '.join(omitted)}")
+        return "; ".join(parts)
 
     # ------------------------------------------------------------------
     # Multi-port RTCM configuration
@@ -1247,10 +1328,16 @@ class UbloxDriver(GpsReceiverDriver):
             self._send_cfg_valset_locked(cfg_data, layer=5)
 
     def drain_warnings(self) -> list[str]:
-        """No producer wired up yet on this driver — always empty (issue #99)."""
+        """Drain flash-divergence advisories queued by durable writes (issue #103).
+
+        The only producer on this driver is ``_write_and_verify_locked``'s
+        flash read-back — see its docstring for what lands here.
+        """
         if not self.is_connected:
             raise ConnectionError("Not connected to device")
-        return []
+        with self._lock:
+            drained, self._warnings = self._warnings, []
+        return drained
 
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         """Batched read of baud, meas rate, dyn model, tmode mode and the

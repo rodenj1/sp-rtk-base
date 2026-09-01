@@ -1911,6 +1911,84 @@ class TestGetUartBaudRates:
         assert result == {PortId.UART1: 57600, PortId.UART2: 115200}
 
 
+class TestGetReceiverScalars:
+    """Tests for ``UbloxDriver.get_receiver_scalars`` (issue #97)."""
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_reads_every_scalar_in_one_poll(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_UART1_BAUDRATE=57600,
+            CFG_UART2_BAUDRATE=115200,
+            CFG_RATE_MEAS=250,
+            CFG_NAVSPG_DYNMODEL=2,
+            CFG_TMODE_MODE=2,
+            CFG_NAVSPG_INFIL_MINELEV=15,
+            CFG_SIGNAL_BDS_B2_ENA=0,
+            CFG_SPI_ENABLED=1,
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
+        )
+
+        result = driver.get_receiver_scalars()
+
+        assert result.uart1_baud == 57600
+        assert result.uart2_baud == 115200
+        assert result.meas_period_ms == 250
+        assert result.dyn_model == DynModel.STATIONARY
+        assert result.tmode_mode == BaseMode.FIXED
+        assert result.elevation_mask_deg == 15
+        assert result.bds_b2_enabled is False
+        assert result.spi_enabled is True
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_polls_all_eight_keys_in_a_single_message(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_UART1_BAUDRATE=9600,
+            CFG_UART2_BAUDRATE=9600,
+            CFG_RATE_MEAS=1000,
+            CFG_NAVSPG_DYNMODEL=0,
+            CFG_TMODE_MODE=0,
+            CFG_NAVSPG_INFIL_MINELEV=5,
+            CFG_SIGNAL_BDS_B2_ENA=1,
+            CFG_SPI_ENABLED=0,
+        )
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
+        )
+
+        driver.get_receiver_scalars()
+
+        assert mock_ubx_msg.config_poll.call_count == 1
+        _layer, _reserved, poll_keys = mock_ubx_msg.config_poll.call_args[0]
+        assert set(poll_keys) == {
+            "CFG_UART1_BAUDRATE",
+            "CFG_UART2_BAUDRATE",
+            "CFG_RATE_MEAS",
+            "CFG_NAVSPG_DYNMODEL",
+            "CFG_TMODE_MODE",
+            "CFG_NAVSPG_INFIL_MINELEV",
+            "CFG_SIGNAL_BDS_B2_ENA",
+            "CFG_SPI_ENABLED",
+        }
+
+
 class TestReadCfgKeysLocked:
     """Tests for ``UbloxDriver._read_cfg_keys_locked`` (issue #94).
 

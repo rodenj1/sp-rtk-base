@@ -19,6 +19,8 @@ from sp_rtk_base.models.device_models import (
     GnssConstellation,
     GnssSystemConfig,
     PortId,
+    PortProtocolConfig,
+    ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -35,6 +37,7 @@ from sp_rtk_base.services.device_service import (
     ApplyConfigLinkLostError,
     ApplyConfigRefusedError,
     DeviceService,
+    build_receiver_assertion,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
@@ -371,6 +374,133 @@ class TestConfiguration:
         assert connected_svc.state == DeviceConnectionState.CONNECTED
         status = connected_svc.get_status()
         assert status.last_error == "NAK"
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_receiver_assertion + get_receiver_assertion (issue #97)
+# ---------------------------------------------------------------------------
+
+
+def _scalars(**overrides: object) -> ReceiverScalarConfig:
+    defaults: dict[str, object] = {
+        "uart1_baud": 57600,
+        "uart2_baud": 115200,
+        "meas_period_ms": 250,
+        "dyn_model": DynModel.STATIONARY,
+        "tmode_mode": BaseMode.FIXED,
+        "elevation_mask_deg": 15,
+        "bds_b2_enabled": False,
+        "spi_enabled": True,
+    }
+    defaults.update(overrides)
+    return ReceiverScalarConfig(**defaults)  # type: ignore[arg-type]
+
+
+class TestBuildReceiverAssertion:
+    """Pure composition of four driver reads into one ``ReceiverAssertion``."""
+
+    def test_composes_every_field(self) -> None:
+        rtcm = RtcmPortConfig(
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1, "UART2": 0, "USB": 0}}
+        )
+        ports = PortProtocolConfig(
+            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
+            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
+        )
+        gnss = GnssConfig(
+            systems=[
+                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
+                GnssSystemConfig(constellation=GnssConstellation.SBAS, enabled=False),
+            ]
+        )
+        scalars = _scalars()
+
+        assertion = build_receiver_assertion(rtcm, ports, gnss, scalars)
+
+        assert assertion.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
+        assert assertion.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART2] is False
+        assert assertion.ports[PortId.UART1].in_ == [UbxProtocol.UBX]
+        assert assertion.ports[PortId.UART1].out == [UbxProtocol.RTCM3X]
+        assert assertion.constellations == [GnssConstellation.GPS]
+        assert assertion.baud.uart1 == 57600
+        assert assertion.baud.uart2 == 115200
+        assert assertion.meas_period_ms == 250
+        assert assertion.dyn_model == DynModel.STATIONARY
+        assert assertion.tmode_mode == BaseMode.FIXED
+        assert assertion.elevation_mask_deg == 15
+        assert assertion.bds_b2_enabled is False
+        assert assertion.spi_enabled is True
+
+    def test_matrix_covers_every_catalog_row_and_matrix_port(self) -> None:
+        assertion = build_receiver_assertion(
+            RtcmPortConfig(), PortProtocolConfig(), GnssConfig(), _scalars()
+        )
+        assert set(assertion.rtcm_stream.matrix.keys()) == set(RtcmRowId)
+        for row in assertion.rtcm_stream.matrix.values():
+            assert set(row.keys()) == {PortId.UART1, PortId.UART2, PortId.USB}
+
+    def test_ports_covers_all_three_ports_even_when_unset(self) -> None:
+        assertion = build_receiver_assertion(
+            RtcmPortConfig(), PortProtocolConfig(), GnssConfig(), _scalars()
+        )
+        assert set(assertion.ports.keys()) == {PortId.UART1, PortId.UART2, PortId.USB}
+
+
+class TestGetReceiverAssertion:
+    @pytest.fixture()
+    def connected_svc(self) -> DeviceService:
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_rtcm_port_config.return_value = RtcmPortConfig(
+            messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
+        )
+        driver.get_port_protocols.return_value = PortProtocolConfig()
+        driver.get_gnss_config.return_value = GnssConfig()
+        driver.get_receiver_scalars.return_value = _scalars()
+        svc.set_driver(driver)
+        svc._state = DeviceConnectionState.CONNECTED
+        svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
+        return svc
+
+    @pytest.mark.asyncio()
+    async def test_composes_the_four_driver_reads(
+        self, connected_svc: DeviceService
+    ) -> None:
+        read = await connected_svc.get_receiver_assertion()
+
+        assertion = read.assertion
+        assert assertion.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
+        assert assertion.meas_period_ms == 250
+        assert assertion.dyn_model == DynModel.STATIONARY
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
+        driver.get_port_protocols.assert_called_once()  # type: ignore[union-attr]
+        driver.get_gnss_config.assert_called_once()  # type: ignore[union-attr]
+        driver.get_receiver_scalars.assert_called_once()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_returns_the_raw_rtcm_read_alongside_the_assertion(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """The raw RTCM read is bundled in, not re-polled (issue #97
+        review): the page's I2C/SPI advisory needs it, and a second call
+        to ``get_rtcm_port_config`` would reintroduce the extra round
+        trip this method exists to collapse away."""
+        driver = connected_svc.driver
+        assert driver is not None
+
+        read = await connected_svc.get_receiver_assertion()
+
+        assert read.rtcm is driver.get_rtcm_port_config.return_value  # type: ignore[union-attr]
+        driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_not_connected_raises(self) -> None:
+        svc = DeviceService()
+        svc.set_driver(_make_mock_driver())
+        with pytest.raises(RuntimeError, match="Device not connected"):
+            await svc.get_receiver_assertion()
 
 
 # ---------------------------------------------------------------------------

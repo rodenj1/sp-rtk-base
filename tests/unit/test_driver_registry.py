@@ -15,6 +15,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
+    ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -127,6 +128,18 @@ class StubDriver(GpsReceiverDriver):
 
     def get_uart_baud_rates(self) -> dict[PortId, int]:
         return {}
+
+    def get_receiver_scalars(self) -> ReceiverScalarConfig:
+        return ReceiverScalarConfig(
+            uart1_baud=115200,
+            uart2_baud=115200,
+            meas_period_ms=1000,
+            dyn_model=DynModel.PORTABLE,
+            tmode_mode=BaseMode.DISABLED,
+            elevation_mask_deg=0,
+            bds_b2_enabled=False,
+            spi_enabled=False,
+        )
 
     def configure_baud(self, uart1: int | None, uart2: int | None) -> None:
         pass

@@ -40,6 +40,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
+    ReceiverScalarConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
@@ -140,6 +141,23 @@ _TMODE_MODE_VALUES: dict[BaseMode, int] = {
     BaseMode.SURVEY_IN: 1,
     BaseMode.FIXED: 2,
 }
+
+# Reverse of ``_TMODE_MODE_VALUES`` — for ``get_receiver_scalars``'s
+# read-back and ``_parse_cfg_tmode``.
+_TMODE_MODE_NAMES: dict[int, BaseMode] = {v: k for k, v in _TMODE_MODE_VALUES.items()}
+
+# The scalar CFG keys ``get_receiver_scalars`` polls in one CFG-VALGET
+# round trip (issue #97) — 8 keys, well under the 64-key poll cap.
+_RECEIVER_SCALAR_KEYS: list[str] = [
+    "CFG_UART1_BAUDRATE",
+    "CFG_UART2_BAUDRATE",
+    "CFG_RATE_MEAS",
+    "CFG_NAVSPG_DYNMODEL",
+    "CFG_TMODE_MODE",
+    "CFG_NAVSPG_INFIL_MINELEV",
+    "CFG_SIGNAL_BDS_B2_ENA",
+    "CFG_SPI_ENABLED",
+]
 
 # Ports the RTCM matrix write covers — deliberately excludes I2C/SPI,
 # which the profile schema doesn't claim (see RtcmStreamConfig).
@@ -1228,6 +1246,29 @@ class UbloxDriver(GpsReceiverDriver):
         with self._lock:
             self._send_cfg_valset_locked(cfg_data, layer=5)
 
+    def get_receiver_scalars(self) -> ReceiverScalarConfig:
+        """Batched read of baud, meas rate, dyn model, tmode mode and the
+        three optimisation fields — one CFG-VALGET poll (issue #97).
+
+        Replaces what would otherwise be up to seven separate getters:
+        the three that already existed (``get_dyn_model``,
+        ``get_uart_baud_rates``, the TMODE portion of ``get_base_config``)
+        plus the four that had no standalone getter at all
+        (measurement rate, elevation mask, BeiDou B2, SPI).
+        """
+        with self._lock:
+            raw = self._read_cfg_keys_locked(_RECEIVER_SCALAR_KEYS)
+        return ReceiverScalarConfig(
+            uart1_baud=raw["CFG_UART1_BAUDRATE"],
+            uart2_baud=raw["CFG_UART2_BAUDRATE"],
+            meas_period_ms=raw["CFG_RATE_MEAS"],
+            dyn_model=_DYN_MODEL_NAMES[raw["CFG_NAVSPG_DYNMODEL"]],
+            tmode_mode=_TMODE_MODE_NAMES[raw["CFG_TMODE_MODE"]],
+            elevation_mask_deg=raw["CFG_NAVSPG_INFIL_MINELEV"],
+            bds_b2_enabled=bool(raw["CFG_SIGNAL_BDS_B2_ENA"]),
+            spi_enabled=bool(raw["CFG_SPI_ENABLED"]),
+        )
+
     def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
         """Reopen the serial port at ``baud_rate`` without resetting the receiver.
 
@@ -1717,12 +1758,7 @@ class UbloxDriver(GpsReceiverDriver):
         - POS_TYPE=1 (LLH): reads LAT/LON/HEIGHT directly
         """
         mode_raw = int(getattr(parsed, "CFG_TMODE_MODE", 0))
-        _MODE_MAP: dict[int, BaseMode] = {
-            0: BaseMode.DISABLED,
-            1: BaseMode.SURVEY_IN,
-            2: BaseMode.FIXED,
-        }
-        mode = _MODE_MAP.get(mode_raw, BaseMode.DISABLED)
+        mode = _TMODE_MODE_NAMES.get(mode_raw, BaseMode.DISABLED)
 
         pos_type_raw = int(getattr(parsed, "CFG_TMODE_POS_TYPE", 1))
         # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm units on the wire —

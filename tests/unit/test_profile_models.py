@@ -10,12 +10,23 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sp_rtk_base.models.device_models import GnssConstellation, PortId, RtcmRowId
+from sp_rtk_base.models.device_models import (
+    GnssConstellation,
+    PortId,
+    RtcmRowId,
+    UbxProtocol,
+)
 from sp_rtk_base.models.profile_models import (
+    BaudAssertion,
+    BaudConfig,
     DynModel,
+    PortProtocolSet,
     Profile,
+    ReceiverAssertion,
     ReceiverConfig,
+    RtcmStreamConfig,
     TmodeMode,
+    merge_profile_into_assertion,
 )
 
 
@@ -301,3 +312,188 @@ class TestProfile:
         data = profile.model_dump(mode="json")
         restored = Profile.model_validate(data)
         assert restored == profile
+
+
+# ---------------------------------------------------------------------------
+# ReceiverAssertion + merge_profile_into_assertion (issue #97)
+# ---------------------------------------------------------------------------
+
+
+def _live() -> ReceiverAssertion:
+    """A fully-populated live read-back, distinct from ``_full_profile()``'s
+    values so a merge's fallback-to-live is unambiguous in assertions."""
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=9600, uart2=9600),
+        meas_period_ms=2000,
+        constellations=[GnssConstellation.BEIDOU],
+        ports={
+            PortId.UART1: PortProtocolSet(**{"in": [], "out": []}),
+            PortId.UART2: PortProtocolSet(**{"in": [], "out": []}),
+            PortId.USB: PortProtocolSet(
+                **{"in": ["UBX", "NMEA"], "out": ["UBX", "NMEA"]}
+            ),
+        },
+        dyn_model=DynModel.PORTABLE,
+        tmode_mode=TmodeMode.SURVEY_IN,
+        elevation_mask_deg=5,
+        bds_b2_enabled=True,
+        spi_enabled=False,
+        rtcm_stream=RtcmStreamConfig(
+            matrix={RtcmRowId.RTCM_1077: {PortId.UART1: True}}
+        ),
+    )
+
+
+def _full_profile() -> Profile:
+    """A profile with every field populated except ``tmode_mode`` and the
+    USB port entry — the two omissions the built-in profile actually
+    makes (see profiles/builtin/ublox-f9p-base-standard.yaml)."""
+    return Profile.model_validate(
+        {
+            "name": "full-profile",
+            "version": 1,
+            "hardware": "ZED-F9P",
+            "baud": {"uart1": 57600, "uart2": 115200},
+            "meas_period_ms": 500,
+            "constellations": ["gps", "glonass"],
+            "ports": {
+                "UART1": {"in": ["UBX", "NMEA", "RTCM3X"], "out": ["RTCM3X"]},
+                "UART2": {"in": ["UBX", "RTCM3X"], "out": ["RTCM3X"]},
+            },
+            "data_link_port": ["UART1", "UART2"],
+            "dyn_model": "stationary",
+            "elevation_mask_deg": 15,
+            "bds_b2_enabled": False,
+            "spi_enabled": True,
+            "rtcm_stream": {
+                "matrix": {
+                    "1005": {"UART1": True, "UART2": True},
+                    "1074": {"UART1": True, "UART2": True},
+                }
+            },
+        }
+    )
+
+
+class TestBaudAssertion:
+    def test_both_fields_required(self) -> None:
+        with pytest.raises(ValidationError):
+            BaudAssertion.model_validate({"uart1": 57600})
+
+    def test_out_of_range_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BaudAssertion(uart1=1, uart2=9600)
+
+
+class TestReceiverAssertion:
+    def test_every_field_required(self) -> None:
+        with pytest.raises(ValidationError):
+            ReceiverAssertion.model_validate({})
+
+    def test_extra_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ReceiverAssertion(**_live().model_dump(), bogus_field="nope")
+
+    def test_fully_populated_instance_is_valid(self) -> None:
+        live = _live()
+        assert live.dyn_model == DynModel.PORTABLE
+        assert live.tmode_mode == TmodeMode.SURVEY_IN
+
+
+class TestMergeProfileIntoAssertion:
+    def test_profile_values_win_where_set(self) -> None:
+        merged = merge_profile_into_assertion(_full_profile(), _live())
+        assert merged.baud.uart1 == 57600
+        assert merged.baud.uart2 == 115200
+        assert merged.meas_period_ms == 500
+        assert merged.constellations == [
+            GnssConstellation.GPS,
+            GnssConstellation.GLONASS,
+        ]
+        assert merged.dyn_model == DynModel.STATIONARY
+        assert merged.elevation_mask_deg == 15
+        assert merged.bds_b2_enabled is False
+        assert merged.spi_enabled is True
+
+    def test_omitted_tmode_mode_falls_back_to_live(self) -> None:
+        """The built-in profile omits ``tmode_mode`` on purpose."""
+        live = _live()
+        merged = merge_profile_into_assertion(_full_profile(), live)
+        assert merged.tmode_mode == live.tmode_mode
+
+    def test_omitted_usb_port_falls_back_to_live(self) -> None:
+        """The built-in profile omits the USB port entry on purpose."""
+        live = _live()
+        merged = merge_profile_into_assertion(_full_profile(), live)
+        assert merged.ports[PortId.USB] == live.ports[PortId.USB]
+
+    def test_ports_the_profile_sets_are_not_overridden_by_live(self) -> None:
+        merged = merge_profile_into_assertion(_full_profile(), _live())
+        assert merged.ports[PortId.UART1].out == [UbxProtocol.RTCM3X]
+
+    def test_partial_baud_falls_back_to_live_per_field(self) -> None:
+        profile = _full_profile().model_copy(update={"baud": BaudConfig(uart1=57600)})
+        live = _live()
+        merged = merge_profile_into_assertion(profile, live)
+        assert merged.baud.uart1 == 57600
+        assert merged.baud.uart2 == live.baud.uart2
+
+    def test_matrix_is_taken_from_the_profile_not_live(self) -> None:
+        """``rtcm_stream`` is always assertive — never "leave alone"."""
+        merged = merge_profile_into_assertion(_full_profile(), _live())
+        assert merged.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
+        # Live's matrix (RTCM_1077 on UART1) is not present in the profile
+        # and must not leak into the merged result.
+        assert merged.rtcm_stream.matrix[RtcmRowId.RTCM_1077][PortId.UART1] is False
+
+    def test_matrix_covers_every_catalog_row_and_matrix_port(self) -> None:
+        merged = merge_profile_into_assertion(_full_profile(), _live())
+        assert set(merged.rtcm_stream.matrix.keys()) == set(RtcmRowId)
+        for row in merged.rtcm_stream.matrix.values():
+            assert set(row.keys()) == {PortId.UART1, PortId.UART2, PortId.USB}
+
+    def test_bare_profile_falls_back_to_live_for_every_optional_field(self) -> None:
+        """A profile that sets nothing beyond identity + the minimal matrix
+        resolves to *live* for every field it left unset."""
+        bare = Profile.model_validate(
+            {
+                "name": "bare",
+                "version": 1,
+                "hardware": "ZED-F9P",
+                "data_link_port": ["UART1"],
+                "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+            }
+        )
+        live = _live()
+        merged = merge_profile_into_assertion(bare, live)
+        assert merged.baud == live.baud
+        assert merged.constellations == live.constellations
+        assert merged.ports == live.ports
+        assert merged.dyn_model == live.dyn_model
+        assert merged.tmode_mode == live.tmode_mode
+        assert merged.elevation_mask_deg == live.elevation_mask_deg
+        assert merged.bds_b2_enabled == live.bds_b2_enabled
+        assert merged.spi_enabled == live.spi_enabled
+
+    def test_meas_period_ms_never_falls_back_to_live(self) -> None:
+        """The one documented exception: ``ReceiverConfig.meas_period_ms``
+        is a plain ``int`` defaulting to 1000, not ``int | None`` — a bare
+        profile that never mentions it is indistinguishable from one that
+        explicitly wants 1000, so it can't fall back to *live* the way
+        every other optional field does."""
+        bare = Profile.model_validate(
+            {
+                "name": "bare",
+                "version": 1,
+                "hardware": "ZED-F9P",
+                "data_link_port": ["UART1"],
+                "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+            }
+        )
+        live = _live()
+        assert bare.meas_period_ms != live.meas_period_ms
+
+        merged = merge_profile_into_assertion(bare, live)
+
+        assert merged.meas_period_ms == bare.meas_period_ms
+        assert merged.meas_period_ms != live.meas_period_ms

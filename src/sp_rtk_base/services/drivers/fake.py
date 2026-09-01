@@ -64,6 +64,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
+    ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
     SerialPortInfo,
@@ -494,6 +495,20 @@ class FakeGpsDriver(GpsReceiverDriver):
             self._uart_baud_rates[PortId.UART1] = uart1
         if uart2 is not None:
             self._uart_baud_rates[PortId.UART2] = uart2
+
+    def get_receiver_scalars(self) -> ReceiverScalarConfig:
+        """Return the fake driver's in-memory scalar config (issue #97)."""
+        self._ensure_connected()
+        return ReceiverScalarConfig(
+            uart1_baud=self._uart_baud_rates[PortId.UART1],
+            uart2_baud=self._uart_baud_rates[PortId.UART2],
+            meas_period_ms=self._meas_period_ms,
+            dyn_model=self._dyn_model,
+            tmode_mode=self._base_config.mode,
+            elevation_mask_deg=self._elevation_mask_deg,
+            bds_b2_enabled=self._bds_b2_enabled,
+            spi_enabled=self._spi_enabled,
+        )
 
     def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
         """Simulate reopening at a new baud — no I/O, always succeeds."""

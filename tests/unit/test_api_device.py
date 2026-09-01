@@ -548,24 +548,45 @@ class TestBaseConfig:
 # Apply-config — the profile one-shot (issue #61)
 # ---------------------------------------------------------------------------
 
-_MINIMAL_APPLY_BODY: dict[str, object] = {
-    "data_link_port": ["UART1"],
+_MINIMAL_ASSERTION_BODY: dict[str, object] = {
+    "baud": {"uart1": 57600, "uart2": 115200},
+    "meas_period_ms": 1000,
+    "constellations": [],
+    "ports": {},
+    "dyn_model": "portable",
+    "tmode_mode": "disabled",
+    "elevation_mask_deg": 0,
+    "bds_b2_enabled": False,
+    "spi_enabled": False,
     "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
 }
 
+_MINIMAL_APPLY_BODY: dict[str, object] = {
+    "assertion": _MINIMAL_ASSERTION_BODY,
+    "data_link_port": ["UART1"],
+}
+
+
+def _minimal_read_back() -> object:
+    """A ``ReceiverAssertion`` matching ``_MINIMAL_ASSERTION_BODY`` — the
+    read-back every mocked ``ApplyConfigResult`` in this section carries."""
+    from sp_rtk_base.models.profile_models import ReceiverAssertion
+
+    return ReceiverAssertion.model_validate(_MINIMAL_ASSERTION_BODY)
+
 
 class TestApplyConfig:
-    """Tests for POST /api/device/apply-config."""
+    """Tests for POST /api/device/apply-config (issue #98)."""
 
     def test_apply_config_ok(
         self,
         client: TestClient,
         mock_device_service: MagicMock,
     ) -> None:
-        from sp_rtk_base.models.device_models import ApplyConfigResult
+        from sp_rtk_base.models.profile_models import ApplyConfigResult
 
         mock_device_service.apply_receiver_config = AsyncMock(
-            return_value=ApplyConfigResult(status="ok")
+            return_value=ApplyConfigResult(status="ok", read_back=_minimal_read_back())
         )
         resp = client.post("/api/device/apply-config", json=_MINIMAL_APPLY_BODY)
         assert resp.status_code == 200
@@ -577,20 +598,15 @@ class TestApplyConfig:
         client: TestClient,
         mock_device_service: MagicMock,
     ) -> None:
-        from sp_rtk_base.models.device_models import (
-            ApplyConfigCellDiff,
-            ApplyConfigResult,
-            PortId,
-            RtcmRowId,
-        )
+        from sp_rtk_base.models.profile_models import ApplyConfigResult, ApplyDiffEntry
 
         mock_device_service.apply_receiver_config = AsyncMock(
             return_value=ApplyConfigResult(
                 status="failed",
+                read_back=_minimal_read_back(),
                 diff=[
-                    ApplyConfigCellDiff(
-                        row_id=RtcmRowId.RTCM_1005,
-                        port=PortId.UART1,
+                    ApplyDiffEntry(
+                        path="rtcm.1005.UART1",
                         expected=True,
                         actual=False,
                     )
@@ -604,8 +620,7 @@ class TestApplyConfig:
         assert body["status"] == "failed"
         assert body["diff"] == [
             {
-                "row_id": "1005",
-                "port": "UART1",
+                "path": "rtcm.1005.UART1",
                 "expected": True,
                 "actual": False,
             }
@@ -646,7 +661,7 @@ class TestApplyConfig:
         handled entirely by pydantic before the service is called."""
         resp = client.post(
             "/api/device/apply-config",
-            json={"rtcm_stream": {"matrix": {"1005": {"UART1": True}}}},
+            json={"assertion": _MINIMAL_ASSERTION_BODY},
         )
         assert resp.status_code == 422
 
@@ -727,10 +742,10 @@ class TestApplyBaseInvariants:
         client: TestClient,
         mock_device_service: MagicMock,
     ) -> None:
-        from sp_rtk_base.models.device_models import ApplyConfigResult
+        from sp_rtk_base.models.profile_models import ApplyConfigResult
 
         mock_device_service.apply_base_invariants = AsyncMock(
-            return_value=ApplyConfigResult(status="ok")
+            return_value=ApplyConfigResult(status="ok", read_back=_minimal_read_back())
         )
         resp = client.post("/api/device/apply-base-invariants")
         assert resp.status_code == 200

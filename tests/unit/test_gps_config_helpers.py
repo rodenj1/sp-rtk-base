@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.models.device_models import (
-    ApplyConfigCellDiff,
+    BaseMode as TmodeMode,
+)
+from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
     DynModel,
     GnssConstellation,
@@ -24,9 +26,6 @@ from sp_rtk_base.models.device_models import (
     RtcmRowId,
     SurveyInProgress,
 )
-from sp_rtk_base.models.device_models import (
-    BaseMode as TmodeMode,
-)
 from sp_rtk_base.models.hardware_identity import (
     HARDWARE_ANY,
     HARDWARE_UNKNOWN,
@@ -34,10 +33,11 @@ from sp_rtk_base.models.hardware_identity import (
     identity_from_target,
 )
 from sp_rtk_base.models.profile_models import (
+    ApplyDiffEntry,
     BaudAssertion,
-    BaudConfig,
     PortProtocolSet,
     Profile,
+    ReceiverApplyRequest,
     ReceiverAssertion,
     RtcmStreamConfig,
     merge_profile_into_assertion,
@@ -47,12 +47,12 @@ from sp_rtk_base.ui.pages.gps_config import (
     MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
     apply_blocked_reason,
-    build_apply_config,
+    build_apply_request,
     build_picker_entries,
     build_saved_profile,
     display_label,
     fixed_position_step_state,
-    format_cell_diff,
+    format_leaf_diff,
     hw_extras_display,
     i2c_spi_advisory_rows,
     infer_data_link_ports,
@@ -293,40 +293,61 @@ class TestApplyBlockedReason:
         assert apply_blocked_reason([PortId.UART1]) is None
 
 
-class TestBuildApplyConfig:
-    def test_builds_a_valid_receiver_config(self) -> None:
-        matrix = rtcm_config_to_matrix(
-            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-        )
-        config = build_apply_config(matrix, [PortId.UART1])
-        assert config.data_link_port == [PortId.UART1]
-        assert config.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
-        # Fields this page doesn't make editable are left untouched.
-        assert config.ports is None
-        assert config.constellations is None
-        assert config.dyn_model is None
-        assert config.tmode_mode is None
-        assert config.baud is None
+def _minimal_form() -> ReceiverAssertion:
+    """A minimal, fully-populated form — used wherever a test only cares
+    about the matrix + data-link ports and doesn't need the rest of the
+    hardware section populated meaningfully (issue #98: ``build_apply_request``
+    always takes the whole form, unlike the old matrix-only default)."""
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=57600, uart2=115200),
+        meas_period_ms=1000,
+        constellations=[],
+        ports={},
+        dyn_model=DynModel.PORTABLE,
+        tmode_mode=TmodeMode.DISABLED,
+        elevation_mask_deg=0,
+        bds_b2_enabled=False,
+        spi_enabled=False,
+        rtcm_stream=RtcmStreamConfig(
+            matrix=rtcm_config_to_matrix(
+                RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
+            )
+        ),
+    )
+
+
+class TestBuildApplyRequest:
+    def test_builds_a_valid_request(self) -> None:
+        form = _minimal_form()
+        request = build_apply_request(form, [PortId.UART1])
+        assert request.data_link_port == [PortId.UART1]
+        assert request.assertion == form
 
     def test_raises_when_1005_missing_from_every_data_link_port(self) -> None:
-        matrix = rtcm_config_to_matrix(RtcmPortConfig(messages={}))
-        with pytest.raises(ValueError, match="1005"):
-            build_apply_config(matrix, [PortId.UART1])
-
-
-class TestFormatCellDiff:
-    def test_names_row_port_and_the_mismatch(self) -> None:
-        diff = ApplyConfigCellDiff(
-            row_id=RtcmRowId.RTCM_1005,
-            port=PortId.UART1,
-            expected=True,
-            actual=False,
+        form = _minimal_form().model_copy(
+            update={
+                "rtcm_stream": RtcmStreamConfig(
+                    matrix=rtcm_config_to_matrix(RtcmPortConfig(messages={}))
+                )
+            }
         )
-        text = format_cell_diff(diff)
-        assert "1005" in text
-        assert "UART1" in text
+        with pytest.raises(ValueError, match="1005"):
+            build_apply_request(form, [PortId.UART1])
+
+
+class TestFormatLeafDiff:
+    def test_names_the_path_and_the_mismatch(self) -> None:
+        diff = ApplyDiffEntry(path="rtcm.1005.UART1", expected=True, actual=False)
+        text = format_leaf_diff(diff)
+        assert "rtcm.1005.UART1" in text
         assert "on" in text
         assert "off" in text
+
+    def test_non_bool_values_render_as_themselves(self) -> None:
+        diff = ApplyDiffEntry(path="meas_period_ms", expected=1000, actual=333)
+        text = format_leaf_diff(diff)
+        assert "1000" in text
+        assert "333" in text
 
 
 def _full_profile(name: str = "full-profile") -> Profile:
@@ -383,81 +404,50 @@ def _live_assertion() -> ReceiverAssertion:
     )
 
 
-class TestBuildApplyConfigWithExtras:
-    def test_extras_flow_into_the_config(self) -> None:
-        matrix = rtcm_config_to_matrix(
-            RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-        )
-        extras = ReceiverAssertion(
-            baud=BaudAssertion(uart1=57600, uart2=115200),
-            meas_period_ms=200,
-            constellations=[GnssConstellation.GPS],
-            ports={},
-            dyn_model=DynModel.STATIONARY,
-            tmode_mode=TmodeMode.DISABLED,
-            elevation_mask_deg=15,
-            bds_b2_enabled=False,
-            spi_enabled=True,
-            rtcm_stream=RtcmStreamConfig(matrix=matrix),
-        )
-        config = build_apply_config(matrix, [PortId.UART1], extras)
-        assert config.baud == BaudConfig(uart1=57600, uart2=115200)
-        assert config.meas_period_ms == 200
-        assert config.constellations == [GnssConstellation.GPS]
-        assert config.dyn_model == DynModel.STATIONARY
-        assert config.tmode_mode == TmodeMode.DISABLED
-        assert config.elevation_mask_deg == 15
-        assert config.bds_b2_enabled is False
-        assert config.spi_enabled is True
-
-
 class TestReceiverConfigFromProfile:
-    def test_strips_identity_fields(self) -> None:
-        config = receiver_config_from_profile(_full_profile(), _live_assertion())
-        assert not hasattr(config, "name")
-        assert not hasattr(config, "hardware")
-        assert not hasattr(config, "forked_from")
-        assert config.meas_period_ms == 500
+    def test_returns_the_apply_envelope(self) -> None:
+        request = receiver_config_from_profile(_full_profile(), _live_assertion())
+        assert isinstance(request, ReceiverApplyRequest)
+        assert request.assertion.meas_period_ms == 500
+        assert request.data_link_port == [PortId.UART1, PortId.UART2]
 
     def test_falls_back_to_live_for_fields_the_profile_omits(self) -> None:
         """``_full_profile()`` omits ``tmode_mode`` and USB ports on purpose."""
         live = _live_assertion()
-        config = receiver_config_from_profile(_full_profile(), live)
-        assert config.tmode_mode == live.tmode_mode
-        assert config.ports is not None
-        assert config.ports[PortId.USB] == live.ports[PortId.USB]
+        request = receiver_config_from_profile(_full_profile(), live)
+        assert request.assertion.tmode_mode == live.tmode_mode
+        assert request.assertion.ports[PortId.USB] == live.ports[PortId.USB]
 
     def test_equals_the_form_built_from_the_same_profile(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
         merged = merge_profile_into_assertion(profile, live)
-        form_config = build_apply_config(
-            merged.rtcm_stream.matrix, profile.data_link_port, merged
-        )
-        assert form_config == receiver_config_from_profile(profile, live)
+        form_request = build_apply_request(merged, list(profile.data_link_port))
+        assert form_request == receiver_config_from_profile(profile, live)
 
 
 class TestIsModifiedFromProfile:
     def test_false_when_no_profile_selected(self) -> None:
-        config = build_apply_config(
-            rtcm_config_to_matrix(
-                RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-            ),
-            [PortId.UART1],
-        )
-        assert not is_modified_from_profile(config, None, _live_assertion())
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        assert not is_modified_from_profile(request, None, _live_assertion())
 
     def test_false_when_form_exactly_equals_the_profile(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
-        form_config = receiver_config_from_profile(profile, live)
-        assert not is_modified_from_profile(form_config, profile, live)
+        form_request = receiver_config_from_profile(profile, live)
+        assert not is_modified_from_profile(form_request, profile, live)
 
     def test_true_once_the_form_diverges(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
-        form_config = receiver_config_from_profile(profile, live)
-        diverged = form_config.model_copy(update={"meas_period_ms": 999})
+        form_request = receiver_config_from_profile(profile, live)
+        diverged = form_request.model_copy(
+            update={
+                "assertion": form_request.assertion.model_copy(
+                    update={"meas_period_ms": 999}
+                )
+            }
+        )
         assert is_modified_from_profile(diverged, profile, live)
 
 
@@ -466,19 +456,14 @@ class TestSaveAsEnabled:
         assert not save_as_enabled(None, None, _live_assertion())
 
     def test_enabled_with_no_profile_selected(self) -> None:
-        config = build_apply_config(
-            rtcm_config_to_matrix(
-                RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-            ),
-            [PortId.UART1],
-        )
-        assert save_as_enabled(config, None, _live_assertion())
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        assert save_as_enabled(request, None, _live_assertion())
 
     def test_suppressed_when_selected_profile_exactly_equals_the_form(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
-        form_config = receiver_config_from_profile(profile, live)
-        assert not save_as_enabled(form_config, profile, live)
+        form_request = receiver_config_from_profile(profile, live)
+        assert not save_as_enabled(form_request, profile, live)
 
     def test_enabled_again_once_the_form_diverges_from_the_selected_profile(
         self,
@@ -486,8 +471,14 @@ class TestSaveAsEnabled:
         """The #66 fix: applying edits must not take Save-as away again."""
         profile = _full_profile()
         live = _live_assertion()
-        form_config = receiver_config_from_profile(profile, live)
-        diverged = form_config.model_copy(update={"meas_period_ms": 999})
+        form_request = receiver_config_from_profile(profile, live)
+        diverged = form_request.model_copy(
+            update={
+                "assertion": form_request.assertion.model_copy(
+                    update={"meas_period_ms": 999}
+                )
+            }
+        )
         assert save_as_enabled(diverged, profile, live)
 
 
@@ -541,13 +532,8 @@ class TestResolveSaveHardware:
 
 class TestBuildSavedProfile:
     def test_builds_a_valid_profile_with_identity_fields(self) -> None:
-        config = build_apply_config(
-            rtcm_config_to_matrix(
-                RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-            ),
-            [PortId.UART1],
-        )
-        profile = build_saved_profile("my-base", config, "ZED-F9P", "source-profile")
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        profile = build_saved_profile("my-base", request, "ZED-F9P", "source-profile")
         assert profile.name == "my-base"
         assert profile.version == 1
         assert profile.hardware == "ZED-F9P"
@@ -555,13 +541,8 @@ class TestBuildSavedProfile:
         assert profile.data_link_port == [PortId.UART1]
 
     def test_bare_capture_has_no_forked_from(self) -> None:
-        config = build_apply_config(
-            rtcm_config_to_matrix(
-                RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
-            ),
-            [PortId.UART1],
-        )
-        profile = build_saved_profile("captured", config, "ZED-F9P", None)
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        profile = build_saved_profile("captured", request, "ZED-F9P", None)
         assert profile.forked_from is None
 
 

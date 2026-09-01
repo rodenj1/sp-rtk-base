@@ -16,8 +16,6 @@ from typing import NamedTuple, Protocol
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
-    ApplyConfigCellDiff,
-    ApplyConfigResult,
     BaseInvariantsCheck,
     CurrentBaseConfig,
     DeviceCapability,
@@ -42,11 +40,14 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.models.profile_models import (
     MATRIX_PORTS,
+    ApplyConfigResult,
     BaudAssertion,
     PortProtocolSet,
+    ReceiverApplyRequest,
     ReceiverAssertion,
-    ReceiverConfig,
     RtcmStreamConfig,
+    diff_receiver_assertions,
+    merge_profile_into_assertion,
 )
 from sp_rtk_base.profiles import BUILTIN_PROFILES
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -135,19 +136,21 @@ _BASE_INVARIANTS_PROFILE_NAME = "ublox-f9p-base-standard"
 
 
 def _throughput_warnings(
-    config: ReceiverConfig, baud_rates: dict[PortId, int]
+    assertion: ReceiverAssertion,
+    data_link_port: list[PortId],
+    baud_rates: dict[PortId, int],
 ) -> list[str]:
     """Non-blocking advisories when estimated RTCM output nears port capacity.
 
-    Takes the whole ``ReceiverConfig`` rather than its three relevant
-    fields individually — ``rtcm_stream.matrix``, ``data_link_port``
-    and ``meas_period_ms`` only ever travel together for this check,
-    and the config already bundles them.
+    Takes the whole ``ReceiverAssertion`` plus *data_link_port*
+    separately — ``data_link_port`` has no CFG key and isn't part of
+    the assertion (issue #98), but the check still needs it alongside
+    ``rtcm_stream.matrix`` and ``meas_period_ms``.
     """
-    matrix = config.rtcm_stream.matrix
-    hz = 1000.0 / config.meas_period_ms
+    matrix = assertion.rtcm_stream.matrix
+    hz = 1000.0 / assertion.meas_period_ms
     warnings: list[str] = []
-    for port in config.data_link_port:
+    for port in data_link_port:
         baud = baud_rates.get(port)
         if not baud:
             continue
@@ -532,22 +535,32 @@ class DeviceService:
         Reuses :meth:`apply_receiver_config` — the built-in profile
         (:data:`_BASE_INVARIANTS_PROFILE_NAME`) already specifies the
         port protocols, dynamics model and RTCM matrix that satisfy
-        :meth:`check_base_invariants`. ``baud`` is stripped from the
-        profile before applying: the two invariants this remedy exists
-        for (dynamics model, RTCM-on-data-link-port) never touch baud,
-        so a one-click warning fix should not risk stranding the
-        console's own link on a UART1 baud change the operator didn't
-        ask for.
+        :meth:`check_base_invariants`. The profile is merged onto a
+        fresh live read via :func:`merge_profile_into_assertion` (issue
+        #98 — ``apply_receiver_config`` now takes a whole
+        ``ReceiverApplyRequest`` rather than a bare, partially-optional
+        config), with ``baud`` stripped from the profile copy first: the
+        two invariants this remedy exists for (dynamics model,
+        RTCM-on-data-link-port) never touch baud, so a one-click warning
+        fix should not risk stranding the console's own link on a UART1
+        baud change the operator didn't ask for — stripping it means the
+        merge falls back to the live baud, which then compares equal in
+        ``apply_receiver_config``'s unchanged-baud skip.
 
         Raises:
             RuntimeError: If not connected or relay is running.
             ApplyConfigRefusedError: If a device-state guard rejects the
                 profile before any write.
         """
-        profile = BUILTIN_PROFILES[_BASE_INVARIANTS_PROFILE_NAME]
-        return await self.apply_receiver_config(
-            profile.model_copy(update={"baud": None})
+        profile = BUILTIN_PROFILES[_BASE_INVARIANTS_PROFILE_NAME].model_copy(
+            update={"baud": None}
         )
+        read = await self.get_receiver_assertion()
+        merged = merge_profile_into_assertion(profile, read.assertion)
+        request = ReceiverApplyRequest(
+            assertion=merged, data_link_port=list(profile.data_link_port)
+        )
+        return await self.apply_receiver_config(request)
 
     async def send_cfg_rst_diagnostic(
         self,
@@ -817,8 +830,17 @@ class DeviceService:
     # Apply-config — the profile one-shot (issue #61)
     # ------------------------------------------------------------------
 
-    async def apply_receiver_config(self, config: ReceiverConfig) -> ApplyConfigResult:
-        """Apply a bare ``ReceiverConfig`` as an ordered series of layer=5 writes.
+    async def apply_receiver_config(
+        self, request: ReceiverApplyRequest
+    ) -> ApplyConfigResult:
+        """Apply the whole form as an ordered series of layer=5 writes (issue #98).
+
+        *request* is the envelope Apply sends: a fully-populated
+        ``ReceiverAssertion`` (every receiver field, no "leave alone"
+        omissions) plus ``data_link_port`` — the port selection has no
+        CFG key of its own and is never written, only used by the
+        guards/warnings below and by ``ReceiverApplyRequest``'s own
+        cross-field validators.
 
         Sequence: guards -> measurement rate -> ports -> constellations
         -> optimisations -> role fields (dyn_model, then tmode_mode) ->
@@ -828,67 +850,85 @@ class DeviceService:
         in — a baud change is the one write that can move the console's
         own management link out from under this very request (issue #62).
 
+        Every field is sent on every Apply — this ticket's "whole form"
+        change — with two deliberate exceptions that skip their write
+        entirely when the live receiver already holds the value being
+        sent: **measurement rate** (this ticket fixes the 1 Hz bug by
+        construction — the caller always seeds it from the receiver
+        rather than a schema default, and this skip means an unchanged
+        rate is never rewritten either) and **baud** (skipping an
+        unchanged baud avoids the reopen-after-write dance below on
+        every single Apply, not just the ones that actually change it).
+        Both compare against one early ``get_receiver_scalars()`` poll.
+        No other field gets this treatment — ports, constellations,
+        optimisations, dyn_model, tmode_mode and the RTCM matrix are
+        always (re)written, matching "send every field".
+
         Guards run before any write and refuse with nothing written:
 
         - **UBX-in liveness.** This console always manages the receiver
           over its own USB connection — UART1/UART2 are reserved for
-          RTCM data-link output (``ReceiverConfig`` only allows those
-          two as ``data_link_port``). So "the connected port" is
-          always ``PortId.USB``; a submitted ``ports`` section that
-          would turn UBX off on USB IN is refused, since it would cut
-          the console's own control channel with nothing left to
-          write it back with.
+          RTCM data-link output. So "the connected port" is always
+          ``PortId.USB``; a submitted ``ports`` section that would turn
+          UBX off on USB IN is refused, since it would cut the
+          console's own control channel with nothing left to write it
+          back with.
         - **Coordinate guard.** ``tmode_mode: fixed`` is refused unless
           the receiver already holds a valid, non-zero position —
           otherwise a fresh receiver becomes a base broadcasting 1005
           from ECEF/LLH 0,0,0.
 
-        ``config.baud.uart1`` is treated as the port the console's own
-        management link is on, per the documented deployment (FTDI ->
-        UART1 at 57600, see docs/zed-f9p-base-station-config-reference.md)
-        — a separate, narrower premise from the UBX-in guard's "always
-        USB" one above; the two guard different concerns (which named
-        port must keep UBX in, vs. which physical serial link this
-        process itself has open) and issue #62 doesn't ask for them to
-        be reconciled. When ``uart1`` is set, this reopens the
-        connection at the new baud once the write lands, before
+        ``request.assertion.baud.uart1`` is treated as the port the
+        console's own management link is on, per the documented
+        deployment (FTDI -> UART1 at 57600, see
+        docs/zed-f9p-base-station-config-reference.md) — a separate,
+        narrower premise from the UBX-in guard's "always USB" one
+        above; the two guard different concerns (which named port must
+        keep UBX in, vs. which physical serial link this process
+        itself has open) and issue #62 doesn't ask for them to be
+        reconciled. When UART1's baud actually changes, this reopens
+        the connection at the new baud once the write lands, before
         anything else runs. Reopening is deterministic — the baud was
         just written — so one attempt normally suffices; a failure
         retries once at the previous baud purely to leave the caller
         with *some* link back, then raises ``ApplyConfigLinkLostError``
         regardless of that retry's outcome: the flash write stands
         either way (rolling it back would fight the write that just
-        landed, and retrying the old rate forever would hang).
-        ``config.baud.uart2`` never triggers a reopen — it isn't the
-        port this console is on.
+        landed, and retrying the old rate forever would hang). A
+        changed UART2 baud never triggers a reopen — it isn't the port
+        this console is on.
 
         After the writes land, a non-blocking throughput estimate
         checks each ``data_link_port`` against its live baud rate, and
-        a final read-back of the full RTCM matrix decides ``status``:
-        a mismatch returns ``status="failed"`` with a per-cell diff
-        (writes are left in flash, nothing is rolled back); a match
-        returns ``status="ok"``.
+        a fresh full read-back (:meth:`get_receiver_assertion`) is
+        diffed per-leaf against *request.assertion*
+        (:func:`profile_models.diff_receiver_assertions`) to decide
+        ``status``: any mismatch returns ``status="failed"`` with the
+        per-leaf, path-keyed diff (writes are left in flash, nothing is
+        rolled back); an empty diff returns ``status="ok"``. The
+        read-back is always attached as ``read_back``, whichever
+        ``status`` — the page's ``live`` state syncs from it either way.
 
         Raises:
             RuntimeError: If not connected or relay is running.
             ApplyConfigRefusedError: If a device-state guard rejects the
-                config before any write.
+                request before any write.
             ApplyConfigLinkLostError: If a UART1 baud write lands but
                 reopening the console's own link fails at both the new
                 and the previous baud.
         """
         driver = self._require_connected()
+        assertion = request.assertion
 
-        if config.ports is not None:
-            usb_ports = config.ports.get(PortId.USB)
-            if usb_ports is not None and UbxProtocol.UBX not in usb_ports.in_:
-                raise ApplyConfigRefusedError(
-                    "ubx_in_liveness",
-                    "ports.USB.in must keep UBX enabled — the console manages "
-                    "the receiver over its own USB connection",
-                )
+        usb_ports = assertion.ports.get(PortId.USB)
+        if usb_ports is not None and UbxProtocol.UBX not in usb_ports.in_:
+            raise ApplyConfigRefusedError(
+                "ubx_in_liveness",
+                "ports.USB.in must keep UBX enabled — the console manages "
+                "the receiver over its own USB connection",
+            )
 
-        if config.tmode_mode == TmodeMode.FIXED:
+        if assertion.tmode_mode == TmodeMode.FIXED:
             current_base = await asyncio.to_thread(driver.get_base_config)
             if (
                 current_base.latitude == 0.0
@@ -903,51 +943,57 @@ class DeviceService:
                 )
 
         self._state = DeviceConnectionState.CONFIGURING
+        new_uart1: int | None = None
         try:
-            await asyncio.to_thread(
-                driver.configure_measurement_rate, config.meas_period_ms
-            )
+            current_scalars = await asyncio.to_thread(driver.get_receiver_scalars)
 
-            if config.ports:
-                in_map = {port: cfg.in_ for port, cfg in config.ports.items()}
-                out_map = {port: cfg.out for port, cfg in config.ports.items()}
+            if current_scalars.meas_period_ms != assertion.meas_period_ms:
                 await asyncio.to_thread(
-                    driver.configure_port_protocols, in_map, out_map
+                    driver.configure_measurement_rate, assertion.meas_period_ms
                 )
 
-            if config.constellations is not None:
-                current_gnss = await asyncio.to_thread(driver.get_gnss_config)
-                wanted = set(config.constellations)
-                updated_gnss = GnssConfig(
-                    systems=[
-                        system.model_copy(
-                            update={"enabled": system.constellation in wanted}
-                        )
-                        for system in current_gnss.systems
-                    ]
-                )
-                await asyncio.to_thread(driver.configure_gnss, updated_gnss)
+            in_map = {port: cfg.in_ for port, cfg in assertion.ports.items()}
+            out_map = {port: cfg.out for port, cfg in assertion.ports.items()}
+            await asyncio.to_thread(driver.configure_port_protocols, in_map, out_map)
+
+            current_gnss = await asyncio.to_thread(driver.get_gnss_config)
+            wanted = set(assertion.constellations)
+            updated_gnss = GnssConfig(
+                systems=[
+                    system.model_copy(
+                        update={"enabled": system.constellation in wanted}
+                    )
+                    for system in current_gnss.systems
+                ]
+            )
+            await asyncio.to_thread(driver.configure_gnss, updated_gnss)
 
             await asyncio.to_thread(
                 driver.configure_optimisations,
-                config.elevation_mask_deg,
-                config.bds_b2_enabled,
-                config.spi_enabled,
+                assertion.elevation_mask_deg,
+                assertion.bds_b2_enabled,
+                assertion.spi_enabled,
             )
 
-            if config.dyn_model is not None:
-                await asyncio.to_thread(driver.configure_dyn_model, config.dyn_model)
-            if config.tmode_mode is not None:
-                await asyncio.to_thread(driver.configure_tmode_mode, config.tmode_mode)
+            await asyncio.to_thread(driver.configure_dyn_model, assertion.dyn_model)
+            await asyncio.to_thread(driver.configure_tmode_mode, assertion.tmode_mode)
 
-            await asyncio.to_thread(driver.apply_rtcm_matrix, config.rtcm_stream.matrix)
+            await asyncio.to_thread(
+                driver.apply_rtcm_matrix, assertion.rtcm_stream.matrix
+            )
 
-            if config.baud is not None and (
-                config.baud.uart1 is not None or config.baud.uart2 is not None
-            ):
-                await asyncio.to_thread(
-                    driver.configure_baud, config.baud.uart1, config.baud.uart2
-                )
+            new_uart1 = (
+                assertion.baud.uart1
+                if assertion.baud.uart1 != current_scalars.uart1_baud
+                else None
+            )
+            new_uart2 = (
+                assertion.baud.uart2
+                if assertion.baud.uart2 != current_scalars.uart2_baud
+                else None
+            )
+            if new_uart1 is not None or new_uart2 is not None:
+                await asyncio.to_thread(driver.configure_baud, new_uart1, new_uart2)
 
             self._state = DeviceConnectionState.CONNECTED
         except Exception as exc:
@@ -955,22 +1001,26 @@ class DeviceService:
             self._last_error = str(exc)
             raise
 
-        if config.baud is not None and config.baud.uart1 is not None:
-            await self._reopen_after_baud_write(driver, config.baud.uart1)
+        if new_uart1 is not None:
+            await self._reopen_after_baud_write(driver, new_uart1)
 
         baud_rates = await asyncio.to_thread(driver.get_uart_baud_rates)
-        warnings = _throughput_warnings(config, baud_rates)
+        warnings = _throughput_warnings(assertion, request.data_link_port, baud_rates)
 
-        actual_rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
-        diff = self._diff_rtcm_matrix(config.rtcm_stream.matrix, actual_rtcm)
+        read = await self.get_receiver_assertion()
+        diff = diff_receiver_assertions(assertion, read.assertion)
         if diff:
             logger.warning(
-                "apply-config read-back mismatch: %d cell(s) differ", len(diff)
+                "apply-config read-back mismatch: %d leaf(ves) differ", len(diff)
             )
-            return ApplyConfigResult(status="failed", diff=diff, warnings=warnings)
+            return ApplyConfigResult(
+                status="failed", read_back=read.assertion, diff=diff, warnings=warnings
+            )
 
         logger.info("apply-config applied and read-back verified")
-        return ApplyConfigResult(status="ok", warnings=warnings)
+        return ApplyConfigResult(
+            status="ok", read_back=read.assertion, warnings=warnings
+        )
 
     async def _reopen_after_baud_write(
         self, driver: GpsReceiverDriver, new_baud: int
@@ -1024,32 +1074,6 @@ class DeviceService:
         )
         logger.error(self._last_error)
         raise ApplyConfigLinkLostError(previous_baud, new_baud)
-
-    @staticmethod
-    def _diff_rtcm_matrix(
-        expected: dict[RtcmRowId, dict[PortId, bool]],
-        actual: RtcmPortConfig,
-    ) -> list[ApplyConfigCellDiff]:
-        """Diff the intended RTCM matrix against a live read-back.
-
-        Covers all 36 cells (12 rows x UART1/UART2/USB) — the same
-        scope ``apply_rtcm_matrix`` writes.
-        """
-        diffs: list[ApplyConfigCellDiff] = []
-        for row in RtcmRowId:
-            for port in (PortId.UART1, PortId.UART2, PortId.USB):
-                expected_on = expected.get(row, {}).get(port, False)
-                actual_on = actual.messages.get(row, {}).get(port.value, 0) > 0
-                if expected_on != actual_on:
-                    diffs.append(
-                        ApplyConfigCellDiff(
-                            row_id=row,
-                            port=port,
-                            expected=expected_on,
-                            actual=actual_on,
-                        )
-                    )
-        return diffs
 
     # ------------------------------------------------------------------
     # Status polling

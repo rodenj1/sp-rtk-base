@@ -18,19 +18,25 @@ and data-link port(s) editable, wired to
 plus the "receiver out of sync" indicator (form vs. live receiver,
 cleared only by a successful apply).
 
-Issue #66 (this revision) makes picking a profile actually write into
-the form — the whole ``ReceiverConfig`` shape (ports, GNSS,
-baud/measurement-rate, role fields, optimisations, plus the matrix and
-data-link ports), not just the matrix — and adds the second,
-independent "modified from X" indicator (form vs. *selected profile*,
-gating Save-as) alongside the existing "out of sync" one (form vs.
-*live receiver*, gating Apply). Save-as, rename, delete and export
-round out the custom-profile lifecycle. The ports/GNSS/baud/role
-section remains a read-only *display* of form state rather than a
-click-to-edit grid — the driver has no read-back for most of those
-fields (baud excepted), so there's nothing yet to reconcile an edit
-against; turning that into an editable grid is future work, same as
-#65 deferred it.
+Issue #66 makes picking a profile actually write into the form — the
+whole ``ReceiverAssertion`` shape (ports, GNSS, baud/measurement-rate,
+role fields, optimisations, plus the matrix and data-link ports), not
+just the matrix — and adds the second, independent "modified from X"
+indicator (form vs. *selected profile*, gating Save-as) alongside the
+existing "out of sync" one (form vs. *live receiver*, gating Apply).
+Save-as, rename, delete and export round out the custom-profile
+lifecycle. The ports/GNSS/baud/role section remains a read-only
+*display* of form state rather than a click-to-edit grid.
+
+Issue #98 (this revision) makes Apply push the *whole* form, not just
+the matrix and data-link ports — it now sends a ``ReceiverApplyRequest``
+(the whole ``form`` :class:`~sp_rtk_base.models.profile_models.ReceiverAssertion`
+plus ``form_data_link_ports``), and both "out of sync" and the post-apply
+verify go through the one shared
+:func:`~sp_rtk_base.models.profile_models.diff_receiver_assertions`
+per-leaf, path-keyed comparison. This also fixes a standing bug by
+construction: ``form`` is always live-seeded, so measurement rate can
+no longer silently default to 1 Hz on every Apply press.
 """
 
 # pyright: reportUnknownMemberType=false
@@ -52,7 +58,6 @@ from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
-    ApplyConfigCellDiff,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
@@ -80,13 +85,14 @@ from sp_rtk_base.models.hardware_identity import (
 )
 from sp_rtk_base.models.profile_models import (
     MATRIX_PORTS,
+    ApplyDiffEntry,
     BaudAssertion,
-    BaudConfig,
     PortProtocolSet,
     Profile,
+    ReceiverApplyRequest,
     ReceiverAssertion,
-    ReceiverConfig,
     RtcmStreamConfig,
+    diff_receiver_assertions,
     merge_profile_into_assertion,
 )
 from sp_rtk_base.services import (
@@ -253,98 +259,68 @@ def apply_blocked_reason(data_link_port: list[PortId]) -> str | None:
     return None
 
 
-def build_apply_config(
-    matrix: dict[RtcmRowId, dict[PortId, bool]],
-    data_link_port: list[PortId],
-    assertion: ReceiverAssertion | None = None,
-) -> ReceiverConfig:
-    """Build a ``ReceiverConfig`` from the form state.
+def build_apply_request(
+    form: ReceiverAssertion, data_link_port: list[PortId]
+) -> ReceiverApplyRequest:
+    """Build the whole-form Apply envelope (issue #98).
 
-    *assertion* defaults to ``None`` — nothing but the matrix and
-    data-link ports set. ``_apply()`` always uses that default (Apply
-    stays scoped to the matrix + data-link ports, per #65 — the other
-    fields have no live read-back to verify a write against). Save-as
-    and the "modified from X" comparison pass the current ``form``
-    :class:`ReceiverAssertion` through, since those only compare
-    in-form state and never touch the receiver. *matrix* is always
-    passed explicitly, even when it's the same value as
-    ``assertion.rtcm_stream.matrix`` — every caller that has an
-    *assertion* happens to derive *matrix* from it directly beforehand,
-    so the two never actually diverge in practice.
+    Apply now sends the entire form — the matrix-only default this
+    used to have (issue #65/#66) is gone; every caller (the actual
+    Apply call, Save-as, and the "modified from X" comparison) passes
+    the current ``form`` :class:`ReceiverAssertion` through.
 
     Raises:
-        pydantic.ValidationError: If the resulting config fails a
+        pydantic.ValidationError: If the resulting request fails a
             context-free rule (e.g. 1005 missing from every chosen
             data-link port) — a client-side pre-write refusal, nothing
             is sent to the receiver.
     """
-    if assertion is None:
-        return ReceiverConfig(
-            data_link_port=data_link_port,
-            rtcm_stream=RtcmStreamConfig(matrix=matrix),
-        )
-    return ReceiverConfig(
-        ports=assertion.ports,
-        constellations=assertion.constellations,
-        baud=BaudConfig(uart1=assertion.baud.uart1, uart2=assertion.baud.uart2),
-        meas_period_ms=assertion.meas_period_ms,
-        dyn_model=assertion.dyn_model,
-        tmode_mode=assertion.tmode_mode,
-        elevation_mask_deg=assertion.elevation_mask_deg,
-        bds_b2_enabled=assertion.bds_b2_enabled,
-        spi_enabled=assertion.spi_enabled,
-        data_link_port=data_link_port,
-        rtcm_stream=RtcmStreamConfig(matrix=matrix),
-    )
+    return ReceiverApplyRequest(assertion=form, data_link_port=data_link_port)
 
 
 def receiver_config_from_profile(
     profile: Profile, live: ReceiverAssertion
-) -> ReceiverConfig:
-    """The ``ReceiverConfig`` picking *profile* against *live* would produce,
-    with identity stripped.
+) -> ReceiverApplyRequest:
+    """The ``ReceiverApplyRequest`` picking *profile* against *live* would
+    produce.
 
     Used to compare "the form" against "the selected profile" as the
-    same type — a ``Profile`` is a ``ReceiverConfig`` plus identity
-    fields, and those must not participate in the "modified from X"
-    equality check.
-
-    Deliberately built through the same :func:`merge_profile_into_assertion`
-    resolution :func:`_select_profile` (in the page closure) uses to seed
-    the form from this same profile against the current *live* state —
-    a stored profile's matrix is *sparse* (absent cell = off) and its
-    optional fields mean "leave the live value alone", while the form
-    is always fully populated. Comparing a freshly-picked, untouched
-    form against a bare ``profile.model_dump()`` would almost always
-    report "modified" unless both sides go through the identical
-    resolution.
+    same type. Deliberately built through the same
+    :func:`merge_profile_into_assertion` resolution
+    :func:`_select_profile` (in the page closure) uses to seed the form
+    from this same profile against the current *live* state — a stored
+    profile's matrix is *sparse* (absent cell = off) and its optional
+    fields mean "leave the live value alone", while the form is always
+    fully populated. Comparing a freshly-picked, untouched form against
+    a bare ``profile.model_dump()`` would almost always report
+    "modified" unless both sides go through the identical resolution.
     """
     merged = merge_profile_into_assertion(profile, live)
-    return build_apply_config(
-        merged.rtcm_stream.matrix, list(profile.data_link_port), merged
-    )
+    return build_apply_request(merged, list(profile.data_link_port))
 
 
 def is_modified_from_profile(
-    form_config: ReceiverConfig, profile: Profile | None, live: ReceiverAssertion
+    form_request: ReceiverApplyRequest, profile: Profile | None, live: ReceiverAssertion
 ) -> bool:
-    """Whether *form_config* diverges from *profile* — the second, independent
-    indicator (form vs. selected profile), distinct from "out of sync" (form
-    vs. live receiver). ``False`` when no profile is selected — there is
-    nothing to have diverged from."""
+    """Whether *form_request* diverges from *profile* — the second,
+    independent indicator (form vs. selected profile), distinct from "out
+    of sync" (form vs. live receiver). ``False`` when no profile is
+    selected — there is nothing to have diverged from."""
     if profile is None:
         return False
-    return form_config != receiver_config_from_profile(profile, live)
+    return form_request != receiver_config_from_profile(profile, live)
 
 
 def save_as_enabled(
-    form_config: ReceiverConfig | None, profile: Profile | None, live: ReceiverAssertion
+    form_request: ReceiverApplyRequest | None,
+    profile: Profile | None,
+    live: ReceiverAssertion,
 ) -> bool:
     """Save-as is available whenever the form is valid, suppressed only when
     a *selected* profile still exactly equals the form."""
-    if form_config is None:
+    if form_request is None:
         return False
-    return profile is None or is_modified_from_profile(form_config, profile, live)
+    return profile is None or is_modified_from_profile(form_request, profile, live)
 
 
 def suggest_profile_name(profile: Profile | None, hardware_target: str) -> str:
@@ -385,13 +361,21 @@ def resolve_save_hardware(profile: Profile | None, identity: HardwareIdentity) -
 
 def build_saved_profile(
     name: str,
-    form_config: ReceiverConfig,
+    form_request: ReceiverApplyRequest,
     hardware: str,
     forked_from: str | None,
 ) -> Profile:
-    """Construct the ``Profile`` document Save-as persists."""
+    """Construct the ``Profile`` document Save-as persists.
+
+    Flattens *form_request*'s envelope — ``assertion``'s fields plus
+    ``data_link_port`` — onto ``Profile``'s own field layout (issue
+    #98: ``data_link_port`` moved off ``ReceiverConfig``, so it's no
+    longer part of ``assertion.model_dump()`` and must be passed
+    separately).
+    """
     return Profile(
-        **form_config.model_dump(),
+        **form_request.assertion.model_dump(),
+        data_link_port=form_request.data_link_port,
         name=name,
         version=1,
         hardware=hardware,
@@ -451,19 +435,6 @@ def hw_extras_display(assertion: ReceiverAssertion) -> list[tuple[str, str, str]
     ]
 
 
-def copy_matrix(
-    matrix: dict[RtcmRowId, dict[PortId, bool]],
-) -> dict[RtcmRowId, dict[PortId, bool]]:
-    """Deep-copy a row x port matrix so the copy can diverge independently.
-
-    A shallow ``dict(matrix)`` shares the per-row inner dicts with the
-    original — mutating one cell would silently mutate both the form
-    and the "last known live" snapshot, breaking the out-of-sync
-    comparison.
-    """
-    return {row: dict(ports) for row, ports in matrix.items()}
-
-
 def placeholder_assertion() -> ReceiverAssertion:
     """An empty ``ReceiverAssertion`` for the page's pre-connect state,
     before any live receiver read has happened."""
@@ -481,12 +452,22 @@ def placeholder_assertion() -> ReceiverAssertion:
     )
 
 
-def format_cell_diff(diff: ApplyConfigCellDiff) -> str:
-    """Render one post-apply read-back mismatch as a human-readable line."""
-    expected = "on" if diff.expected else "off"
-    actual = "on" if diff.actual else "off"
+def _format_diff_value(value: bool | int | str) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def format_leaf_diff(diff: ApplyDiffEntry) -> str:
+    """Render one post-apply read-back mismatch as a human-readable line.
+
+    *diff.path* already names the exact leaf (a matrix cell, a port's
+    protocol, a constellation, or a plain scalar field) — see
+    :func:`sp_rtk_base.models.profile_models.diff_receiver_assertions`.
+    """
     return (
-        f"{diff.row_id.value} on {diff.port.value}: expected {expected}, got {actual}"
+        f"{diff.path}: expected {_format_diff_value(diff.expected)}, "
+        f"got {_format_diff_value(diff.actual)}"
     )
 
 
@@ -1044,8 +1025,8 @@ def gps_config_page() -> None:
                 save_as_error_label.set_visibility(True)
                 return
 
-            form_config = _current_form_config()
-            if form_config is None:
+            form_request = _current_form_request()
+            if form_request is None:
                 save_as_error_label.text = (
                     "The form doesn't currently validate — fix the RTCM "
                     "matrix / data-link ports before saving."
@@ -1057,7 +1038,7 @@ def gps_config_page() -> None:
             forked_from = selected_profile.name if selected_profile else None
 
             try:
-                profile = build_saved_profile(name, form_config, hardware, forked_from)
+                profile = build_saved_profile(name, form_request, hardware, forked_from)
                 created = profile_store.create_profile(profile)
             except (ValidationError, ProfileStoreError) as exc:
                 save_as_error_label.text = str(exc)
@@ -1218,17 +1199,18 @@ def gps_config_page() -> None:
         delete_target_label: str = ""
 
         def _out_of_sync() -> bool:
-            """Matrix-only, matching what Apply actually pushes (#65/#66) —
-            the rest of ``form`` has no live read-back to verify against."""
-            return form.rtcm_stream.matrix != live.rtcm_stream.matrix
+            """Whole-form comparison (issue #98) — the same per-leaf
+            ``diff_receiver_assertions`` call Apply's read-back verify
+            uses, applied here to form vs. live. Never mentions
+            ``data_link_port`` (it isn't part of either operand), so a
+            data-link-port-only change never shows as out of sync."""
+            return bool(diff_receiver_assertions(form, live))
 
-        def _current_form_config() -> ReceiverConfig | None:
-            """The form as a ``ReceiverConfig``, or ``None`` if it doesn't
-            currently validate (e.g. no data-link port selected)."""
+        def _current_form_request() -> ReceiverApplyRequest | None:
+            """The form as a ``ReceiverApplyRequest``, or ``None`` if it
+            doesn't currently validate (e.g. no data-link port selected)."""
             try:
-                return build_apply_config(
-                    form.rtcm_stream.matrix, form_data_link_ports, form
-                )
+                return build_apply_request(form, form_data_link_ports)
             except ValidationError:
                 return None
 
@@ -1383,12 +1365,12 @@ def gps_config_page() -> None:
             profile*, distinct from "out of sync" (form vs. live receiver).
             Hidden when no profile is selected: nothing to have diverged
             from."""
-            form_config = _current_form_config()
-            if selected_profile is None or form_config is None:
+            form_request = _current_form_request()
+            if selected_profile is None or form_request is None:
                 modified_badge.set_visibility(False)
                 return
             modified_badge.set_visibility(True)
-            if is_modified_from_profile(form_config, selected_profile, live):
+            if is_modified_from_profile(form_request, selected_profile, live):
                 modified_badge.text = f"Modified from {display_label(selected_profile)}"
                 modified_badge.props("color=warning")
             else:
@@ -1397,7 +1379,7 @@ def gps_config_page() -> None:
 
         def _render_save_as_gate() -> None:
             save_as_btn.set_enabled(
-                save_as_enabled(_current_form_config(), selected_profile, live)
+                save_as_enabled(_current_form_request(), selected_profile, live)
             )
 
         def _on_form_changed() -> None:
@@ -1426,33 +1408,30 @@ def gps_config_page() -> None:
             apply_result_label.set_visibility(False)
             apply_diff_list.clear()
 
-        def _show_apply_diff(diff: list[ApplyConfigCellDiff]) -> None:
+        def _show_apply_diff(diff: list[ApplyDiffEntry]) -> None:
             apply_diff_list.clear()
             with apply_diff_list:
-                for cell in diff:
-                    ui.label(format_cell_diff(cell)).classes(
+                for leaf in diff:
+                    ui.label(format_leaf_diff(leaf)).classes(
                         "text-caption text-warning"
                     )
 
         async def _apply() -> None:
-            """Push the current form (matrix + data-link ports) to the receiver.
+            """Push the whole current form to the receiver (issue #98).
 
-            Deliberately excludes the rest of ``form`` (issue #66
-            review): those fields have no live read-back, so a
-            profile-populated value pushed through Apply could never be
-            verified by the read-back-diff below, unlike the matrix.
-            Extending Apply to the full hardware section is out of
-            #66's scope — it isn't in the acceptance criteria, and #65
-            deliberately scoped Apply to "only the RTCM matrix and the
-            data-link ports". The rest of ``form`` is still used for
-            Save-as/"modified from X", which compare in-form state and
-            never touch the receiver.
+            Apply now sends every receiver field, not just the RTCM
+            matrix — ``build_apply_request`` wraps the full ``form``
+            plus the data-link port selection into the envelope
+            ``svc.apply_receiver_config`` takes. ``live`` is replaced
+            wholesale from ``result.read_back`` — the fresh full
+            read-back the service always returns, whichever ``status``
+            — rather than patched field-by-field, so every display
+            (matrix, ports, GNSS, hardware section) stays honest after
+            both a clean apply and a partial-mismatch one.
             """
             nonlocal live
             try:
-                config = build_apply_config(
-                    form.rtcm_stream.matrix, form_data_link_ports
-                )
+                request = build_apply_request(form, form_data_link_ports)
             except ValidationError as exc:
                 _set_apply_result(
                     f"Apply refused: {exc.errors()[0]['msg']} — nothing was written.",
@@ -1461,7 +1440,7 @@ def gps_config_page() -> None:
                 return
 
             try:
-                result = await svc.apply_receiver_config(config)
+                result = await svc.apply_receiver_config(request)
             except ApplyConfigRefusedError as exc:
                 _set_apply_result(
                     f"Apply refused ({exc.rule}): {exc} — nothing was written.",
@@ -1476,26 +1455,12 @@ def gps_config_page() -> None:
                 logger.exception("apply-config failed")
                 return
 
+            live = result.read_back
+
             if result.status == "ok":
-                live = live.model_copy(
-                    update={
-                        "rtcm_stream": RtcmStreamConfig(
-                            matrix=copy_matrix(form.rtcm_stream.matrix)
-                        )
-                    }
-                )
                 _set_apply_result("Applied and verified ✓", ok=True)
                 ui.notify("Applied and verified ✓", type="positive")
             else:
-                # The writes landed but the read-back disagrees — reflect
-                # the receiver's *actual* state so "out of sync" stays
-                # honest even though only a successful apply clears it.
-                new_matrix = copy_matrix(live.rtcm_stream.matrix)
-                for cell in result.diff:
-                    new_matrix[cell.row_id][cell.port] = cell.actual
-                live = live.model_copy(
-                    update={"rtcm_stream": RtcmStreamConfig(matrix=new_matrix)}
-                )
                 _set_apply_result(
                     "Applied, but verification found mismatches — nothing "
                     "was rolled back.",

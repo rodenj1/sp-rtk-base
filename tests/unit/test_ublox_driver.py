@@ -1911,6 +1911,29 @@ class TestGetUartBaudRates:
         assert result == {PortId.UART1: 57600, PortId.UART2: 115200}
 
 
+class TestDrainWarnings:
+    """No producer is wired up on this driver yet (issue #99)."""
+
+    def test_requires_connection(self) -> None:
+        driver = UbloxDriver()
+        with pytest.raises(ConnectionError, match="Not connected"):
+            driver.drain_warnings()
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_returns_empty_when_connected(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+        assert driver.drain_warnings() == []
+
+
 class TestGetReceiverScalars:
     """Tests for ``UbloxDriver.get_receiver_scalars`` (issue #97)."""
 

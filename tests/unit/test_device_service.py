@@ -28,6 +28,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.profile_models import (
+    APPLY_STEPS,
     ApplyConfigResult,
     BaudAssertion,
     PortProtocolSet,
@@ -623,6 +624,13 @@ class TestApplyReceiverConfig:
             PortId.UART1: 57600,
             PortId.UART2: 115200,
         }
+        driver.drain_warnings.return_value = []
+        # ``_make_mock_driver()`` defaults survey-in to active — most of
+        # this class doesn't care, and an active survey would refuse
+        # any request that changes ``tmode_mode`` (issue #99's
+        # survey-in-active guard). Tests exercising that guard override
+        # this back to ``active=True`` themselves.
+        driver.get_survey_in_status.return_value = SurveyInProgress(active=False)
         svc.set_driver(driver)
         svc._state = DeviceConnectionState.CONNECTED
         svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
@@ -694,7 +702,10 @@ class TestApplyReceiverConfig:
             if call_[0] in write_methods
         ]
         assert order[-1] == "configure_baud"
-        driver.configure_baud.assert_called_once_with(115200, None)  # type: ignore[union-attr]
+        # A step that runs writes its complete key set assertively
+        # (issue #99) — uart2 is reasserted at its unchanged value,
+        # not omitted as ``None``.
+        driver.configure_baud.assert_called_once_with(115200, 115200)  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_baud_uart1_and_uart2_both_written(
@@ -728,7 +739,9 @@ class TestApplyReceiverConfig:
         result = await connected_svc.apply_receiver_config(request)
 
         assert result.status == "ok"
-        driver.configure_baud.assert_called_once_with(None, 38400)  # type: ignore[union-attr]
+        # Complete-key-set write (issue #99): uart1 is reasserted at
+        # its unchanged value, not omitted as ``None``.
+        driver.configure_baud.assert_called_once_with(57600, 38400)  # type: ignore[union-attr]
         driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
@@ -756,7 +769,14 @@ class TestApplyReceiverConfig:
             for call_ in driver.method_calls  # type: ignore[union-attr]
             if call_[0] in {"reconnect_at_baud", "get_rtcm_port_config"}
         ]
-        assert order == ["reconnect_at_baud", "get_rtcm_port_config"]
+        # The first ``get_rtcm_port_config`` is the pre-write pre-read
+        # (issue #99); the second is the post-write read-back verify,
+        # which must come after the reopen.
+        assert order == [
+            "get_rtcm_port_config",
+            "reconnect_at_baud",
+            "get_rtcm_port_config",
+        ]
 
     @pytest.mark.asyncio()
     async def test_baud_uart1_reopen_success_updates_tracked_baud(
@@ -795,7 +815,10 @@ class TestApplyReceiverConfig:
             [call(115200), call(57600)]
         )
         assert connected_svc.state == DeviceConnectionState.DISCONNECTED
-        driver.get_rtcm_port_config.assert_not_called()  # type: ignore[union-attr]
+        # Called once, for the pre-write pre-read (issue #99) — the
+        # reopen failure raises before the post-write read-back verify
+        # would call it a second time.
+        driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_baud_uart1_reopen_retry_recovers_link_but_still_raises(
@@ -818,7 +841,9 @@ class TestApplyReceiverConfig:
 
         assert connected_svc.state == DeviceConnectionState.CONNECTED
         assert connected_svc._baud_rate == 57600  # pyright: ignore[reportPrivateUsage]
-        driver.get_rtcm_port_config.assert_not_called()  # type: ignore[union-attr]
+        # Called once, for the pre-write pre-read (issue #99) — see
+        # the sibling test above.
+        driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
     async def test_ubx_in_liveness_guard_refuses_before_any_write(
@@ -881,6 +906,15 @@ class TestApplyReceiverConfig:
         )
         request = _minimal_request(tmode_mode=BaseMode.FIXED)
         _mock_read_back_matches(driver, request.assertion)
+        # ``_mock_read_back_matches`` points every read at the
+        # post-apply state — fine for the final read-back verify, but
+        # the pre-read (issue #99) needs to see the *old* tmode_mode
+        # first so the ``tmode_mode`` step actually runs rather than
+        # skipping (it would otherwise already "match").
+        driver.get_receiver_scalars.side_effect = [
+            _scalars_for(_minimal_assertion()),
+            _scalars_for(request.assertion),
+        ]
 
         result = await connected_svc.apply_receiver_config(request)
 
@@ -891,6 +925,8 @@ class TestApplyReceiverConfig:
     async def test_write_order_matches_the_specified_sequence(
         self, connected_svc: DeviceService
     ) -> None:
+        """Every step differs from the pre-read, so every step runs — and
+        runs in ``APPLY_STEPS`` order (issue #99)."""
         assert connected_svc.driver is not None
         request = _minimal_request(
             ports={
@@ -901,11 +937,24 @@ class TestApplyReceiverConfig:
             constellations=[GnssConstellation.GPS],
             elevation_mask_deg=10,
             dyn_model=DynModel.STATIONARY,
-            tmode_mode=BaseMode.DISABLED,
+            # Differs from the fixture's default live tmode (DISABLED)
+            # so the ``tmode_mode`` step actually runs; SURVEY_IN (not
+            # FIXED) keeps the coordinate guard out of the way, and
+            # ``connected_svc``'s survey-in status defaults to inactive
+            # so the new survey-in-active guard doesn't refuse it.
+            tmode_mode=BaseMode.SURVEY_IN,
             # Differs from the fixture's default current scalars so
             # ``configure_measurement_rate`` actually fires and can be
             # asserted first in the order below.
             meas_period_ms=333,
+            # Differs from the fixture's default matrix (1005/UART1
+            # only) so the ``rtcm_matrix`` step actually runs.
+            rtcm_stream=RtcmStreamConfig(
+                matrix={
+                    RtcmRowId.RTCM_1005: {PortId.UART1: True},
+                    RtcmRowId.RTCM_1077: {PortId.UART1: True},
+                }
+            ),
         )
 
         await connected_svc.apply_receiver_config(request)
@@ -935,12 +984,35 @@ class TestApplyReceiverConfig:
         ]
 
     @pytest.mark.asyncio()
-    async def test_ports_always_written(self, connected_svc: DeviceService) -> None:
-        """Issue #98: every field is sent on every Apply — ``ports`` is no
-        longer conditionally omitted."""
+    async def test_ports_step_skips_when_unchanged(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Issue #99: a step skips when its fields already match the
+        pre-read, rather than always (re)writing — the walk-back of
+        issue #98's "every field, every Apply"."""
         assert connected_svc.driver is not None
         await connected_svc.apply_receiver_config(_minimal_request())
-        connected_svc.driver.configure_port_protocols.assert_called_once()  # type: ignore[union-attr]
+        connected_svc.driver.configure_port_protocols.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_ports_step_runs_when_changed(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        request = _minimal_request(
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+                )
+            }
+        )
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.configure_port_protocols.assert_called_once_with(  # type: ignore[union-attr]
+            {PortId.UART1: [UbxProtocol.UBX]}, {PortId.UART1: [UbxProtocol.RTCM3X]}
+        )
 
     @pytest.mark.asyncio()
     async def test_constellations_flip_enabled_and_preserve_channels(
@@ -979,30 +1051,52 @@ class TestApplyReceiverConfig:
         assert by_constellation[GnssConstellation.GALILEO].max_channels == 12
 
     @pytest.mark.asyncio()
-    async def test_dyn_model_and_tmode_mode_always_written(
+    async def test_dyn_model_and_tmode_mode_skip_when_unchanged(
         self, connected_svc: DeviceService
     ) -> None:
-        """Issue #98: every field is sent on every Apply — ``dyn_model``/
-        ``tmode_mode`` are no longer conditionally omitted. Plain
-        reassertion of the same value is safe here (not the edge-
-        triggered survey-in path — see ``UbloxDriver.configure_tmode_mode``)."""
+        """Issue #99: a plain reassertion of the receiver's current value
+        is exactly the no-op case the step-level skip exists for."""
         assert connected_svc.driver is not None
         await connected_svc.apply_receiver_config(_minimal_request())
+        connected_svc.driver.configure_dyn_model.assert_not_called()  # type: ignore[union-attr]
+        connected_svc.driver.configure_tmode_mode.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_dyn_model_and_tmode_mode_run_when_changed(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Plain reassertion of a *changed* value is safe here (not the
+        edge-triggered survey-in path — see
+        ``UbloxDriver.configure_tmode_mode``)."""
+        assert connected_svc.driver is not None
+        request = _minimal_request(
+            dyn_model=DynModel.STATIONARY, tmode_mode=BaseMode.SURVEY_IN
+        )
+        await connected_svc.apply_receiver_config(request)
         connected_svc.driver.configure_dyn_model.assert_called_once_with(  # type: ignore[union-attr]
-            DynModel.PORTABLE
+            DynModel.STATIONARY
         )
         connected_svc.driver.configure_tmode_mode.assert_called_once_with(  # type: ignore[union-attr]
-            BaseMode.DISABLED
+            BaseMode.SURVEY_IN
         )
 
     @pytest.mark.asyncio()
-    async def test_optimisations_always_invoked(
+    async def test_optimisations_skip_when_unchanged(
         self, connected_svc: DeviceService
     ) -> None:
         assert connected_svc.driver is not None
         await connected_svc.apply_receiver_config(_minimal_request())
+        connected_svc.driver.configure_optimisations.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_optimisations_run_when_changed(
+        self, connected_svc: DeviceService
+    ) -> None:
+        assert connected_svc.driver is not None
+        request = _minimal_request(elevation_mask_deg=10)
+        await connected_svc.apply_receiver_config(request)
         connected_svc.driver.configure_optimisations.assert_called_once_with(  # type: ignore[union-attr]
-            0, False, False
+            10, False, False
         )
 
     @pytest.mark.asyncio()
@@ -1078,6 +1172,214 @@ class TestApplyReceiverConfig:
         }
         result = await connected_svc.apply_receiver_config(_minimal_request())
         assert result.warnings == []
+
+    # ------------------------------------------------------------------
+    # Per-step outcomes, the service-side no-op, and the warning
+    # channel (issue #99)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio()
+    async def test_unchanged_form_reports_every_step_skipped_and_still_rereads(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        result = await connected_svc.apply_receiver_config(_minimal_request())
+
+        assert result.status == "ok"
+        assert [s.step for s in result.steps] == list(APPLY_STEPS)
+        assert all(s.status == "skipped" for s in result.steps)
+        # Once for the pre-read's no-op decision, once for the
+        # post-apply read-back verify — nothing was written in
+        # between, but both reads still happen.
+        assert driver.get_rtcm_port_config.call_count == 2  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_failed_step_stops_remaining_steps_without_raising(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.configure_port_protocols.side_effect = RuntimeError("NAK")  # type: ignore[union-attr]
+        request = _minimal_request(
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+                )
+            },
+            dyn_model=DynModel.STATIONARY,
+        )
+
+        result = await connected_svc.apply_receiver_config(request)
+
+        by_step = {s.step: s.status for s in result.steps}
+        assert by_step["meas_period_ms"] == "skipped"
+        assert by_step["ports"] == "failed"
+        # Every step after the failure reports "skipped" too — not
+        # just the ones that happened to already match the pre-read
+        # (``dyn_model`` deliberately differs here).
+        assert by_step["constellations"] == "skipped"
+        assert by_step["optimisations"] == "skipped"
+        assert by_step["dyn_model"] == "skipped"
+        assert by_step["tmode_mode"] == "skipped"
+        assert by_step["rtcm_matrix"] == "skipped"
+        assert by_step["baud"] == "skipped"
+        driver.configure_dyn_model.assert_not_called()  # type: ignore[union-attr]
+        # The read-back still ran (pre-read + final verify) despite
+        # the failed step never raising out of apply_receiver_config.
+        assert driver.get_rtcm_port_config.call_count == 2  # type: ignore[union-attr]
+        assert result.status == "failed"
+        assert result.read_back is not None
+
+    @pytest.mark.asyncio()
+    async def test_survey_in_active_refuses_tmode_mode_change(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.get_survey_in_status.return_value = SurveyInProgress(active=True)  # type: ignore[union-attr]
+        request = _minimal_request(tmode_mode=BaseMode.SURVEY_IN)
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(request)
+
+        assert exc_info.value.rule == "survey_in_active"
+        driver.configure_tmode_mode.assert_not_called()  # type: ignore[union-attr]
+        driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_survey_in_active_allows_apply_when_base_mode_unchanged(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """An Apply that leaves ``tmode_mode`` alone still proceeds
+        mid-survey — only a base-mode *change* is refused."""
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.get_survey_in_status.return_value = SurveyInProgress(active=True)  # type: ignore[union-attr]
+        request = _minimal_request(elevation_mask_deg=10)
+
+        result = await connected_svc.apply_receiver_config(request)
+
+        by_step = {s.step: s.status for s in result.steps}
+        assert by_step["optimisations"] == "ok"
+        driver.configure_optimisations.assert_called_once_with(  # type: ignore[union-attr]
+            10, False, False
+        )
+
+    @pytest.mark.asyncio()
+    async def test_step_warning_drained_and_tagged_with_step_name(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.drain_warnings.return_value = ["flash write not confirmed"]  # type: ignore[union-attr]
+        request = _minimal_request(
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+                )
+            }
+        )
+
+        result = await connected_svc.apply_receiver_config(request)
+
+        assert len(result.step_warnings) == 1
+        warning = result.step_warnings[0]
+        assert warning.step == "ports"
+        assert warning.message == "flash write not confirmed"
+
+    @pytest.mark.asyncio()
+    async def test_step_that_warned_is_excluded_from_next_apply_skip(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """A step that warned on the previous Apply retries on the next
+        one even though nothing changed — the remedy for a durability
+        warning must not be a no-op that erases its own warning."""
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.drain_warnings.return_value = ["flash write not confirmed"]  # type: ignore[union-attr]
+        request = _minimal_request(
+            ports={
+                PortId.UART1: PortProtocolSet(
+                    **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+                )
+            }
+        )
+
+        await connected_svc.apply_receiver_config(request)
+        driver.configure_port_protocols.reset_mock()  # type: ignore[union-attr]
+        driver.drain_warnings.return_value = []  # type: ignore[union-attr]
+        # The pre-read now reflects what the first Apply just wrote —
+        # were it not for the warning exception, this would make the
+        # ``ports`` step look unchanged and skip.
+        driver.get_port_protocols.return_value = PortProtocolConfig(  # type: ignore[union-attr]
+            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
+            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
+        )
+
+        result = await connected_svc.apply_receiver_config(request)
+
+        driver.configure_port_protocols.assert_called_once()  # type: ignore[union-attr]
+        by_step = {s.step: s.status for s in result.steps}
+        assert by_step["ports"] == "ok"
+
+    @pytest.mark.asyncio()
+    async def test_warned_step_blocked_by_earlier_failure_keeps_warned_status(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """A step that warned on Apply N, then gets blocked (never
+        reached) by an unrelated earlier failure on Apply N+1, still
+        retries on Apply N+2 — the warning isn't silently dropped just
+        because one Apply in between never got a chance to resolve
+        it."""
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.drain_warnings.return_value = ["flash write not confirmed"]  # type: ignore[union-attr]
+        ports_override = {
+            PortId.UART1: PortProtocolSet(
+                **{"in": [UbxProtocol.UBX], "out": [UbxProtocol.RTCM3X]}
+            )
+        }
+        ports_request = _minimal_request(ports=ports_override)
+
+        # Apply #1: ``ports`` differs, runs, and warns.
+        await connected_svc.apply_receiver_config(ports_request)
+        assert connected_svc._steps_warned_last_apply == {"ports"}
+        driver.configure_port_protocols.reset_mock()  # type: ignore[union-attr]
+
+        # Apply #2: ``ports`` now matches the receiver (were it not
+        # for the warning, it would skip) but an unrelated, earlier
+        # step (``meas_period_ms``) fails first and blocks the rest —
+        # ``ports`` never gets the chance to run or resolve.
+        driver.get_port_protocols.return_value = PortProtocolConfig(  # type: ignore[union-attr]
+            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
+            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
+        )
+        driver.configure_measurement_rate.side_effect = RuntimeError("NAK")  # type: ignore[union-attr]
+        blocked_request = _minimal_request(ports=ports_override, meas_period_ms=333)
+
+        result2 = await connected_svc.apply_receiver_config(blocked_request)
+
+        by_step2 = {s.step: s.status for s in result2.steps}
+        assert by_step2["meas_period_ms"] == "failed"
+        assert by_step2["ports"] == "skipped"
+        driver.configure_port_protocols.assert_not_called()  # type: ignore[union-attr]
+        # The warning survives — it wasn't cleared just because
+        # ``ports`` never got a chance to run this Apply.
+        assert connected_svc._steps_warned_last_apply == {"ports"}
+
+        # Apply #3: the earlier step no longer fails, and ``ports``
+        # still matches — it runs anyway, purely because it's still
+        # in the warned set from Apply #1.
+        driver.configure_measurement_rate.side_effect = None  # type: ignore[union-attr]
+        driver.drain_warnings.return_value = []  # type: ignore[union-attr]
+
+        result3 = await connected_svc.apply_receiver_config(ports_request)
+
+        by_step3 = {s.step: s.status for s in result3.steps}
+        assert by_step3["ports"] == "ok"
+        driver.configure_port_protocols.assert_called_once()  # type: ignore[union-attr]
+        assert connected_svc._steps_warned_last_apply == set()
 
 
 class TestSurveyInPreservesAppliedProfile:
@@ -1273,6 +1575,38 @@ class TestBaseInvariants:
         assert applied_request.assertion.tmode_mode == BaseMode.SURVEY_IN
 
         assert result.status == "ok"
+
+    @pytest.mark.asyncio()
+    async def test_apply_base_invariants_never_rewrites_baud(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Issue #99 acceptance criterion: applying base invariants no
+        longer rearms a baud write. End to end through the real
+        ``apply_receiver_config`` step-skip (not a mocked delegate, as
+        ``test_apply_delegates_...`` above uses) — baud falling back to
+        live in the merged request only prevents a rewrite if the new
+        per-step skip actually sees it as unchanged."""
+        driver = connected_svc.driver
+        assert driver is not None
+        driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
+            PortId.UART1: 9600,
+            PortId.UART2: 9600,
+        }
+        driver.drain_warnings.return_value = []  # type: ignore[union-attr]
+        # The built-in profile doesn't mention USB, so the merged
+        # request's USB ports fall back to live — which must keep UBX
+        # enabled on USB IN (the console's own management link) or the
+        # ubx_in_liveness guard refuses, as it would on any real,
+        # connected receiver.
+        driver.get_port_protocols.return_value = PortProtocolConfig(  # type: ignore[union-attr]
+            in_protocols={PortId.USB: [UbxProtocol.UBX]},
+            out_protocols={},
+        )
+
+        await connected_svc.apply_base_invariants()
+
+        driver.configure_baud.assert_not_called()  # type: ignore[union-attr]
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------

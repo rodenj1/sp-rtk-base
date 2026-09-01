@@ -18,8 +18,11 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.profile_models import (
+    APPLY_STEPS,
     ApplyConfigResult,
     ApplyDiffEntry,
+    ApplyStepResult,
+    ApplyStepWarning,
     BaudAssertion,
     BaudConfig,
     DynModel,
@@ -32,6 +35,7 @@ from sp_rtk_base.models.profile_models import (
     TmodeMode,
     diff_receiver_assertions,
     merge_profile_into_assertion,
+    step_for_diff_path,
 )
 
 
@@ -729,3 +733,101 @@ class TestApplyConfigResult:
             status="failed", read_back=_base_assertion(), diff=[entry]
         )
         assert result.diff == [entry]
+
+    def test_steps_and_step_warnings_default_empty(self) -> None:
+        result = ApplyConfigResult(status="ok", read_back=_base_assertion())
+        assert result.steps == []
+        assert result.step_warnings == []
+
+    def test_carries_steps_and_step_warnings(self) -> None:
+        result = ApplyConfigResult(
+            status="ok",
+            read_back=_base_assertion(),
+            steps=[ApplyStepResult(step="ports", status="ok")],
+            step_warnings=[ApplyStepWarning(step="ports", message="flash mismatch")],
+        )
+        assert result.steps == [ApplyStepResult(step="ports", status="ok")]
+        assert result.step_warnings == [
+            ApplyStepWarning(step="ports", message="flash mismatch")
+        ]
+
+
+# ---------------------------------------------------------------------------
+# APPLY_STEPS / step_for_diff_path / ApplyStepResult / ApplyStepWarning
+# (issue #99)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyStepResult:
+    def test_rejects_unknown_status(self) -> None:
+        with pytest.raises(ValidationError):
+            ApplyStepResult.model_validate({"name": "ports", "status": "bogus"})
+
+    def test_rejects_extra_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            ApplyStepResult.model_validate(
+                {"name": "ports", "status": "ok", "extra": 1}
+            )
+
+
+class TestApplyStepWarning:
+    def test_rejects_extra_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            ApplyStepWarning.model_validate(
+                {"step": "ports", "message": "x", "severity": "high"}
+            )
+
+
+class TestStepForDiffPath:
+    @pytest.mark.parametrize(
+        ("path", "step"),
+        [
+            ("meas_period_ms", "meas_period_ms"),
+            ("ports.UART1.in.UBX", "ports"),
+            ("ports.USB.out.NMEA", "ports"),
+            ("constellations.gps", "constellations"),
+            ("elevation_mask_deg", "optimisations"),
+            ("bds_b2_enabled", "optimisations"),
+            ("spi_enabled", "optimisations"),
+            ("dyn_model", "dyn_model"),
+            ("tmode_mode", "tmode_mode"),
+            ("rtcm.1005.UART1", "rtcm_matrix"),
+            ("baud.uart1", "baud"),
+            ("baud.uart2", "baud"),
+        ],
+    )
+    def test_maps_known_paths_to_their_step(self, path: str, step: str) -> None:
+        assert step_for_diff_path(path) == step
+        assert step in APPLY_STEPS
+
+    def test_unrecognised_path_raises(self) -> None:
+        with pytest.raises(ValueError, match="unrecognised"):
+            step_for_diff_path("not.a.real.path")
+
+    def test_every_real_diff_leaf_resolves_to_a_step(self) -> None:
+        """Every leaf ``diff_receiver_assertions`` can ever emit maps onto
+        exactly one ``APPLY_STEPS`` entry — the grouping
+        ``DeviceService.apply_receiver_config`` relies on for its
+        per-step skip decision never raises on a real diff."""
+        a = _base_assertion()
+        b = ReceiverAssertion(
+            baud=BaudAssertion(uart1=115200, uart2=38400),
+            meas_period_ms=200,
+            constellations=[GnssConstellation.GLONASS],
+            ports={
+                PortId.UART1: PortProtocolSet(**{"in": [], "out": []}),
+                PortId.UART2: PortProtocolSet(**{"in": [], "out": ["NMEA"]}),
+                PortId.USB: PortProtocolSet(**{"in": [], "out": []}),
+            },
+            dyn_model=DynModel.PORTABLE,
+            tmode_mode=TmodeMode.FIXED,
+            elevation_mask_deg=20,
+            bds_b2_enabled=True,
+            spi_enabled=True,
+            rtcm_stream=RtcmStreamConfig(
+                matrix={RtcmRowId.RTCM_1077: {PortId.UART2: True}}
+            ),
+        )
+        diffs = diff_receiver_assertions(a, b)
+        assert diffs, "fixture should produce at least one diff leaf"
+        assert {step_for_diff_path(d.path) for d in diffs} <= set(APPLY_STEPS)

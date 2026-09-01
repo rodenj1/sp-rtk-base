@@ -129,6 +129,9 @@ class StubDriver(GpsReceiverDriver):
     def get_uart_baud_rates(self) -> dict[PortId, int]:
         return {}
 
+    def drain_warnings(self) -> list[str]:
+        return []
+
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         return ReceiverScalarConfig(
             uart1_baud=115200,

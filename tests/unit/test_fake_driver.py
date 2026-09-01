@@ -280,6 +280,10 @@ class TestDisconnectedGuards:
         with pytest.raises(ConnectionError):
             driver.get_uart_baud_rates()
 
+    def test_drain_warnings_requires_connection(self, driver: FakeGpsDriver) -> None:
+        with pytest.raises(ConnectionError):
+            driver.drain_warnings()
+
 
 # ---------------------------------------------------------------------------
 # Configuration round-trips
@@ -448,6 +452,14 @@ class TestConfigurationRoundTrips:
     ) -> None:
         rates = connected_driver.get_uart_baud_rates()
         assert rates == {PortId.UART1: 57600, PortId.UART2: 115200}
+
+    def test_drain_warnings_is_always_empty(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        """No producer is wired up on the fake driver yet (issue #99)."""
+        assert connected_driver.drain_warnings() == []
+        connected_driver.configure_baud(115200, None)
+        assert connected_driver.drain_warnings() == []
 
     def test_configure_baud_stores_only_provided_fields(
         self, connected_driver: FakeGpsDriver

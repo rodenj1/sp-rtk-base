@@ -1,18 +1,20 @@
-"""E2E tests for the GPS page's profile picker + live-seeded form (issue #64).
+"""E2E tests for the GPS page's profile picker dropdown (issues #64, #105).
 
 Extends the existing GPS page suite (``test_gps_config_buttons.py``,
-``test_gps_data_flow.py``). This ticket is rendering-only — no Apply,
-no Save-as — so these tests cover:
+``test_gps_data_flow.py``). Issue #105 turned the picker's card list
+into a Quasar ``q-select`` dropdown, so these tests cover:
 
 - The form (ports, GNSS, RTCM matrix) seeds from the live receiver via
   ``connected_gps``, not from any profile.
-- The picker lists built-ins before customs, tagging compatibility and
-  greying incompatible entries with a tooltip.
-- The deterministic default is visibly suggested but never written
-  into the form.
-- The unconfirmed-hardware banner appears (and no default is
-  suggested) when the receiver's identity can't be confirmed — driven
-  through ``FakeGpsDriver``'s ``FAKE_UNKNOWN_HW_PORT`` sentinel.
+- The picker's dropdown lists built-ins before customs, tagging
+  compatibility: an incompatible option is disabled (unclickable) and
+  carries a tooltip explaining why.
+- The deterministic default is visibly highlighted/suggested in the
+  dropdown but never written into the form until picked.
+- The unconfirmed-hardware banner appears (and no option is
+  highlighted as suggested) when the receiver's identity can't be
+  confirmed — driven through ``FakeGpsDriver``'s ``FAKE_UNKNOWN_HW_PORT``
+  sentinel.
 - The matrix highlights the data-link columns and tags 1005 required.
 
 Locators target the stable ``profile-*`` / ``rtcm-*`` CSS class hooks
@@ -20,6 +22,11 @@ the page renders (see ``ui/pages/gps_config.py``) rather than text
 substrings — several page strings (e.g. the unconfirmed-hardware
 banner's "...no profile is suggested") share words with the things
 under test, which makes plain ``get_by_text`` matches ambiguous.
+
+The dropdown's option list only exists in the DOM while the popup is
+open (it's a Quasar ``q-menu``, mounted/unmounted on open/close), so
+every test that inspects an option opens the picker first via
+``.profile-picker`` before locating ``.profile-option-*``.
 """
 
 from __future__ import annotations
@@ -106,6 +113,12 @@ def _goto_gps_config(page: Page, base_url: str) -> None:
     )
 
 
+def _open_picker(page: Page) -> None:
+    """Open the profile dropdown — its options only mount while open."""
+    expect(page.locator(".profile-picker")).to_be_visible(timeout=10_000)
+    page.locator(".profile-picker").click()
+
+
 @pytest.mark.e2e
 def test_form_seeds_matrix_and_gnss_from_live_receiver(
     page: Page,
@@ -158,71 +171,128 @@ def test_matrix_tags_1005_required_and_highlights_data_link_columns(
 
 
 @pytest.mark.e2e
-def test_picker_lists_builtin_before_custom_and_greys_incompatible(
+def test_picker_is_a_dropdown_listing_builtin_before_custom(
     page: Page,
     base_url: str,
     connected_gps: None,
     custom_incompatible_profile: None,
 ) -> None:
-    """Built-in appears before the incompatible custom, which is greyed + tooltipped."""
+    """AC: "The picker renders as a dropdown rather than a card list."
+
+    The control itself is a ``q-select`` (queried via ``.profile-picker``,
+    a ``role=combobox``), and its options — only mounted once the
+    dropdown is opened — list the built-in before the custom.
+    """
     _goto_gps_config(page, base_url)
 
-    builtin_row = page.locator(f".profile-row-{BUILTIN_NAME}")
-    custom_name = CUSTOM_INCOMPATIBLE_PROFILE["name"]
-    custom_row = page.locator(f".profile-row-{custom_name}")
-    expect(builtin_row).to_be_visible(timeout=10_000)
-    expect(custom_row).to_be_visible(timeout=10_000)
+    picker = page.locator(".profile-picker")
+    expect(picker).to_be_visible(timeout=10_000)
+    expect(picker.locator('[role="combobox"]')).to_have_count(1)
 
-    builtin_box = builtin_row.bounding_box()
-    custom_box = custom_row.bounding_box()
+    _open_picker(page)
+    custom_name = CUSTOM_INCOMPATIBLE_PROFILE["name"]
+    builtin_option = page.locator(f".profile-option-{BUILTIN_NAME}")
+    custom_option = page.locator(f".profile-option-{custom_name}")
+    expect(builtin_option).to_be_visible(timeout=10_000)
+    expect(custom_option).to_be_visible(timeout=10_000)
+
+    builtin_box = builtin_option.bounding_box()
+    custom_box = custom_option.bounding_box()
     assert builtin_box is not None and custom_box is not None
     assert builtin_box["y"] < custom_box["y"], (
         "built-in profile should render above the custom profile"
     )
 
-    # Greyed + tooltip: the incompatible custom's row carries an info
-    # icon whose hover tooltip names the mismatched hardware.
-    info_icon = custom_row.locator(".profile-incompatible-icon")
-    expect(info_icon).to_be_visible()
-    info_icon.hover()
+
+@pytest.mark.e2e
+def test_incompatible_option_is_disabled_with_tooltip(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+    custom_incompatible_profile: None,
+) -> None:
+    """AC: "Profiles incompatible with the connected hardware are disabled
+    and carry a tooltip explaining why."
+
+    Covers both halves: the option carries the disabled CSS hook and a
+    hover tooltip naming the mismatched hardware, *and* clicking it is
+    a no-op — nothing gets selected (the "modified from X" indicator,
+    which only appears once a profile is picked, stays hidden).
+    """
+    _goto_gps_config(page, base_url)
+    _open_picker(page)
+
+    custom_name = CUSTOM_INCOMPATIBLE_PROFILE["name"]
+    builtin_option = page.locator(f".profile-option-{BUILTIN_NAME}")
+    custom_option = page.locator(f".profile-option-{custom_name}")
+    expect(builtin_option).to_be_visible(timeout=10_000)
+    expect(custom_option).to_be_visible(timeout=10_000)
+
+    expect(custom_option).to_have_class(re.compile("profile-option-disabled"))
+    expect(builtin_option).not_to_have_class(re.compile("profile-option-disabled"))
+
+    custom_option.hover()
     expect(page.get_by_text("not for this hardware (ZED-F9P)")).to_be_visible(
         timeout=5_000
     )
-    expect(builtin_row.locator(".profile-incompatible-icon")).to_have_count(0)
+
+    # Disabled options stay hoverable (that's how the tooltip above
+    # works) but a click must still be a no-op — force the click since
+    # the option isn't Quasar-"clickable" and Playwright's actionability
+    # check would otherwise refuse it.
+    custom_option.click(force=True)
+    page.wait_for_timeout(300)
+    expect(page.locator(".modified-badge")).to_be_hidden()
 
 
 @pytest.mark.e2e
-def test_default_is_suggested_but_not_written_to_form(
+def test_suggested_profile_is_highlighted_but_not_written_to_form(
     page: Page,
     base_url: str,
     connected_gps: None,
 ) -> None:
-    """The confirmed-compatible built-in is badged "Suggested"; the form stays live-seeded."""
-    _goto_gps_config(page, base_url)
+    """AC: "The suggested profile for the detected hardware is highlighted."
 
-    builtin_row = page.locator(f".profile-row-{BUILTIN_NAME}")
-    expect(builtin_row).to_be_visible(timeout=10_000)
-    expect(builtin_row.locator(".profile-suggested-badge")).to_be_visible()
+    The confirmed-compatible built-in carries the suggested badge and
+    highlight class in the dropdown; the form stays live-seeded until
+    actually picked.
+    """
+    _goto_gps_config(page, base_url)
+    _open_picker(page)
+
+    builtin_option = page.locator(f".profile-option-{BUILTIN_NAME}")
+    expect(builtin_option).to_be_visible(timeout=10_000)
+    expect(builtin_option).to_have_class(re.compile("profile-option-suggested"))
+    expect(builtin_option.locator(".profile-suggested-badge")).to_be_visible()
+
+    page.keyboard.press("Escape")
 
     # The built-in profile's matrix has UART2 enabled for 1077; the
     # fake driver's live read-back does not (UART1+USB only). If the
     # form had been written from the "suggested" profile, this cell
     # would show "on". It must instead reflect the live receiver.
     expect(page.locator(".rtcm-cell-1077-UART2")).to_have_text("-", timeout=10_000)
+    expect(page.locator(".modified-badge")).to_be_hidden()
 
 
 @pytest.mark.e2e
-def test_unconfirmed_hardware_banner_shown_with_no_default(
+def test_unconfirmed_hardware_banner_shown_with_no_suggestion(
     page: Page,
     base_url: str,
     connected_gps_unknown_hw: None,
 ) -> None:
-    """Unresolved hardware identity shows the banner and suggests nothing."""
+    """AC: "A banner appears when the hardware has not been confirmed."
+
+    Unresolved hardware identity shows the banner and highlights no
+    option as suggested.
+    """
     _goto_gps_config(page, base_url)
 
-    profile_card = page.locator(".q-card:has(.profile-row)").first
+    profile_card = page.locator(".q-card:has(.profile-picker)").first
     expect(profile_card).to_be_visible(timeout=10_000)
     expect(profile_card.get_by_text("Unconfirmed hardware")).to_be_visible(
         timeout=10_000
     )
-    expect(profile_card.locator(".profile-suggested-badge")).to_have_count(0)
+
+    _open_picker(page)
+    expect(page.locator(".profile-suggested-badge")).to_have_count(0)

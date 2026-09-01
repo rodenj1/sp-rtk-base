@@ -37,7 +37,14 @@ against; turning that into an editable grid is future work, same as
 # pyright: reportUnknownVariableType=false
 # pyright: reportOptionalMemberAccess=false
 # pyright: reportOptionalIterable=false
-# NiceGUI elements have partially unknown types.
+# pyright: reportPrivateUsage=false
+# NiceGUI elements have partially unknown types. reportPrivateUsage is
+# disabled because the profile-picker dropdown (issue #105) writes
+# directly to a raw ``q-select`` element's ``_props['options']`` — the
+# public ``ui.select``/``ChoiceElement`` options API rebuilds that prop
+# from a plain ``{value: label}`` mapping on every ``update()``, with
+# no room for the per-option disable/tooltip/highlight fields its
+# ``option`` scoped slot needs (see the comment beside ``picker_select``).
 
 from __future__ import annotations
 
@@ -644,7 +651,132 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #5a4520; border-radius: 4px")
             )
             unconfirmed_banner.set_visibility(False)
-            picker_list = ui.column().classes("q-mt-sm gap-1 w-full")
+
+            # The dropdown (issue #105 — replaces the #64/#65/#66 card
+            # list). Built as a raw Quasar ``q-select`` via ``ui.element``
+            # rather than NiceGUI's ``ui.select`` wrapper: the wrapper's
+            # ``ChoiceElement`` maps options to plain ``{value, label}``
+            # pairs and rebuilds that list itself on every ``update()``,
+            # leaving nowhere to hang the extra per-option
+            # disable/tooltip/highlight fields the ``option`` scoped slot
+            # below needs. Working against the raw element keeps full
+            # control of the ``options`` prop's shape.
+            with ui.row().classes("items-center gap-2 q-mt-sm flex-wrap"):
+                picker_select = (
+                    ui.element("q-select")
+                    .props(
+                        "label='Select profile' emit-value map-options "
+                        "option-value=value option-label=label "
+                        "options-dense dense outlined behavior=menu"
+                    )
+                    .classes("profile-picker")
+                    .style("min-width: 320px")
+                )
+                # Custom ``option`` slot: Quasar's own ``option-disable``
+                # prop would set the native ``disable`` prop on the
+                # rendered ``q-item``, which sets ``pointer-events:none``
+                # and silently kills hover — exactly what the tooltip
+                # explaining *why* a profile is disabled needs. So
+                # selection is gated by hand (``props.opt.disable`` guards
+                # the click) instead, keeping the item hoverable.
+                #
+                # NB: NiceGUI's own slot-template wrapper (see
+                # ``renderRecursively`` in its bundled ``nicegui.js``)
+                # exposes the Quasar scoped-slot object as a template
+                # variable named ``props`` — *not* Quasar's own docs
+                # convention ``scope`` — regardless of which slot this
+                # is, so every reference below is ``props.*``.
+                picker_select.add_slot(
+                    "option",
+                    r"""
+                    <q-item
+                      v-bind:clickable="!props.opt.disable"
+                      v-bind:class="[
+                        'profile-option',
+                        'profile-option-' + props.opt.value,
+                        props.opt.disable ? 'profile-option-disabled' : '',
+                        props.opt.highlighted ? 'profile-option-suggested bg-primary-1' : '',
+                      ]"
+                      v-on:click="() => { if (!props.opt.disable) props.toggleOption(props.opt) }"
+                    >
+                      <q-item-section>
+                        <q-item-label v-bind:class="props.opt.disable ? 'text-grey-6' : ''">
+                          {{ props.opt.label }}
+                          <q-badge
+                            v-if="props.opt.highlighted"
+                            color="primary"
+                            class="profile-suggested-badge q-ml-sm"
+                          >Suggested</q-badge>
+                          <q-badge
+                            outline
+                            color="grey"
+                            class="profile-builtin-badge q-ml-sm"
+                          >{{ props.opt.builtin ? 'built-in' : 'custom' }}</q-badge>
+                        </q-item-label>
+                      </q-item-section>
+                      <q-tooltip
+                        v-if="props.opt.disable"
+                        class="profile-option-tooltip"
+                      >{{ props.opt.tooltip }}</q-tooltip>
+                    </q-item>
+                    """,
+                )
+                picker_select.on(
+                    "update:model-value",
+                    lambda e: _select_profile_by_name(e.args),
+                )
+
+                picker_rename_icon = (
+                    ui.icon("edit")
+                    .classes("profile-rename-icon text-grey-4 cursor-pointer")
+                    .tooltip("Rename")
+                )
+                picker_delete_icon = (
+                    ui.icon("delete")
+                    .classes("profile-delete-icon text-grey-4 cursor-pointer")
+                    .tooltip("Delete")
+                )
+                picker_export_icon = (
+                    ui.icon("download")
+                    .classes("profile-export-icon text-grey-4 cursor-pointer")
+                    .tooltip("Export")
+                )
+                picker_rename_icon.on(
+                    "click",
+                    lambda: (
+                        _open_rename_dialog(selected_profile)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+                picker_delete_icon.on(
+                    "click",
+                    lambda: (
+                        _open_delete_dialog(selected_profile)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+                picker_export_icon.on(
+                    "click",
+                    lambda: (
+                        _export_profile(selected_profile.name)
+                        if selected_profile is not None
+                        else None
+                    ),
+                )
+
+                # The profile-relation indicator (issue #105 — moved out
+                # of the action row, where it sat as a same-weight
+                # sibling of receiver status and used warning colour for
+                # "modified from X". It answers "should I save this?",
+                # never "something's wrong", so it renders here next to
+                # the control that resolves it, always in a neutral
+                # colour — see ``_render_modified_indicator``.
+                modified_badge = (
+                    ui.badge("").classes("modified-badge").props("color=grey-7 outline")
+                )
+                modified_badge.set_visibility(False)
 
         # ================================================================
         # Section C: Receiver configuration — read-only, seeded from the
@@ -707,10 +839,6 @@ def gps_config_page() -> None:
                     .classes("save-as-btn")
                     .props("color=secondary outline")
                 )
-                modified_badge = (
-                    ui.badge("").classes("modified-badge").props("color=warning")
-                )
-                modified_badge.set_visibility(False)
 
             apply_result_label = (
                 ui.label("")
@@ -906,7 +1034,16 @@ def gps_config_page() -> None:
                 pass  # Non-critical
 
         def _render_picker() -> None:
-            """Render the profile picker from the current device identity."""
+            """Render the profile picker dropdown from the current device identity.
+
+            Populates the raw ``q-select``'s ``options`` prop directly
+            (each entry a dict carrying ``value``/``label`` plus the
+            ``disable``/``tooltip``/``highlighted``/``builtin`` fields the
+            ``option`` scoped slot renders) rather than going through
+            NiceGUI's ``ui.select`` options API, which has no room for
+            those extra fields — see the comment where ``picker_select``
+            is built.
+            """
             identity = _current_identity()
             identity_label.text = (
                 f"Connected receiver hardware: {identity.target} "
@@ -920,78 +1057,48 @@ def gps_config_page() -> None:
                 profile_store.list_profiles(), profile_store, identity
             )
 
-            picker_list.clear()
-            with picker_list:
-                for entry in entries:
-                    is_selected = (
-                        selected_profile is not None
-                        and selected_profile.name == entry.profile.name
-                    )
-                    is_incompatible = (
-                        not entry.compatible and entry.incompatible_reason is not None
-                    )
-                    row_classes = f"profile-row profile-row-{entry.profile.name} items-center gap-2 q-py-xs justify-between"
-                    if is_selected:
-                        row_classes += " profile-row-selected"
-                    with ui.row().classes(row_classes) as row:
-                        name_classes = (
-                            "text-white" if entry.compatible else "text-grey-6"
-                        )
-                        # The clickable "select" target is its own inner
-                        # row so the rename/delete/export icons — siblings
-                        # inside the outer row, not descendants of this one
-                        # — never bubble a click into profile selection.
-                        select_classes = "items-center gap-2" + (
-                            " cursor-pointer" if entry.compatible else ""
-                        )
-                        with ui.row().classes(select_classes) as select_area:
-                            if entry.compatible:
-                                select_area.on(
-                                    "click",
-                                    lambda _, p=entry.profile: _select_profile(p),
-                                )
-                            if is_selected:
-                                ui.icon("check_circle").classes(
-                                    "profile-selected-icon text-primary"
-                                )
-                            ui.label(display_label(entry.profile)).classes(
-                                f"profile-name {name_classes}"
-                            )
-                            ui.badge(
-                                "built-in" if entry.is_builtin else "custom"
-                            ).props("outline color=grey")
-                            if entry.is_default:
-                                ui.badge("Suggested").classes(
-                                    "profile-suggested-badge"
-                                ).props("color=primary")
-                            if entry.incompatible_reason:
-                                ui.icon("info").classes(
-                                    "profile-incompatible-icon text-grey-5"
-                                ).tooltip(entry.incompatible_reason)
+            picker_select._props["options"] = [
+                {
+                    "value": entry.profile.name,
+                    "label": display_label(entry.profile),
+                    "disable": not entry.compatible,
+                    "tooltip": entry.incompatible_reason or "",
+                    "highlighted": entry.is_default,
+                    "builtin": entry.is_builtin,
+                }
+                for entry in entries
+            ]
+            picker_select._props["model-value"] = (
+                selected_profile.name if selected_profile is not None else None
+            )
+            picker_select.update()
 
-                        if is_incompatible:
-                            row.classes("opacity-60")
+            # Rename/delete/export act on whichever profile is currently
+            # selected (issue #105) — customs-only, same as before.
+            is_custom_selected = selected_profile is not None and not (
+                profile_store.is_builtin(selected_profile.name)
+            )
+            for icon in (
+                picker_rename_icon,
+                picker_delete_icon,
+                picker_export_icon,
+            ):
+                icon.set_visibility(is_custom_selected)
 
-                        if not entry.is_builtin:
-                            with ui.row().classes("gap-2 items-center"):
-                                ui.icon("edit").classes(
-                                    "profile-rename-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, p=entry.profile: _open_rename_dialog(p),
-                                ).tooltip("Rename")
-                                ui.icon("delete").classes(
-                                    "profile-delete-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, p=entry.profile: _open_delete_dialog(p),
-                                ).tooltip("Delete")
-                                ui.icon("download").classes(
-                                    "profile-export-icon text-grey-4 cursor-pointer"
-                                ).on(
-                                    "click",
-                                    lambda _, n=entry.profile.name: _export_profile(n),
-                                ).tooltip("Export")
+        def _select_profile_by_name(name: str | None) -> None:
+            """``update:model-value`` handler for the picker dropdown.
+
+            Looks the picked value back up as a :class:`Profile` and
+            delegates to :func:`_select_profile` — the dropdown emits the
+            profile's slug (``option-value=value``/``emit-value``), not
+            the object itself.
+            """
+            if not name:
+                return
+            profile = profile_store.get_profile(name)
+            if profile is None:
+                return
+            _select_profile(profile)
 
         def _select_profile(profile: Profile) -> None:
             """Pick a profile — pre-fills the whole form (issue #66).
@@ -1382,7 +1489,15 @@ def gps_config_page() -> None:
             """The second, independent indicator — form vs. *selected
             profile*, distinct from "out of sync" (form vs. live receiver).
             Hidden when no profile is selected: nothing to have diverged
-            from."""
+            from.
+
+            Renders in a neutral colour either way (issue #105) — this
+            answers "should I save this?", not "something's wrong", so
+            neither state ever borrows the warning/positive colours that
+            train an operator to read amber as trouble. "Modified from
+            X" and "Matches X" are told apart by an outline vs. filled
+            treatment of the same neutral grey, not by hue.
+            """
             form_config = _current_form_config()
             if selected_profile is None or form_config is None:
                 modified_badge.set_visibility(False)
@@ -1390,10 +1505,11 @@ def gps_config_page() -> None:
             modified_badge.set_visibility(True)
             if is_modified_from_profile(form_config, selected_profile, live):
                 modified_badge.text = f"Modified from {display_label(selected_profile)}"
-                modified_badge.props("color=warning")
+                modified_badge.props(remove="outline")
+                modified_badge.props("color=grey-7")
             else:
                 modified_badge.text = f"Matches {display_label(selected_profile)}"
-                modified_badge.props("color=positive")
+                modified_badge.props("color=grey-7 outline")
 
         def _render_save_as_gate() -> None:
             save_as_btn.set_enabled(

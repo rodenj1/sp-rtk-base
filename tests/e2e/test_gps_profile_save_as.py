@@ -1,10 +1,10 @@
-"""E2E tests for profile pre-fill, Save-as, and the modified-from-profile
-indicator (issue #66).
+"""E2E tests for profile pre-fill, Save-as, and the profile-relation
+indicator (issues #66, #105).
 
 Extends the GPS page suite (``test_gps_profile_picker.py`` covers the
-read-only #64 shell, ``test_gps_apply.py`` covers #65's out-of-sync
-indicator + Apply). This ticket makes picking a profile actually write
-into the form and adds the *second*, independent indicator:
+picker dropdown itself, ``test_gps_apply.py`` covers #65's out-of-sync
+indicator + Apply). This suite covers picking a profile actually
+writing into the form, plus the *second*, independent indicator:
 
 - Selecting a compatible profile pre-fills the matrix, the data-link
   picker, and the "Hardware Section" display; the "modified from X"
@@ -21,10 +21,14 @@ into the form and adds the *second*, independent indicator:
 - Saving forks an independent custom profile carrying a
   ``forked_from`` provenance label; a name collision surfaces inline
   rather than silently overwriting.
-- Rename/delete/export are customs-only.
+- Rename/delete/export are customs-only, and act on whichever profile
+  is currently selected in the dropdown (issue #105 moved them from a
+  per-row icon set to a single icon trio beside the picker).
 
 Locators target the stable CSS class hooks the page renders (see
 ``ui/pages/gps_config.py``), matching the existing suite's convention.
+The dropdown's options only exist in the DOM while the popup is open,
+so selecting a profile always opens ``.profile-picker`` first.
 """
 
 from __future__ import annotations
@@ -37,8 +41,8 @@ from playwright.sync_api import Page, expect
 
 BUILTIN_NAME = "ublox-f9p-base-standard"
 #: The built-in's ``display_name`` (issue #95) — provenance labels
-#: (picker row, "Matches"/"Modified from", "Forked from") render this,
-#: not the slug ``BUILTIN_NAME``.
+#: (picker option, "Matches"/"Modified from", "Forked from") render
+#: this, not the slug ``BUILTIN_NAME``.
 BUILTIN_DISPLAY_NAME = "u-blox F9P — Base Station (Standard)"
 
 
@@ -81,8 +85,22 @@ def _goto_gps_config(page: Page, base_url: str) -> None:
     expect(page.locator(".rtcm-cell-1005-UART1")).to_have_text("✓", timeout=10_000)
 
 
+def _select_profile_option(page: Page, slug: str) -> None:
+    """Open the picker dropdown and click the option identified by *slug*.
+
+    The option list only mounts in the DOM while the dropdown is open
+    (it's a Quasar ``q-menu``), so every pick opens ``.profile-picker``
+    first.
+    """
+    expect(page.locator(".profile-picker")).to_be_visible(timeout=10_000)
+    page.locator(".profile-picker").click()
+    option = page.locator(f".profile-option-{slug}")
+    expect(option).to_be_visible(timeout=10_000)
+    option.click()
+
+
 def _select_builtin(page: Page) -> None:
-    """Click the built-in row and wait for the pick to fully settle.
+    """Pick the built-in profile and wait for the pick to fully settle.
 
     ``_select_profile`` re-renders several sections over the NiceGUI
     websocket round-trip; without waiting for the last of them
@@ -90,9 +108,7 @@ def _select_builtin(page: Page) -> None:
     a next action can land before the pick has actually taken effect
     client-side.
     """
-    builtin_row = page.locator(f".profile-row-{BUILTIN_NAME}")
-    expect(builtin_row).to_be_visible(timeout=10_000)
-    builtin_row.locator(".profile-name").click()
+    _select_profile_option(page, BUILTIN_NAME)
     expect(page.locator(".modified-badge")).to_contain_text(
         f"Matches {BUILTIN_DISPLAY_NAME}", timeout=10_000
     )
@@ -230,7 +246,8 @@ def test_save_as_forks_a_custom_profile_with_provenance(
     # The edited cell made it into the saved document.
     assert body["profile"]["rtcm_stream"]["matrix"]["1077"]["UART1"] is True
 
-    expect(page.locator(f".profile-row-{forked_name}")).to_be_visible(timeout=10_000)
+    page.locator(".profile-picker").click()
+    expect(page.locator(f".profile-option-{forked_name}")).to_be_visible(timeout=10_000)
 
 
 @pytest.mark.e2e
@@ -296,6 +313,9 @@ def test_rename_delete_export_are_customs_only(
     connected_gps: None,
     cleanup_profiles: list[str],
 ) -> None:
+    """Rename/delete/export (issue #105: a single icon trio beside the
+    picker, acting on whichever profile is currently selected) only
+    show up once a *custom* profile is the current selection."""
     custom = {
         "name": "e2e-custom-actions",
         "version": 1,
@@ -309,17 +329,20 @@ def test_rename_delete_export_are_customs_only(
 
     _goto_gps_config(page, base_url)
 
-    builtin_row = page.locator(f".profile-row-{BUILTIN_NAME}")
-    expect(builtin_row).to_be_visible(timeout=10_000)
-    expect(builtin_row.locator(".profile-rename-icon")).to_have_count(0)
-    expect(builtin_row.locator(".profile-delete-icon")).to_have_count(0)
-    expect(builtin_row.locator(".profile-export-icon")).to_have_count(0)
+    # Nothing selected yet — the icons stay hidden.
+    expect(page.locator(".profile-rename-icon")).to_be_hidden()
+    expect(page.locator(".profile-delete-icon")).to_be_hidden()
+    expect(page.locator(".profile-export-icon")).to_be_hidden()
 
-    custom_row = page.locator(".profile-row-e2e-custom-actions")
-    expect(custom_row).to_be_visible()
-    expect(custom_row.locator(".profile-rename-icon")).to_have_count(1)
-    expect(custom_row.locator(".profile-delete-icon")).to_have_count(1)
-    expect(custom_row.locator(".profile-export-icon")).to_have_count(1)
+    _select_profile_option(page, BUILTIN_NAME)
+    expect(page.locator(".profile-rename-icon")).to_be_hidden()
+    expect(page.locator(".profile-delete-icon")).to_be_hidden()
+    expect(page.locator(".profile-export-icon")).to_be_hidden()
+
+    _select_profile_option(page, "e2e-custom-actions")
+    expect(page.locator(".profile-rename-icon")).to_be_visible()
+    expect(page.locator(".profile-delete-icon")).to_be_visible()
+    expect(page.locator(".profile-export-icon")).to_be_visible()
 
 
 @pytest.mark.e2e
@@ -330,8 +353,8 @@ def test_rename_then_delete_custom_profile(
     connected_gps: None,
     cleanup_profiles: list[str],
 ) -> None:
-    """Rename edits the display name only — the slug (and so the row's
-    CSS identity, ``.profile-row-e2e-rename-me``) never changes; only
+    """Rename edits the display name only — the slug (and so the option's
+    CSS identity, ``.profile-option-e2e-rename-me``) never changes; only
     the rendered label updates."""
     custom = {
         "name": "e2e-rename-me",
@@ -346,19 +369,24 @@ def test_rename_then_delete_custom_profile(
 
     _goto_gps_config(page, base_url)
 
-    row = page.locator(".profile-row-e2e-rename-me")
-    expect(row).to_be_visible(timeout=10_000)
-    row.locator(".profile-rename-icon").click()
+    _select_profile_option(page, "e2e-rename-me")
+    page.locator(".profile-rename-icon").click()
 
     # No display_name set yet — the dialog falls back to the slug.
     expect(page.locator(".rename-name input")).to_have_value("e2e-rename-me")
     page.locator(".rename-name input").fill("e2e Renamed")
     page.locator(".rename-confirm-btn").click()
 
-    # Same row (same slug) — only the visible label changed.
-    expect(row).to_be_visible(timeout=10_000)
-    expect(row.locator(".profile-name")).to_have_text("e2e Renamed")
+    # Same option (same slug) — only the visible label changed.
+    page.locator(".profile-picker").click()
+    option = page.locator(".profile-option-e2e-rename-me")
+    expect(option).to_be_visible(timeout=10_000)
+    expect(option).to_contain_text("e2e Renamed")
+    page.keyboard.press("Escape")
 
-    row.locator(".profile-delete-icon").click()
+    page.locator(".profile-delete-icon").click()
     page.locator(".delete-confirm-btn").click()
-    expect(page.locator(".profile-row-e2e-rename-me")).to_have_count(0, timeout=10_000)
+    expect(page.locator(".profile-delete-icon")).to_be_hidden(timeout=10_000)
+
+    page.locator(".profile-picker").click()
+    expect(page.locator(".profile-option-e2e-rename-me")).to_have_count(0)

@@ -484,6 +484,13 @@ class DeviceService:
                 config.min_duration_seconds,
                 config.accuracy_limit_mm,
             )
+            # Drain immediately: this call sits outside apply_receiver_
+            # config's per-step loop, the only other drain site. Left
+            # undrained, a flash-divergence warning (issue #103) would
+            # sit on the driver's shared queue and get misattributed to
+            # whatever unrelated step a later Apply happens to run.
+            for warning in await asyncio.to_thread(driver.drain_warnings):
+                logger.warning("configure_survey_in: %s", warning)
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
@@ -732,6 +739,13 @@ class DeviceService:
             await asyncio.to_thread(driver.configure_rtcm_ports, config)
             self._state = DeviceConnectionState.CONNECTED
             logger.info("Multi-port RTCM config applied")
+            # Drain immediately — see the matching comment in
+            # configure_survey_in (issue #103): this call sits outside
+            # apply_receiver_config's per-step loop, the only other
+            # drain site, so an undrained warning would otherwise be
+            # misattributed to a later, unrelated Apply step.
+            for warning in await asyncio.to_thread(driver.drain_warnings):
+                logger.warning("configure_rtcm_ports: %s", warning)
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)

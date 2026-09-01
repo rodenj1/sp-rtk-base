@@ -339,9 +339,10 @@ class GpsReceiverDriver(abc.ABC):
         to have succeeded, but something the sync check is
         structurally unable to see is wrong — e.g. a value that landed
         in RAM but not flash, or a constellation the firmware
-        acknowledged but does not appear to act on. No severity field,
-        and no producer on this driver yet — a concrete driver with
-        nothing to report simply returns an empty list every time.
+        acknowledged but does not appear to act on. No severity field.
+        A concrete driver with nothing to report simply returns an
+        empty list every time — the u-blox driver's only producer is
+        its write-and-verify helper's flash read-back (issue #103).
 
         Returns:
             Warning messages queued since the last call; empty if none.

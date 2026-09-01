@@ -331,24 +331,24 @@ class TestUbloxDriverConfiguration:
         #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
         #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
         #   2. CFG-VALSET TMODE=1 + SVIN params (layer=5)   -> ACK
-        #   3. CFG-VALGET read-back                         -> matches (issue #42)
-        #   4. NAV-SVIN poll                                -> dur=0
-        #   5. (~2 s gap)
-        #   6. NAV-SVIN poll                                -> dur=3 (incremented)
+        #   3. CFG-VALGET RAM read-back                     -> matches (issue #42)
+        #   4. CFG-VALGET flash read-back                   -> matches (issue #103)
+        #   5. NAV-SVIN poll                                -> dur=0
+        #   6. (~2 s gap)
+        #   7. NAV-SVIN poll                                -> dur=3 (incremented)
+        enable_read_back = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_TMODE_SVIN_MIN_DUR=300,
+            CFG_TMODE_SVIN_ACC_LIMIT=400000,
+            CFG_TMODE_MODE=1,
+        )
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),  # baseline
             (b"", _make_ack_response()),  # full-layer disable
             (b"", _make_ack_response()),  # enable
-            (
-                b"",
-                SimpleNamespace(
-                    identity="CFG-VALGET",
-                    CFG_TMODE_SVIN_MIN_DUR=300,
-                    CFG_TMODE_SVIN_ACC_LIMIT=400000,
-                    CFG_TMODE_MODE=1,
-                ),
-            ),  # enable read-back — matches
+            (b"", enable_read_back),  # enable RAM read-back — matches
+            (b"", enable_read_back),  # enable flash read-back — matches
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=3, obs=1)),
         ]
@@ -1563,7 +1563,10 @@ class TestConfigurePortProtocols:
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [_make_ack_response(), read_back],
+            # Second ``read_back`` is the flash-layer poll a layer=5
+            # write now also performs (issue #103) — matches, so no
+            # warning is queued.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_port_protocols(
@@ -1621,7 +1624,10 @@ class TestConfigureMeasurementRate:
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [_make_ack_response(), read_back],
+            # Second ``read_back`` is the flash-layer poll a layer=5
+            # write now also performs (issue #103); matches, so no
+            # warning is queued.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_measurement_rate(333)
@@ -1652,16 +1658,16 @@ class TestConfigureDynModel:
         model: DynModel,
         expected_value: int,
     ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=expected_value
+        )
         driver, _reader = _connect_driver(
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [
-                _make_ack_response(),
-                SimpleNamespace(
-                    identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=expected_value
-                ),
-            ],
+            # Second copy is the flash-layer poll a layer=5 write now
+            # also performs (issue #103); matches, so no warning.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_dyn_model(model)
@@ -1726,14 +1732,16 @@ class TestConfigureTmodeMode:
         mode: BaseMode,
         expected_value: int,
     ) -> None:
+        read_back = SimpleNamespace(
+            identity="CFG-VALGET", CFG_TMODE_MODE=expected_value
+        )
         driver, _reader = _connect_driver(
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [
-                _make_ack_response(),
-                SimpleNamespace(identity="CFG-VALGET", CFG_TMODE_MODE=expected_value),
-            ],
+            # Second copy is the flash-layer poll a layer=5 write now
+            # also performs (issue #103); matches, so no warning.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_tmode_mode(mode)
@@ -1759,7 +1767,9 @@ class TestConfigureOptimisations:
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [_make_ack_response(), read_back],
+            # Second copy is the flash-layer poll a layer=5 write now
+            # also performs (issue #103); matches, so no warning.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_optimisations(
@@ -1807,7 +1817,9 @@ class TestConfigureOptimisations:
             mock_serial_cls,
             mock_reader_cls,
             mock_ubx_msg,
-            [_make_ack_response(), read_back],
+            # Second copy is the flash-layer poll a layer=5 write now
+            # also performs (issue #103); matches, so no warning.
+            [_make_ack_response(), read_back, read_back],
         )
 
         driver.configure_optimisations(
@@ -1912,7 +1924,9 @@ class TestGetUartBaudRates:
 
 
 class TestDrainWarnings:
-    """No producer is wired up on this driver yet (issue #99)."""
+    """No producer is wired up on the fake driver; the u-blox driver's only
+    producer is ``_write_and_verify_locked``'s flash read-back (issue #103) —
+    see ``TestWriteAndVerifyFlashDivergence`` for that coverage."""
 
     def test_requires_connection(self) -> None:
         driver = UbloxDriver()
@@ -1931,6 +1945,246 @@ class TestDrainWarnings:
         driver, _reader = _connect_driver(
             mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
         )
+        assert driver.drain_warnings() == []
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_drain_clears_the_queue(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A second drain with nothing new queued returns empty — the
+        first drain must actually clear the queue, not just read it."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+        driver._warnings.append("flash divergence")  # pyright: ignore[reportPrivateUsage]
+
+        assert driver.drain_warnings() == ["flash divergence"]
+        assert driver.drain_warnings() == []
+
+
+class TestWriteAndVerifyFlashDivergence:
+    """Tests for the flash-layer check in ``_write_and_verify_locked`` (issue #103).
+
+    RAM always matches in these scenarios — flash is the only thing
+    diverging — so none of them should raise; the divergence is queued
+    on ``drain_warnings`` instead.
+    """
+
+    _CFG_DATA = [("CFG_RATE_MEAS", 250)]
+    _EXPECTED = dict(_CFG_DATA)
+
+    @staticmethod
+    def _ram_match() -> SimpleNamespace:
+        return SimpleNamespace(identity="CFG-VALGET", CFG_RATE_MEAS=250)
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_value_differs_at_flash_warns_without_raising(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A flash value that still differs after the retry produces a
+        warning naming the key and both values, never a raise."""
+        flash_mismatch = SimpleNamespace(identity="CFG-VALGET", CFG_RATE_MEAS=1000)
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),  # first write
+                self._ram_match(),  # RAM read-back — matches
+                flash_mismatch,  # flash read-back — differs
+                _make_ack_response(),  # retry write
+                self._ram_match(),  # RAM read-back — matches
+                flash_mismatch,  # flash read-back — still differs
+            ],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                self._CFG_DATA, layer=5, label="Measurement rate"
+            )
+
+        assert mock_ubx_msg.config_set.call_count == 2
+        warnings = driver.drain_warnings()
+        assert len(warnings) == 1
+        assert "Measurement rate" in warnings[0]
+        assert "CFG_RATE_MEAS" in warnings[0]
+        assert "1000" in warnings[0]
+        assert "250" in warnings[0]
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_flash_nak_warns_without_raising(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A flash poll the receiver NAKs is a divergence shape, not a
+        transport failure — it must warn, not raise."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),
+                self._ram_match(),
+                _make_nak_response(),
+                _make_ack_response(),
+                self._ram_match(),
+                _make_nak_response(),
+            ],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                self._CFG_DATA, layer=5, label="Measurement rate"
+            )
+
+        warnings = driver.drain_warnings()
+        assert len(warnings) == 1
+        assert "NAK" in warnings[0]
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_flash_transport_timeout_raises_instead_of_warning(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A flash poll that gets no response at all — not an ACK-NAK —
+        is a transport/hardware failure, not one of the three divergence
+        shapes the spec describes. It must propagate as a hard failure,
+        not be softened into a durability warning."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_ack_response()]
+        )
+
+        with patch.object(
+            driver,
+            "_read_cfg_keys_locked",  # pyright: ignore[reportPrivateUsage]
+            side_effect=[
+                dict(self._CFG_DATA),  # RAM read-back — matches
+                RuntimeError("No CFG-VALGET response for config keys"),
+            ],
+        ):
+            with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+                with driver._lock:  # pyright: ignore[reportPrivateUsage]
+                    driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                        self._CFG_DATA, layer=5, label="Measurement rate"
+                    )
+
+        assert driver.drain_warnings() == []
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_omitted_key_at_flash_warns_without_raising(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A partial flash batch response that silently omits the key
+        (rather than NAKing or reporting a wrong value) must still warn."""
+        flash_omitted = SimpleNamespace(identity="CFG-VALGET")  # no attrs at all
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),
+                self._ram_match(),
+                flash_omitted,
+                _make_ack_response(),
+                self._ram_match(),
+                flash_omitted,
+            ],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                self._CFG_DATA, layer=5, label="Measurement rate"
+            )
+
+        warnings = driver.drain_warnings()
+        assert len(warnings) == 1
+        assert "omitted" in warnings[0].lower()
+        assert "CFG_RATE_MEAS" in warnings[0]
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_spurious_first_attempt_flash_miss_resolves_on_retry(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A flash miss that clears itself by the retry (the async-commit
+        timing risk the helper's docstring calls out) must not warn at
+        all — the existing single retry absorbs it."""
+        flash_mismatch = SimpleNamespace(identity="CFG-VALGET", CFG_RATE_MEAS=1000)
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [
+                _make_ack_response(),
+                self._ram_match(),
+                flash_mismatch,  # spurious first-attempt miss
+                _make_ack_response(),  # retry
+                self._ram_match(),
+                self._ram_match(),  # flash now agrees too
+            ],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                self._CFG_DATA, layer=5, label="Measurement rate"
+            )
+
+        assert mock_ubx_msg.config_set.call_count == 2
+        assert driver.drain_warnings() == []
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_non_flash_layer_skips_the_flash_check(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A write that doesn't target flash (layer bit 4 unset) has
+        nothing durable to check — only the RAM read-back runs."""
+        driver, reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_ack_response(), self._ram_match()],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._write_and_verify_locked(  # pyright: ignore[reportPrivateUsage]
+                self._CFG_DATA, layer=1, label="Measurement rate"
+            )
+
+        # 1 read for MON-VER during connect() + 1 for the write's ACK +
+        # 1 RAM read-back — no flash poll was issued.
+        assert reader.read.call_count == 3
         assert driver.drain_warnings() == []
 
 

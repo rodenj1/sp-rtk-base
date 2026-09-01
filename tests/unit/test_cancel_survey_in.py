@@ -158,10 +158,11 @@ class TestUbloxDisableBaseMode:
         #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
         #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
         #   2. CFG-VALSET TMODE=1 + SVIN params (layer=5)   -> ACK
-        #   3. CFG-VALGET read-back                         -> matches (issue #42)
-        #   4. NAV-SVIN poll                                -> dur=0
-        #   5. (wait ~2s)
-        #   6. NAV-SVIN poll                                -> dur=2 (incremented)
+        #   3. CFG-VALGET RAM read-back                     -> matches (issue #42)
+        #   4. CFG-VALGET flash read-back                   -> matches (issue #103)
+        #   5. NAV-SVIN poll                                -> dur=0
+        #   6. (wait ~2s)
+        #   7. NAV-SVIN poll                                -> dur=2 (incremented)
         reader.read.side_effect = [
             (b"", _make_mon_ver()),
             (
@@ -185,7 +186,16 @@ class TestUbloxDisableBaseMode:
                     CFG_TMODE_SVIN_ACC_LIMIT=500000,
                     CFG_TMODE_MODE=1,
                 ),
-            ),  # enable read-back — matches
+            ),  # enable RAM read-back — matches
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_SVIN_MIN_DUR=120,
+                    CFG_TMODE_SVIN_ACC_LIMIT=500000,
+                    CFG_TMODE_MODE=1,
+                ),
+            ),  # enable flash read-back — matches (issue #103)
             (
                 b"",
                 SimpleNamespace(
@@ -290,7 +300,16 @@ class TestUbloxDisableBaseMode:
                     CFG_TMODE_SVIN_ACC_LIMIT=500000,
                     CFG_TMODE_MODE=1,
                 ),
-            ),  # enable read-back — matches (issue #42)
+            ),  # enable RAM read-back — matches (issue #42)
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_SVIN_MIN_DUR=60,
+                    CFG_TMODE_SVIN_ACC_LIMIT=500000,
+                    CFG_TMODE_MODE=1,
+                ),
+            ),  # enable flash read-back — matches (issue #103)
             (b"", nav_svin_idle),  # before-snapshot
             (b"", nav_svin_idle),  # after-snapshot, dur unchanged
             (b"", _make_ack()),  # rollback layer=7 disable
@@ -382,7 +401,16 @@ class TestUbloxDisableBaseMode:
                     CFG_TMODE_SVIN_ACC_LIMIT=500000,
                     CFG_TMODE_MODE=1,
                 ),
-            ),  # enable read-back — matches (issue #42)
+            ),  # enable RAM read-back — matches (issue #42)
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_SVIN_MIN_DUR=60,
+                    CFG_TMODE_SVIN_ACC_LIMIT=500000,
+                    CFG_TMODE_MODE=1,
+                ),
+            ),  # enable flash read-back — matches (issue #103)
             (b"", nav_svin_fresh_before),  # before-snapshot
             (b"", nav_svin_fresh_after),  # after-snapshot
         ]
@@ -441,7 +469,11 @@ class TestUbloxDisableBaseMode:
             (b"", nav_svin_idle),  # baseline (no pre-reset)
             (b"", _make_ack()),  # full-layer disable
             (b"", _make_ack()),  # enable (first attempt)
-            (b"", SimpleNamespace(identity="CFG-VALGET")),  # read-back — mismatch
+            (b"", SimpleNamespace(identity="CFG-VALGET")),  # RAM read-back — mismatch
+            (
+                b"",
+                SimpleNamespace(identity="CFG-VALGET"),
+            ),  # flash read-back (issue #103) — discarded, RAM already retrying
             (b"", _make_ack()),  # enable (retried)
             (
                 b"",
@@ -451,7 +483,16 @@ class TestUbloxDisableBaseMode:
                     CFG_TMODE_SVIN_ACC_LIMIT=500000,
                     CFG_TMODE_MODE=1,
                 ),
-            ),  # read-back — matches on retry
+            ),  # RAM read-back — matches on retry
+            (
+                b"",
+                SimpleNamespace(
+                    identity="CFG-VALGET",
+                    CFG_TMODE_SVIN_MIN_DUR=60,
+                    CFG_TMODE_SVIN_ACC_LIMIT=500000,
+                    CFG_TMODE_MODE=1,
+                ),
+            ),  # flash read-back — matches (issue #103)
             (b"", nav_svin_idle),  # before-snapshot
             (b"", nav_svin_progressed),  # after-snapshot
         ]
@@ -504,9 +545,10 @@ class TestUbloxDisableBaseMode:
             (b"", nav_svin_idle),  # baseline (no pre-reset)
             (b"", _make_ack()),  # full-layer disable
             (b"", _make_ack()),  # enable (first attempt)
-            (b"", mismatch),  # read-back — mismatch
+            (b"", mismatch),  # RAM read-back — mismatch
+            (b"", mismatch),  # flash read-back (issue #103) — discarded
             (b"", _make_ack()),  # enable (retried)
-            (b"", mismatch),  # read-back — still mismatched
+            (b"", mismatch),  # RAM read-back — still mismatched -> raises
         ]
         mock_reader_cls.return_value = reader
 

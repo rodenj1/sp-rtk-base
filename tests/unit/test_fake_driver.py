@@ -8,7 +8,7 @@ behaviour from the e2e harness.
 
 What we assert
 --------------
-- All 18 abstract methods of :class:`GpsReceiverDriver` are
+- All 19 abstract methods of :class:`GpsReceiverDriver` are
   implemented (mypy already enforces this; we verify at runtime too).
 - ``connect`` / ``disconnect`` flip the ``is_connected`` flag.
 - Every method that touches device state raises ``ConnectionError``
@@ -466,6 +466,46 @@ class TestConfigurationRoundTrips:
         info = connected_driver.reconnect_at_baud(115200)
         assert info.model == "FAKE-F9P"
         assert connected_driver._baud_rate == 115200
+
+    def test_get_receiver_scalars_returns_defaults(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        """Defaults mirror the shipped built-in profile (issue #97)."""
+        scalars = connected_driver.get_receiver_scalars()
+        assert scalars.uart1_baud == 57600
+        assert scalars.uart2_baud == 115200
+        assert scalars.meas_period_ms == 1000
+        assert scalars.dyn_model == DynModel.PORTABLE
+        assert scalars.tmode_mode == BaseMode.DISABLED
+        assert scalars.elevation_mask_deg == 15
+        assert scalars.bds_b2_enabled is False
+        assert scalars.spi_enabled is True
+
+    def test_get_receiver_scalars_reflects_writes(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        connected_driver.configure_measurement_rate(250)
+        connected_driver.configure_dyn_model(DynModel.STATIONARY)
+        connected_driver.configure_tmode_mode(BaseMode.FIXED)
+        connected_driver.configure_optimisations(5, True, False)
+        connected_driver.configure_baud(9600, 9600)
+
+        scalars = connected_driver.get_receiver_scalars()
+
+        assert scalars.meas_period_ms == 250
+        assert scalars.dyn_model == DynModel.STATIONARY
+        assert scalars.tmode_mode == BaseMode.FIXED
+        assert scalars.elevation_mask_deg == 5
+        assert scalars.bds_b2_enabled is True
+        assert scalars.spi_enabled is False
+        assert scalars.uart1_baud == 9600
+        assert scalars.uart2_baud == 9600
+
+    def test_get_receiver_scalars_requires_connection(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        with pytest.raises(ConnectionError):
+            driver.get_receiver_scalars()
 
 
 # ---------------------------------------------------------------------------

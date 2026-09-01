@@ -17,16 +17,12 @@ from sp_rtk_base.models.device_models import (
     ApplyConfigCellDiff,
     CurrentBaseConfig,
     DynModel,
-    GnssConfig,
     GnssConstellation,
-    GnssSystemConfig,
     PortId,
-    PortProtocolConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInProgress,
-    UbxProtocol,
 )
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
@@ -37,12 +33,19 @@ from sp_rtk_base.models.hardware_identity import (
     HardwareConfidence,
     identity_from_target,
 )
-from sp_rtk_base.models.profile_models import BaudConfig, PortProtocolSet, Profile
+from sp_rtk_base.models.profile_models import (
+    BaudAssertion,
+    BaudConfig,
+    PortProtocolSet,
+    Profile,
+    ReceiverAssertion,
+    RtcmStreamConfig,
+    merge_profile_into_assertion,
+)
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.ui.pages.gps_config import (
     MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
-    FormExtras,
     apply_blocked_reason,
     build_apply_config,
     build_picker_entries,
@@ -55,8 +58,6 @@ from sp_rtk_base.ui.pages.gps_config import (
     infer_data_link_ports,
     is_modified_from_profile,
     matrix_cell_on,
-    profile_matrix_to_form_matrix,
-    profile_to_form_extras,
     receiver_config_from_profile,
     resolve_gnss_display,
     resolve_identity,
@@ -358,20 +359,28 @@ def _full_profile(name: str = "full-profile") -> Profile:
     )
 
 
-class TestFormExtras:
-    """Defaults mirror ``ReceiverConfig``'s own "leave untouched" semantics."""
-
-    def test_defaults_are_all_none_except_meas_period(self) -> None:
-        extras = FormExtras()
-        assert extras.ports is None
-        assert extras.constellations is None
-        assert extras.baud is None
-        assert extras.meas_period_ms == 1000
-        assert extras.dyn_model is None
-        assert extras.tmode_mode is None
-        assert extras.elevation_mask_deg is None
-        assert extras.bds_b2_enabled is None
-        assert extras.spi_enabled is None
+def _live_assertion() -> ReceiverAssertion:
+    """A live-seeded assertion with values distinct from ``_full_profile()``'s
+    — used to prove a merge/comparison falls back to *live* wherever the
+    profile omits a field, rather than to a schema default."""
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=9600, uart2=9600),
+        meas_period_ms=2000,
+        constellations=[GnssConstellation.BEIDOU],
+        ports={
+            PortId.UART1: PortProtocolSet(**{"in": ["UBX"], "out": []}),
+            PortId.UART2: PortProtocolSet(**{"in": ["UBX"], "out": []}),
+            PortId.USB: PortProtocolSet(
+                **{"in": ["UBX", "NMEA"], "out": ["UBX", "NMEA"]}
+            ),
+        },
+        dyn_model=DynModel.PORTABLE,
+        tmode_mode=TmodeMode.SURVEY_IN,
+        elevation_mask_deg=5,
+        bds_b2_enabled=True,
+        spi_enabled=False,
+        rtcm_stream=RtcmStreamConfig(matrix={}),
+    )
 
 
 class TestBuildApplyConfigWithExtras:
@@ -379,18 +388,20 @@ class TestBuildApplyConfigWithExtras:
         matrix = rtcm_config_to_matrix(
             RtcmPortConfig(messages={RtcmRowId.RTCM_1005: {"UART1": 1}})
         )
-        extras = FormExtras(
-            baud=BaudConfig(uart1=57600),
+        extras = ReceiverAssertion(
+            baud=BaudAssertion(uart1=57600, uart2=115200),
             meas_period_ms=200,
             constellations=[GnssConstellation.GPS],
+            ports={},
             dyn_model=DynModel.STATIONARY,
             tmode_mode=TmodeMode.DISABLED,
             elevation_mask_deg=15,
             bds_b2_enabled=False,
             spi_enabled=True,
+            rtcm_stream=RtcmStreamConfig(matrix=matrix),
         )
         config = build_apply_config(matrix, [PortId.UART1], extras)
-        assert config.baud is not None and config.baud.uart1 == 57600
+        assert config.baud == BaudConfig(uart1=57600, uart2=115200)
         assert config.meas_period_ms == 200
         assert config.constellations == [GnssConstellation.GPS]
         assert config.dyn_model == DynModel.STATIONARY
@@ -400,51 +411,30 @@ class TestBuildApplyConfigWithExtras:
         assert config.spi_enabled is True
 
 
-class TestProfileMatrixToFormMatrix:
-    def test_covers_every_catalog_row_and_matrix_port(self) -> None:
-        matrix = profile_matrix_to_form_matrix(_full_profile())
-        assert set(matrix.keys()) == set(RtcmRowId)
-        for row in matrix.values():
-            assert set(row.keys()) == set(MATRIX_PORTS)
-
-    def test_reflects_the_profiles_sparse_matrix(self) -> None:
-        matrix = profile_matrix_to_form_matrix(_full_profile())
-        assert matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
-        assert matrix[RtcmRowId.RTCM_1005][PortId.USB] is False
-        assert matrix[RtcmRowId.RTCM_1077][PortId.UART1] is False
-
-
-class TestProfileToFormExtras:
-    def test_copies_every_field(self) -> None:
-        extras = profile_to_form_extras(_full_profile())
-        assert extras.ports is not None
-        assert extras.constellations == [
-            GnssConstellation.GPS,
-            GnssConstellation.GLONASS,
-        ]
-        assert extras.baud == BaudConfig(uart1=57600, uart2=115200)
-        assert extras.meas_period_ms == 500
-        assert extras.dyn_model == DynModel.STATIONARY
-        assert extras.tmode_mode is None
-        assert extras.elevation_mask_deg == 15
-        assert extras.bds_b2_enabled is False
-        assert extras.spi_enabled is True
-
-
 class TestReceiverConfigFromProfile:
     def test_strips_identity_fields(self) -> None:
-        config = receiver_config_from_profile(_full_profile())
+        config = receiver_config_from_profile(_full_profile(), _live_assertion())
         assert not hasattr(config, "name")
         assert not hasattr(config, "hardware")
         assert not hasattr(config, "forked_from")
         assert config.meas_period_ms == 500
 
+    def test_falls_back_to_live_for_fields_the_profile_omits(self) -> None:
+        """``_full_profile()`` omits ``tmode_mode`` and USB ports on purpose."""
+        live = _live_assertion()
+        config = receiver_config_from_profile(_full_profile(), live)
+        assert config.tmode_mode == live.tmode_mode
+        assert config.ports is not None
+        assert config.ports[PortId.USB] == live.ports[PortId.USB]
+
     def test_equals_the_form_built_from_the_same_profile(self) -> None:
         profile = _full_profile()
-        matrix = profile_matrix_to_form_matrix(profile)
-        extras = profile_to_form_extras(profile)
-        form_config = build_apply_config(matrix, profile.data_link_port, extras)
-        assert form_config == receiver_config_from_profile(profile)
+        live = _live_assertion()
+        merged = merge_profile_into_assertion(profile, live)
+        form_config = build_apply_config(
+            merged.rtcm_stream.matrix, profile.data_link_port, merged
+        )
+        assert form_config == receiver_config_from_profile(profile, live)
 
 
 class TestIsModifiedFromProfile:
@@ -455,27 +445,25 @@ class TestIsModifiedFromProfile:
             ),
             [PortId.UART1],
         )
-        assert not is_modified_from_profile(config, None)
+        assert not is_modified_from_profile(config, None, _live_assertion())
 
     def test_false_when_form_exactly_equals_the_profile(self) -> None:
         profile = _full_profile()
-        matrix = profile_matrix_to_form_matrix(profile)
-        extras = profile_to_form_extras(profile)
-        form_config = build_apply_config(matrix, profile.data_link_port, extras)
-        assert not is_modified_from_profile(form_config, profile)
+        live = _live_assertion()
+        form_config = receiver_config_from_profile(profile, live)
+        assert not is_modified_from_profile(form_config, profile, live)
 
     def test_true_once_the_form_diverges(self) -> None:
         profile = _full_profile()
-        matrix = profile_matrix_to_form_matrix(profile)
-        matrix[RtcmRowId.RTCM_1074][PortId.UART1] = False
-        extras = profile_to_form_extras(profile)
-        form_config = build_apply_config(matrix, profile.data_link_port, extras)
-        assert is_modified_from_profile(form_config, profile)
+        live = _live_assertion()
+        form_config = receiver_config_from_profile(profile, live)
+        diverged = form_config.model_copy(update={"meas_period_ms": 999})
+        assert is_modified_from_profile(diverged, profile, live)
 
 
 class TestSaveAsEnabled:
     def test_disabled_when_form_is_invalid(self) -> None:
-        assert not save_as_enabled(None, None)
+        assert not save_as_enabled(None, None, _live_assertion())
 
     def test_enabled_with_no_profile_selected(self) -> None:
         config = build_apply_config(
@@ -484,25 +472,23 @@ class TestSaveAsEnabled:
             ),
             [PortId.UART1],
         )
-        assert save_as_enabled(config, None)
+        assert save_as_enabled(config, None, _live_assertion())
 
     def test_suppressed_when_selected_profile_exactly_equals_the_form(self) -> None:
         profile = _full_profile()
-        matrix = profile_matrix_to_form_matrix(profile)
-        extras = profile_to_form_extras(profile)
-        form_config = build_apply_config(matrix, profile.data_link_port, extras)
-        assert not save_as_enabled(form_config, profile)
+        live = _live_assertion()
+        form_config = receiver_config_from_profile(profile, live)
+        assert not save_as_enabled(form_config, profile, live)
 
     def test_enabled_again_once_the_form_diverges_from_the_selected_profile(
         self,
     ) -> None:
         """The #66 fix: applying edits must not take Save-as away again."""
         profile = _full_profile()
-        matrix = profile_matrix_to_form_matrix(profile)
-        matrix[RtcmRowId.RTCM_1074][PortId.UART2] = False
-        extras = profile_to_form_extras(profile)
-        form_config = build_apply_config(matrix, profile.data_link_port, extras)
-        assert save_as_enabled(form_config, profile)
+        live = _live_assertion()
+        form_config = receiver_config_from_profile(profile, live)
+        diverged = form_config.model_copy(update={"meas_period_ms": 999})
+        assert save_as_enabled(diverged, profile, live)
 
 
 class TestDisplayLabel:
@@ -580,73 +566,43 @@ class TestBuildSavedProfile:
 
 
 class TestResolvePortsDisplay:
-    def test_falls_back_to_live_when_no_form_ports(self) -> None:
-        live = PortProtocolConfig(
-            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
-            out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
-        )
-        display = resolve_ports_display(live, None)
-        assert display[PortId.UART1] == (["UBX"], ["RTCM3X"])
-        assert display[PortId.UART2] == ([], [])
-
-    def test_form_ports_take_priority_over_live(self) -> None:
-        live = PortProtocolConfig(
-            in_protocols={PortId.UART1: [UbxProtocol.UBX]},
-        )
-        form_ports = {
-            PortId.UART1: PortProtocolSet(
-                **{"in": [UbxProtocol.UBX, UbxProtocol.NMEA], "out": []}
-            ),
+    def test_renders_the_forms_ports(self) -> None:
+        ports = {
+            PortId.UART1: PortProtocolSet(**{"in": ["UBX"], "out": ["RTCM3X"]}),
         }
-        display = resolve_ports_display(live, form_ports)
-        assert display[PortId.UART1] == (["UBX", "NMEA"], [])
-        # A port omitted from the profile's ports is untouched -> empty.
+        display = resolve_ports_display(ports)
+        assert display[PortId.UART1] == (["UBX"], ["RTCM3X"])
+        # A port absent from the map renders empty.
         assert display[PortId.UART2] == ([], [])
 
 
 class TestResolveGnssDisplay:
-    def test_falls_back_to_live_when_no_form_constellations(self) -> None:
-        live = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-                GnssSystemConfig(constellation=GnssConstellation.SBAS, enabled=False),
-            ]
-        )
-        display = resolve_gnss_display(live, None)
+    def test_renders_the_forms_constellations(self) -> None:
+        display = resolve_gnss_display([GnssConstellation.GPS])
         assert display["gps"] is True
         assert display["sbas"] is False
 
-    def test_form_constellations_take_priority_over_live(self) -> None:
-        live = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=False),
-            ]
-        )
-        display = resolve_gnss_display(live, [GnssConstellation.GLONASS])
-        assert display["gps"] is False
-        assert display["glonass"] is True
+    def test_empty_constellations_shows_nothing_enabled(self) -> None:
+        display = resolve_gnss_display([])
+        assert not any(display.values())
 
 
 class TestHwExtrasDisplay:
-    def test_default_extras_show_unchanged(self) -> None:
-        rows = {label: value for _cls, label, value in hw_extras_display(FormExtras())}
-        assert rows["Baud"] == "unchanged"
-        assert rows["Dynamics Model"] == "unchanged"
-        assert rows["BeiDou B2"] == "unchanged"
-        assert rows["Measurement Rate"] == "1 Hz"
-
-    def test_populated_extras_render_their_values(self) -> None:
-        extras = FormExtras(
-            baud=BaudConfig(uart1=57600),
+    def test_renders_every_field_concretely(self) -> None:
+        extras = ReceiverAssertion(
+            baud=BaudAssertion(uart1=57600, uart2=115200),
             meas_period_ms=500,
+            constellations=[],
+            ports={},
             dyn_model=DynModel.STATIONARY,
             tmode_mode=TmodeMode.FIXED,
             elevation_mask_deg=15,
             bds_b2_enabled=False,
             spi_enabled=True,
+            rtcm_stream=RtcmStreamConfig(matrix={}),
         )
         rows = {label: value for _cls, label, value in hw_extras_display(extras)}
-        assert rows["Baud"] == "UART1=57600"
+        assert rows["Baud"] == "UART1=57600, UART2=115200"
         assert rows["Measurement Rate"] == "2 Hz"
         assert rows["Dynamics Model"] == "stationary"
         assert rows["Time Mode"] == "fixed"

@@ -12,9 +12,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from sp_rtk_base.models.device_models import (
+    ALL_RTCM_MESSAGE_IDS,
     ApplyConfigCellDiff,
     ApplyConfigResult,
     BaseInvariantsCheck,
@@ -28,6 +29,8 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
+    ReceiverScalarConfig,
+    RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
@@ -37,7 +40,14 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
 )
-from sp_rtk_base.models.profile_models import ReceiverConfig
+from sp_rtk_base.models.profile_models import (
+    MATRIX_PORTS,
+    BaudAssertion,
+    PortProtocolSet,
+    ReceiverAssertion,
+    ReceiverConfig,
+    RtcmStreamConfig,
+)
 from sp_rtk_base.profiles import BUILTIN_PROFILES
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
@@ -158,6 +168,61 @@ def _throughput_warnings(
                 "— consider a higher baud rate or fewer messages."
             )
     return warnings
+
+
+def build_receiver_assertion(
+    rtcm: RtcmPortConfig,
+    ports: PortProtocolConfig,
+    gnss: GnssConfig,
+    scalars: ReceiverScalarConfig,
+) -> ReceiverAssertion:
+    """Compose a full live receiver read into one ``ReceiverAssertion``.
+
+    Pure — reshapes the driver's four already-fetched reads (RTCM
+    matrix, port protocols, GNSS constellations, the batched scalar
+    poll) into the schema the Advanced GPS page seeds ``form``/``live``
+    from (issue #97). No device I/O of its own.
+    """
+    matrix = {
+        row_id: {
+            port: rtcm.is_enabled(row_id, RtcmOutputPort(port.value))
+            for port in MATRIX_PORTS
+        }
+        for row_id in ALL_RTCM_MESSAGE_IDS
+    }
+    port_set = {
+        port: PortProtocolSet(
+            **{"in": ports.enabled_in(port), "out": ports.enabled_out(port)}
+        )
+        for port in PortId
+    }
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=scalars.uart1_baud, uart2=scalars.uart2_baud),
+        meas_period_ms=scalars.meas_period_ms,
+        constellations=gnss.enabled_constellations(),
+        ports=port_set,
+        dyn_model=scalars.dyn_model,
+        tmode_mode=scalars.tmode_mode,
+        elevation_mask_deg=scalars.elevation_mask_deg,
+        bds_b2_enabled=scalars.bds_b2_enabled,
+        spi_enabled=scalars.spi_enabled,
+        rtcm_stream=RtcmStreamConfig(matrix=matrix),
+    )
+
+
+class ReceiverAssertionRead(NamedTuple):
+    """One ``get_receiver_assertion()`` read: the sync-set assertion plus
+    the raw multi-port RTCM read-back the page's I2C/SPI advisory needs.
+
+    I2C/SPI aren't part of ``assertion.rtcm_stream``'s matrix — that
+    mirrors ``ReceiverConfig``'s UART1/UART2/USB-only scope — so the
+    advisory display needs the wider read ``rtcm`` already carries.
+    Bundling both here means one receiver read serves both, rather than
+    the page re-polling RTCM a second time.
+    """
+
+    assertion: ReceiverAssertion
+    rtcm: RtcmPortConfig
 
 
 class DeviceService:
@@ -679,6 +744,34 @@ class DeviceService:
         """
         driver = self._require_connected()
         return await asyncio.to_thread(driver.get_base_config)
+
+    async def get_receiver_assertion(self) -> ReceiverAssertionRead:
+        """Read the whole receiver in one go as a ``ReceiverAssertion``.
+
+        Four driver reads — RTCM matrix, port protocols, GNSS
+        constellations, and the batched scalar poll (baud, meas rate,
+        dyn model, tmode mode, elevation mask, BeiDou B2, SPI) — landing
+        as three CFG-VALGET polls rather than seven separate round
+        trips, composed by the pure :func:`build_receiver_assertion`
+        (issue #97). Every field the Advanced GPS page seeds ``form``/
+        ``live`` from reflects the receiver's actual value.
+
+        Returns the raw RTCM read alongside the assertion — the page's
+        I2C/SPI advisory needs it (ports the matrix doesn't claim), and
+        re-polling it separately would reintroduce exactly the extra
+        lock-acquire/RX-drain/read-loop round trip this method exists
+        to collapse away.
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        driver = self._require_connected()
+        rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
+        ports = await asyncio.to_thread(driver.get_port_protocols)
+        gnss = await asyncio.to_thread(driver.get_gnss_config)
+        scalars = await asyncio.to_thread(driver.get_receiver_scalars)
+        assertion = build_receiver_assertion(rtcm, ports, gnss, scalars)
+        return ReceiverAssertionRead(assertion=assertion, rtcm=rtcm)
 
     async def configure_gnss(self, config: GnssConfig) -> None:
         """Write GNSS constellation configuration to the receiver.

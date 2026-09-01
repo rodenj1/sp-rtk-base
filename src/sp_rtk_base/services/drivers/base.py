@@ -20,6 +20,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortId,
     PortProtocolConfig,
+    ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
     SerialPortInfo,
@@ -326,6 +327,22 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
             RuntimeError: If the write fails.
+        """
+
+    @abc.abstractmethod
+    def get_receiver_scalars(self) -> ReceiverScalarConfig:
+        """Batched read of every scalar CFG value the full receiver read needs.
+
+        Baud (UART1/UART2), measurement rate, dynamics model, TMODE
+        mode, elevation mask, BeiDou B2 and SPI enablement — one poll
+        instead of up to seven separate getters (issue #97).
+
+        Returns:
+            The current scalar configuration.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the read fails.
         """
 
     @abc.abstractmethod

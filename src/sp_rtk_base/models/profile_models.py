@@ -25,14 +25,15 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sp_rtk_base.models.device_models import (
-    BaseMode as TmodeMode,
-)
-from sp_rtk_base.models.device_models import (
+    ALL_RTCM_MESSAGE_IDS,
     DynModel,
     GnssConstellation,
     PortId,
     RtcmRowId,
     UbxProtocol,
+)
+from sp_rtk_base.models.device_models import (
+    BaseMode as TmodeMode,
 )
 from sp_rtk_base.models.hardware_identity import (
     HARDWARE_ANY,
@@ -65,6 +66,12 @@ _DATA_LINK_CANDIDATE_PORTS: frozenset[PortId] = frozenset({PortId.UART1, PortId.
 
 _SANE_BAUD_MIN = 9600
 _SANE_BAUD_MAX = 921600
+
+#: Ports the RTCM matrix covers, in ``ReceiverAssertion``/``ReceiverConfig``
+#: alike — deliberately excludes I2C/SPI, which the schema doesn't claim.
+#: Public: shared with ``device_service.build_receiver_assertion`` and
+#: ``ui.pages.gps_config`` so the port set is defined in exactly one place.
+MATRIX_PORTS: tuple[PortId, ...] = (PortId.UART1, PortId.UART2, PortId.USB)
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +213,144 @@ class Profile(ReceiverConfig):
             )
 
         return self
+
+
+# ---------------------------------------------------------------------------
+# ReceiverAssertion — the shape a full receiver read returns (issue #97)
+# ---------------------------------------------------------------------------
+
+
+class BaudAssertion(BaseModel):
+    """Per-UART baud rate, both required — a live read always has both."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uart1: int = Field(ge=_SANE_BAUD_MIN, le=_SANE_BAUD_MAX)
+    uart2: int = Field(ge=_SANE_BAUD_MIN, le=_SANE_BAUD_MAX)
+
+
+class ReceiverAssertion(BaseModel):
+    """Every receiver field required — no optional values.
+
+    Deliberately symmetric with ``ReceiverConfig``: the same field list
+    Apply will eventually send is the field list a full read returns
+    (``data_link_port`` excepted — that stays page state, inferred from
+    the matrix rather than asserted). Unlike ``ReceiverConfig``, there
+    is no "omitted means leave it alone" here — every field always
+    carries the receiver's actual value, which is exactly what makes a
+    ``ReceiverAssertion`` usable as both ``form`` and ``live`` state: on
+    seed they're equal by construction, and every field the page
+    displays reflects the receiver rather than a schema default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    baud: BaudAssertion
+    meas_period_ms: int = Field(ge=100, le=60000)
+    constellations: list[GnssConstellation]
+    ports: dict[PortId, PortProtocolSet]
+    dyn_model: DynModel
+    tmode_mode: TmodeMode
+    elevation_mask_deg: int = Field(ge=0, le=90)
+    bds_b2_enabled: bool
+    spi_enabled: bool
+    rtcm_stream: RtcmStreamConfig
+
+
+def _dense_matrix(
+    matrix: dict[RtcmRowId, dict[PortId, bool]],
+) -> dict[RtcmRowId, dict[PortId, bool]]:
+    """Normalize a possibly-sparse row x port matrix to the full catalog
+    x :data:`MATRIX_PORTS` grid (absent cell = off).
+
+    A profile's matrix is sparse by design (``RtcmStreamConfig``: absent
+    cell = off); a live read-back is already dense. Routing both through
+    this same normalization is what makes a merged/live/form matrix
+    comparable by plain equality.
+    """
+    return {
+        row_id: {port: matrix.get(row_id, {}).get(port, False) for port in MATRIX_PORTS}
+        for row_id in ALL_RTCM_MESSAGE_IDS
+    }
+
+
+def merge_profile_into_assertion(
+    profile: Profile, live: ReceiverAssertion
+) -> ReceiverAssertion:
+    """Resolve a profile pick's optional omissions against a live-seeded
+    assertion, producing a fully-populated ``form``.
+
+    Wherever *profile* leaves a field unset, *live*'s value stays in
+    place instead of falling back to a schema default — e.g. the
+    built-in profile omits USB port protocols and ``tmode_mode`` on
+    purpose, and both stay whatever the receiver already reports.
+    ``ports`` is merged per-port (a profile may set some ports and
+    leave others alone); every other field is whole-field.
+
+    ``rtcm_stream`` is the one exception to the omission rule: a
+    profile's matrix is always assertive (absent cell = off, never
+    "leave alone" — see ``RtcmStreamConfig``), so it's taken from
+    *profile* outright, normalized to the same dense grid *live*'s
+    matrix already uses.
+
+    ``meas_period_ms`` is a second, narrower exception, inherited from
+    ``ReceiverConfig`` rather than introduced here: that field is a
+    plain ``int`` defaulting to ``1000`` (see ``ReceiverConfig``), not
+    ``int | None`` like every other optimisation/role field, so a
+    profile that never mentions it is indistinguishable from one that
+    explicitly wants ``1000`` — there is no wire-level "omitted" state
+    to fall back to *live* from. ``profile.meas_period_ms`` is always
+    used as-is.
+
+    A pure, module-level function (issue #97) — no device I/O, no page
+    state — so the omission rule is an explicit, testable merge step
+    rather than implicit driver or page-closure behaviour.
+    """
+    merged_ports = dict(live.ports)
+    if profile.ports is not None:
+        merged_ports.update(profile.ports)
+
+    profile_baud = profile.baud
+    baud = BaudAssertion(
+        uart1=(
+            profile_baud.uart1
+            if profile_baud is not None and profile_baud.uart1 is not None
+            else live.baud.uart1
+        ),
+        uart2=(
+            profile_baud.uart2
+            if profile_baud is not None and profile_baud.uart2 is not None
+            else live.baud.uart2
+        ),
+    )
+
+    return ReceiverAssertion(
+        baud=baud,
+        meas_period_ms=profile.meas_period_ms,
+        constellations=(
+            profile.constellations
+            if profile.constellations is not None
+            else live.constellations
+        ),
+        ports=merged_ports,
+        dyn_model=profile.dyn_model
+        if profile.dyn_model is not None
+        else live.dyn_model,
+        tmode_mode=(
+            profile.tmode_mode if profile.tmode_mode is not None else live.tmode_mode
+        ),
+        elevation_mask_deg=(
+            profile.elevation_mask_deg
+            if profile.elevation_mask_deg is not None
+            else live.elevation_mask_deg
+        ),
+        bds_b2_enabled=(
+            profile.bds_b2_enabled
+            if profile.bds_b2_enabled is not None
+            else live.bds_b2_enabled
+        ),
+        spi_enabled=(
+            profile.spi_enabled if profile.spi_enabled is not None else live.spi_enabled
+        ),
+        rtcm_stream=RtcmStreamConfig(matrix=_dense_matrix(profile.rtcm_stream.matrix)),
+    )

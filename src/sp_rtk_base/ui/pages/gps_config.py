@@ -57,10 +57,8 @@ from sp_rtk_base.models.device_models import (
     DeviceCapability,
     DeviceConnectionState,
     DynModel,
-    GnssConfig,
     GnssConstellation,
     PortId,
-    PortProtocolConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
@@ -81,11 +79,15 @@ from sp_rtk_base.models.hardware_identity import (
     is_compatible,
 )
 from sp_rtk_base.models.profile_models import (
+    MATRIX_PORTS,
+    BaudAssertion,
     BaudConfig,
     PortProtocolSet,
     Profile,
+    ReceiverAssertion,
     ReceiverConfig,
     RtcmStreamConfig,
+    merge_profile_into_assertion,
 )
 from sp_rtk_base.services import (
     get_config_service,
@@ -115,11 +117,6 @@ _GNSS_DISPLAY: list[tuple[str, str]] = [
     ("sbas", "SBAS"),
     ("qzss", "QZSS"),
 ]
-
-#: Ports the boolean RTCM matrix covers — matches
-#: ``RtcmStreamConfig.matrix``'s column set (``PortId``), not the full
-#: 5-port live read-back.
-MATRIX_PORTS: list[PortId] = [PortId.UART1, PortId.UART2, PortId.USB]
 
 #: Data-link-capable ports — highlighted matrix columns. Mirrors
 #: ``profile_models._DATA_LINK_CANDIDATE_PORTS`` (USB excluded).
@@ -256,43 +253,24 @@ def apply_blocked_reason(data_link_port: list[PortId]) -> str | None:
     return None
 
 
-@dataclass
-class FormExtras:
-    """The hardware-section fields beyond the matrix and data-link ports.
-
-    Not editable via any widget on this page yet (see the module
-    docstring) — this only carries values a *profile pick* pre-fills,
-    so Apply can push them and Save-as / "modified from X" can compare
-    against them. ``None`` mirrors ``ReceiverConfig``'s own "leave
-    untouched" semantics for every field except ``meas_period_ms``,
-    which ``ReceiverConfig`` itself always defaults to ``1000``.
-    """
-
-    ports: dict[PortId, PortProtocolSet] | None = None
-    constellations: list[GnssConstellation] | None = None
-    baud: BaudConfig | None = None
-    meas_period_ms: int = 1000
-    dyn_model: DynModel | None = None
-    tmode_mode: TmodeMode | None = None
-    elevation_mask_deg: int | None = None
-    bds_b2_enabled: bool | None = None
-    spi_enabled: bool | None = None
-
-
 def build_apply_config(
     matrix: dict[RtcmRowId, dict[PortId, bool]],
     data_link_port: list[PortId],
-    extras: FormExtras | None = None,
+    assertion: ReceiverAssertion | None = None,
 ) -> ReceiverConfig:
     """Build a ``ReceiverConfig`` from the form state.
 
-    *extras* defaults to an all-``None`` :class:`FormExtras` — nothing
-    but the matrix and data-link ports set. ``_apply()`` always uses
-    that default (Apply stays scoped to the matrix + data-link ports,
-    per #65 — the other fields have no live read-back to verify a
-    write against). Save-as and the "modified from X" comparison pass
-    the real *extras* through, since those only compare in-form state
-    and never touch the receiver.
+    *assertion* defaults to ``None`` — nothing but the matrix and
+    data-link ports set. ``_apply()`` always uses that default (Apply
+    stays scoped to the matrix + data-link ports, per #65 — the other
+    fields have no live read-back to verify a write against). Save-as
+    and the "modified from X" comparison pass the current ``form``
+    :class:`ReceiverAssertion` through, since those only compare
+    in-form state and never touch the receiver. *matrix* is always
+    passed explicitly, even when it's the same value as
+    ``assertion.rtcm_stream.matrix`` — every caller that has an
+    *assertion* happens to derive *matrix* from it directly beforehand,
+    so the two never actually diverge in practice.
 
     Raises:
         pydantic.ValidationError: If the resulting config fails a
@@ -300,82 +278,55 @@ def build_apply_config(
             data-link port) — a client-side pre-write refusal, nothing
             is sent to the receiver.
     """
-    extras = extras or FormExtras()
+    if assertion is None:
+        return ReceiverConfig(
+            data_link_port=data_link_port,
+            rtcm_stream=RtcmStreamConfig(matrix=matrix),
+        )
     return ReceiverConfig(
-        ports=extras.ports,
-        constellations=extras.constellations,
-        baud=extras.baud,
-        meas_period_ms=extras.meas_period_ms,
-        dyn_model=extras.dyn_model,
-        tmode_mode=extras.tmode_mode,
-        elevation_mask_deg=extras.elevation_mask_deg,
-        bds_b2_enabled=extras.bds_b2_enabled,
-        spi_enabled=extras.spi_enabled,
+        ports=assertion.ports,
+        constellations=assertion.constellations,
+        baud=BaudConfig(uart1=assertion.baud.uart1, uart2=assertion.baud.uart2),
+        meas_period_ms=assertion.meas_period_ms,
+        dyn_model=assertion.dyn_model,
+        tmode_mode=assertion.tmode_mode,
+        elevation_mask_deg=assertion.elevation_mask_deg,
+        bds_b2_enabled=assertion.bds_b2_enabled,
+        spi_enabled=assertion.spi_enabled,
         data_link_port=data_link_port,
         rtcm_stream=RtcmStreamConfig(matrix=matrix),
     )
 
 
-def profile_matrix_to_form_matrix(
-    profile: Profile,
-) -> dict[RtcmRowId, dict[PortId, bool]]:
-    """Normalize a profile's sparse matrix to the full catalog x port grid.
-
-    Mirrors :func:`rtcm_config_to_matrix` — the form's out-of-sync
-    comparison relies on every matrix always covering every catalog
-    row x :data:`MATRIX_PORTS` cell, whether it was seeded from a live
-    read-back or, here, a profile pick.
-    """
-    matrix = profile.rtcm_stream.matrix
-    return {
-        row_id: {port: matrix.get(row_id, {}).get(port, False) for port in MATRIX_PORTS}
-        for row_id in ALL_RTCM_MESSAGE_IDS
-    }
-
-
-def profile_to_form_extras(profile: Profile) -> FormExtras:
-    """Everything a profile pick writes into the form besides matrix/data-link."""
-    return FormExtras(
-        ports=profile.ports,
-        constellations=profile.constellations,
-        baud=profile.baud,
-        meas_period_ms=profile.meas_period_ms,
-        dyn_model=profile.dyn_model,
-        tmode_mode=profile.tmode_mode,
-        elevation_mask_deg=profile.elevation_mask_deg,
-        bds_b2_enabled=profile.bds_b2_enabled,
-        spi_enabled=profile.spi_enabled,
-    )
-
-
-def receiver_config_from_profile(profile: Profile) -> ReceiverConfig:
-    """The ``ReceiverConfig`` a profile carries, with identity stripped.
+def receiver_config_from_profile(
+    profile: Profile, live: ReceiverAssertion
+) -> ReceiverConfig:
+    """The ``ReceiverConfig`` picking *profile* against *live* would produce,
+    with identity stripped.
 
     Used to compare "the form" against "the selected profile" as the
     same type — a ``Profile`` is a ``ReceiverConfig`` plus identity
     fields, and those must not participate in the "modified from X"
     equality check.
 
-    Deliberately built through :func:`build_apply_config` with the
-    same :func:`profile_matrix_to_form_matrix`/:func:`profile_to_form_extras`
-    normalization :func:`_select_profile` (in the page closure) uses to
-    seed the form from this same profile — a stored profile's matrix is
-    *sparse* (absent cell = off), while the form's is always *dense*
-    (every catalog row x port present). Comparing a freshly-picked,
-    untouched form against ``ReceiverConfig(**profile.model_dump())``
-    would almost always report "modified" — the same on/off state,
-    represented as two differently-shaped dicts that don't compare
-    equal — unless both sides go through the identical normalization.
+    Deliberately built through the same :func:`merge_profile_into_assertion`
+    resolution :func:`_select_profile` (in the page closure) uses to seed
+    the form from this same profile against the current *live* state —
+    a stored profile's matrix is *sparse* (absent cell = off) and its
+    optional fields mean "leave the live value alone", while the form
+    is always fully populated. Comparing a freshly-picked, untouched
+    form against a bare ``profile.model_dump()`` would almost always
+    report "modified" unless both sides go through the identical
+    resolution.
     """
+    merged = merge_profile_into_assertion(profile, live)
     return build_apply_config(
-        profile_matrix_to_form_matrix(profile),
-        list(profile.data_link_port),
-        profile_to_form_extras(profile),
+        merged.rtcm_stream.matrix, list(profile.data_link_port), merged
     )
 
 
 def is_modified_from_profile(
-    form_config: ReceiverConfig, profile: Profile | None
+    form_config: ReceiverConfig, profile: Profile | None, live: ReceiverAssertion
 ) -> bool:
     """Whether *form_config* diverges from *profile* — the second, independent
     indicator (form vs. selected profile), distinct from "out of sync" (form
@@ -383,17 +334,17 @@ def is_modified_from_profile(
     nothing to have diverged from."""
     if profile is None:
         return False
-    return form_config != receiver_config_from_profile(profile)
+    return form_config != receiver_config_from_profile(profile, live)
 
 
 def save_as_enabled(
-    form_config: ReceiverConfig | None, profile: Profile | None
+    form_config: ReceiverConfig | None, profile: Profile | None, live: ReceiverAssertion
 ) -> bool:
     """Save-as is available whenever the form is valid, suppressed only when
     a *selected* profile still exactly equals the form."""
     if form_config is None:
         return False
-    return profile is None or is_modified_from_profile(form_config, profile)
+    return profile is None or is_modified_from_profile(form_config, profile, live)
 
 
 def suggest_profile_name(profile: Profile | None, hardware_target: str) -> str:
@@ -449,82 +400,54 @@ def build_saved_profile(
 
 
 def resolve_ports_display(
-    live: PortProtocolConfig,
-    form_ports: dict[PortId, PortProtocolSet] | None,
+    ports: dict[PortId, PortProtocolSet],
 ) -> dict[PortId, tuple[list[str], list[str]]]:
     """Per-port (in, out) protocol name lists the "Port Protocols" display
-    renders — the live read-back, unless a profile pick set *form_ports*, in
-    which case the form is the source of truth (issue #66)."""
-    if form_ports is not None:
-        empty = PortProtocolSet()
-        return {
-            port: (
-                [p.value for p in form_ports.get(port, empty).in_],
-                [p.value for p in form_ports.get(port, empty).out],
-            )
-            for port in (PortId.UART1, PortId.UART2, PortId.USB)
-        }
+    renders, straight from the form's always-populated ``ports`` map."""
+    empty = PortProtocolSet()
     return {
         port: (
-            [p.value for p in live.enabled_in(port)],
-            [p.value for p in live.enabled_out(port)],
+            [p.value for p in ports.get(port, empty).in_],
+            [p.value for p in ports.get(port, empty).out],
         )
         for port in (PortId.UART1, PortId.UART2, PortId.USB)
     }
 
 
-def resolve_gnss_display(
-    live: GnssConfig,
-    form_constellations: list[GnssConstellation] | None,
-) -> dict[str, bool]:
+def resolve_gnss_display(constellations: list[GnssConstellation]) -> dict[str, bool]:
     """Constellation -> enabled map the "GNSS Constellations" display
-    renders — the live read-back, unless a profile pick set
-    *form_constellations*, in which case only those are enabled."""
-    if form_constellations is not None:
-        wanted = set(form_constellations)
-        return {c.value: c in wanted for c in GnssConstellation}
-    return {sys_cfg.constellation.value: sys_cfg.enabled for sys_cfg in live.systems}
+    renders, straight from the form's always-populated ``constellations``
+    list."""
+    wanted = set(constellations)
+    return {c.value: c in wanted for c in GnssConstellation}
 
 
-def _tri_state_text(value: bool | None) -> str:
-    """``"on"``/``"off"``/``"unchanged"`` for an optional bool form field."""
-    return "unchanged" if value is None else ("on" if value else "off")
-
-
-def hw_extras_display(extras: FormExtras) -> list[tuple[str, str, str]]:
+def hw_extras_display(assertion: ReceiverAssertion) -> list[tuple[str, str, str]]:
     """(css-class, label, value) triples the "Hardware Section" display
-    renders — every :class:`FormExtras` field the matrix/ports/GNSS views
-    don't already cover."""
-    baud_parts: list[str] = []
-    if extras.baud is not None:
-        if extras.baud.uart1 is not None:
-            baud_parts.append(f"UART1={extras.baud.uart1}")
-        if extras.baud.uart2 is not None:
-            baud_parts.append(f"UART2={extras.baud.uart2}")
-
-    hz = 1000 / extras.meas_period_ms
+    renders — every :class:`ReceiverAssertion` field the matrix/ports/GNSS
+    views don't already cover. Every field is always populated (issue
+    #97), so every value shown is real — never a placeholder."""
+    hz = 1000 / assertion.meas_period_ms
     return [
         ("hw-field-meas-rate", "Measurement Rate", f"{hz:g} Hz"),
-        ("hw-field-baud", "Baud", ", ".join(baud_parts) or "unchanged"),
         (
-            "hw-field-dyn-model",
-            "Dynamics Model",
-            extras.dyn_model.value if extras.dyn_model else "unchanged",
+            "hw-field-baud",
+            "Baud",
+            f"UART1={assertion.baud.uart1}, UART2={assertion.baud.uart2}",
         ),
-        (
-            "hw-field-tmode",
-            "Time Mode",
-            extras.tmode_mode.value if extras.tmode_mode else "unchanged",
-        ),
+        ("hw-field-dyn-model", "Dynamics Model", assertion.dyn_model.value),
+        ("hw-field-tmode", "Time Mode", assertion.tmode_mode.value),
         (
             "hw-field-elevation-mask",
             "Elevation Mask",
-            f"{extras.elevation_mask_deg}°"
-            if extras.elevation_mask_deg is not None
-            else "unchanged",
+            f"{assertion.elevation_mask_deg}°",
         ),
-        ("hw-field-bds-b2", "BeiDou B2", _tri_state_text(extras.bds_b2_enabled)),
-        ("hw-field-spi", "SPI", _tri_state_text(extras.spi_enabled)),
+        (
+            "hw-field-bds-b2",
+            "BeiDou B2",
+            "on" if assertion.bds_b2_enabled else "off",
+        ),
+        ("hw-field-spi", "SPI", "on" if assertion.spi_enabled else "off"),
     ]
 
 
@@ -539,6 +462,23 @@ def copy_matrix(
     comparison.
     """
     return {row: dict(ports) for row, ports in matrix.items()}
+
+
+def placeholder_assertion() -> ReceiverAssertion:
+    """An empty ``ReceiverAssertion`` for the page's pre-connect state,
+    before any live receiver read has happened."""
+    return ReceiverAssertion(
+        baud=BaudAssertion(uart1=DEFAULT_BAUD, uart2=DEFAULT_BAUD),
+        meas_period_ms=1000,
+        constellations=[],
+        ports={},
+        dyn_model=DynModel.PORTABLE,
+        tmode_mode=TmodeMode.DISABLED,
+        elevation_mask_deg=0,
+        bds_b2_enabled=False,
+        spi_enabled=False,
+        rtcm_stream=RtcmStreamConfig(matrix=rtcm_config_to_matrix(RtcmPortConfig())),
+    )
 
 
 def format_cell_diff(diff: ApplyConfigCellDiff) -> str:
@@ -1063,11 +1003,10 @@ def gps_config_page() -> None:
             source of truth afterwards: further matrix/data-link edits
             mutate it same as before, independent of the profile pick.
             """
-            nonlocal selected_profile, form_matrix, form_data_link_ports, form_extras
+            nonlocal selected_profile, form, form_data_link_ports
             selected_profile = profile
-            form_matrix = profile_matrix_to_form_matrix(profile)
+            form = merge_profile_into_assertion(profile, live)
             form_data_link_ports = list(profile.data_link_port)
-            form_extras = profile_to_form_extras(profile)
 
             _render_matrix()
             _render_ports_view()
@@ -1261,37 +1200,34 @@ def gps_config_page() -> None:
             else:
                 error_label.set_visibility(False)
 
-        # Editable form state (issue #65) — seeded from the live receiver on
-        # every load/reload/reconnect, then mutated by matrix clicks and the
-        # data-link checkboxes until the next Apply or reseed.
-        form_matrix: dict[RtcmRowId, dict[PortId, bool]] = rtcm_config_to_matrix(
-            RtcmPortConfig()
-        )
-        live_matrix: dict[RtcmRowId, dict[PortId, bool]] = copy_matrix(form_matrix)
+        # Editable form state (issue #97) — a ``form``/``live`` assertion
+        # pair plus the data-link port selection, seeded from the live
+        # receiver on every load/reload/reconnect. ``form`` holds operator
+        # intent (mutated by matrix clicks, profile picks, and the
+        # data-link checkboxes until the next Apply or reseed); ``live``
+        # holds receiver truth. On seed they are equal by construction.
+        form: ReceiverAssertion = placeholder_assertion()
+        live: ReceiverAssertion = form.model_copy(deep=True)
         form_data_link_ports: list[PortId] = []
 
-        # Issue #66 additions — the rest of the "hardware section" (ports,
-        # GNSS, baud, role fields, optimisations), the profile a pick
-        # selected (None = no pick, the default/transient state), and the
-        # live ports/GNSS read-backs the "Port Protocols"/"GNSS
-        # Constellations" display falls back to when no profile is picked.
-        form_extras = FormExtras()
+        # The profile a pick selected (None = no pick, the default/
+        # transient state).
         selected_profile: Profile | None = None
-        live_ports = PortProtocolConfig()
-        live_gnss = GnssConfig()
         rename_target: str | None = None
         delete_target: str | None = None
         delete_target_label: str = ""
 
         def _out_of_sync() -> bool:
-            return form_matrix != live_matrix
+            """Matrix-only, matching what Apply actually pushes (#65/#66) —
+            the rest of ``form`` has no live read-back to verify against."""
+            return form.rtcm_stream.matrix != live.rtcm_stream.matrix
 
         def _current_form_config() -> ReceiverConfig | None:
             """The form as a ``ReceiverConfig``, or ``None`` if it doesn't
             currently validate (e.g. no data-link port selected)."""
             try:
                 return build_apply_config(
-                    form_matrix, form_data_link_ports, form_extras
+                    form.rtcm_stream.matrix, form_data_link_ports, form
                 )
             except ValidationError:
                 return None
@@ -1299,7 +1235,7 @@ def gps_config_page() -> None:
         def _render_ports_view() -> None:
             ports_view.clear()
             with ports_view:
-                display = resolve_ports_display(live_ports, form_extras.ports)
+                display = resolve_ports_display(form.ports)
                 for port_id in (PortId.UART1, PortId.UART2, PortId.USB):
                     in_names, out_names = display[port_id]
                     with ui.row().classes("items-center gap-2"):
@@ -1316,9 +1252,7 @@ def gps_config_page() -> None:
         def _render_gnss_view() -> None:
             gnss_view.clear()
             with gnss_view:
-                enabled_map = resolve_gnss_display(
-                    live_gnss, form_extras.constellations
-                )
+                enabled_map = resolve_gnss_display(form.constellations)
                 for c_val, c_name in _GNSS_DISPLAY:
                     enabled = enabled_map.get(c_val, False)
                     ui.badge(c_name).props(
@@ -1328,13 +1262,15 @@ def gps_config_page() -> None:
         def _render_hw_extras_view() -> None:
             hw_extras_view.clear()
             with hw_extras_view:
-                for css_class, label, value in hw_extras_display(form_extras):
+                for css_class, label, value in hw_extras_display(form):
                     with ui.column().classes(f"{css_class} gap-0"):
                         ui.label(label).classes("text-caption text-grey-5")
                         ui.label(value).classes("text-white")
 
         def _toggle_matrix_cell(msg_id: RtcmRowId, port: PortId) -> None:
-            form_matrix[msg_id][port] = not form_matrix[msg_id][port]
+            form.rtcm_stream.matrix[msg_id][port] = not form.rtcm_stream.matrix[msg_id][
+                port
+            ]
             _render_matrix()
             _on_form_changed()
 
@@ -1386,7 +1322,7 @@ def gps_config_page() -> None:
                                     ui.badge("Required").props("outline color=warning")
 
                             for port in MATRIX_PORTS:
-                                on = form_matrix[msg_id][port]
+                                on = form.rtcm_stream.matrix[msg_id][port]
                                 cell_classes = (
                                     f"rtcm-cell rtcm-cell-{slug}-{port.value} "
                                     "text-center cursor-pointer"
@@ -1402,7 +1338,7 @@ def gps_config_page() -> None:
                                 )
 
         def _render_data_link_picker() -> None:
-            inferred = infer_data_link_ports(form_matrix)
+            inferred = infer_data_link_ports(form.rtcm_stream.matrix)
             data_link_hint.text = (
                 f"Inferred from current RTCM state: "
                 f"{', '.join(p.value for p in inferred)}"
@@ -1452,7 +1388,7 @@ def gps_config_page() -> None:
                 modified_badge.set_visibility(False)
                 return
             modified_badge.set_visibility(True)
-            if is_modified_from_profile(form_config, selected_profile):
+            if is_modified_from_profile(form_config, selected_profile, live):
                 modified_badge.text = f"Modified from {display_label(selected_profile)}"
                 modified_badge.props("color=warning")
             else:
@@ -1461,7 +1397,7 @@ def gps_config_page() -> None:
 
         def _render_save_as_gate() -> None:
             save_as_btn.set_enabled(
-                save_as_enabled(_current_form_config(), selected_profile)
+                save_as_enabled(_current_form_config(), selected_profile, live)
             )
 
         def _on_form_changed() -> None:
@@ -1501,19 +1437,22 @@ def gps_config_page() -> None:
         async def _apply() -> None:
             """Push the current form (matrix + data-link ports) to the receiver.
 
-            Deliberately excludes ``form_extras`` (issue #66 review):
-            those fields have no live read-back, so a profile-populated
-            value pushed through Apply could never be verified by the
-            read-back-diff below, unlike the matrix. Extending Apply to
-            the full hardware section is out of #66's scope — it isn't
-            in the acceptance criteria, and #65 deliberately scoped
-            Apply to "only the RTCM matrix and the data-link ports".
-            ``form_extras`` is still used for Save-as/"modified from X",
-            which compare in-form state and never touch the receiver.
+            Deliberately excludes the rest of ``form`` (issue #66
+            review): those fields have no live read-back, so a
+            profile-populated value pushed through Apply could never be
+            verified by the read-back-diff below, unlike the matrix.
+            Extending Apply to the full hardware section is out of
+            #66's scope — it isn't in the acceptance criteria, and #65
+            deliberately scoped Apply to "only the RTCM matrix and the
+            data-link ports". The rest of ``form`` is still used for
+            Save-as/"modified from X", which compare in-form state and
+            never touch the receiver.
             """
-            nonlocal live_matrix
+            nonlocal live
             try:
-                config = build_apply_config(form_matrix, form_data_link_ports)
+                config = build_apply_config(
+                    form.rtcm_stream.matrix, form_data_link_ports
+                )
             except ValidationError as exc:
                 _set_apply_result(
                     f"Apply refused: {exc.errors()[0]['msg']} — nothing was written.",
@@ -1538,15 +1477,25 @@ def gps_config_page() -> None:
                 return
 
             if result.status == "ok":
-                live_matrix = copy_matrix(form_matrix)
+                live = live.model_copy(
+                    update={
+                        "rtcm_stream": RtcmStreamConfig(
+                            matrix=copy_matrix(form.rtcm_stream.matrix)
+                        )
+                    }
+                )
                 _set_apply_result("Applied and verified ✓", ok=True)
                 ui.notify("Applied and verified ✓", type="positive")
             else:
                 # The writes landed but the read-back disagrees — reflect
                 # the receiver's *actual* state so "out of sync" stays
                 # honest even though only a successful apply clears it.
+                new_matrix = copy_matrix(live.rtcm_stream.matrix)
                 for cell in result.diff:
-                    live_matrix[cell.row_id][cell.port] = cell.actual
+                    new_matrix[cell.row_id][cell.port] = cell.actual
+                live = live.model_copy(
+                    update={"rtcm_stream": RtcmStreamConfig(matrix=new_matrix)}
+                )
                 _set_apply_result(
                     "Applied, but verification found mismatches — nothing "
                     "was rolled back.",
@@ -1634,19 +1583,19 @@ def gps_config_page() -> None:
             per spec — the form always re-seeds from the live receiver,
             never from the last-loaded profile.
             """
-            nonlocal form_matrix, live_matrix, form_data_link_ports
-            nonlocal form_extras, selected_profile, live_ports, live_gnss
-            rtcm = await svc.get_rtcm_port_config()
-            ports = await svc.get_port_protocols()
-            gnss = await svc.get_gnss_config()
-
-            form_matrix = rtcm_config_to_matrix(rtcm)
-            live_matrix = copy_matrix(form_matrix)
-            form_data_link_ports = infer_data_link_ports(form_matrix)
-            form_extras = FormExtras()
+            nonlocal form, live, form_data_link_ports, selected_profile
+            read = await svc.get_receiver_assertion()
+            live = read.assertion
+            form = live.model_copy(deep=True)
+            form_data_link_ports = infer_data_link_ports(live.rtcm_stream.matrix)
             selected_profile = None
-            live_ports = ports
-            live_gnss = gnss
+
+            # The I2C/SPI advisory (rows enabled on a port the matrix
+            # doesn't manage) needs the raw multi-port read-back, which
+            # ``ReceiverAssertion`` doesn't carry — ``read.rtcm`` reuses
+            # the one poll ``get_receiver_assertion`` already made rather
+            # than re-polling RTCM a second time.
+            rtcm = read.rtcm
 
             _render_ports_view()
             _render_gnss_view()

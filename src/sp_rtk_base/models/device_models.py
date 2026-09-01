@@ -428,6 +428,28 @@ class GnssConfig(BaseModel):
         return [s.constellation for s in self.systems if s.enabled]
 
 
+class ReceiverScalarConfig(BaseModel):
+    """Every scalar (non-matrix, non-per-port) CFG value the Advanced GPS
+    page's full receiver read needs — baud, measurement rate, dynamics
+    model, TMODE mode, elevation mask, BeiDou B2 and SPI enablement.
+
+    Read from the receiver in a single CFG-VALGET poll (issue #97),
+    replacing what would otherwise be up to seven separate getters —
+    three of which (dyn model, UART baud, TMODE mode) already existed,
+    the other four (measurement rate, elevation mask, BeiDou B2, SPI)
+    had no standalone getter at all before this.
+    """
+
+    uart1_baud: int = Field(description="UART1 baud rate")
+    uart2_baud: int = Field(description="UART2 baud rate")
+    meas_period_ms: int = Field(description="Measurement period in milliseconds")
+    dyn_model: DynModel = Field(description="Dynamics platform model")
+    tmode_mode: BaseMode = Field(description="Active base station mode")
+    elevation_mask_deg: int = Field(description="Minimum satellite elevation, degrees")
+    bds_b2_enabled: bool = Field(description="Whether the BeiDou B2 signal is enabled")
+    spi_enabled: bool = Field(description="Whether the SPI interface is enabled")
+
+
 # ---------------------------------------------------------------------------
 # Survey-in progress
 # ---------------------------------------------------------------------------

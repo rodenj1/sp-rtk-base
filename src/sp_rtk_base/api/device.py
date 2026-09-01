@@ -17,7 +17,6 @@ from sp_rtk_base.models.config_models import (
     InputProfile,
 )
 from sp_rtk_base.models.device_models import (
-    ApplyConfigResult,
     BaseInvariantsCheck,
     CurrentBaseConfig,
     DeviceStatus,
@@ -30,7 +29,7 @@ from sp_rtk_base.models.device_models import (
     SurveyInConfig,
     SurveyInProgress,
 )
-from sp_rtk_base.models.profile_models import ReceiverConfig
+from sp_rtk_base.models.profile_models import ApplyConfigResult, ReceiverApplyRequest
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
@@ -311,21 +310,31 @@ async def get_port_protocols(
 
 @router.post("/apply-config", response_model=ApplyConfigResult)
 async def apply_config(
-    config: ReceiverConfig,
+    request: ReceiverApplyRequest,
     svc: DeviceService = Depends(get_device_service),
 ) -> ApplyConfigResult:
-    """Apply a bare ``ReceiverConfig`` to the receiver, verified with a read-back.
+    """Apply the whole form to the receiver, verified with a per-leaf read-back diff.
+
+    *request* is the envelope Apply sends (issue #98): the full
+    asserted receiver state (``assertion``, a ``ReceiverAssertion`` —
+    every field, none omitted) plus ``data_link_port``, which has no
+    CFG key of its own and is only an input to ``ReceiverApplyRequest``'s
+    cross-field validators (never written, never part of the diff
+    below).
 
     An ordered series of layer=5 writes (see
-    ``DeviceService.apply_receiver_config`` for the exact sequence and
-    guards), followed by a read-back of the RTCM matrix. A read-back
-    mismatch still returns 200 with ``status: "failed"`` and a
-    per-cell diff — the writes are left in flash, nothing is rolled
-    back.
+    ``DeviceService.apply_receiver_config`` for the exact sequence,
+    the measurement-rate/baud unchanged-skip, and the guards), followed
+    by a full read-back diffed per-leaf, path-keyed against what was
+    sent. A read-back mismatch still returns 200 with
+    ``status: "failed"`` and the per-leaf diff — the writes are left in
+    flash, nothing is rolled back. ``read_back`` on the response is
+    always the fresh full assertion read, whichever ``status`` — the
+    caller syncs its live state from it either way.
 
     Status contract: 409 if not connected or the relay is running;
     422 for a schema violation (handled automatically by the
-    ``ReceiverConfig`` body validation); 400 for a business-rule
+    ``ReceiverApplyRequest`` body validation); 400 for a business-rule
     refusal, with the failed rule named and nothing written; 502 if a
     UART1 baud write lands but the console's own link can't be
     reopened at the new baud or the previous one (issue #62) — the
@@ -333,7 +342,7 @@ async def apply_config(
     needs a power-cycle or manual reconnect at the new baud rate.
     """
     try:
-        return await svc.apply_receiver_config(config)
+        return await svc.apply_receiver_config(request)
     except ApplyConfigLinkLostError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ApplyConfigRefusedError as exc:

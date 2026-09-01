@@ -1911,6 +1911,188 @@ class TestGetUartBaudRates:
         assert result == {PortId.UART1: 57600, PortId.UART2: 115200}
 
 
+class TestReadCfgKeysLocked:
+    """Tests for ``UbloxDriver._read_cfg_keys_locked`` (issue #94).
+
+    Covers the layer parameter, the tri-state (present / absent /
+    NAK) result, and the immediate-NAK-raise behaviour that
+    distinguishes this from ``_wait_for_ack``'s write-side sibling.
+    """
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_defaults_to_ram_layer(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """No layer arg polls RAM (0) — unchanged pre-#94 behaviour."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_dyn_model_valget(2)],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            result = driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_NAVSPG_DYNMODEL"]
+            )
+
+        assert result == {"CFG_NAVSPG_DYNMODEL": 2}
+        mock_ubx_msg.config_poll.assert_called_once_with(0, 0, ["CFG_NAVSPG_DYNMODEL"])
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_polls_requested_layer(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """An explicit layer is forwarded to ``config_poll``."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [_make_dyn_model_valget(2)],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_NAVSPG_DYNMODEL"], layer=2
+            )
+
+        mock_ubx_msg.config_poll.assert_called_once_with(2, 0, ["CFG_NAVSPG_DYNMODEL"])
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_unrecognised_key_omitted_not_sentineled(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A key the receiver doesn't recognise is absent from the
+        dict, not sentinelled to a fake ``-1`` reading."""
+        read_back = SimpleNamespace(identity="CFG-VALGET")  # no attrs
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            result = driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_UNKNOWN_KEY"]
+            )
+
+        assert result == {}
+        assert "CFG_UNKNOWN_KEY" not in result
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_nak_raises_immediately_naming_nak(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A NAK is detected on the first read, not after exhausting
+        the read loop, and the error names the NAK."""
+        driver, reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [_make_nak_response()]
+        )
+
+        with pytest.raises(RuntimeError, match="NAK"):
+            with driver._lock:  # pyright: ignore[reportPrivateUsage]
+                driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                    ["CFG_NAVSPG_DYNMODEL"]
+                )
+
+        # 1 read for MON-VER during connect() + 1 for the NAK — proves
+        # it raised immediately rather than looping to exhaustion.
+        assert reader.read.call_count == 2
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_mixed_batch_returns_only_present_keys(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A batch poll where only some keys are set at the requested
+        layer returns the ones that are, without failing."""
+        read_back = SimpleNamespace(identity="CFG-VALGET", CFG_UART1_BAUDRATE=57600)
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            result = driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_UART1_BAUDRATE", "CFG_UART2_BAUDRATE"]
+            )
+
+        assert result == {"CFG_UART1_BAUDRATE": 57600}
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_key_absent_at_other_layer_present_at_ram(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """A key never written to a layer reads as absent at that
+        layer while still returning its value at RAM."""
+        absent_at_bbr = SimpleNamespace(identity="CFG-VALGET")  # no attrs
+        present_at_ram = SimpleNamespace(identity="CFG-VALGET", CFG_NAVSPG_DYNMODEL=2)
+        driver, _reader = _connect_driver(
+            mock_serial_cls,
+            mock_reader_cls,
+            mock_ubx_msg,
+            [absent_at_bbr, present_at_ram],
+        )
+
+        with driver._lock:  # pyright: ignore[reportPrivateUsage]
+            bbr_result = driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_NAVSPG_DYNMODEL"], layer=2
+            )
+            ram_result = driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                ["CFG_NAVSPG_DYNMODEL"]
+            )
+
+        assert bbr_result == {}
+        assert ram_result == {"CFG_NAVSPG_DYNMODEL": 2}
+
+    @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
+    @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_no_response_raises_no_cfg_valget_error(
+        self,
+        mock_serial_cls: MagicMock,
+        mock_reader_cls: MagicMock,
+        mock_ubx_msg: MagicMock,
+    ) -> None:
+        """Total timeout (no CFG-VALGET or ACK-NAK at all) still
+        raises the existing 'no response' error."""
+        driver, _reader = _connect_driver(
+            mock_serial_cls, mock_reader_cls, mock_ubx_msg, []
+        )
+
+        with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+            with driver._lock:  # pyright: ignore[reportPrivateUsage]
+                driver._read_cfg_keys_locked(  # pyright: ignore[reportPrivateUsage]
+                    ["CFG_NAVSPG_DYNMODEL"]
+                )
+
+
 class TestConfigureBaud:
     """Tests for ``UbloxDriver.configure_baud`` (issue #62)."""
 

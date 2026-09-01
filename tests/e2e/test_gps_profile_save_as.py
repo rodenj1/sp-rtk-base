@@ -36,6 +36,10 @@ import pytest
 from playwright.sync_api import Page, expect
 
 BUILTIN_NAME = "ublox-f9p-base-standard"
+#: The built-in's ``display_name`` (issue #95) — provenance labels
+#: (picker row, "Matches"/"Modified from", "Forked from") render this,
+#: not the slug ``BUILTIN_NAME``.
+BUILTIN_DISPLAY_NAME = "u-blox F9P — Base Station (Standard)"
 
 
 def _delete_profile(api_base_url: str, name: str) -> None:
@@ -90,7 +94,7 @@ def _select_builtin(page: Page) -> None:
     expect(builtin_row).to_be_visible(timeout=10_000)
     builtin_row.locator(".profile-name").click()
     expect(page.locator(".modified-badge")).to_contain_text(
-        f"Matches {BUILTIN_NAME}", timeout=10_000
+        f"Matches {BUILTIN_DISPLAY_NAME}", timeout=10_000
     )
 
 
@@ -122,7 +126,7 @@ def test_selecting_profile_prefills_matrix_and_matches_immediately(
 
     modified_badge = page.locator(".modified-badge")
     expect(modified_badge).to_be_visible()
-    expect(modified_badge).to_contain_text(f"Matches {BUILTIN_NAME}")
+    expect(modified_badge).to_contain_text(f"Matches {BUILTIN_DISPLAY_NAME}")
 
     expect(page.locator(".save-as-btn")).to_be_disabled()
 
@@ -143,7 +147,7 @@ def test_editing_after_pick_flips_to_modified_and_reenables_save_as(
     page.locator(".rtcm-cell-1077-UART1").click()
 
     modified_badge = page.locator(".modified-badge")
-    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_NAME}")
+    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_DISPLAY_NAME}")
     expect(page.locator(".save-as-btn")).to_be_enabled()
 
 
@@ -164,7 +168,7 @@ def test_save_as_stays_enabled_after_a_real_successful_apply(
     page.locator(".rtcm-cell-1077-UART1").click()
 
     modified_badge = page.locator(".modified-badge")
-    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_NAME}")
+    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_DISPLAY_NAME}")
 
     page.get_by_role("button", name="Apply").click()
     expect(page.locator(".apply-result")).to_contain_text(
@@ -173,7 +177,7 @@ def test_save_as_stays_enabled_after_a_real_successful_apply(
 
     # Apply cleared "out of sync" (implicit — that's #65) but must leave
     # "modified from X" and Save-as exactly as they were.
-    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_NAME}")
+    expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_DISPLAY_NAME}")
     expect(page.locator(".save-as-btn")).to_be_enabled()
 
 
@@ -208,7 +212,7 @@ def test_save_as_forks_a_custom_profile_with_provenance(
     name_input = page.locator(".save-as-name input")
     expect(name_input).to_have_value(f"{BUILTIN_NAME}-copy")
     expect(page.locator(".save-as-from")).to_contain_text(
-        f"Forked from: {BUILTIN_NAME}"
+        f"Forked from: {BUILTIN_DISPLAY_NAME}"
     )
 
     forked_name = f"{BUILTIN_NAME}-copy"
@@ -326,6 +330,9 @@ def test_rename_then_delete_custom_profile(
     connected_gps: None,
     cleanup_profiles: list[str],
 ) -> None:
+    """Rename edits the display name only — the slug (and so the row's
+    CSS identity, ``.profile-row-e2e-rename-me``) never changes; only
+    the rendered label updates."""
     custom = {
         "name": "e2e-rename-me",
         "version": 1,
@@ -336,22 +343,22 @@ def test_rename_then_delete_custom_profile(
     resp = httpx.post(f"{api_base_url}/api/profiles", json=custom, timeout=5.0)
     assert resp.status_code in (201, 409), resp.text
     cleanup_profiles.append("e2e-rename-me")
-    cleanup_profiles.append("e2e-renamed")
 
     _goto_gps_config(page, base_url)
 
-    old_row = page.locator(".profile-row-e2e-rename-me")
-    expect(old_row).to_be_visible(timeout=10_000)
-    old_row.locator(".profile-rename-icon").click()
+    row = page.locator(".profile-row-e2e-rename-me")
+    expect(row).to_be_visible(timeout=10_000)
+    row.locator(".profile-rename-icon").click()
 
+    # No display_name set yet — the dialog falls back to the slug.
     expect(page.locator(".rename-name input")).to_have_value("e2e-rename-me")
-    page.locator(".rename-name input").fill("e2e-renamed")
+    page.locator(".rename-name input").fill("e2e Renamed")
     page.locator(".rename-confirm-btn").click()
 
-    new_row = page.locator(".profile-row-e2e-renamed")
-    expect(new_row).to_be_visible(timeout=10_000)
-    expect(page.locator(".profile-row-e2e-rename-me")).to_have_count(0)
+    # Same row (same slug) — only the visible label changed.
+    expect(row).to_be_visible(timeout=10_000)
+    expect(row.locator(".profile-name")).to_have_text("e2e Renamed")
 
-    new_row.locator(".profile-delete-icon").click()
+    row.locator(".profile-delete-icon").click()
     page.locator(".delete-confirm-btn").click()
-    expect(page.locator(".profile-row-e2e-renamed")).to_have_count(0, timeout=10_000)
+    expect(page.locator(".profile-row-e2e-rename-me")).to_have_count(0, timeout=10_000)

@@ -53,6 +53,7 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     RTCM_MESSAGE_GROUPS,
     ApplyConfigCellDiff,
+    CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
     DynModel,
@@ -63,6 +64,7 @@ from sp_rtk_base.models.device_models import (
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
+    SurveyInProgress,
 )
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
@@ -157,6 +159,18 @@ def resolve_identity(
     if hardware_target is None or hardware_confidence is None:
         return identity_from_target(HARDWARE_UNKNOWN, HardwareConfidence.UNKNOWN)
     return identity_from_target(hardware_target, hardware_confidence)
+
+
+def display_label(profile: Profile) -> str:
+    """The human-facing label for *profile* — its display name, falling
+    back to the slug (``name``) when none is set.
+
+    Every operator-visible rendering of a profile's identity (picker
+    rows, provenance labels like "Forked from"/"Modified from", the
+    rename dialog's prefill) goes through this one helper so the
+    fallback rule lives in exactly one place.
+    """
+    return profile.display_name or profile.name
 
 
 def build_picker_entries(
@@ -542,6 +556,69 @@ def row_slug(row_id: RtcmRowId) -> str:
     return row_id.value.replace(".", "_")
 
 
+# ---------------------------------------------------------------------------
+# Fixed Position three-step card (issue #96) — deliberately separate from
+# the profile-form helpers above. This card's state is derived entirely
+# from live receiver polls (``CurrentBaseConfig`` + ``SurveyInProgress``),
+# never from the selected/applied profile — a profile has no position
+# field, per the card's own "not part of the profile" copy.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FixedPositionStepState:
+    """Which step of Apply -> survey-in -> fixed-position the receiver is
+    currently at, plus the per-step status text the card renders.
+
+    ``current_step`` is 1 (apply profile), 2 (run survey-in) or 3 (fixed
+    position set) — steps before it are "done", steps after are "pending".
+    """
+
+    current_step: int
+    survey_state_text: str
+    fixed_pos_text: str
+
+
+def fixed_position_step_state(
+    base_config: CurrentBaseConfig, survey: SurveyInProgress
+) -> FixedPositionStepState:
+    """Derive the three-step card's current step + status text.
+
+    Step 3 (fixed position set) is current once the receiver reports
+    ``BaseMode.FIXED`` — a promoted survey-in and a manually restored
+    position both land here identically, and survey-in's own state is
+    irrelevant once fixed mode is reached. Step 2 (run survey-in) is
+    current while the receiver is in ``BaseMode.SURVEY_IN`` *or* the
+    survey-in poll reports ``active`` (covers a receiver mid-survey
+    whose TMODE read-back hasn't caught up yet). Anything else is step
+    1 (apply profile) — the baseline a freshly-applied, not-yet-surveyed
+    base sits in.
+    """
+    if base_config.mode == TmodeMode.FIXED:
+        return FixedPositionStepState(
+            current_step=3,
+            survey_state_text="— complete" if survey.valid else "— done",
+            fixed_pos_text=(
+                f"{base_config.latitude:.7f}°, {base_config.longitude:.7f}° "
+                f"± {base_config.accuracy_mm} mm"
+            ),
+        )
+    if base_config.mode == TmodeMode.SURVEY_IN or survey.active:
+        return FixedPositionStepState(
+            current_step=2,
+            survey_state_text=(
+                f"— running ({survey.duration_seconds}s, "
+                f"{survey.mean_accuracy_mm:.0f} mm, {survey.observations} obs)"
+            ),
+            fixed_pos_text="— none",
+        )
+    return FixedPositionStepState(
+        current_step=1,
+        survey_state_text="— not started",
+        fixed_pos_text="— none",
+    )
+
+
 @ui.page("/gps-config")
 def gps_config_page() -> None:
     """Render the advanced GPS configuration page."""
@@ -727,7 +804,7 @@ def gps_config_page() -> None:
         with ui.dialog() as rename_dialog, ui.card().classes("q-pa-md"):
             ui.label("Rename profile").classes("text-h6 text-white")
             ui.separator()
-            rename_name_input = ui.input("New name").classes(
+            rename_name_input = ui.input("Display name").classes(
                 "rename-name w-full q-mt-sm"
             )
             rename_error_label = ui.label("").classes(
@@ -788,6 +865,63 @@ def gps_config_page() -> None:
                 ui.label(
                     "Persist current receiver configuration to non-volatile memory"
                 ).classes("text-grey-4")
+
+        # ================================================================
+        # Section E: Fixed Position — three-step Apply -> survey-in ->
+        # fixed-position card (issue #96). Hidden until connected, like
+        # every other card but Connection. Deliberately NOT part of the
+        # Profile section above — a profile has no position field, and
+        # the card says so explicitly. Survey-in and position-setting
+        # stay owned by the Survey page; this card only links there
+        # rather than duplicating those controls (issue #96 acceptance
+        # criteria).
+        # ================================================================
+        fixed_position_card = ui.card().classes(
+            "fixed-position-card w-full q-pa-md q-mt-md"
+        )
+        fixed_position_card.set_visibility(False)
+
+        with fixed_position_card:
+            with ui.row().classes("items-center gap-2"):
+                ui.label("Fixed Position").classes("text-h6 text-white")
+                ui.badge("separate operator step — not part of the profile").classes(
+                    "fixed-position-not-in-profile"
+                ).props("outline color=grey")
+            ui.separator()
+            ui.label(
+                "A profile has no position field. After Apply, the base is a "
+                "correctly-configured fixed-mode receiver still without a "
+                "fixed point — positioning is your deliberate step, "
+                "unchanged from today's Survey-In page."
+            ).classes("text-grey-4 q-mt-xs text-caption")
+
+            with ui.row().classes(
+                "fixed-position-steps items-center gap-2 q-mt-md flex-wrap"
+            ):
+                fp_step1_label = ui.label("").classes("fixed-position-step-1 q-pa-xs")
+                ui.icon("arrow_forward").classes("text-grey-6")
+                fp_step2_label = ui.label("").classes("fixed-position-step-2 q-pa-xs")
+                ui.icon("arrow_forward").classes("text-grey-6")
+                fp_step3_label = ui.label("").classes("fixed-position-step-3 q-pa-xs")
+
+            with ui.row().classes("items-center gap-2 q-mt-md"):
+                ui.button("Run survey-in", icon="open_in_new").classes(
+                    "fixed-position-survey-link"
+                ).props("outline color=primary").on(
+                    "click", lambda: ui.navigate.to("/survey")
+                )
+                ui.button("Set fixed position", icon="open_in_new").classes(
+                    "fixed-position-manual-link"
+                ).props("outline color=primary").on(
+                    "click", lambda: ui.navigate.to("/survey")
+                )
+
+            ui.label(
+                "Survey-in is a live observation session (see Survey) — "
+                "this step is shown here only to make the apply -> "
+                "position sequence legible at a glance. It never blocks "
+                "Apply, and the profile never carries it."
+            ).classes("text-grey-5 q-mt-sm text-caption")
 
         # ================================================================
         # Event handlers
@@ -880,7 +1014,7 @@ def gps_config_page() -> None:
                                 ui.icon("check_circle").classes(
                                     "profile-selected-icon text-primary"
                                 )
-                            ui.label(entry.profile.name).classes(
+                            ui.label(display_label(entry.profile)).classes(
                                 f"profile-name {name_classes}"
                             )
                             ui.badge(
@@ -904,17 +1038,13 @@ def gps_config_page() -> None:
                                     "profile-rename-icon text-grey-4 cursor-pointer"
                                 ).on(
                                     "click",
-                                    lambda _, n=entry.profile.name: _open_rename_dialog(
-                                        n
-                                    ),
+                                    lambda _, p=entry.profile: _open_rename_dialog(p),
                                 ).tooltip("Rename")
                                 ui.icon("delete").classes(
                                     "profile-delete-icon text-grey-4 cursor-pointer"
                                 ).on(
                                     "click",
-                                    lambda _, n=entry.profile.name: _open_delete_dialog(
-                                        n
-                                    ),
+                                    lambda _, p=entry.profile: _open_delete_dialog(p),
                                 ).tooltip("Delete")
                                 ui.icon("download").classes(
                                     "profile-export-icon text-grey-4 cursor-pointer"
@@ -959,7 +1089,9 @@ def gps_config_page() -> None:
                 selected_profile, identity.target
             )
             save_as_from_label.text = (
-                f"Forked from: {selected_profile.name}" if selected_profile else ""
+                f"Forked from: {display_label(selected_profile)}"
+                if selected_profile
+                else ""
             )
             save_as_from_label.set_visibility(selected_profile is not None)
             save_as_error_label.set_visibility(False)
@@ -999,10 +1131,10 @@ def gps_config_page() -> None:
             _render_picker()
             _on_form_changed()
 
-        def _open_rename_dialog(name: str) -> None:
+        def _open_rename_dialog(profile: Profile) -> None:
             nonlocal rename_target
-            rename_target = name
-            rename_name_input.value = name
+            rename_target = profile.name
+            rename_name_input.value = display_label(profile)
             rename_error_label.set_visibility(False)
             rename_dialog.open()
 
@@ -1010,9 +1142,9 @@ def gps_config_page() -> None:
             nonlocal selected_profile
             if rename_target is None:
                 return
-            new_name = (rename_name_input.value or "").strip()
+            new_display_name = (rename_name_input.value or "").strip()
             try:
-                renamed = profile_store.rename_profile(rename_target, new_name)
+                renamed = profile_store.rename_profile(rename_target, new_display_name)
             except ProfileStoreError as exc:
                 rename_error_label.text = str(exc)
                 rename_error_label.set_visibility(True)
@@ -1021,14 +1153,17 @@ def gps_config_page() -> None:
             if selected_profile is not None and selected_profile.name == rename_target:
                 selected_profile = renamed
             rename_dialog.close()
-            ui.notify(f"Renamed to '{renamed.name}'", type="positive")
+            ui.notify(f"Renamed to '{display_label(renamed)}'", type="positive")
             _render_picker()
             _on_form_changed()
 
-        def _open_delete_dialog(name: str) -> None:
-            nonlocal delete_target
-            delete_target = name
-            delete_confirm_label.text = f"Delete custom profile '{name}'?"
+        def _open_delete_dialog(profile: Profile) -> None:
+            nonlocal delete_target, delete_target_label
+            delete_target = profile.name
+            delete_target_label = display_label(profile)
+            delete_confirm_label.text = (
+                f"Delete custom profile '{delete_target_label}'?"
+            )
             delete_dialog.open()
 
         def _confirm_delete() -> None:
@@ -1045,7 +1180,7 @@ def gps_config_page() -> None:
             if selected_profile is not None and selected_profile.name == delete_target:
                 selected_profile = None
             delete_dialog.close()
-            ui.notify(f"Deleted '{delete_target}'", type="positive")
+            ui.notify(f"Deleted '{delete_target_label}'", type="positive")
             _render_picker()
             _on_form_changed()
 
@@ -1112,6 +1247,7 @@ def gps_config_page() -> None:
             flash_card.set_visibility(
                 connected and DeviceCapability.SAVE_TO_FLASH in caps
             )
+            fixed_position_card.set_visibility(connected)
             reload_device_btn.set_visibility(connected)
 
             if connected:
@@ -1145,6 +1281,7 @@ def gps_config_page() -> None:
         live_gnss = GnssConfig()
         rename_target: str | None = None
         delete_target: str | None = None
+        delete_target_label: str = ""
 
         def _out_of_sync() -> bool:
             return form_matrix != live_matrix
@@ -1316,10 +1453,10 @@ def gps_config_page() -> None:
                 return
             modified_badge.set_visibility(True)
             if is_modified_from_profile(form_config, selected_profile):
-                modified_badge.text = f"Modified from {selected_profile.name}"
+                modified_badge.text = f"Modified from {display_label(selected_profile)}"
                 modified_badge.props("color=warning")
             else:
-                modified_badge.text = f"Matches {selected_profile.name}"
+                modified_badge.text = f"Matches {display_label(selected_profile)}"
                 modified_badge.props("color=positive")
 
         def _render_save_as_gate() -> None:
@@ -1435,6 +1572,55 @@ def gps_config_page() -> None:
             else:
                 advisory_label.set_visibility(False)
 
+        def _render_fixed_position_step(
+            label: ui.label, step_index: int, current_step: int, text: str
+        ) -> None:
+            label.text = text
+            if step_index == current_step:
+                modifier = "is-current"
+            elif step_index < current_step:
+                modifier = "is-done"
+            else:
+                modifier = "is-pending"
+            label.classes(
+                remove="is-current is-done is-pending",
+                add=modifier,
+            )
+
+        async def _render_fixed_position() -> None:
+            """Refresh the Fixed Position card's three-step state (issue #96).
+
+            Polls the live receiver directly — ``get_base_config`` /
+            ``get_survey_in_status`` — never the profile-seeded form
+            state above. Called alongside the rest of the live-seeding
+            refresh flow in ``_load_receiver_config_form``, so it stays
+            current on connect, reload/reconnect, and page (re)load
+            while already connected.
+            """
+            try:
+                base_config = await svc.get_base_config()
+                survey = await svc.get_survey_in_status()
+            except Exception:
+                logger.debug("Failed to read fixed-position step state")
+                return
+
+            state = fixed_position_step_state(base_config, survey)
+            _render_fixed_position_step(
+                fp_step1_label, 1, state.current_step, "① Apply profile"
+            )
+            _render_fixed_position_step(
+                fp_step2_label,
+                2,
+                state.current_step,
+                f"② Run survey-in {state.survey_state_text}",
+            )
+            _render_fixed_position_step(
+                fp_step3_label,
+                3,
+                state.current_step,
+                f"③ Fixed position set {state.fixed_pos_text}",
+            )
+
         async def _load_receiver_config_form() -> None:
             """Seed the form from the live receiver.
 
@@ -1470,6 +1656,7 @@ def gps_config_page() -> None:
             _clear_apply_result()
             _on_form_changed()
             _render_picker()
+            await _render_fixed_position()
 
         async def _connect() -> None:
             """Connect to the selected device."""

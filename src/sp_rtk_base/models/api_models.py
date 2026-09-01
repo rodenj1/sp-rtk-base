@@ -347,6 +347,10 @@ class ProfileDetailResponse(BaseModel):
 
 
 class ProfileRenameRequest(BaseModel):
-    """Body for ``PATCH /api/profiles/{name}`` — rename a custom profile."""
+    """Body for ``PATCH /api/profiles/{name}`` — rename a custom profile.
 
-    new_name: str = Field(min_length=1)
+    Renaming edits ``display_name`` only — the profile's slug (its
+    ``name``, also its filename) is immortal and never changes.
+    """
+
+    new_display_name: str = Field(min_length=1)

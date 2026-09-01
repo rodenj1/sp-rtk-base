@@ -529,6 +529,83 @@ def diff_receiver_assertions(
     return diffs
 
 
+#: The write steps ``apply_receiver_config`` performs, in execution
+#: order (issue #99). Baud is last — see
+#: ``DeviceService.apply_receiver_config`` for why.
+APPLY_STEPS: tuple[str, ...] = (
+    "meas_period_ms",
+    "ports",
+    "constellations",
+    "optimisations",
+    "dyn_model",
+    "tmode_mode",
+    "rtcm_matrix",
+    "baud",
+)
+
+
+def step_for_diff_path(path: str) -> str:
+    """Map one :class:`ApplyDiffEntry` ``path`` onto the write step that
+    owns it — the grouping :func:`~sp_rtk_base.services.device_service.
+    DeviceService.apply_receiver_config` uses to decide, per step,
+    whether the pre-write read-back already matches what's being sent
+    (issue #99). Every path :func:`diff_receiver_assertions` can ever
+    produce resolves to exactly one of :data:`APPLY_STEPS`.
+    """
+    if path == "meas_period_ms":
+        return "meas_period_ms"
+    if path.startswith("ports."):
+        return "ports"
+    if path.startswith("constellations."):
+        return "constellations"
+    if path in ("elevation_mask_deg", "bds_b2_enabled", "spi_enabled"):
+        return "optimisations"
+    if path == "dyn_model":
+        return "dyn_model"
+    if path == "tmode_mode":
+        return "tmode_mode"
+    if path.startswith("rtcm."):
+        return "rtcm_matrix"
+    if path.startswith("baud."):
+        return "baud"
+    raise ValueError(f"unrecognised apply-diff path: {path!r}")  # pragma: no cover
+
+
+class ApplyStepResult(BaseModel):
+    """One write step's outcome, in the order ``apply_receiver_config`` ran it.
+
+    ``"skipped"`` covers two distinct reasons alike (issue #99): the
+    step's fields already matched the pre-write read-back (the
+    service-decided no-op), or an earlier step failed and stopped the
+    rest of the sequence from running at all. Either way, nothing was
+    written for this step.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    step: str
+    status: Literal["ok", "failed", "skipped"]
+
+
+class ApplyStepWarning(BaseModel):
+    """One advisory drained from the driver's warning channel after a step
+    ran (issue #99).
+
+    Means exactly one thing, deliberately with no severity field: the
+    write appears to have succeeded, but something the sync check is
+    structurally unable to see is wrong (a write that landed in RAM
+    but not flash; a constellation the firmware acknowledged but does
+    not appear to act on). ``step`` is the step whose write produced
+    it — a step that warned on one Apply is excluded from the skip on
+    the next, so pressing Apply again actually retries it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    step: str
+    message: str
+
+
 class ApplyConfigResult(BaseModel):
     """Response for ``POST /api/device/apply-config``.
 
@@ -538,9 +615,14 @@ class ApplyConfigResult(BaseModel):
     :func:`diff_receiver_assertions`). ``read_back`` is the full
     post-apply assertion read — callers (the Advanced GPS page) sync
     their live state from it whether ``status`` is ``"ok"`` or
-    ``"failed"``, since the writes land either way. ``warnings``
-    carries non-blocking advisories (e.g. the estimated-throughput
-    check) that never affect ``status``.
+    ``"failed"``, since the writes land either way (or didn't run at
+    all — a failed or skipped step still leaves ``read_back`` as the
+    truth of what the receiver holds). ``warnings`` carries
+    non-blocking advisories (e.g. the estimated-throughput check) that
+    never affect ``status``. ``steps`` reports every write step's
+    outcome in execution order (issue #99); ``step_warnings`` carries
+    the driver's step-tagged warning channel, distinct from
+    ``warnings`` — see :class:`ApplyStepWarning`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -549,6 +631,12 @@ class ApplyConfigResult(BaseModel):
     read_back: ReceiverAssertion
     diff: list[ApplyDiffEntry] = Field(default_factory=lambda: list[ApplyDiffEntry]())
     warnings: list[str] = Field(default_factory=lambda: list[str]())
+    steps: list[ApplyStepResult] = Field(
+        default_factory=lambda: list[ApplyStepResult]()
+    )
+    step_warnings: list[ApplyStepWarning] = Field(
+        default_factory=lambda: list[ApplyStepWarning]()
+    )
 
 
 def _dense_matrix(

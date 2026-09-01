@@ -496,6 +496,11 @@ class FakeGpsDriver(GpsReceiverDriver):
         if uart2 is not None:
             self._uart_baud_rates[PortId.UART2] = uart2
 
+    def drain_warnings(self) -> list[str]:
+        """No producer wired up yet — the fake driver never warns (issue #99)."""
+        self._ensure_connected()
+        return []
+
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         """Return the fake driver's in-memory scalar config (issue #97)."""
         self._ensure_connected()

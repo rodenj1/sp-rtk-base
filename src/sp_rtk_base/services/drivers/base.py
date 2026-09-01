@@ -330,6 +330,27 @@ class GpsReceiverDriver(abc.ABC):
         """
 
     @abc.abstractmethod
+    def drain_warnings(self) -> list[str]:
+        """Drain and return every warning queued since the last drain (issue #99).
+
+        The apply-config service calls this after each write step that
+        actually runs, tagging whatever comes back with that step's
+        name. The channel means exactly one thing: the write appears
+        to have succeeded, but something the sync check is
+        structurally unable to see is wrong — e.g. a value that landed
+        in RAM but not flash, or a constellation the firmware
+        acknowledged but does not appear to act on. No severity field,
+        and no producer on this driver yet — a concrete driver with
+        nothing to report simply returns an empty list every time.
+
+        Returns:
+            Warning messages queued since the last call; empty if none.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+
+    @abc.abstractmethod
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         """Batched read of every scalar CFG value the full receiver read needs.
 

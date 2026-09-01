@@ -39,8 +39,11 @@ from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
 )
 from sp_rtk_base.models.profile_models import (
+    APPLY_STEPS,
     MATRIX_PORTS,
     ApplyConfigResult,
+    ApplyStepResult,
+    ApplyStepWarning,
     BaudAssertion,
     PortProtocolSet,
     ReceiverApplyRequest,
@@ -48,6 +51,7 @@ from sp_rtk_base.models.profile_models import (
     RtcmStreamConfig,
     diff_receiver_assertions,
     merge_profile_into_assertion,
+    step_for_diff_path,
 )
 from sp_rtk_base.profiles import BUILTIN_PROFILES
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -214,18 +218,23 @@ def build_receiver_assertion(
 
 
 class ReceiverAssertionRead(NamedTuple):
-    """One ``get_receiver_assertion()`` read: the sync-set assertion plus
-    the raw multi-port RTCM read-back the page's I2C/SPI advisory needs.
+    """One ``get_receiver_assertion()`` read: the sync-set assertion, the
+    raw multi-port RTCM read-back the page's I2C/SPI advisory needs, and
+    the raw GNSS config the constellation apply-step needs (issue #99).
 
     I2C/SPI aren't part of ``assertion.rtcm_stream``'s matrix — that
     mirrors ``ReceiverConfig``'s UART1/UART2/USB-only scope — so the
     advisory display needs the wider read ``rtcm`` already carries.
-    Bundling both here means one receiver read serves both, rather than
-    the page re-polling RTCM a second time.
+    Likewise, ``assertion.constellations`` is just the flat enabled set —
+    writing a constellation change needs each system's channel tuning,
+    which only the raw ``gnss`` read carries. Bundling all three here
+    means one receiver read serves every caller, rather than any of them
+    re-polling RTCM or GNSS a second time.
     """
 
     assertion: ReceiverAssertion
     rtcm: RtcmPortConfig
+    gnss: GnssConfig
 
 
 class DeviceService:
@@ -252,6 +261,11 @@ class DeviceService:
         self._last_error: str | None = None
         self._connected_at: datetime | None = None
         self._relay_running_check: _RelayRunningCheck | None = None
+        # Steps whose drained warnings were non-empty on the previous
+        # apply-config call — excluded from the next call's skip so
+        # pressing Apply again actually retries them (issue #99).
+        # Reset on every fresh connect: a new session starts clean.
+        self._steps_warned_last_apply: set[str] = set()
 
     # ------------------------------------------------------------------
     # Properties
@@ -376,6 +390,7 @@ class DeviceService:
             self._baud_rate = baud_rate
             self._info = info
             self._connected_at = datetime.now(tz=timezone.utc)
+            self._steps_warned_last_apply = set()
             logger.info(
                 "Connected to %s %s on %s",
                 info.vendor,
@@ -779,12 +794,24 @@ class DeviceService:
             RuntimeError: If not connected.
         """
         driver = self._require_connected()
+        return await self._read_full_assertion(driver)
+
+    async def _read_full_assertion(
+        self, driver: GpsReceiverDriver
+    ) -> ReceiverAssertionRead:
+        """The four driver reads behind :meth:`get_receiver_assertion`.
+
+        Shared with ``apply_receiver_config``'s pre-write pre-read
+        (issue #99) so there's exactly one place composing a full
+        receiver read, rather than the pre-read duplicating this
+        method's body to also get at the raw ``gnss`` config it needs.
+        """
         rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
         ports = await asyncio.to_thread(driver.get_port_protocols)
         gnss = await asyncio.to_thread(driver.get_gnss_config)
         scalars = await asyncio.to_thread(driver.get_receiver_scalars)
         assertion = build_receiver_assertion(rtcm, ports, gnss, scalars)
-        return ReceiverAssertionRead(assertion=assertion, rtcm=rtcm)
+        return ReceiverAssertionRead(assertion=assertion, rtcm=rtcm, gnss=gnss)
 
     async def configure_gnss(self, config: GnssConfig) -> None:
         """Write GNSS constellation configuration to the receiver.
@@ -833,7 +860,7 @@ class DeviceService:
     async def apply_receiver_config(
         self, request: ReceiverApplyRequest
     ) -> ApplyConfigResult:
-        """Apply the whole form as an ordered series of layer=5 writes (issue #98).
+        """Apply the form as an ordered series of per-step, layer=5 writes (issue #99).
 
         *request* is the envelope Apply sends: a fully-populated
         ``ReceiverAssertion`` (every receiver field, no "leave alone"
@@ -842,27 +869,51 @@ class DeviceService:
         guards/warnings below and by ``ReceiverApplyRequest``'s own
         cross-field validators.
 
-        Sequence: guards -> measurement rate -> ports -> constellations
-        -> optimisations -> role fields (dyn_model, then tmode_mode) ->
-        the full RTCM matrix -> baud -> reopen (if UART1's baud changed)
-        -> read-back verify. Baud is written **last**, after every other
-        key has landed, and only once every other write's ACK is safely
-        in — a baud change is the one write that can move the console's
-        own management link out from under this very request (issue #62).
+        Sequence: guards -> a fresh pre-read -> :data:`APPLY_STEPS` in
+        order (measurement rate, ports, constellations, optimisations,
+        dyn_model, tmode_mode, the RTCM matrix, baud) -> reopen (if
+        UART1's baud changed) -> read-back verify. Baud is last, after
+        every other key has landed and only once every other write's
+        ACK is safely in — a baud change is the one write that can move
+        the console's own management link out from under this very
+        request (issue #62).
 
-        Every field is sent on every Apply — this ticket's "whole form"
-        change — with two deliberate exceptions that skip their write
-        entirely when the live receiver already holds the value being
-        sent: **measurement rate** (this ticket fixes the 1 Hz bug by
-        construction — the caller always seeds it from the receiver
-        rather than a schema default, and this skip means an unchanged
-        rate is never rewritten either) and **baud** (skipping an
-        unchanged baud avoids the reopen-after-write dance below on
-        every single Apply, not just the ones that actually change it).
-        Both compare against one early ``get_receiver_scalars()`` poll.
-        No other field gets this treatment — ports, constellations,
-        optimisations, dyn_model, tmode_mode and the RTCM matrix are
-        always (re)written, matching "send every field".
+        **The pre-read decides the no-op.** One fresh full read, taken
+        at the instant of Apply (never the page's seed — a stale seed
+        another client or a reboot has invalidated can't be trusted to
+        rest a "nothing to do" claim on), is diffed per-leaf against
+        *request.assertion* and grouped by :func:`profile_models.
+        step_for_diff_path`. A step is skipped when every leaf it
+        covers already matches; a step that runs writes its complete
+        key set assertively (never a partial, per-leaf write) — so an
+        unqualified whole-form assert doesn't push every key to flash
+        on every Apply, but pressing Apply on a genuinely unchanged
+        form still performs no writes at all and just re-verifies.
+        **Exception:** a step that produced a warning on the *previous*
+        Apply is excluded from this skip, so it actually retries
+        instead of the remedy being a no-op that quietly erases its own
+        warning.
+
+        **Step outcomes.** Each step reports ``"ok"``, ``"failed"`` or
+        ``"skipped"`` in ``result.steps``, in execution order. A step
+        that raises stops every subsequent step (they report
+        ``"skipped"`` too — nothing further is written) but never
+        propagates: only a pre-write refusal or a lost link still
+        raises out of this method. The read-back always runs
+        regardless, so ``result.diff``/``result.read_back`` state what
+        the receiver actually holds even when a step failed.
+
+        **Warnings.** After each step that runs, ``GpsReceiverDriver.
+        drain_warnings`` is drained and whatever comes back is tagged
+        with that step's name onto ``result.step_warnings`` — see
+        :class:`profile_models.ApplyStepWarning`. A step that ran and
+        drained nothing clears its membership in the warned set; one
+        that ran and drained something (again) keeps it. A step this
+        Apply never got the chance to run — skipped because an earlier
+        step failed — carries its prior membership forward unchanged,
+        so an unresolved warning survives an unrelated failure rather
+        than being silently dropped the moment one Apply doesn't reach
+        it.
 
         Guards run before any write and refuse with nothing written:
 
@@ -873,6 +924,13 @@ class DeviceService:
           UBX off on USB IN is refused, since it would cut the
           console's own control channel with nothing left to write it
           back with.
+        - **Survey-in active.** Whole-form assert makes ``tmode_mode``
+          a required assertion field, so an Apply that leaves it alone
+          would otherwise silently cancel an in-progress survey-in that
+          may be hours in. Refused only when this Apply would actually
+          change base mode (``request.assertion.tmode_mode`` differs
+          from the pre-read) while a survey-in is running — an Apply
+          that leaves base mode alone still proceeds mid-survey.
         - **Coordinate guard.** ``tmode_mode: fixed`` is refused unless
           the receiver already holds a valid, non-zero position —
           otherwise a fresh receiver becomes a base broadcasting 1005
@@ -928,6 +986,20 @@ class DeviceService:
                 "the receiver over its own USB connection",
             )
 
+        pre_read = await self._read_full_assertion(driver)
+        pre_assertion = pre_read.assertion
+
+        if assertion.tmode_mode != pre_assertion.tmode_mode:
+            survey = await asyncio.to_thread(driver.get_survey_in_status)
+            if survey.active:
+                raise ApplyConfigRefusedError(
+                    "survey_in_active",
+                    "a survey-in is running — changing base mode would "
+                    "cancel it. Cancel the survey from the Survey page "
+                    "first, or leave tmode_mode unchanged to apply "
+                    "everything else",
+                )
+
         if assertion.tmode_mode == TmodeMode.FIXED:
             current_base = await asyncio.to_thread(driver.get_base_config)
             if (
@@ -942,64 +1014,59 @@ class DeviceService:
                     "position first",
                 )
 
+        pre_diff = diff_receiver_assertions(assertion, pre_assertion)
+        changed_steps = {step_for_diff_path(d.path) for d in pre_diff}
+
         self._state = DeviceConnectionState.CONFIGURING
+        steps: list[ApplyStepResult] = []
+        step_warnings: list[ApplyStepWarning] = []
+        # Starts as a copy of the previous Apply's warned steps and is
+        # only touched by a step that actually gets to run this time —
+        # a step skipped by an earlier failure (``blocked``) hasn't been
+        # given the chance to resolve its warning, so its membership
+        # carries forward untouched rather than being dropped just
+        # because this particular Apply didn't reach it.
+        updated_warned_steps = set(self._steps_warned_last_apply)
         new_uart1: int | None = None
-        try:
-            current_scalars = await asyncio.to_thread(driver.get_receiver_scalars)
+        blocked = False
 
-            if current_scalars.meas_period_ms != assertion.meas_period_ms:
-                await asyncio.to_thread(
-                    driver.configure_measurement_rate, assertion.meas_period_ms
+        for step_name in APPLY_STEPS:
+            if blocked:
+                steps.append(ApplyStepResult(step=step_name, status="skipped"))
+                continue
+
+            if (
+                step_name not in changed_steps
+                and step_name not in self._steps_warned_last_apply
+            ):
+                steps.append(ApplyStepResult(step=step_name, status="skipped"))
+                continue
+
+            try:
+                await self._run_apply_step(driver, step_name, assertion, pre_read.gnss)
+            except Exception as exc:
+                logger.warning("apply-config step %r failed: %s", step_name, exc)
+                self._last_error = f"apply-config step {step_name!r} failed: {exc}"
+                steps.append(ApplyStepResult(step=step_name, status="failed"))
+                blocked = True
+                continue
+
+            if step_name == "baud" and assertion.baud.uart1 != pre_assertion.baud.uart1:
+                new_uart1 = assertion.baud.uart1
+
+            drained = await asyncio.to_thread(driver.drain_warnings)
+            if drained:
+                updated_warned_steps.add(step_name)
+                step_warnings.extend(
+                    ApplyStepWarning(step=step_name, message=message)
+                    for message in drained
                 )
+            else:
+                updated_warned_steps.discard(step_name)
+            steps.append(ApplyStepResult(step=step_name, status="ok"))
 
-            in_map = {port: cfg.in_ for port, cfg in assertion.ports.items()}
-            out_map = {port: cfg.out for port, cfg in assertion.ports.items()}
-            await asyncio.to_thread(driver.configure_port_protocols, in_map, out_map)
-
-            current_gnss = await asyncio.to_thread(driver.get_gnss_config)
-            wanted = set(assertion.constellations)
-            updated_gnss = GnssConfig(
-                systems=[
-                    system.model_copy(
-                        update={"enabled": system.constellation in wanted}
-                    )
-                    for system in current_gnss.systems
-                ]
-            )
-            await asyncio.to_thread(driver.configure_gnss, updated_gnss)
-
-            await asyncio.to_thread(
-                driver.configure_optimisations,
-                assertion.elevation_mask_deg,
-                assertion.bds_b2_enabled,
-                assertion.spi_enabled,
-            )
-
-            await asyncio.to_thread(driver.configure_dyn_model, assertion.dyn_model)
-            await asyncio.to_thread(driver.configure_tmode_mode, assertion.tmode_mode)
-
-            await asyncio.to_thread(
-                driver.apply_rtcm_matrix, assertion.rtcm_stream.matrix
-            )
-
-            new_uart1 = (
-                assertion.baud.uart1
-                if assertion.baud.uart1 != current_scalars.uart1_baud
-                else None
-            )
-            new_uart2 = (
-                assertion.baud.uart2
-                if assertion.baud.uart2 != current_scalars.uart2_baud
-                else None
-            )
-            if new_uart1 is not None or new_uart2 is not None:
-                await asyncio.to_thread(driver.configure_baud, new_uart1, new_uart2)
-
-            self._state = DeviceConnectionState.CONNECTED
-        except Exception as exc:
-            self._state = DeviceConnectionState.CONNECTED
-            self._last_error = str(exc)
-            raise
+        self._state = DeviceConnectionState.CONNECTED
+        self._steps_warned_last_apply = updated_warned_steps
 
         if new_uart1 is not None:
             await self._reopen_after_baud_write(driver, new_uart1)
@@ -1014,13 +1081,77 @@ class DeviceService:
                 "apply-config read-back mismatch: %d leaf(ves) differ", len(diff)
             )
             return ApplyConfigResult(
-                status="failed", read_back=read.assertion, diff=diff, warnings=warnings
+                status="failed",
+                read_back=read.assertion,
+                diff=diff,
+                warnings=warnings,
+                steps=steps,
+                step_warnings=step_warnings,
             )
 
         logger.info("apply-config applied and read-back verified")
         return ApplyConfigResult(
-            status="ok", read_back=read.assertion, warnings=warnings
+            status="ok",
+            read_back=read.assertion,
+            warnings=warnings,
+            steps=steps,
+            step_warnings=step_warnings,
         )
+
+    async def _run_apply_step(
+        self,
+        driver: GpsReceiverDriver,
+        step_name: str,
+        assertion: ReceiverAssertion,
+        pre_gnss: GnssConfig,
+    ) -> None:
+        """Perform one write step's driver call (issue #99).
+
+        *pre_gnss* is the raw pre-read GNSS config — the constellation
+        step needs it (not just ``assertion.constellations``) to
+        preserve each system's channel tuning, which
+        ``ReceiverAssertion`` doesn't carry.
+        """
+        if step_name == "meas_period_ms":
+            await asyncio.to_thread(
+                driver.configure_measurement_rate, assertion.meas_period_ms
+            )
+        elif step_name == "ports":
+            in_map = {port: cfg.in_ for port, cfg in assertion.ports.items()}
+            out_map = {port: cfg.out for port, cfg in assertion.ports.items()}
+            await asyncio.to_thread(driver.configure_port_protocols, in_map, out_map)
+        elif step_name == "constellations":
+            wanted = set(assertion.constellations)
+            updated_gnss = GnssConfig(
+                systems=[
+                    system.model_copy(
+                        update={"enabled": system.constellation in wanted}
+                    )
+                    for system in pre_gnss.systems
+                ]
+            )
+            await asyncio.to_thread(driver.configure_gnss, updated_gnss)
+        elif step_name == "optimisations":
+            await asyncio.to_thread(
+                driver.configure_optimisations,
+                assertion.elevation_mask_deg,
+                assertion.bds_b2_enabled,
+                assertion.spi_enabled,
+            )
+        elif step_name == "dyn_model":
+            await asyncio.to_thread(driver.configure_dyn_model, assertion.dyn_model)
+        elif step_name == "tmode_mode":
+            await asyncio.to_thread(driver.configure_tmode_mode, assertion.tmode_mode)
+        elif step_name == "rtcm_matrix":
+            await asyncio.to_thread(
+                driver.apply_rtcm_matrix, assertion.rtcm_stream.matrix
+            )
+        elif step_name == "baud":
+            await asyncio.to_thread(
+                driver.configure_baud, assertion.baud.uart1, assertion.baud.uart2
+            )
+        else:  # pragma: no cover
+            raise AssertionError(f"unhandled apply step: {step_name!r}")
 
     async def _reopen_after_baud_write(
         self, driver: GpsReceiverDriver, new_baud: int

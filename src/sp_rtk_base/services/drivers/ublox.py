@@ -1246,6 +1246,12 @@ class UbloxDriver(GpsReceiverDriver):
         with self._lock:
             self._send_cfg_valset_locked(cfg_data, layer=5)
 
+    def drain_warnings(self) -> list[str]:
+        """No producer wired up yet on this driver — always empty (issue #99)."""
+        if not self.is_connected:
+            raise ConnectionError("Not connected to device")
+        return []
+
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         """Batched read of baud, meas rate, dyn model, tmode mode and the
         three optimisation fields — one CFG-VALGET poll (issue #97).

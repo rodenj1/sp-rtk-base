@@ -141,62 +141,58 @@ class TestCreateProfile:
 
 
 class TestRenameProfile:
-    def test_rename_returns_updated_profile(
+    """Rename edits ``display_name`` only — the slug (``name``) never
+    changes, so there's no more "colliding name" or "unsafe name" case."""
+
+    def test_rename_sets_display_name_and_keeps_slug(
         self, api_client_with_services: TestClient
     ) -> None:
         api_client_with_services.post(
             "/api/profiles", json=_profile_payload("old-name")
         )
         resp = api_client_with_services.patch(
-            "/api/profiles/old-name", json={"new_name": "new-name"}
+            "/api/profiles/old-name", json={"new_display_name": "Pretty Name"}
         )
         assert resp.status_code == 200
-        assert resp.json()["profile"]["name"] == "new-name"
+        body = resp.json()["profile"]
+        assert body["name"] == "old-name"
+        assert body["display_name"] == "Pretty Name"
 
     def test_rename_builtin_is_403(self, api_client_with_services: TestClient) -> None:
         resp = api_client_with_services.patch(
-            f"/api/profiles/{BUILTIN_NAME}", json={"new_name": "something-else"}
+            f"/api/profiles/{BUILTIN_NAME}", json={"new_display_name": "Something Else"}
         )
         assert resp.status_code == 403
 
     def test_rename_unknown_is_404(self, api_client_with_services: TestClient) -> None:
         resp = api_client_with_services.patch(
-            "/api/profiles/does-not-exist", json={"new_name": "something-else"}
+            "/api/profiles/does-not-exist", json={"new_display_name": "Something Else"}
         )
         assert resp.status_code == 404
 
-    def test_rename_to_colliding_name_is_409(
-        self, api_client_with_services: TestClient
-    ) -> None:
-        api_client_with_services.post("/api/profiles", json=_profile_payload("first"))
-        api_client_with_services.post("/api/profiles", json=_profile_payload("second"))
-        resp = api_client_with_services.patch(
-            "/api/profiles/first", json={"new_name": "second"}
-        )
-        assert resp.status_code == 409
-
-    def test_rename_to_unsafe_name_is_400(
+    def test_rename_to_blank_display_name_is_400(
         self, api_client_with_services: TestClient
     ) -> None:
         api_client_with_services.post(
             "/api/profiles", json=_profile_payload("old-name")
         )
         resp = api_client_with_services.patch(
-            "/api/profiles/old-name", json={"new_name": "has/slash"}
+            "/api/profiles/old-name", json={"new_display_name": "   "}
         )
         assert resp.status_code == 400
 
-    def test_rename_to_same_name_is_a_noop_not_a_conflict(
+    def test_rename_to_a_name_matching_another_profiles_slug_is_not_a_conflict(
         self, api_client_with_services: TestClient
     ) -> None:
-        api_client_with_services.post(
-            "/api/profiles", json=_profile_payload("same-name")
-        )
+        api_client_with_services.post("/api/profiles", json=_profile_payload("first"))
+        api_client_with_services.post("/api/profiles", json=_profile_payload("second"))
         resp = api_client_with_services.patch(
-            "/api/profiles/same-name", json={"new_name": "same-name"}
+            "/api/profiles/first", json={"new_display_name": "second"}
         )
         assert resp.status_code == 200
-        assert resp.json()["profile"]["name"] == "same-name"
+        body = resp.json()["profile"]
+        assert body["name"] == "first"
+        assert body["display_name"] == "second"
 
 
 class TestDeleteProfile:

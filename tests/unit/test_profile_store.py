@@ -139,48 +139,99 @@ class TestCreateProfile:
 
 
 class TestRenameProfile:
-    def test_rename_moves_file(self, store: ProfileStore, profiles_dir: Path) -> None:
-        store.create_profile(_custom("old-name"))
-        store.rename_profile("old-name", "new-name")
-        assert not (profiles_dir / "old-name.yaml").exists()
-        assert (profiles_dir / "new-name.yaml").exists()
+    """Rename edits ``display_name`` only — the slug is immortal.
 
-    def test_rename_returns_updated_profile(self, store: ProfileStore) -> None:
+    It's frozen at creation like a database id: the filename never
+    moves and inbound ``forked_from`` references never dangle.
+    """
+
+    def test_rename_sets_display_name(self, store: ProfileStore) -> None:
         store.create_profile(_custom("old-name"))
-        renamed = store.rename_profile("old-name", "new-name")
-        assert renamed.name == "new-name"
+        renamed = store.rename_profile("old-name", "Pretty Name")
+        assert renamed.display_name == "Pretty Name"
+
+    def test_rename_never_changes_the_slug(self, store: ProfileStore) -> None:
+        store.create_profile(_custom("old-name"))
+        renamed = store.rename_profile("old-name", "Pretty Name")
+        assert renamed.name == "old-name"
+
+    def test_rename_never_moves_the_file(
+        self, store: ProfileStore, profiles_dir: Path
+    ) -> None:
+        store.create_profile(_custom("old-name"))
+        store.rename_profile("old-name", "Pretty Name")
+        assert (profiles_dir / "old-name.yaml").exists()
+        assert len(list(profiles_dir.glob("*.yaml"))) == 1
+
+    def test_rename_persists_display_name_to_disk(self, store: ProfileStore) -> None:
+        store.create_profile(_custom("old-name"))
+        store.rename_profile("old-name", "Pretty Name")
+        reloaded = store.get_profile("old-name")
+        assert reloaded is not None
+        assert reloaded.display_name == "Pretty Name"
+
+    def test_rename_does_not_dangle_fork_references(self, store: ProfileStore) -> None:
+        store.create_profile(_custom("source-profile"))
+        store.create_profile(_custom("fork", forked_from="source-profile"))
+        store.rename_profile("source-profile", "Renamed Source")
+        fork = store.get_profile("fork")
+        assert fork is not None
+        assert fork.forked_from == "source-profile"
 
     def test_rename_builtin_is_forbidden(self, store: ProfileStore) -> None:
         with pytest.raises(ProfileImmutableError):
-            store.rename_profile(BUILTIN_NAME, "something-else")
+            store.rename_profile(BUILTIN_NAME, "Something Else")
 
     def test_rename_unknown_is_not_found(self, store: ProfileStore) -> None:
         with pytest.raises(ProfileNotFoundError):
-            store.rename_profile("does-not-exist", "something-else")
+            store.rename_profile("does-not-exist", "Something Else")
 
-    def test_rename_to_existing_builtin_conflicts(self, store: ProfileStore) -> None:
+    def test_rename_to_a_name_matching_a_builtin_slug_is_not_a_conflict(
+        self, store: ProfileStore
+    ) -> None:
+        # display_name has no charset/uniqueness constraint — it can even
+        # read the same as another profile's slug, since it never becomes
+        # a filesystem path.
         store.create_profile(_custom("old-name"))
-        with pytest.raises(ProfileConflictError):
-            store.rename_profile("old-name", BUILTIN_NAME)
+        renamed = store.rename_profile("old-name", BUILTIN_NAME)
+        assert renamed.display_name == BUILTIN_NAME
+        assert renamed.name == "old-name"
 
-    def test_rename_to_existing_custom_conflicts(self, store: ProfileStore) -> None:
-        store.create_profile(_custom("first"))
-        store.create_profile(_custom("second"))
-        with pytest.raises(ProfileConflictError):
-            store.rename_profile("first", "second")
-
-    def test_rename_to_unsafe_name_rejected(self, store: ProfileStore) -> None:
+    def test_rename_to_empty_display_name_rejected(self, store: ProfileStore) -> None:
         store.create_profile(_custom("old-name"))
         with pytest.raises(ProfileBusinessRuleError):
-            store.rename_profile("old-name", "has/slash")
+            store.rename_profile("old-name", "   ")
 
-    def test_rename_to_same_name_is_a_noop(
+
+class TestUpdateProfile:
+    """The overwrite path the collision error text promises but the
+    store didn't previously implement."""
+
+    def test_update_overwrites_existing_custom_in_place(
+        self, store: ProfileStore
+    ) -> None:
+        store.create_profile(_custom("my-custom", hardware="ZED-F9P"))
+        updated = store.update_profile(_custom("my-custom", hardware="any"))
+        assert updated.hardware == "any"
+        reloaded = store.get_profile("my-custom")
+        assert reloaded is not None
+        assert reloaded.hardware == "any"
+
+    def test_update_does_not_create_a_new_file(
         self, store: ProfileStore, profiles_dir: Path
     ) -> None:
-        created = store.create_profile(_custom("same-name"))
-        renamed = store.rename_profile("same-name", "same-name")
-        assert renamed == created
-        assert (profiles_dir / "same-name.yaml").exists()
+        store.create_profile(_custom("my-custom"))
+        store.update_profile(_custom("my-custom", hardware="any"))
+        assert len(list(profiles_dir.glob("*.yaml"))) == 1
+
+    def test_update_rejects_builtin(self, store: ProfileStore) -> None:
+        with pytest.raises(ProfileImmutableError):
+            store.update_profile(_custom(BUILTIN_NAME))
+        assert BUILTIN_PROFILES[BUILTIN_NAME].hardware == "ZED-F9P"
+
+    def test_update_rejects_unknown_custom(self, store: ProfileStore) -> None:
+        with pytest.raises(ProfileNotFoundError):
+            store.update_profile(_custom("does-not-exist"))
 
 
 class TestDeleteProfile:

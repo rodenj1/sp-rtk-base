@@ -262,6 +262,34 @@ class TestProfile:
         profile = Profile.model_validate(kwargs)
         assert profile.forked_from == "ublox-f9p-base-standard"
 
+    def test_display_name_defaults_to_none(self) -> None:
+        profile = Profile.model_validate(self._profile_kwargs())
+        assert profile.display_name is None
+
+    def test_display_name_settable(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["display_name"] = "u-blox F9P — Base Station (Standard)"
+        profile = Profile.model_validate(kwargs)
+        assert profile.display_name == "u-blox F9P — Base Station (Standard)"
+
+    def test_display_name_roundtrips_through_serialization(self) -> None:
+        kwargs = self._profile_kwargs()
+        kwargs["display_name"] = "My Pretty Name"
+        profile = Profile.model_validate(kwargs)
+        data = profile.model_dump(mode="json")
+        restored = Profile.model_validate(data)
+        assert restored.display_name == "My Pretty Name"
+
+    def test_profile_without_display_name_still_loads(self) -> None:
+        kwargs = self._profile_kwargs()
+        assert "display_name" not in kwargs
+        profile = Profile.model_validate(kwargs)
+        data = profile.model_dump(mode="json", exclude_none=True)
+        assert "display_name" not in data
+        restored = Profile.model_validate(data)
+        assert restored.display_name is None
+        assert restored == profile
+
     def test_inherits_receiver_config_validation(self) -> None:
         kwargs = self._profile_kwargs()
         kwargs["meas_period_ms"] = 1

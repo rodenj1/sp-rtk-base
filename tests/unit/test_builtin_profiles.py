@@ -38,6 +38,9 @@ class TestUbloxF9pBaseStandard:
         assert self.profile.version == 1
         assert self.profile.hardware == "ZED-F9P"
 
+    def test_display_name(self) -> None:
+        assert self.profile.display_name == "u-blox F9P — Base Station (Standard)"
+
     def test_baud_split(self) -> None:
         assert self.profile.baud is not None
         assert self.profile.baud.uart1 == 57600

@@ -171,12 +171,16 @@ async def rename_profile(
     request: ProfileRenameRequest,
     store: ProfileStore = Depends(get_profile_store),
 ) -> ProfileDetailResponse | JSONResponse:
-    """Rename an existing custom profile."""
+    """Rename an existing custom profile.
+
+    Renaming edits ``display_name`` only — the slug/filename never
+    changes, so fork references pointing at *name* stay valid.
+    """
     try:
-        renamed = store.rename_profile(name, request.new_name)
+        renamed = store.rename_profile(name, request.new_display_name)
     except ProfileStoreError as exc:
         return _error_response(exc)
-    logger.info("Renamed profile: %s -> %s", name, request.new_name)
+    logger.info("Renamed profile %s -> display_name=%r", name, request.new_display_name)
     return _detail(store, renamed)
 
 

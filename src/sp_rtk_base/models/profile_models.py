@@ -5,8 +5,15 @@ Two nested types:
 - ``ReceiverConfig`` — everything writable to a receiver (no ``name``).
   This is what Apply takes.
 - ``Profile`` — ``ReceiverConfig`` plus identity metadata (``name``,
-  ``version``, ``hardware``, ``forked_from``). This is what gets
-  saved, listed, exported and imported.
+  ``version``, ``hardware``, ``forked_from``, ``display_name``). This
+  is what gets saved, listed, exported and imported.
+
+``name`` is the profile's immutable slug — also its filename and the
+key fork references (``forked_from``) point at. ``display_name`` is
+an optional human-readable label; when absent, every UI surface falls
+back to rendering ``name``. Renaming a profile only ever changes
+``display_name`` — the slug is frozen at creation so fork references
+never dangle and no files ever move.
 
 Only *context-free* validation lives here — rules that need no live
 device state. The UBX-in liveness guard and the ``tmode_mode: fixed``
@@ -179,6 +186,7 @@ class Profile(ReceiverConfig):
     version: int
     hardware: str
     forked_from: str | None = Field(default=None)
+    display_name: str | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_identity(self) -> Profile:

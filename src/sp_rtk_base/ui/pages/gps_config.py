@@ -159,6 +159,18 @@ def resolve_identity(
     return identity_from_target(hardware_target, hardware_confidence)
 
 
+def display_label(profile: Profile) -> str:
+    """The human-facing label for *profile* — its display name, falling
+    back to the slug (``name``) when none is set.
+
+    Every operator-visible rendering of a profile's identity (picker
+    rows, provenance labels like "Forked from"/"Modified from", the
+    rename dialog's prefill) goes through this one helper so the
+    fallback rule lives in exactly one place.
+    """
+    return profile.display_name or profile.name
+
+
 def build_picker_entries(
     profiles: list[Profile],
     store: ProfileStore,
@@ -727,7 +739,7 @@ def gps_config_page() -> None:
         with ui.dialog() as rename_dialog, ui.card().classes("q-pa-md"):
             ui.label("Rename profile").classes("text-h6 text-white")
             ui.separator()
-            rename_name_input = ui.input("New name").classes(
+            rename_name_input = ui.input("Display name").classes(
                 "rename-name w-full q-mt-sm"
             )
             rename_error_label = ui.label("").classes(
@@ -880,7 +892,7 @@ def gps_config_page() -> None:
                                 ui.icon("check_circle").classes(
                                     "profile-selected-icon text-primary"
                                 )
-                            ui.label(entry.profile.name).classes(
+                            ui.label(display_label(entry.profile)).classes(
                                 f"profile-name {name_classes}"
                             )
                             ui.badge(
@@ -904,17 +916,13 @@ def gps_config_page() -> None:
                                     "profile-rename-icon text-grey-4 cursor-pointer"
                                 ).on(
                                     "click",
-                                    lambda _, n=entry.profile.name: _open_rename_dialog(
-                                        n
-                                    ),
+                                    lambda _, p=entry.profile: _open_rename_dialog(p),
                                 ).tooltip("Rename")
                                 ui.icon("delete").classes(
                                     "profile-delete-icon text-grey-4 cursor-pointer"
                                 ).on(
                                     "click",
-                                    lambda _, n=entry.profile.name: _open_delete_dialog(
-                                        n
-                                    ),
+                                    lambda _, p=entry.profile: _open_delete_dialog(p),
                                 ).tooltip("Delete")
                                 ui.icon("download").classes(
                                     "profile-export-icon text-grey-4 cursor-pointer"
@@ -959,7 +967,9 @@ def gps_config_page() -> None:
                 selected_profile, identity.target
             )
             save_as_from_label.text = (
-                f"Forked from: {selected_profile.name}" if selected_profile else ""
+                f"Forked from: {display_label(selected_profile)}"
+                if selected_profile
+                else ""
             )
             save_as_from_label.set_visibility(selected_profile is not None)
             save_as_error_label.set_visibility(False)
@@ -999,10 +1009,10 @@ def gps_config_page() -> None:
             _render_picker()
             _on_form_changed()
 
-        def _open_rename_dialog(name: str) -> None:
+        def _open_rename_dialog(profile: Profile) -> None:
             nonlocal rename_target
-            rename_target = name
-            rename_name_input.value = name
+            rename_target = profile.name
+            rename_name_input.value = display_label(profile)
             rename_error_label.set_visibility(False)
             rename_dialog.open()
 
@@ -1010,9 +1020,9 @@ def gps_config_page() -> None:
             nonlocal selected_profile
             if rename_target is None:
                 return
-            new_name = (rename_name_input.value or "").strip()
+            new_display_name = (rename_name_input.value or "").strip()
             try:
-                renamed = profile_store.rename_profile(rename_target, new_name)
+                renamed = profile_store.rename_profile(rename_target, new_display_name)
             except ProfileStoreError as exc:
                 rename_error_label.text = str(exc)
                 rename_error_label.set_visibility(True)
@@ -1021,14 +1031,17 @@ def gps_config_page() -> None:
             if selected_profile is not None and selected_profile.name == rename_target:
                 selected_profile = renamed
             rename_dialog.close()
-            ui.notify(f"Renamed to '{renamed.name}'", type="positive")
+            ui.notify(f"Renamed to '{display_label(renamed)}'", type="positive")
             _render_picker()
             _on_form_changed()
 
-        def _open_delete_dialog(name: str) -> None:
-            nonlocal delete_target
-            delete_target = name
-            delete_confirm_label.text = f"Delete custom profile '{name}'?"
+        def _open_delete_dialog(profile: Profile) -> None:
+            nonlocal delete_target, delete_target_label
+            delete_target = profile.name
+            delete_target_label = display_label(profile)
+            delete_confirm_label.text = (
+                f"Delete custom profile '{delete_target_label}'?"
+            )
             delete_dialog.open()
 
         def _confirm_delete() -> None:
@@ -1045,7 +1058,7 @@ def gps_config_page() -> None:
             if selected_profile is not None and selected_profile.name == delete_target:
                 selected_profile = None
             delete_dialog.close()
-            ui.notify(f"Deleted '{delete_target}'", type="positive")
+            ui.notify(f"Deleted '{delete_target_label}'", type="positive")
             _render_picker()
             _on_form_changed()
 
@@ -1145,6 +1158,7 @@ def gps_config_page() -> None:
         live_gnss = GnssConfig()
         rename_target: str | None = None
         delete_target: str | None = None
+        delete_target_label: str = ""
 
         def _out_of_sync() -> bool:
             return form_matrix != live_matrix
@@ -1316,10 +1330,10 @@ def gps_config_page() -> None:
                 return
             modified_badge.set_visibility(True)
             if is_modified_from_profile(form_config, selected_profile):
-                modified_badge.text = f"Modified from {selected_profile.name}"
+                modified_badge.text = f"Modified from {display_label(selected_profile)}"
                 modified_badge.props("color=warning")
             else:
-                modified_badge.text = f"Matches {selected_profile.name}"
+                modified_badge.text = f"Matches {display_label(selected_profile)}"
                 modified_badge.props("color=positive")
 
         def _render_save_as_gate() -> None:

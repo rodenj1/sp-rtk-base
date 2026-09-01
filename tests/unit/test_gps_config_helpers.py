@@ -45,6 +45,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     build_apply_config,
     build_picker_entries,
     build_saved_profile,
+    display_label,
     format_cell_diff,
     hw_extras_display,
     i2c_spi_advisory_rows,
@@ -499,6 +500,19 @@ class TestSaveAsEnabled:
         extras = profile_to_form_extras(profile)
         form_config = build_apply_config(matrix, profile.data_link_port, extras)
         assert save_as_enabled(form_config, profile)
+
+
+class TestDisplayLabel:
+    def test_renders_display_name_when_set(self) -> None:
+        profile = _full_profile("some-slug").model_copy(
+            update={"display_name": "Pretty Name"}
+        )
+        assert display_label(profile) == "Pretty Name"
+
+    def test_falls_back_to_slug_when_absent(self) -> None:
+        profile = _full_profile("some-slug")
+        assert profile.display_name is None
+        assert display_label(profile) == "some-slug"
 
 
 class TestSuggestProfileName:

@@ -157,46 +157,73 @@ class ProfileStore:
         logger.info("Created custom profile: %s", profile.name)
         return profile
 
-    def rename_profile(self, name: str, new_name: str) -> Profile:
+    def rename_profile(self, name: str, new_display_name: str) -> Profile:
         """Rename an existing custom profile.
 
+        Renaming edits ``display_name`` only. The slug (``name``,
+        also the filename) is immortal — frozen at creation like a
+        database id — so it never changes here: no file ever moves,
+        and any ``forked_from`` reference pointing at *name* stays
+        valid. The accepted cost is that a long-lived profile's
+        filename may drift from its label.
+
         Args:
-            name: Current name of the custom profile.
-            new_name: New name to give it.
+            name: Slug of the custom profile to rename.
+            new_display_name: The new human-readable label.
 
         Returns:
-            The renamed profile.
+            The profile with its ``display_name`` updated.
 
         Raises:
             ProfileImmutableError: *name* identifies a built-in.
             ProfileNotFoundError: No custom profile named *name* exists.
-            ProfileBusinessRuleError: *new_name* isn't filesystem-safe.
-            ProfileConflictError: *new_name* collides with a built-in or
-                another existing custom profile.
+            ProfileBusinessRuleError: *new_display_name* is blank.
         """
         if name in BUILTIN_PROFILES:
             raise ProfileImmutableError(f"'{name}' is a built-in and cannot be renamed")
-        customs = self._load_customs()
-        existing = customs.get(name)
+        existing = self._load_customs().get(name)
         if existing is None:
             raise ProfileNotFoundError(f"No profile named '{name}'")
 
-        if new_name == name:
-            return existing
+        if not new_display_name.strip():
+            raise ProfileBusinessRuleError("display name must not be blank")
 
-        self._validate_name_is_safe(new_name)
-        if new_name in BUILTIN_PROFILES:
-            raise ProfileConflictError(f"'{new_name}' collides with a built-in profile")
-        if new_name in customs:
-            raise ProfileConflictError(
-                f"A custom profile named '{new_name}' already exists"
-            )
-
-        renamed = existing.model_copy(update={"name": new_name})
+        renamed = existing.model_copy(update={"display_name": new_display_name})
         self._write_custom(renamed)
-        self._custom_path(name).unlink()
-        logger.info("Renamed custom profile: %s -> %s", name, new_name)
+        logger.info(
+            "Renamed custom profile %s -> display_name=%r", name, new_display_name
+        )
         return renamed
+
+    def update_profile(self, profile: Profile) -> Profile:
+        """Overwrite an existing custom profile's content in place.
+
+        Same slug, same filename — the collision path ``create_profile``'s
+        error message has always promised but the store never
+        implemented.
+
+        Args:
+            profile: The full replacement document. ``profile.name``
+                identifies which existing custom to overwrite.
+
+        Returns:
+            The persisted profile (the same object passed in).
+
+        Raises:
+            ProfileImmutableError: *profile.name* identifies a built-in.
+            ProfileNotFoundError: No custom profile named *profile.name*
+                exists yet — use :meth:`create_profile` instead.
+        """
+        if profile.name in BUILTIN_PROFILES:
+            raise ProfileImmutableError(
+                f"'{profile.name}' is a built-in and cannot be overwritten"
+            )
+        if profile.name not in self._load_customs():
+            raise ProfileNotFoundError(f"No profile named '{profile.name}'")
+
+        self._write_custom(profile)
+        logger.info("Updated custom profile: %s", profile.name)
+        return profile
 
     def delete_profile(self, name: str) -> None:
         """Delete a custom profile.

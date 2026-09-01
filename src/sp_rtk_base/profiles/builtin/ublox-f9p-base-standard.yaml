@@ -5,6 +5,7 @@
 # docs/zed-f9p-base-station-config-reference.md for the hardware
 # audit this file reproduces cell-for-cell.
 name: ublox-f9p-base-standard
+display_name: "u-blox F9P — Base Station (Standard)"
 version: 1
 hardware: ZED-F9P
 

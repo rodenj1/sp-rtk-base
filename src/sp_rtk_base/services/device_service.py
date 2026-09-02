@@ -30,7 +30,6 @@ from sp_rtk_base.models.device_models import (
     ReceiverScalarConfig,
     RtcmOutputPort,
     RtcmPortConfig,
-    RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
     UbxProtocol,
@@ -97,39 +96,6 @@ class ApplyConfigLinkLostError(Exception):
         )
 
 
-# ---------------------------------------------------------------------------
-# Non-blocking RTCM throughput estimate (issue #61)
-#
-# Approximate typical RTCM3 frame sizes in bytes at a moderate satellite
-# count. These are estimates for a heads-up warning only — not exact
-# wire measurements — so precision beyond "roughly right" isn't the
-# goal. MSM4/MSM7 sizes scale with tracked satellite count; the values
-# below assume a typical 8-12 satellites per constellation.
-# ---------------------------------------------------------------------------
-
-_APPROX_RTCM_FRAME_BYTES: dict[RtcmRowId, int] = {
-    RtcmRowId.RTCM_1005: 19,
-    RtcmRowId.RTCM_4072_0: 72,
-    RtcmRowId.RTCM_4072_1: 40,
-    RtcmRowId.RTCM_1074: 150,
-    RtcmRowId.RTCM_1077: 300,
-    RtcmRowId.RTCM_1084: 130,
-    RtcmRowId.RTCM_1087: 260,
-    RtcmRowId.RTCM_1094: 120,
-    RtcmRowId.RTCM_1097: 240,
-    RtcmRowId.RTCM_1124: 130,
-    RtcmRowId.RTCM_1127: 260,
-    RtcmRowId.RTCM_1230: 25,
-}
-
-# 8N1 serial framing: ~10 bits on the wire per payload byte (1 start +
-# 8 data + 1 stop), so baud / 10 approximates byte capacity per second.
-_BITS_PER_BYTE_ON_WIRE = 10.0
-
-# Warn once estimated RTCM throughput crosses this fraction of a
-# data-link port's baud capacity.
-_THROUGHPUT_WARN_THRESHOLD = 0.70
-
 # The built-in profile whose ``ports``/``dyn_model``/``rtcm_stream``
 # values define "the base invariants" for the survey-in pre-flight
 # check (issue #63) and its one-click remedy. There is exactly one
@@ -137,44 +103,6 @@ _THROUGHPUT_WARN_THRESHOLD = 0.70
 # test_imports_cleanly_with_exactly_one_builtin) and it is the base
 # station reference profile.
 _BASE_INVARIANTS_PROFILE_NAME = "ublox-f9p-base-standard"
-
-
-def _throughput_warnings(
-    assertion: ReceiverAssertion,
-    data_link_port: list[PortId],
-    baud_rates: dict[PortId, int],
-) -> list[str]:
-    """Non-blocking advisories when estimated RTCM output nears port capacity.
-
-    Takes the whole ``ReceiverAssertion`` plus *data_link_port*
-    separately — ``data_link_port`` has no CFG key and isn't part of
-    the assertion (issue #98), but the check still needs it alongside
-    ``rtcm_stream.matrix`` and ``meas_period_ms``.
-    """
-    matrix = assertion.rtcm_stream.matrix
-    hz = 1000.0 / assertion.meas_period_ms
-    warnings: list[str] = []
-    for port in data_link_port:
-        baud = baud_rates.get(port)
-        if not baud:
-            continue
-        bytes_per_sec = (
-            sum(
-                _APPROX_RTCM_FRAME_BYTES.get(row, 0)
-                for row, ports in matrix.items()
-                if ports.get(port, False)
-            )
-            * hz
-        )
-        capacity_bytes_per_sec = baud / _BITS_PER_BYTE_ON_WIRE
-        fraction = bytes_per_sec / capacity_bytes_per_sec
-        if fraction > _THROUGHPUT_WARN_THRESHOLD:
-            warnings.append(
-                f"Estimated RTCM throughput on {port.value} is "
-                f"~{round(fraction * 100)}% of its {baud} baud capacity "
-                "— consider a higher baud rate or fewer messages."
-            )
-    return warnings
 
 
 def build_receiver_assertion(
@@ -970,9 +898,8 @@ class DeviceService:
         changed UART2 baud never triggers a reopen — it isn't the port
         this console is on.
 
-        After the writes land, a non-blocking throughput estimate
-        checks each ``data_link_port`` against its live baud rate, and
-        a fresh full read-back (:meth:`get_receiver_assertion`) is
+        After the writes land, a fresh full read-back
+        (:meth:`get_receiver_assertion`) is
         diffed per-leaf against *request.assertion*
         (:func:`profile_models.diff_receiver_assertions`) to decide
         ``status``: any mismatch returns ``status="failed"`` with the
@@ -1085,9 +1012,6 @@ class DeviceService:
         if new_uart1 is not None:
             await self._reopen_after_baud_write(driver, new_uart1)
 
-        baud_rates = await asyncio.to_thread(driver.get_uart_baud_rates)
-        warnings = _throughput_warnings(assertion, request.data_link_port, baud_rates)
-
         read = await self.get_receiver_assertion()
         diff = diff_receiver_assertions(assertion, read.assertion)
         if diff:
@@ -1098,7 +1022,6 @@ class DeviceService:
                 status="failed",
                 read_back=read.assertion,
                 diff=diff,
-                warnings=warnings,
                 steps=steps,
                 step_warnings=step_warnings,
             )
@@ -1107,7 +1030,6 @@ class DeviceService:
         return ApplyConfigResult(
             status="ok",
             read_back=read.assertion,
-            warnings=warnings,
             steps=steps,
             step_warnings=step_warnings,
         )

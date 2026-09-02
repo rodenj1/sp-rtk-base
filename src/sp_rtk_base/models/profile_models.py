@@ -617,12 +617,14 @@ class ApplyConfigResult(BaseModel):
     their live state from it whether ``status`` is ``"ok"`` or
     ``"failed"``, since the writes land either way (or didn't run at
     all — a failed or skipped step still leaves ``read_back`` as the
-    truth of what the receiver holds). ``warnings`` carries
-    non-blocking advisories (e.g. the estimated-throughput check) that
-    never affect ``status``. ``steps`` reports every write step's
-    outcome in execution order (issue #99); ``step_warnings`` carries
-    the driver's step-tagged warning channel, distinct from
-    ``warnings`` — see :class:`ApplyStepWarning`.
+    truth of what the receiver holds). ``steps`` reports every write
+    step's outcome in execution order (issue #99); ``step_warnings``
+    carries the driver's step-tagged warning channel — the one thing
+    left in this result's warning channel: a post-write observation
+    the sync check can't express (issue #102 moved the other warning
+    this used to carry, the estimated-throughput advisory, to a live,
+    form-derived caption on the Advanced GPS page instead, since there
+    was no consumer of it here — see :class:`ApplyStepWarning`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -630,7 +632,6 @@ class ApplyConfigResult(BaseModel):
     status: Literal["ok", "failed"]
     read_back: ReceiverAssertion
     diff: list[ApplyDiffEntry] = Field(default_factory=lambda: list[ApplyDiffEntry]())
-    warnings: list[str] = Field(default_factory=lambda: list[str]())
     steps: list[ApplyStepResult] = Field(
         default_factory=lambda: list[ApplyStepResult]()
     )

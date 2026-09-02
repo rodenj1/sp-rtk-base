@@ -229,3 +229,58 @@ class TestInstallerConfigPermissions:
             "'install -d' line so a re-run heals pre-existing installs "
             "whose CONFIG_DIR was created root-owned."
         )
+
+
+class TestProfilesDirProvisioned:
+    """Regression: the installer must provision a writable custom-profiles
+    directory up front, and the app unit must point ``ProfileStore`` at it.
+
+    Background (issue #81): ``ProfileStore``'s default profiles dir is
+    ``~/.config/sp-rtk-base/profiles``. On appliance installs the systemd
+    unit sets ``ProtectHome=true``, which makes ``~`` for the
+    ``sp-rtk-base`` service user inaccessible — every ``/api/profiles``
+    call 500'd with an unhandled ``PermissionError``, even after manually
+    pre-creating the directory as root. The fix mirrors the existing
+    ``SP_RTK_BASE_NET_CONFIG`` pattern (see
+    :class:`TestMainAppServiceHasNetProvisionEnv` in
+    ``test_install_net_provision.py``): redirect ``ProfileStore`` to a
+    ``ReadWritePaths`` location via ``SP_RTK_BASE_PROFILES_DIR``, and have
+    the installer create that directory up front.
+    """
+
+    _PROFILES_DIR_INSTALL_RE = re.compile(
+        r'install\s+-d\s+-m\s+0750\s+-o\s+"\$SERVICE_USER"\s+-g\s+"\$SERVICE_USER"\s+'
+        r'"\$\{STATE_DIR\}/profiles"'
+    )
+
+    def test_installer_creates_profiles_dir_owned_by_service_user(
+        self, install_script_text: str
+    ) -> None:
+        assert self._PROFILES_DIR_INSTALL_RE.search(install_script_text), (
+            "deploy/install.sh must create ${STATE_DIR}/profiles owned by "
+            '"$SERVICE_USER":"$SERVICE_USER", e.g.\n'
+            '    install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" '
+            '"${STATE_DIR}/profiles"'
+        )
+
+    def test_app_service_unit_redirects_profiles_dir_into_read_write_paths(
+        self,
+    ) -> None:
+        unit = REPO_ROOT / "deploy" / "sp-rtk-base.service"
+        assert unit.is_file(), f"unit file not found: {unit}"
+        text = unit.read_text(encoding="utf-8")
+        assert (
+            "Environment=SP_RTK_BASE_PROFILES_DIR=/var/lib/sp-rtk-base/profiles" in text
+        ), (
+            "deploy/sp-rtk-base.service must set SP_RTK_BASE_PROFILES_DIR to "
+            "a location inside ReadWritePaths (/var/lib/sp-rtk-base), or "
+            "ProfileStore falls back to the ProtectHome-hidden ~/.config "
+            "default and every /api/profiles call 500s."
+        )
+        assert (
+            "/var/lib/sp-rtk-base"
+            in text.split("ReadWritePaths=", 1)[1].split("\n", 1)[0]
+        ), (
+            "SP_RTK_BASE_PROFILES_DIR points inside /var/lib/sp-rtk-base, "
+            "which must stay listed in ReadWritePaths."
+        )

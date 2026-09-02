@@ -15,7 +15,10 @@ from sp_rtk_base.services import get_device_service, get_profile_store
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.metrics_service import MetricsService
-from sp_rtk_base.services.profile_store import ProfileStore
+from sp_rtk_base.services.profile_store import (
+    ProfileStore,
+    ProfileStoreUnavailableError,
+)
 
 BUILTIN_NAME = "ublox-f9p-base-standard"
 
@@ -51,6 +54,44 @@ def api_client_with_device(
     app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
     app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
     app.dependency_overrides[get_profile_store] = lambda: mock_profile_store
+    app.dependency_overrides[get_device_service] = lambda: mock_device_service
+    return TestClient(app)
+
+
+@pytest.fixture()
+def api_client_with_unavailable_store(
+    mock_config_service: ConfigService,
+    mock_relay_service: MagicMock,
+    mock_event_bridge: MagicMock,
+    mock_metrics_service: MetricsService,
+    mock_device_service: DeviceService,
+) -> TestClient:
+    """``api_client_with_services`` but the profile store can't touch disk —
+    issue #81 (``ProtectHome=true`` hiding ``~`` on appliance installs)."""
+    from sp_rtk_base.services import (
+        get_config_service,
+        get_event_bridge,
+        get_metrics_service,
+        get_relay_service,
+    )
+
+    unavailable_store = MagicMock(spec=ProfileStore)
+    unavailable_error = ProfileStoreUnavailableError(
+        "profiles dir '/home/sp-rtk-base/.config/sp-rtk-base/profiles' is not "
+        "accessible (Permission denied); set SP_RTK_BASE_PROFILES_DIR to a "
+        "writable location"
+    )
+    unavailable_store.list_profiles.side_effect = unavailable_error
+    unavailable_store.get_profile.side_effect = unavailable_error
+    unavailable_store.export_profile.side_effect = unavailable_error
+    unavailable_store.create_profile.side_effect = unavailable_error
+
+    app = create_api_app()
+    app.dependency_overrides[get_config_service] = lambda: mock_config_service
+    app.dependency_overrides[get_relay_service] = lambda: mock_relay_service
+    app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
+    app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
+    app.dependency_overrides[get_profile_store] = lambda: unavailable_store
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
     return TestClient(app)
 
@@ -271,6 +312,41 @@ class TestMalformedCustomFileDoesNotBreakListing:
         names = [item["profile"]["name"] for item in resp.json()["profiles"]]
         assert "good" in names
         assert len(names) == 2  # builtin + good; corrupt.yaml silently skipped
+
+
+class TestProfileStoreUnavailable:
+    """Issue #81: an inaccessible profiles dir must surface as a clear
+    5xx with an actionable message, not an unhandled ``PermissionError``
+    traceback (e.g. appliance installs with ``ProtectHome=true``)."""
+
+    def test_list_returns_503_with_actionable_message(
+        self, api_client_with_unavailable_store: TestClient
+    ) -> None:
+        resp = api_client_with_unavailable_store.get("/api/profiles")
+        assert resp.status_code == 503
+        assert "SP_RTK_BASE_PROFILES_DIR" in resp.json()["message"]
+
+    def test_get_returns_503(
+        self, api_client_with_unavailable_store: TestClient
+    ) -> None:
+        resp = api_client_with_unavailable_store.get(f"/api/profiles/{BUILTIN_NAME}")
+        assert resp.status_code == 503
+
+    def test_export_returns_503(
+        self, api_client_with_unavailable_store: TestClient
+    ) -> None:
+        resp = api_client_with_unavailable_store.get(
+            f"/api/profiles/{BUILTIN_NAME}/export"
+        )
+        assert resp.status_code == 503
+
+    def test_create_returns_503(
+        self, api_client_with_unavailable_store: TestClient
+    ) -> None:
+        resp = api_client_with_unavailable_store.post(
+            "/api/profiles", json=_profile_payload()
+        )
+        assert resp.status_code == 503
 
 
 class TestHardwareIdentityInListing:

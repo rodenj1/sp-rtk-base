@@ -17,6 +17,7 @@ from sp_rtk_base.services.profile_store import (
     ProfileImmutableError,
     ProfileNotFoundError,
     ProfileStore,
+    ProfileStoreUnavailableError,
 )
 
 BUILTIN_NAME = "ublox-f9p-base-standard"
@@ -316,3 +317,73 @@ class TestPathResolutionPrecedence:
 
         store = ProfileStore()
         assert store.profiles_dir == DEFAULT_PROFILES_DIR
+
+
+class TestUnavailableProfilesDir:
+    """Issue #81: an inaccessible profiles dir (e.g. ``ProtectHome=true``
+    hiding ``~`` on appliance installs) must raise a clear, actionable
+    error rather than let a raw ``PermissionError`` reach the caller."""
+
+    def test_construction_warns_when_dir_is_inaccessible(
+        self,
+        profiles_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The store is built as a module-level singleton at import time
+        (before the first request), so a startup-time warning gives an
+        operator a log line to find instead of only a 503 on first use.
+        """
+
+        def _denied(self: Path) -> bool:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "exists", _denied)
+        with caplog.at_level("WARNING"):
+            ProfileStore(profiles_dir=profiles_dir)
+
+        assert "SP_RTK_BASE_PROFILES_DIR" in caplog.text
+        assert str(profiles_dir) in caplog.text
+
+    def test_listing_an_unreadable_dir_raises_actionable_error(
+        self,
+        store: ProfileStore,
+        profiles_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        def _denied(self: Path, pattern: str) -> list[Path]:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "glob", _denied)
+        with pytest.raises(
+            ProfileStoreUnavailableError, match="SP_RTK_BASE_PROFILES_DIR"
+        ):
+            store.list_profiles()
+
+    def test_delete_raises_actionable_error_when_file_cannot_be_unlinked(
+        self, store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store.create_profile(_custom())
+
+        def _denied(self: Path) -> None:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "unlink", _denied)
+        with pytest.raises(
+            ProfileStoreUnavailableError, match="SP_RTK_BASE_PROFILES_DIR"
+        ):
+            store.delete_profile("my-custom")
+
+    def test_create_raises_actionable_error_when_dir_cannot_be_made(
+        self, store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _denied(self: Path, **kwargs: object) -> None:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "mkdir", _denied)
+        with pytest.raises(
+            ProfileStoreUnavailableError, match="SP_RTK_BASE_PROFILES_DIR"
+        ):
+            store.create_profile(_custom())

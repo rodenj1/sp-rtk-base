@@ -20,6 +20,11 @@ Environment=SP_RTK_BASE_CONFIG=/etc/sp-rtk-base/config.yaml
 # doesn't exist for this homeless system user, and every /api/network/*
 # call 502s.
 Environment=SP_RTK_BASE_NET_CONFIG=/etc/sp-rtk-base/net_provision.yaml
+# Same story for custom GPS profiles (issue #81): ProfileStore's default
+# ~/.config path is unreachable under ProtectHome=true below (the service
+# user's home is hidden/read-only), so every /api/profiles call 500s.
+# /var/lib/sp-rtk-base is already in ReadWritePaths, so redirect there.
+Environment=SP_RTK_BASE_PROFILES_DIR=/var/lib/sp-rtk-base/profiles
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base
 Restart=on-failure
 RestartSec=5

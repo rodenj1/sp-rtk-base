@@ -75,6 +75,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.models.device_models import (
     BaseMode as TmodeMode,
@@ -276,13 +277,23 @@ def build_apply_request(
     Apply call, Save-as, and the "modified from X" comparison) passes
     the current ``form`` :class:`ReceiverAssertion` through.
 
+    BeiDou B2 is coerced off here when BeiDou itself is off (issue
+    #100), regardless of what the form's raw ``bds_b2_enabled`` holds —
+    this is the one choke point every caller (Apply, Save-as, the
+    "modified from X" comparison) goes through, so the outgoing assert
+    always agrees with what the firmware would renormalise on its own,
+    pre-empting a permanently unclearable difference.
+
     Raises:
         pydantic.ValidationError: If the resulting request fails a
             context-free rule (e.g. 1005 missing from every chosen
             data-link port) — a client-side pre-write refusal, nothing
             is sent to the receiver.
     """
-    return ReceiverApplyRequest(assertion=form, data_link_port=data_link_port)
+    assertion = form
+    if bds_b2_control_disabled(form.constellations) and form.bds_b2_enabled:
+        assertion = form.model_copy(update={"bds_b2_enabled": False})
+    return ReceiverApplyRequest(assertion=assertion, data_link_port=data_link_port)
 
 
 def receiver_config_from_profile(
@@ -413,33 +424,36 @@ def resolve_gnss_display(constellations: list[GnssConstellation]) -> dict[str, b
     return {c.value: c in wanted for c in GnssConstellation}
 
 
-def hw_extras_display(assertion: ReceiverAssertion) -> list[tuple[str, str, str]]:
-    """(css-class, label, value) triples the "Hardware Section" display
-    renders — every :class:`ReceiverAssertion` field the matrix/ports/GNSS
-    views don't already cover. Every field is always populated (issue
-    #97), so every value shown is real — never a placeholder."""
-    hz = 1000 / assertion.meas_period_ms
-    return [
-        ("hw-field-meas-rate", "Measurement Rate", f"{hz:g} Hz"),
-        (
-            "hw-field-baud",
-            "Baud",
-            f"UART1={assertion.baud.uart1}, UART2={assertion.baud.uart2}",
-        ),
-        ("hw-field-dyn-model", "Dynamics Model", assertion.dyn_model.value),
-        ("hw-field-tmode", "Time Mode", assertion.tmode_mode.value),
-        (
-            "hw-field-elevation-mask",
-            "Elevation Mask",
-            f"{assertion.elevation_mask_deg}°",
-        ),
-        (
-            "hw-field-bds-b2",
-            "BeiDou B2",
-            "on" if assertion.bds_b2_enabled else "off",
-        ),
-        ("hw-field-spi", "SPI", "on" if assertion.spi_enabled else "off"),
-    ]
+#: Base mode states the hardware-section control offers directly.
+#: ``survey_in`` is seedable (a live receiver can be found running one)
+#: but never itself selectable — starting a survey stays the Survey
+#: page's transition, since it's edge-triggered and needs survey
+#: parameters (issue #100).
+SELECTABLE_TMODE_MODES: tuple[TmodeMode, ...] = (TmodeMode.DISABLED, TmodeMode.FIXED)
+
+
+def tmode_mode_locked(mode: TmodeMode) -> bool:
+    """Whether the base-mode control is showing *mode* as a locked,
+    non-selectable current value rather than a normal picker.
+
+    True only for ``survey_in`` — the one state the control must be
+    able to represent (so a receiver mid-survey shows no phantom
+    unapplied change) without offering it as something an operator can
+    pick here.
+    """
+    return mode == TmodeMode.SURVEY_IN
+
+
+def bds_b2_control_disabled(constellations: list[GnssConstellation]) -> bool:
+    """Whether the BeiDou B2 control should be greyed out.
+
+    True whenever BeiDou itself is off — B2 has nothing to modulate
+    without it. Doesn't touch the underlying value; that's
+    :func:`build_apply_request`'s job (see its docstring) so the read
+    can still report the receiver's truth even in the rare case where
+    the two are already inconsistent.
+    """
+    return GnssConstellation.BEIDOU not in constellations
 
 
 def placeholder_assertion() -> ReceiverAssertion:
@@ -769,10 +783,12 @@ def gps_config_page() -> None:
         with config_card:
             ui.label("Receiver Configuration").classes("text-h6 text-white")
             ui.label(
-                "Port protocols, GNSS and the fields below reflect the live "
-                "receiver, or a picked profile once one's selected — this "
-                "display isn't click-to-edit yet. The RTCM matrix and "
-                "data-link port(s) further down are — edit, then Apply."
+                "Every field below is seeded from the live receiver, or a "
+                "picked profile once one's selected, and every field is "
+                "editable — model, firmware, protocol and hardware version "
+                "on the Connection card above are the only genuine "
+                "read-only status fields. Edit anything, then Apply to "
+                "assert the whole form and verify the read-back."
             ).classes("text-grey-4 q-mt-xs text-caption")
             ui.separator()
 
@@ -1321,40 +1337,216 @@ def gps_config_page() -> None:
             except ValidationError:
                 return None
 
+        def _toggle_port_protocol(
+            port: PortId, direction: str, protocol: UbxProtocol, checked: bool
+        ) -> None:
+            protocols = form.ports.setdefault(port, PortProtocolSet())
+            target = protocols.in_ if direction == "in" else protocols.out
+            if checked and protocol not in target:
+                target.append(protocol)
+            elif not checked and protocol in target:
+                target.remove(protocol)
+            _on_form_changed()
+
         def _render_ports_view() -> None:
             ports_view.clear()
             with ports_view:
                 display = resolve_ports_display(form.ports)
                 for port_id in (PortId.UART1, PortId.UART2, PortId.USB):
                     in_names, out_names = display[port_id]
-                    with ui.row().classes("items-center gap-2"):
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
                         ui.label(port_id.value).classes("text-white").style(
                             "width: 60px; flex-shrink: 0"
                         )
                         ui.label("IN").classes("text-caption text-grey-5")
-                        for name in in_names:
-                            ui.badge(name).props("outline color=grey")
+                        for protocol in UbxProtocol:
+                            ui.checkbox(
+                                protocol.value,
+                                value=protocol.value in in_names,
+                                on_change=lambda e, p=port_id, pr=protocol: (
+                                    _toggle_port_protocol(p, "in", pr, bool(e.value))
+                                ),
+                            ).classes(
+                                f"port-protocol-{port_id.value}-in-{protocol.value}"
+                            )
                         ui.label("OUT").classes("text-caption text-grey-5 q-ml-md")
-                        for name in out_names:
-                            ui.badge(name).props("outline color=primary")
+                        for protocol in UbxProtocol:
+                            ui.checkbox(
+                                protocol.value,
+                                value=protocol.value in out_names,
+                                on_change=lambda e, p=port_id, pr=protocol: (
+                                    _toggle_port_protocol(p, "out", pr, bool(e.value))
+                                ),
+                            ).classes(
+                                f"port-protocol-{port_id.value}-out-{protocol.value}"
+                            )
+
+        def _toggle_gnss(constellation: GnssConstellation, checked: bool) -> None:
+            if checked and constellation not in form.constellations:
+                form.constellations.append(constellation)
+            elif not checked and constellation in form.constellations:
+                form.constellations.remove(constellation)
+                if constellation == GnssConstellation.BEIDOU:
+                    # Keep the form's own value consistent with the
+                    # now-greyed-out B2 control the moment BeiDou goes
+                    # off, rather than leaving a stale "on" behind it
+                    # (build_apply_request coerces this too, for the
+                    # case where the two were already inconsistent on
+                    # seed — see its docstring).
+                    form.bds_b2_enabled = False
+            _render_gnss_view()
+            _render_hw_extras_view()
+            _on_form_changed()
 
         def _render_gnss_view() -> None:
             gnss_view.clear()
             with gnss_view:
                 enabled_map = resolve_gnss_display(form.constellations)
                 for c_val, c_name in _GNSS_DISPLAY:
-                    enabled = enabled_map.get(c_val, False)
-                    ui.badge(c_name).props(
-                        "color=positive" if enabled else "outline color=grey"
-                    )
+                    constellation = GnssConstellation(c_val)
+                    ui.checkbox(
+                        c_name,
+                        value=enabled_map.get(c_val, False),
+                        on_change=lambda e, c=constellation: _toggle_gnss(
+                            c, bool(e.value)
+                        ),
+                    ).classes(f"gnss-checkbox-{c_val}")
+
+        def _set_meas_period_ms(period_ms: float | None) -> None:
+            if period_ms is None:
+                return
+            form.meas_period_ms = int(period_ms)
+            _render_hw_extras_view()
+            _on_form_changed()
+
+        def _set_baud(uart: str, value: int | None) -> None:
+            if value is None:
+                return
+            if uart == "uart1":
+                form.baud.uart1 = int(value)
+            else:
+                form.baud.uart2 = int(value)
+            _on_form_changed()
+
+        def _set_dyn_model(value: str | None) -> None:
+            if value is None:
+                return
+            form.dyn_model = DynModel(value)
+            _on_form_changed()
+
+        def _set_tmode_mode(value: str | None) -> None:
+            if value is None:
+                return
+            form.tmode_mode = TmodeMode(value)
+            _render_hw_extras_view()
+            _on_form_changed()
+
+        def _set_elevation_mask(value: float | None) -> None:
+            if value is None:
+                return
+            form.elevation_mask_deg = int(value)
+            _on_form_changed()
+
+        def _toggle_bds_b2(checked: bool) -> None:
+            form.bds_b2_enabled = checked
+            _on_form_changed()
+
+        def _toggle_spi(checked: bool) -> None:
+            form.spi_enabled = checked
+            _on_form_changed()
 
         def _render_hw_extras_view() -> None:
             hw_extras_view.clear()
+            tmode_options = {m.value: m.value for m in SELECTABLE_TMODE_MODES}
             with hw_extras_view:
-                for css_class, label, value in hw_extras_display(form):
-                    with ui.column().classes(f"{css_class} gap-0"):
-                        ui.label(label).classes("text-caption text-grey-5")
-                        ui.label(value).classes("text-white")
+                with ui.column().classes("hw-field-meas-rate gap-0"):
+                    ui.label("Measurement Rate").classes("text-caption text-grey-5")
+                    ui.number(
+                        value=form.meas_period_ms,
+                        min=100,
+                        max=60000,
+                        step=100,
+                        on_change=lambda e: _set_meas_period_ms(e.value),
+                    ).classes("hw-field-meas-rate-input").props(
+                        "dense suffix=ms"
+                    ).style("width: 140px")
+                    hz = 1000 / form.meas_period_ms
+                    ui.label(f"= {hz:g} Hz").classes("text-caption text-grey-5")
+
+                with ui.column().classes("hw-field-baud gap-0"):
+                    ui.label("Baud").classes("text-caption text-grey-5")
+                    with ui.row().classes("gap-2"):
+                        ui.select(
+                            options={r: str(r) for r in BAUD_RATES},
+                            label="UART1",
+                            value=form.baud.uart1,
+                            on_change=lambda e: _set_baud("uart1", e.value),
+                        ).classes("hw-field-baud-uart1").style("width: 110px")
+                        ui.select(
+                            options={r: str(r) for r in BAUD_RATES},
+                            label="UART2",
+                            value=form.baud.uart2,
+                            on_change=lambda e: _set_baud("uart2", e.value),
+                        ).classes("hw-field-baud-uart2").style("width: 110px")
+
+                with ui.column().classes("hw-field-dyn-model gap-0"):
+                    ui.label("Dynamics Model").classes("text-caption text-grey-5")
+                    ui.select(
+                        options={m.value: m.value for m in DynModel},
+                        value=form.dyn_model.value,
+                        on_change=lambda e: _set_dyn_model(e.value),
+                    ).classes("hw-field-dyn-model-select").style("width: 160px")
+
+                with ui.column().classes("hw-field-tmode gap-0"):
+                    ui.label("Time Mode").classes("text-caption text-grey-5")
+                    if tmode_mode_locked(form.tmode_mode):
+                        ui.label(f"{form.tmode_mode.value} (running)").classes(
+                            "hw-field-tmode-note text-white"
+                        )
+                        ui.button("Go to Survey page", icon="open_in_new").classes(
+                            "hw-field-tmode-survey-link"
+                        ).props("outline color=primary dense").on(
+                            "click", lambda: ui.navigate.to("/survey")
+                        )
+                        ui.select(
+                            options=tmode_options,
+                            label="Change to...",
+                            on_change=lambda e: _set_tmode_mode(e.value),
+                        ).classes("hw-field-tmode-select").style("width: 140px")
+                    else:
+                        ui.select(
+                            options=tmode_options,
+                            value=form.tmode_mode.value,
+                            on_change=lambda e: _set_tmode_mode(e.value),
+                        ).classes("hw-field-tmode-select").style("width: 140px")
+
+                with ui.column().classes("hw-field-elevation-mask gap-0"):
+                    ui.label("Elevation Mask").classes("text-caption text-grey-5")
+                    ui.number(
+                        value=form.elevation_mask_deg,
+                        min=0,
+                        max=90,
+                        step=1,
+                        on_change=lambda e: _set_elevation_mask(e.value),
+                    ).classes("hw-field-elevation-mask-input").props(
+                        "dense suffix=°"
+                    ).style("width: 100px")
+
+                with ui.column().classes("hw-field-bds-b2 gap-0"):
+                    ui.label("BeiDou B2").classes("text-caption text-grey-5")
+                    ui.checkbox(
+                        value=form.bds_b2_enabled,
+                        on_change=lambda e: _toggle_bds_b2(bool(e.value)),
+                    ).classes("hw-field-bds-b2-checkbox").set_enabled(
+                        not bds_b2_control_disabled(form.constellations)
+                    )
+
+                with ui.column().classes("hw-field-spi gap-0"):
+                    ui.label("SPI").classes("text-caption text-grey-5")
+                    ui.checkbox(
+                        value=form.spi_enabled,
+                        on_change=lambda e: _toggle_spi(bool(e.value)),
+                    ).classes("hw-field-spi-checkbox")
 
         def _toggle_matrix_cell(msg_id: RtcmRowId, port: PortId) -> None:
             form.rtcm_stream.matrix[msg_id][port] = not form.rtcm_stream.matrix[msg_id][

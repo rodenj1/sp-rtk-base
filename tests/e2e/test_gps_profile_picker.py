@@ -125,7 +125,8 @@ def test_form_seeds_matrix_and_gnss_from_live_receiver(
     base_url: str,
     connected_gps: None,
 ) -> None:
-    """The RTCM matrix and GNSS badges reflect the fake driver's live state.
+    """The RTCM matrix and GNSS checkboxes reflect the fake driver's live
+    state.
 
     ``FakeGpsDriver`` enables RTCM 1005/1077/1087/1097/1127/1230 on
     USB+UART1 (not UART2) and enables GPS/GLONASS/Galileo/BeiDou but
@@ -141,9 +142,10 @@ def test_form_seeds_matrix_and_gnss_from_live_receiver(
     # A row with no live data at all stays off everywhere.
     expect(page.locator(".rtcm-cell-1074-UART1")).to_have_text("-")
 
-    config_card = page.locator(".q-card:has(:text('Receiver Configuration'))").first
-    expect(config_card.locator(".q-badge:text-is('GPS')")).to_be_visible()
-    expect(config_card.locator(".q-badge:text-is('SBAS')")).to_be_visible()
+    expect(page.locator(".gnss-checkbox-gps")).to_have_attribute("aria-checked", "true")
+    expect(page.locator(".gnss-checkbox-sbas")).to_have_attribute(
+        "aria-checked", "false"
+    )
 
 
 @pytest.mark.e2e

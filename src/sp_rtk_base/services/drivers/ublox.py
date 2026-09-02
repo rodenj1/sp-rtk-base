@@ -826,6 +826,41 @@ class UbloxDriver(GpsReceiverDriver):
 
         raise RuntimeError("No CFG-VALGET response for config keys")
 
+    def _read_cfg_keys_with_retry_locked(
+        self,
+        keys: list[str],
+        layer: int = _CFG_LAYER_RAM,
+        attempts: int = 3,
+    ) -> dict[str, int]:
+        """Poll ``keys`` via ``_read_cfg_keys_locked``, retrying a bare timeout.
+
+        Must hold ``self._lock``. A large poll (dozens of keys, e.g. the
+        60-key RTCM port matrix) racing against RTCM/NAV traffic streamed
+        on the same UART can miss its CFG-VALGET reply within one read
+        budget even though the receiver is healthy and answers on the
+        next attempt (issue #119) — each attempt re-drains and re-polls
+        from scratch, so a miss here is a lost round trip, not a stuck
+        receiver. An explicit ACK-NAK is a different failure shape (the
+        receiver rejected the poll outright) and is never retried — it
+        propagates immediately so it stays distinguishable from a
+        transient timeout.
+        """
+        last_error = RuntimeError("No CFG-VALGET response for config keys")
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._read_cfg_keys_locked(keys, layer=layer)
+            except RuntimeError as exc:
+                if "NAK" in str(exc):
+                    raise
+                last_error = exc
+                logger.warning(
+                    "CFG-VALGET poll for %d keys got no response (attempt %d/%d)",
+                    len(keys),
+                    attempt,
+                    attempts,
+                )
+        raise last_error
+
     def _write_and_verify_locked(
         self, cfg_data: list[tuple[str, int]], layer: int, label: str
     ) -> None:
@@ -944,42 +979,23 @@ class UbloxDriver(GpsReceiverDriver):
 
     def _get_rtcm_port_config_locked(self) -> RtcmPortConfig:
         """Read multi-port RTCM config (must hold self._lock)."""
-        ser, reader = self._require_connection()
-
         # Build key list: 12 rows × 5 ports = 60 keys
-        all_keys: list[str | int] = []
-        for msg_id in _ALL_RTCM_IDS:
-            for port in _RTCM_PORTS:
-                all_keys.append(_rtcm_key(msg_id, port))
-
-        msg = UBXMessage.config_poll(0, 0, all_keys)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        for _ in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    continue
-                identity = getattr(parsed, "identity", "")
-                if identity == "CFG-VALGET":
-                    return self._parse_rtcm_port_valget(parsed)
-            except Exception:
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for RTCM port config")
+        all_keys = [
+            _rtcm_key(msg_id, port) for msg_id in _ALL_RTCM_IDS for port in _RTCM_PORTS
+        ]
+        values = self._read_cfg_keys_with_retry_locked(all_keys)
+        return self._parse_rtcm_port_valget(values)
 
     @staticmethod
-    def _parse_rtcm_port_valget(parsed: object) -> RtcmPortConfig:
-        """Parse a CFG-VALGET response into a multi-port RTCM config."""
+    def _parse_rtcm_port_valget(values: dict[str, int]) -> RtcmPortConfig:
+        """Build a multi-port RTCM config from polled CFG key values."""
         messages: dict[RtcmRowId, dict[str, int]] = {}
 
         for msg_id in _ALL_RTCM_IDS:
             port_rates: dict[str, int] = {}
             for port in _RTCM_PORTS:
                 key = _rtcm_key(msg_id, port)
-                rate = int(getattr(parsed, key, 0))
-                port_rates[port] = rate
+                port_rates[port] = values.get(key, 0)
             messages[msg_id] = port_rates
 
         return RtcmPortConfig(messages=messages)
@@ -1023,35 +1039,18 @@ class UbloxDriver(GpsReceiverDriver):
 
     def _get_port_protocols_locked(self) -> PortProtocolConfig:
         """Read port protocol config for all ports (must hold self._lock)."""
-        ser, reader = self._require_connection()
-
-        all_keys: list[str | int] = [
+        all_keys = [
             _protocol_key(port, direction, protocol)
             for port in PortId
             for direction in _PROTOCOL_DIRECTIONS
             for protocol in UbxProtocol
         ]
-
-        msg = UBXMessage.config_poll(0, 0, all_keys)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        for _ in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    continue
-                identity = getattr(parsed, "identity", "")
-                if identity == "CFG-VALGET":
-                    return self._parse_port_protocols_valget(parsed)
-            except Exception:
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for port protocol config")
+        values = self._read_cfg_keys_with_retry_locked(all_keys)
+        return self._parse_port_protocols_valget(values)
 
     @staticmethod
-    def _parse_port_protocols_valget(parsed: object) -> PortProtocolConfig:
-        """Parse a CFG-VALGET response into a port protocol config."""
+    def _parse_port_protocols_valget(values: dict[str, int]) -> PortProtocolConfig:
+        """Build a port protocol config from polled CFG key values."""
         in_protocols: dict[PortId, list[UbxProtocol]] = {}
         out_protocols: dict[PortId, list[UbxProtocol]] = {}
 
@@ -1059,12 +1058,12 @@ class UbloxDriver(GpsReceiverDriver):
             in_protocols[port] = [
                 protocol
                 for protocol in UbxProtocol
-                if int(getattr(parsed, _protocol_key(port, "IN", protocol), 0)) == 1
+                if values.get(_protocol_key(port, "IN", protocol), 0) == 1
             ]
             out_protocols[port] = [
                 protocol
                 for protocol in UbxProtocol
-                if int(getattr(parsed, _protocol_key(port, "OUT", protocol), 0)) == 1
+                if values.get(_protocol_key(port, "OUT", protocol), 0) == 1
             ]
 
         return PortProtocolConfig(

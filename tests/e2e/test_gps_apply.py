@@ -5,9 +5,10 @@ read-only shell from #64). This ticket makes the RTCM matrix and
 data-link port(s) editable and wires them to
 ``POST /api/device/apply-config``:
 
-- Toggling a matrix cell flips the "In sync" badge to "Receiver out of
-  sync"; a successful Apply clears it back to "In sync" (usage path 2
-  — tweak one cell, apply, iterate).
+- Toggling a matrix cell flips the "In sync" badge to "1 unapplied
+  change" (issue #101's neutral pending state); a successful Apply
+  clears it back to "In sync" (usage path 2 — tweak one cell, apply,
+  iterate).
 - A factory-fresh receiver (no RTCM anywhere) can't infer a data-link
   port — Apply is disabled with a clear prompt until the operator
   checks at least one UART box.
@@ -83,7 +84,7 @@ def test_toggle_cell_then_apply_clears_out_of_sync(
     expect(cell).to_have_text("-")
     cell.click()
     expect(cell).to_have_text("✓")
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
     apply_btn = page.get_by_role("button", name="Apply")
     expect(apply_btn).to_be_enabled()
@@ -149,4 +150,4 @@ def test_breaking_1005_rule_shows_named_refusal_and_writes_nothing(
 
     # Nothing was written — the receiver-out-of-sync badge is untouched
     # by the refusal (still reflects the pending, unwritten edit).
-    expect(page.locator(".sync-badge")).to_have_text("Receiver out of sync")
+    expect(page.locator(".sync-badge")).to_contain_text("unapplied change")

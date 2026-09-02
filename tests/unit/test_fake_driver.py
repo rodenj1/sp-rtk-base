@@ -54,6 +54,7 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.fake import (
+    FAKE_FLASH_DIVERGENCE_PORT,
     FAKE_PORT_LABEL,
     FakeGpsDriver,
 )
@@ -456,7 +457,9 @@ class TestConfigurationRoundTrips:
     def test_drain_warnings_is_always_empty(
         self, connected_driver: FakeGpsDriver
     ) -> None:
-        """No producer is wired up on the fake driver yet (issue #99)."""
+        """No producer is wired up by default (issue #99) — only the
+        flash-divergence sentinel (issue #101, see
+        ``TestFlashDivergenceSentinel``) queues anything."""
         assert connected_driver.drain_warnings() == []
         connected_driver.configure_baud(115200, None)
         assert connected_driver.drain_warnings() == []
@@ -518,6 +521,53 @@ class TestConfigurationRoundTrips:
     ) -> None:
         with pytest.raises(ConnectionError):
             driver.get_receiver_scalars()
+
+
+# ---------------------------------------------------------------------------
+# Flash-divergence sentinel (issue #101)
+# ---------------------------------------------------------------------------
+
+
+class TestFlashDivergenceSentinel:
+    """``FAKE_FLASH_DIVERGENCE_PORT`` — the only way to reach the GPS
+    page's warning strip without a real warning producer."""
+
+    def test_normal_connect_never_warns_on_rtcm_write(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        driver.connect(FAKE_PORT_LABEL, 115200)
+        driver.apply_rtcm_matrix({RtcmRowId.RTCM_1005: {PortId.UART1: True}})
+        assert driver.drain_warnings() == []
+
+    def test_sentinel_connect_queues_a_warning_on_rtcm_write(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        driver.connect(FAKE_FLASH_DIVERGENCE_PORT, 115200)
+        driver.apply_rtcm_matrix({RtcmRowId.RTCM_1005: {PortId.UART1: True}})
+        warnings = driver.drain_warnings()
+        assert len(warnings) == 1
+        assert "flash" in warnings[0].lower()
+
+    def test_drain_clears_the_queue(self, driver: FakeGpsDriver) -> None:
+        driver.connect(FAKE_FLASH_DIVERGENCE_PORT, 115200)
+        driver.apply_rtcm_matrix({RtcmRowId.RTCM_1005: {PortId.UART1: True}})
+        assert driver.drain_warnings() != []
+        assert driver.drain_warnings() == []
+
+    def test_every_write_queues_another_warning(self, driver: FakeGpsDriver) -> None:
+        driver.connect(FAKE_FLASH_DIVERGENCE_PORT, 115200)
+        driver.apply_rtcm_matrix({RtcmRowId.RTCM_1005: {PortId.UART1: True}})
+        driver.apply_rtcm_matrix({RtcmRowId.RTCM_1005: {PortId.UART1: False}})
+        assert len(driver.drain_warnings()) == 2
+
+    def test_writes_other_than_rtcm_still_round_trip_cleanly(
+        self, driver: FakeGpsDriver
+    ) -> None:
+        """The sentinel only taints RTCM matrix writes — other writes
+        stay honest."""
+        driver.connect(FAKE_FLASH_DIVERGENCE_PORT, 115200)
+        driver.configure_baud(115200, None)
+        assert driver.drain_warnings() == []
 
 
 # ---------------------------------------------------------------------------

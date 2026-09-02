@@ -46,14 +46,15 @@ from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.ui.pages.gps_config import (
     MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
+    SELECTABLE_TMODE_MODES,
     apply_blocked_reason,
+    bds_b2_control_disabled,
     build_apply_request,
     build_picker_entries,
     build_saved_profile,
     display_label,
     fixed_position_step_state,
     format_leaf_diff,
-    hw_extras_display,
     i2c_spi_advisory_rows,
     infer_data_link_ports,
     is_modified_from_profile,
@@ -67,6 +68,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     rtcm_config_to_matrix,
     save_as_enabled,
     suggest_profile_name,
+    tmode_mode_locked,
 )
 
 
@@ -334,6 +336,28 @@ class TestBuildApplyRequest:
         with pytest.raises(ValueError, match="1005"):
             build_apply_request(form, [PortId.UART1])
 
+    def test_coerces_bds_b2_off_when_beidou_disabled(self) -> None:
+        """A form left inconsistent (e.g. from a seed that already was)
+        gets its assert coerced — see the docstring on
+        ``build_apply_request``."""
+        form = _minimal_form().model_copy(
+            update={"constellations": [GnssConstellation.GPS], "bds_b2_enabled": True}
+        )
+        request = build_apply_request(form, [PortId.UART1])
+        assert request.assertion.bds_b2_enabled is False
+        # The original form object itself is left untouched.
+        assert form.bds_b2_enabled is True
+
+    def test_leaves_bds_b2_alone_when_beidou_enabled(self) -> None:
+        form = _minimal_form().model_copy(
+            update={
+                "constellations": [GnssConstellation.BEIDOU],
+                "bds_b2_enabled": True,
+            }
+        )
+        request = build_apply_request(form, [PortId.UART1])
+        assert request.assertion.bds_b2_enabled is True
+
 
 class TestFormatLeafDiff:
     def test_names_the_path_and_the_mismatch(self) -> None:
@@ -568,28 +592,27 @@ class TestResolveGnssDisplay:
         assert not any(display.values())
 
 
-class TestHwExtrasDisplay:
-    def test_renders_every_field_concretely(self) -> None:
-        extras = ReceiverAssertion(
-            baud=BaudAssertion(uart1=57600, uart2=115200),
-            meas_period_ms=500,
-            constellations=[],
-            ports={},
-            dyn_model=DynModel.STATIONARY,
-            tmode_mode=TmodeMode.FIXED,
-            elevation_mask_deg=15,
-            bds_b2_enabled=False,
-            spi_enabled=True,
-            rtcm_stream=RtcmStreamConfig(matrix={}),
+class TestTmodeModeLocked:
+    def test_survey_in_is_locked(self) -> None:
+        assert tmode_mode_locked(TmodeMode.SURVEY_IN)
+
+    def test_disabled_and_fixed_are_not_locked(self) -> None:
+        assert not tmode_mode_locked(TmodeMode.DISABLED)
+        assert not tmode_mode_locked(TmodeMode.FIXED)
+
+    def test_selectable_modes_excludes_survey_in(self) -> None:
+        assert TmodeMode.SURVEY_IN not in SELECTABLE_TMODE_MODES
+        assert set(SELECTABLE_TMODE_MODES) == {TmodeMode.DISABLED, TmodeMode.FIXED}
+
+
+class TestBdsB2ControlDisabled:
+    def test_disabled_when_beidou_absent(self) -> None:
+        assert bds_b2_control_disabled([GnssConstellation.GPS])
+
+    def test_enabled_when_beidou_present(self) -> None:
+        assert not bds_b2_control_disabled(
+            [GnssConstellation.GPS, GnssConstellation.BEIDOU]
         )
-        rows = {label: value for _cls, label, value in hw_extras_display(extras)}
-        assert rows["Baud"] == "UART1=57600, UART2=115200"
-        assert rows["Measurement Rate"] == "2 Hz"
-        assert rows["Dynamics Model"] == "stationary"
-        assert rows["Time Mode"] == "fixed"
-        assert rows["Elevation Mask"] == "15°"
-        assert rows["BeiDou B2"] == "off"
-        assert rows["SPI"] == "on"
 
 
 class TestFixedPositionStepState:

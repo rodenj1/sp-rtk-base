@@ -51,6 +51,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
     SELECTABLE_TMODE_MODES,
+    ProfilePickerEntry,
     ResultBadgeState,
     apply_blocked_reason,
     apply_headline,
@@ -66,6 +67,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     fixed_position_step_state,
     format_leaf_diff,
     format_step_log_entry,
+    has_custom_profiles,
     i2c_spi_advisory_rows,
     infer_data_link_ports,
     is_modified_from_profile,
@@ -82,6 +84,10 @@ from sp_rtk_base.ui.pages.gps_config import (
     rtcm_config_to_matrix,
     rtcm_diff_path,
     save_as_enabled,
+    save_as_unmodified_note,
+    save_profile_visible,
+    should_offer_save_after_apply,
+    slugify_profile_name,
     suggest_profile_name,
     throughput_advisory_lines,
     tmode_mode_locked,
@@ -555,23 +561,41 @@ class TestIsModifiedFromProfile:
 
 
 class TestSaveAsEnabled:
+    """Issue #106: Save-as is gated on validity alone — no suppression for
+    an unmodified copy of the selected profile any more."""
+
     def test_disabled_when_form_is_invalid(self) -> None:
-        assert not save_as_enabled(None, None, _live_assertion())
+        assert not save_as_enabled(None)
 
     def test_enabled_with_no_profile_selected(self) -> None:
         request = build_apply_request(_minimal_form(), [PortId.UART1])
-        assert save_as_enabled(request, None, _live_assertion())
+        assert save_as_enabled(request)
 
-    def test_suppressed_when_selected_profile_exactly_equals_the_form(self) -> None:
+    def test_enabled_even_when_selected_profile_exactly_equals_the_form(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
         form_request = receiver_config_from_profile(profile, live)
-        assert not save_as_enabled(form_request, profile, live)
+        assert save_as_enabled(form_request)
 
-    def test_enabled_again_once_the_form_diverges_from_the_selected_profile(
-        self,
-    ) -> None:
-        """The #66 fix: applying edits must not take Save-as away again."""
+
+class TestShouldOfferSaveAfterApply:
+    """Issue #106: the post-apply prompt inherits the old suppression
+    logic that used to gate the Save-as button itself."""
+
+    def test_false_when_form_is_invalid(self) -> None:
+        assert not should_offer_save_after_apply(None, None, _live_assertion())
+
+    def test_true_with_no_profile_selected(self) -> None:
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        assert should_offer_save_after_apply(request, None, _live_assertion())
+
+    def test_false_when_selected_profile_exactly_equals_the_form(self) -> None:
+        profile = _full_profile()
+        live = _live_assertion()
+        form_request = receiver_config_from_profile(profile, live)
+        assert not should_offer_save_after_apply(form_request, profile, live)
+
+    def test_true_once_the_form_diverges_from_the_selected_profile(self) -> None:
         profile = _full_profile()
         live = _live_assertion()
         form_request = receiver_config_from_profile(profile, live)
@@ -582,7 +606,79 @@ class TestSaveAsEnabled:
                 )
             }
         )
-        assert save_as_enabled(diverged, profile, live)
+        assert should_offer_save_after_apply(diverged, profile, live)
+
+
+class TestSaveAsUnmodifiedNote:
+    def test_none_when_no_profile_selected(self) -> None:
+        assert save_as_unmodified_note(None, is_modified=True) is None
+
+    def test_none_when_form_has_diverged(self) -> None:
+        assert save_as_unmodified_note(_full_profile(), is_modified=True) is None
+
+    def test_names_the_profile_when_unmodified(self) -> None:
+        profile = _full_profile().model_copy(update={"display_name": "My Base"})
+        note = save_as_unmodified_note(profile, is_modified=False)
+        assert note is not None
+        assert "My Base" in note
+
+
+class TestSaveProfileVisible:
+    def test_hidden_when_no_profile_selected(self) -> None:
+        assert not save_profile_visible(None, is_builtin=False)
+
+    def test_hidden_for_a_builtin(self) -> None:
+        assert not save_profile_visible(_full_profile(), is_builtin=True)
+
+    def test_visible_for_a_selected_custom(self) -> None:
+        assert save_profile_visible(_full_profile(), is_builtin=False)
+
+
+def _picker_entry(name: str, *, is_builtin: bool) -> ProfilePickerEntry:
+    return ProfilePickerEntry(
+        profile=_profile(name, HARDWARE_ANY),
+        is_builtin=is_builtin,
+        compatible=True,
+        incompatible_reason=None,
+        is_default=False,
+    )
+
+
+class TestHasCustomProfiles:
+    def test_false_when_every_entry_is_builtin(self) -> None:
+        assert not has_custom_profiles([_picker_entry("builtin-a", is_builtin=True)])
+
+    def test_false_for_an_empty_list(self) -> None:
+        assert not has_custom_profiles([])
+
+    def test_true_when_a_custom_entry_is_present(self) -> None:
+        entries = [
+            _picker_entry("builtin-a", is_builtin=True),
+            _picker_entry("custom-a", is_builtin=False),
+        ]
+        assert has_custom_profiles(entries)
+
+
+class TestSlugifyProfileName:
+    def test_lowercases_and_hyphenates_spaces(self) -> None:
+        assert slugify_profile_name("My Rooftop Base") == "my-rooftop-base"
+
+    def test_collapses_punctuation_runs_into_one_hyphen(self) -> None:
+        assert slugify_profile_name("Base #1 (v2)!!") == "base-1-v2"
+
+    def test_strips_leading_and_trailing_hyphens(self) -> None:
+        assert slugify_profile_name("  -weird-  ") == "weird"
+
+    def test_leaves_an_already_safe_slug_unchanged(self) -> None:
+        assert slugify_profile_name("ublox-f9p-base-standard-copy") == (
+            "ublox-f9p-base-standard-copy"
+        )
+
+    def test_blank_input_derives_an_empty_slug(self) -> None:
+        assert slugify_profile_name("   ") == ""
+
+    def test_pure_punctuation_derives_an_empty_slug(self) -> None:
+        assert slugify_profile_name("###") == ""
 
 
 class TestDisplayLabel:
@@ -647,6 +743,25 @@ class TestBuildSavedProfile:
         request = build_apply_request(_minimal_form(), [PortId.UART1])
         profile = build_saved_profile("captured", request, "ZED-F9P", None)
         assert profile.forked_from is None
+
+    def test_display_name_carries_through_when_distinct_from_the_slug(self) -> None:
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        profile = build_saved_profile(
+            "my-base", request, "ZED-F9P", None, display_name="My Base"
+        )
+        assert profile.display_name == "My Base"
+
+    def test_display_name_omitted_when_identical_to_the_slug(self) -> None:
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        profile = build_saved_profile(
+            "my-base", request, "ZED-F9P", None, display_name="my-base"
+        )
+        assert profile.display_name is None
+
+    def test_display_name_defaults_to_none(self) -> None:
+        request = build_apply_request(_minimal_form(), [PortId.UART1])
+        profile = build_saved_profile("captured", request, "ZED-F9P", None)
+        assert profile.display_name is None
 
 
 class TestResolvePortsDisplay:

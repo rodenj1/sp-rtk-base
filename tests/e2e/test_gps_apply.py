@@ -112,8 +112,13 @@ def test_factory_receiver_blocks_apply_until_data_link_port_chosen(
     expect(apply_btn).to_be_disabled()
 
     # Turn on 1005 for UART1 so the chosen data-link port has a row on,
-    # then explicitly pick UART1 as the data-link port.
+    # then explicitly pick UART1 as the data-link port. The matrix
+    # toggle rebuilds the data-link checkboxes (``_on_form_changed`` ->
+    # ``_render_data_link_picker``) over the websocket round-trip, so
+    # wait for that edit to settle before clicking the checkbox it
+    # rebuilds — otherwise the second click can race the rebuild.
     page.locator(".rtcm-cell-1005-UART1").click()
+    expect(page.locator(".rtcm-cell-1005-UART1")).to_have_text("✓", timeout=10_000)
     page.locator(".data-link-checkbox-UART1").click()
 
     expect(page.locator(".data-link-blocked")).not_to_be_visible(timeout=10_000)

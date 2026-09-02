@@ -15,9 +15,7 @@ from sp_rtk_base.models.device_models import (
     DeviceInfo,
     DynModel,
     FixedBaseConfig,
-    GnssConfig,
     GnssConstellation,
-    GnssSystemConfig,
     PortId,
     PortProtocolConfig,
     ReceiverScalarConfig,
@@ -176,6 +174,36 @@ class TestConnection:
         assert svc.is_connected is True
         assert svc.device_info is not None
         driver.connect.assert_called_once_with("/dev/ttyACM0", 115200)
+
+    @pytest.mark.asyncio()
+    async def test_connect_probes_legacy_gnss_block_once(self) -> None:
+        """Issue #104: the legacy CFG-GNSS block poll runs once per
+        connection, established here — ``configure_gnss`` re-runs it
+        again whenever a constellation step actually executes."""
+        from sp_rtk_base.models.device_models import GnssConfig
+
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_gnss_config.return_value = GnssConfig()
+        svc.set_driver(driver)
+
+        await svc.connect("/dev/ttyACM0", 115200)
+
+        driver.get_gnss_config.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_connect_survives_gnss_probe_failure(self) -> None:
+        """A driver that can't answer the legacy poll must not fail
+        an otherwise-successful connect — the probe is diagnostic-only."""
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_gnss_config.side_effect = RuntimeError("no legacy support")
+        svc.set_driver(driver)
+
+        info = await svc.connect("/dev/ttyACM0", 115200)
+
+        assert info.vendor == "MockVendor"
+        assert svc.state == DeviceConnectionState.CONNECTED
 
     @pytest.mark.asyncio()
     async def test_connect_no_driver_raises(self) -> None:
@@ -391,6 +419,7 @@ def _scalars(**overrides: object) -> ReceiverScalarConfig:
         "meas_period_ms": 250,
         "dyn_model": DynModel.STATIONARY,
         "tmode_mode": BaseMode.FIXED,
+        "constellations": [GnssConstellation.GPS],
         "elevation_mask_deg": 15,
         "bds_b2_enabled": False,
         "spi_enabled": True,
@@ -400,7 +429,7 @@ def _scalars(**overrides: object) -> ReceiverScalarConfig:
 
 
 class TestBuildReceiverAssertion:
-    """Pure composition of four driver reads into one ``ReceiverAssertion``."""
+    """Pure composition of three driver reads into one ``ReceiverAssertion``."""
 
     def test_composes_every_field(self) -> None:
         rtcm = RtcmPortConfig(
@@ -410,15 +439,9 @@ class TestBuildReceiverAssertion:
             in_protocols={PortId.UART1: [UbxProtocol.UBX]},
             out_protocols={PortId.UART1: [UbxProtocol.RTCM3X]},
         )
-        gnss = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-                GnssSystemConfig(constellation=GnssConstellation.SBAS, enabled=False),
-            ]
-        )
         scalars = _scalars()
 
-        assertion = build_receiver_assertion(rtcm, ports, gnss, scalars)
+        assertion = build_receiver_assertion(rtcm, ports, scalars)
 
         assert assertion.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART1] is True
         assert assertion.rtcm_stream.matrix[RtcmRowId.RTCM_1005][PortId.UART2] is False
@@ -436,7 +459,7 @@ class TestBuildReceiverAssertion:
 
     def test_matrix_covers_every_catalog_row_and_matrix_port(self) -> None:
         assertion = build_receiver_assertion(
-            RtcmPortConfig(), PortProtocolConfig(), GnssConfig(), _scalars()
+            RtcmPortConfig(), PortProtocolConfig(), _scalars()
         )
         assert set(assertion.rtcm_stream.matrix.keys()) == set(RtcmRowId)
         for row in assertion.rtcm_stream.matrix.values():
@@ -444,7 +467,7 @@ class TestBuildReceiverAssertion:
 
     def test_ports_covers_all_three_ports_even_when_unset(self) -> None:
         assertion = build_receiver_assertion(
-            RtcmPortConfig(), PortProtocolConfig(), GnssConfig(), _scalars()
+            RtcmPortConfig(), PortProtocolConfig(), _scalars()
         )
         assert set(assertion.ports.keys()) == {PortId.UART1, PortId.UART2, PortId.USB}
 
@@ -458,7 +481,6 @@ class TestGetReceiverAssertion:
             messages={RtcmRowId.RTCM_1005: {"UART1": 1}}
         )
         driver.get_port_protocols.return_value = PortProtocolConfig()
-        driver.get_gnss_config.return_value = GnssConfig()
         driver.get_receiver_scalars.return_value = _scalars()
         svc.set_driver(driver)
         svc._state = DeviceConnectionState.CONNECTED
@@ -466,7 +488,7 @@ class TestGetReceiverAssertion:
         return svc
 
     @pytest.mark.asyncio()
-    async def test_composes_the_four_driver_reads(
+    async def test_composes_the_three_driver_reads(
         self, connected_svc: DeviceService
     ) -> None:
         read = await connected_svc.get_receiver_assertion()
@@ -479,7 +501,6 @@ class TestGetReceiverAssertion:
         assert driver is not None
         driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
         driver.get_port_protocols.assert_called_once()  # type: ignore[union-attr]
-        driver.get_gnss_config.assert_called_once()  # type: ignore[union-attr]
         driver.get_receiver_scalars.assert_called_once()  # type: ignore[union-attr]
 
     @pytest.mark.asyncio()
@@ -564,6 +585,7 @@ def _scalars_for(assertion: ReceiverAssertion) -> ReceiverScalarConfig:
         meas_period_ms=assertion.meas_period_ms,
         dyn_model=assertion.dyn_model,
         tmode_mode=assertion.tmode_mode,
+        constellations=assertion.constellations,
         elevation_mask_deg=assertion.elevation_mask_deg,
         bds_b2_enabled=assertion.bds_b2_enabled,
         spi_enabled=assertion.spi_enabled,
@@ -592,13 +614,6 @@ def _mock_read_back_matches(driver: MagicMock, assertion: ReceiverAssertion) -> 
         in_protocols={port: cfg.in_ for port, cfg in assertion.ports.items()},
         out_protocols={port: cfg.out for port, cfg in assertion.ports.items()},
     )
-    wanted = set(assertion.constellations)
-    driver.get_gnss_config.return_value = GnssConfig(
-        systems=[
-            GnssSystemConfig(constellation=c, enabled=c in wanted)
-            for c in GnssConstellation
-        ]
-    )
     driver.get_receiver_scalars.return_value = _scalars_for(assertion)
 
 
@@ -610,7 +625,6 @@ class TestApplyReceiverConfig:
         svc = DeviceService()
         driver = _make_mock_driver()
         driver.get_base_config.return_value = CurrentBaseConfig(mode=BaseMode.DISABLED)
-        driver.get_gnss_config.return_value = GnssConfig(systems=[])
         # Matches ``_minimal_assertion()`` exactly by default, so tests
         # that don't care about the read-back diff see status="ok" and
         # the meas-rate/baud unchanged-skip fires for anything that
@@ -1011,40 +1025,19 @@ class TestApplyReceiverConfig:
         )
 
     @pytest.mark.asyncio()
-    async def test_constellations_flip_enabled_and_preserve_channels(
+    async def test_constellations_step_writes_the_wanted_set(
         self, connected_svc: DeviceService
     ) -> None:
+        """Issue #104: the constellation step passes the wanted set
+        straight through — no channel data survives to preserve, since
+        the assertive enable-key write has no channel parameter at all."""
         driver = connected_svc.driver
         assert isinstance(driver, MagicMock)
-        driver.get_gnss_config.return_value = GnssConfig(
-            systems=[
-                GnssSystemConfig(
-                    constellation=GnssConstellation.GPS,
-                    enabled=True,
-                    min_channels=8,
-                    max_channels=16,
-                ),
-                GnssSystemConfig(
-                    constellation=GnssConstellation.GALILEO,
-                    enabled=False,
-                    min_channels=4,
-                    max_channels=12,
-                ),
-            ]
-        )
         request = _minimal_request(constellations=[GnssConstellation.GALILEO])
 
         await connected_svc.apply_receiver_config(request)
 
-        written: GnssConfig = driver.configure_gnss.call_args[0][0]
-        by_constellation: dict[GnssConstellation, GnssSystemConfig] = {
-            s.constellation: s for s in written.systems
-        }
-        assert by_constellation[GnssConstellation.GPS].enabled is False
-        assert by_constellation[GnssConstellation.GALILEO].enabled is True
-        # Channel tuning is preserved from the live read, not clobbered.
-        assert by_constellation[GnssConstellation.GALILEO].min_channels == 4
-        assert by_constellation[GnssConstellation.GALILEO].max_channels == 12
+        driver.configure_gnss.assert_called_once_with({GnssConstellation.GALILEO})
 
     @pytest.mark.asyncio()
     async def test_dyn_model_and_tmode_mode_skip_when_unchanged(
@@ -1428,13 +1421,13 @@ class TestBaseInvariants:
         # regression that used the built-in's value instead of live (or
         # vice versa) is caught by ``test_apply_delegates_...`` below.
         driver.get_port_protocols.return_value = PortProtocolConfig()
-        driver.get_gnss_config.return_value = GnssConfig(systems=[])
         driver.get_receiver_scalars.return_value = ReceiverScalarConfig(
             uart1_baud=9600,
             uart2_baud=9600,
             meas_period_ms=250,
             dyn_model=DynModel.PORTABLE,
             tmode_mode=BaseMode.SURVEY_IN,
+            constellations=[],
             elevation_mask_deg=45,
             bds_b2_enabled=True,
             spi_enabled=False,

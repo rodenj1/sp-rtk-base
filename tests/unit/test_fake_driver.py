@@ -42,9 +42,7 @@ from sp_rtk_base.models.device_models import (
     DeviceCapability,
     DynModel,
     FixedBaseConfig,
-    GnssConfig,
     GnssConstellation,
-    GnssSystemConfig,
     GpsFixType,
     PortId,
     RtcmPortConfig,
@@ -217,7 +215,7 @@ class TestDisconnectedGuards:
 
     def test_configure_gnss_requires_connection(self, driver: FakeGpsDriver) -> None:
         with pytest.raises(ConnectionError):
-            driver.configure_gnss(GnssConfig())
+            driver.configure_gnss(set())
 
     def test_get_position_requires_connection(self, driver: FakeGpsDriver) -> None:
         with pytest.raises(ConnectionError):
@@ -328,19 +326,33 @@ class TestConfigurationRoundTrips:
         assert out.messages[RtcmRowId.RTCM_1005]["USB"] == 0
 
     def test_gnss_round_trip(self, connected_driver: FakeGpsDriver) -> None:
-        cfg = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-                GnssSystemConfig(
-                    constellation=GnssConstellation.GALILEO, enabled=False
-                ),
-            ]
-        )
-        connected_driver.configure_gnss(cfg)
+        connected_driver.configure_gnss({GnssConstellation.GPS})
+
         out = connected_driver.get_gnss_config()
         assert {s.constellation for s in out.systems if s.enabled} == {
             GnssConstellation.GPS
         }
+        scalars = connected_driver.get_receiver_scalars()
+        assert scalars.constellations == [GnssConstellation.GPS]
+
+    def test_gnss_write_preserves_channel_tuning(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        """Issue #104: the assertive write has no channel parameter —
+        whatever channel tuning the fake started with survives untouched."""
+        before = {
+            s.constellation: s for s in connected_driver.get_gnss_config().systems
+        }
+
+        connected_driver.configure_gnss({GnssConstellation.GALILEO})
+
+        after = {s.constellation: s for s in connected_driver.get_gnss_config().systems}
+        assert after[GnssConstellation.GPS].min_channels == (
+            before[GnssConstellation.GPS].min_channels
+        )
+        assert after[GnssConstellation.GPS].max_channels == (
+            before[GnssConstellation.GPS].max_channels
+        )
 
     def test_default_rtcm_port_config_has_six_messages(
         self, connected_driver: FakeGpsDriver
@@ -492,6 +504,12 @@ class TestConfigurationRoundTrips:
         assert scalars.meas_period_ms == 1000
         assert scalars.dyn_model == DynModel.PORTABLE
         assert scalars.tmode_mode == BaseMode.DISABLED
+        assert set(scalars.constellations) == {
+            GnssConstellation.GPS,
+            GnssConstellation.GLONASS,
+            GnssConstellation.GALILEO,
+            GnssConstellation.BEIDOU,
+        }
         assert scalars.elevation_mask_deg == 15
         assert scalars.bds_b2_enabled is False
         assert scalars.spi_enabled is True
@@ -504,12 +522,14 @@ class TestConfigurationRoundTrips:
         connected_driver.configure_tmode_mode(BaseMode.FIXED)
         connected_driver.configure_optimisations(5, True, False)
         connected_driver.configure_baud(9600, 9600)
+        connected_driver.configure_gnss({GnssConstellation.QZSS})
 
         scalars = connected_driver.get_receiver_scalars()
 
         assert scalars.meas_period_ms == 250
         assert scalars.dyn_model == DynModel.STATIONARY
         assert scalars.tmode_mode == BaseMode.FIXED
+        assert scalars.constellations == [GnssConstellation.QZSS]
         assert scalars.elevation_mask_deg == 5
         assert scalars.bds_b2_enabled is True
         assert scalars.spi_enabled is False

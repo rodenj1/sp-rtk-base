@@ -406,6 +406,22 @@ class GnssConfig(BaseModel):
         return [s.constellation for s in self.systems if s.enabled]
 
 
+class GnssConstellationSelection(BaseModel):
+    """Wanted constellation set for the assertive enable-key write (issue #104).
+
+    The ``PUT /api/device/gnss`` request body — replaces the old
+    full-``GnssConfig`` payload now that the write targets six
+    ``CFG_SIGNAL_*_ENA`` keys directly rather than a CFG-GNSS block,
+    which carried per-system channel counts the new write never
+    touches (channel allocation is left to the firmware).
+    """
+
+    constellations: list[GnssConstellation] = Field(
+        default_factory=lambda: list[GnssConstellation](),
+        description="Constellations to enable; every other constellation is disabled",
+    )
+
+
 class ReceiverScalarConfig(BaseModel):
     """Every scalar (non-matrix, non-per-port) CFG value the Advanced GPS
     page's full receiver read needs — baud, measurement rate, dynamics
@@ -423,6 +439,12 @@ class ReceiverScalarConfig(BaseModel):
     meas_period_ms: int = Field(description="Measurement period in milliseconds")
     dyn_model: DynModel = Field(description="Dynamics platform model")
     tmode_mode: BaseMode = Field(description="Active base station mode")
+    constellations: list[GnssConstellation] = Field(
+        description=(
+            "Enabled constellations, read from the six CFG_SIGNAL_*_ENA "
+            "keys folded into this same batched poll (issue #104)"
+        )
+    )
     elevation_mask_deg: int = Field(description="Minimum satellite elevation, degrees")
     bds_b2_enabled: bool = Field(description="Whether the BeiDou B2 signal is enabled")
     spi_enabled: bool = Field(description="Whether the SPI interface is enabled")

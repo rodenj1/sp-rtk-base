@@ -22,6 +22,7 @@ from sp_rtk_base.models.device_models import (
     DeviceStatus,
     FixedBaseConfig,
     GnssConfig,
+    GnssConstellationSelection,
     GpsPosition,
     PortProtocolConfig,
     RtcmPortConfig,
@@ -373,22 +374,25 @@ async def get_gnss_config(
 
 @router.put("/gnss", response_model=DeviceActionResponse)
 async def configure_gnss(
-    config: GnssConfig,
+    selection: GnssConstellationSelection,
     svc: DeviceService = Depends(get_device_service),
 ) -> DeviceActionResponse:
-    """Apply GNSS constellation configuration to the receiver.
+    """Assertively enable/disable satellite constellations on the receiver.
 
-    Enable/disable satellite systems and configure tracking channel allocation.
+    Writes the six per-constellation ``CFG_SIGNAL_*_ENA`` keys at the
+    durable layer (issue #104) — every constellation is written
+    explicitly, on for ``selection.constellations`` and off otherwise.
+    Channel allocation is left to the firmware; there is no channel
+    parameter here.
     """
     try:
-        await svc.configure_gnss(config)
+        await svc.configure_gnss(set(selection.constellations))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    enabled = config.enabled_constellations()
     return DeviceActionResponse(
         status="ok",
-        message=f"GNSS configured: {[c.value for c in enabled]}",
+        message=f"GNSS configured: {[c.value for c in selection.constellations]}",
     )
 
 

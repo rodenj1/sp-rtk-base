@@ -24,6 +24,7 @@ from sp_rtk_base.models.device_models import (
     DeviceStatus,
     FixedBaseConfig,
     GnssConfig,
+    GnssConstellation,
     GpsPosition,
     PortId,
     PortProtocolConfig,
@@ -108,15 +109,16 @@ _BASE_INVARIANTS_PROFILE_NAME = "ublox-f9p-base-standard"
 def build_receiver_assertion(
     rtcm: RtcmPortConfig,
     ports: PortProtocolConfig,
-    gnss: GnssConfig,
     scalars: ReceiverScalarConfig,
 ) -> ReceiverAssertion:
     """Compose a full live receiver read into one ``ReceiverAssertion``.
 
-    Pure — reshapes the driver's four already-fetched reads (RTCM
-    matrix, port protocols, GNSS constellations, the batched scalar
-    poll) into the schema the Advanced GPS page seeds ``form``/``live``
-    from (issue #97). No device I/O of its own.
+    Pure — reshapes the driver's three already-fetched reads (RTCM
+    matrix, port protocols, the batched scalar poll) into the schema
+    the Advanced GPS page seeds ``form``/``live`` from (issue #97).
+    Constellations come from ``scalars`` — the six ``CFG_SIGNAL_*_ENA``
+    keys folded into the batched poll (issue #104) — rather than a
+    separate GNSS block read. No device I/O of its own.
     """
     matrix = {
         row_id: {
@@ -134,7 +136,7 @@ def build_receiver_assertion(
     return ReceiverAssertion(
         baud=BaudAssertion(uart1=scalars.uart1_baud, uart2=scalars.uart2_baud),
         meas_period_ms=scalars.meas_period_ms,
-        constellations=gnss.enabled_constellations(),
+        constellations=scalars.constellations,
         ports=port_set,
         dyn_model=scalars.dyn_model,
         tmode_mode=scalars.tmode_mode,
@@ -146,23 +148,24 @@ def build_receiver_assertion(
 
 
 class ReceiverAssertionRead(NamedTuple):
-    """One ``get_receiver_assertion()`` read: the sync-set assertion, the
-    raw multi-port RTCM read-back the page's I2C/SPI advisory needs, and
-    the raw GNSS config the constellation apply-step needs (issue #99).
+    """One ``get_receiver_assertion()`` read: the sync-set assertion plus the
+    raw multi-port RTCM read-back the page's I2C/SPI advisory needs (issue #99).
 
     I2C/SPI aren't part of ``assertion.rtcm_stream``'s matrix — that
     mirrors ``ReceiverConfig``'s UART1/UART2/USB-only scope — so the
     advisory display needs the wider read ``rtcm`` already carries.
-    Likewise, ``assertion.constellations`` is just the flat enabled set —
-    writing a constellation change needs each system's channel tuning,
-    which only the raw ``gnss`` read carries. Bundling all three here
-    means one receiver read serves every caller, rather than any of them
-    re-polling RTCM or GNSS a second time.
+    Bundling both here means one receiver read serves every caller,
+    rather than a second one re-polling RTCM.
+
+    A raw ``GnssConfig`` used to ride along here too, for the
+    constellation apply-step's channel-preserving write. Issue #104
+    dropped it: the driver's constellation write no longer takes
+    channel data at all (channel allocation is left to the firmware),
+    so the step only needs ``assertion.constellations``.
     """
 
     assertion: ReceiverAssertion
     rtcm: RtcmPortConfig
-    gnss: GnssConfig
 
 
 class DeviceService:
@@ -325,12 +328,37 @@ class DeviceService:
                 info.model,
                 port,
             )
+            await self._probe_gnss_capability_once(self._driver)
             return info
         except Exception as exc:
             self._state = DeviceConnectionState.ERROR
             self._last_error = str(exc)
             logger.error("Failed to connect to %s: %s", port, exc)
             raise
+
+    @staticmethod
+    async def _probe_gnss_capability_once(driver: GpsReceiverDriver) -> None:
+        """Run the legacy CFG-GNSS block poll once, right after connect (issue #104).
+
+        The block poll's only remaining role is the capability probe
+        ``UbloxDriver.configure_gnss`` re-runs after a constellation
+        write actually executes — this call is what makes that "once
+        per connection, and again after a step that ran" rather than
+        "only ever after a write". Purely diagnostic: the result is
+        logged, never compared or queued as a warning here (that
+        comparison needs a just-written expected set, which only
+        exists inside ``configure_gnss``). Never raises — a driver
+        that can't answer this legacy poll must not fail an otherwise
+        -successful connect.
+        """
+        try:
+            config = await asyncio.to_thread(driver.get_gnss_config)
+            logger.debug(
+                "GNSS capability probe: %s",
+                [c.value for c in config.enabled_constellations()],
+            )
+        except Exception as exc:
+            logger.debug("GNSS capability probe failed at connect: %s", exc)
 
     def set_connecting(self) -> None:
         """Set state to CONNECTING for UI feedback before connect."""
@@ -692,7 +720,13 @@ class DeviceService:
         return await asyncio.to_thread(driver.get_port_protocols)
 
     async def get_gnss_config(self) -> GnssConfig:
-        """Read the current GNSS constellation configuration.
+        """Read the current GNSS constellation configuration from the legacy block.
+
+        This is the capability-probe read (issue #104) — the standalone
+        ``GET /api/device/gnss`` diagnostic endpoint's source, kept for
+        its per-system channel counts. It is no longer how
+        ``ReceiverAssertion.constellations`` gets populated; see
+        ``get_receiver_assertion``.
 
         Returns:
             Current GNSS system configuration.
@@ -718,13 +752,14 @@ class DeviceService:
     async def get_receiver_assertion(self) -> ReceiverAssertionRead:
         """Read the whole receiver in one go as a ``ReceiverAssertion``.
 
-        Four driver reads — RTCM matrix, port protocols, GNSS
-        constellations, and the batched scalar poll (baud, meas rate,
-        dyn model, tmode mode, elevation mask, BeiDou B2, SPI) — landing
-        as three CFG-VALGET polls rather than seven separate round
-        trips, composed by the pure :func:`build_receiver_assertion`
-        (issue #97). Every field the Advanced GPS page seeds ``form``/
-        ``live`` from reflects the receiver's actual value.
+        Three driver reads — RTCM matrix, port protocols, and the
+        batched scalar poll (baud, meas rate, dyn model, tmode mode,
+        enabled constellations, elevation mask, BeiDou B2, SPI) —
+        landing as two CFG-VALGET polls rather than eight separate
+        round trips, composed by the pure :func:`build_receiver_assertion`
+        (issue #97, extended by issue #104). Every field the Advanced
+        GPS page seeds ``form``/``live`` from reflects the receiver's
+        actual value.
 
         Returns the raw RTCM read alongside the assertion — the page's
         I2C/SPI advisory needs it (ports the matrix doesn't claim), and
@@ -741,25 +776,24 @@ class DeviceService:
     async def _read_full_assertion(
         self, driver: GpsReceiverDriver
     ) -> ReceiverAssertionRead:
-        """The four driver reads behind :meth:`get_receiver_assertion`.
+        """The three driver reads behind :meth:`get_receiver_assertion`.
 
         Shared with ``apply_receiver_config``'s pre-write pre-read
         (issue #99) so there's exactly one place composing a full
-        receiver read, rather than the pre-read duplicating this
-        method's body to also get at the raw ``gnss`` config it needs.
+        receiver read.
         """
         rtcm = await asyncio.to_thread(driver.get_rtcm_port_config)
         ports = await asyncio.to_thread(driver.get_port_protocols)
-        gnss = await asyncio.to_thread(driver.get_gnss_config)
         scalars = await asyncio.to_thread(driver.get_receiver_scalars)
-        assertion = build_receiver_assertion(rtcm, ports, gnss, scalars)
-        return ReceiverAssertionRead(assertion=assertion, rtcm=rtcm, gnss=gnss)
+        assertion = build_receiver_assertion(rtcm, ports, scalars)
+        return ReceiverAssertionRead(assertion=assertion, rtcm=rtcm)
 
-    async def configure_gnss(self, config: GnssConfig) -> None:
-        """Write GNSS constellation configuration to the receiver.
+    async def configure_gnss(self, constellations: set[GnssConstellation]) -> None:
+        """Assertive durable write of the enabled-constellation set (issue #104).
 
         Args:
-            config: Desired GNSS system configuration.
+            constellations: Exactly the constellations that should end
+                up enabled; every other constellation is disabled.
 
         Raises:
             RuntimeError: If not connected or relay is running.
@@ -767,11 +801,11 @@ class DeviceService:
         driver = self._require_connected()
         self._state = DeviceConnectionState.CONFIGURING
         try:
-            await asyncio.to_thread(driver.configure_gnss, config)
+            await asyncio.to_thread(driver.configure_gnss, constellations)
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "GNSS constellations configured: %s",
-                [c.value for c in config.enabled_constellations()],
+                sorted(c.value for c in constellations),
             )
         except Exception as exc:
             self._state = DeviceConnectionState.CONNECTED
@@ -984,7 +1018,7 @@ class DeviceService:
                 continue
 
             try:
-                await self._run_apply_step(driver, step_name, assertion, pre_read.gnss)
+                await self._run_apply_step(driver, step_name, assertion)
             except Exception as exc:
                 logger.warning("apply-config step %r failed: %s", step_name, exc)
                 self._last_error = f"apply-config step {step_name!r} failed: {exc}"
@@ -1039,14 +1073,13 @@ class DeviceService:
         driver: GpsReceiverDriver,
         step_name: str,
         assertion: ReceiverAssertion,
-        pre_gnss: GnssConfig,
     ) -> None:
         """Perform one write step's driver call (issue #99).
 
-        *pre_gnss* is the raw pre-read GNSS config — the constellation
-        step needs it (not just ``assertion.constellations``) to
-        preserve each system's channel tuning, which
-        ``ReceiverAssertion`` doesn't carry.
+        The constellation step (issue #104) needs nothing beyond
+        ``assertion.constellations`` — the driver's assertive write
+        takes the wanted set directly and leaves channel allocation to
+        the firmware, so there's no pre-read GNSS state to preserve.
         """
         if step_name == "meas_period_ms":
             await asyncio.to_thread(
@@ -1057,16 +1090,9 @@ class DeviceService:
             out_map = {port: cfg.out for port, cfg in assertion.ports.items()}
             await asyncio.to_thread(driver.configure_port_protocols, in_map, out_map)
         elif step_name == "constellations":
-            wanted = set(assertion.constellations)
-            updated_gnss = GnssConfig(
-                systems=[
-                    system.model_copy(
-                        update={"enabled": system.constellation in wanted}
-                    )
-                    for system in pre_gnss.systems
-                ]
+            await asyncio.to_thread(
+                driver.configure_gnss, set(assertion.constellations)
             )
-            await asyncio.to_thread(driver.configure_gnss, updated_gnss)
         elif step_name == "optimisations":
             await asyncio.to_thread(
                 driver.configure_optimisations,

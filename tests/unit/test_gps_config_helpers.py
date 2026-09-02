@@ -83,6 +83,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     rtcm_diff_path,
     save_as_enabled,
     suggest_profile_name,
+    throughput_advisory_lines,
     tmode_mode_locked,
 )
 
@@ -331,6 +332,69 @@ def _minimal_form() -> ReceiverAssertion:
             )
         ),
     )
+
+
+class TestThroughputAdvisoryLines:
+    """Live, form-derived counterpart to :func:`i2c_spi_advisory_rows`
+    (issue #102) — computed straight from the form the operator is
+    editing, never from a driver read. There is no receiver-read
+    parameter to fake here at all, which is the point."""
+
+    def _heavy_form(self, *, uart1_baud: int = 9600) -> ReceiverAssertion:
+        heavy_matrix = rtcm_config_to_matrix(
+            RtcmPortConfig(
+                messages={
+                    RtcmRowId.RTCM_1005: {"UART1": 1},
+                    RtcmRowId.RTCM_1077: {"UART1": 1},
+                    RtcmRowId.RTCM_1087: {"UART1": 1},
+                    RtcmRowId.RTCM_1097: {"UART1": 1},
+                }
+            )
+        )
+        return _minimal_form().model_copy(
+            update={
+                "baud": BaudAssertion(uart1=uart1_baud, uart2=115200),
+                "rtcm_stream": RtcmStreamConfig(matrix=heavy_matrix),
+            }
+        )
+
+    def test_no_data_link_ports_means_no_advisory(self) -> None:
+        assert throughput_advisory_lines(_minimal_form(), []) == []
+
+    def test_warns_when_estimated_output_exceeds_threshold(self) -> None:
+        lines = throughput_advisory_lines(self._heavy_form(), [PortId.UART1])
+        assert len(lines) == 1
+        assert "UART1" in lines[0]
+
+    def test_silent_under_threshold(self) -> None:
+        lines = throughput_advisory_lines(
+            self._heavy_form(uart1_baud=115200), [PortId.UART1]
+        )
+        assert lines == []
+
+    def test_computed_against_the_forms_baud(self) -> None:
+        """Same heavy matrix, only the form's intended baud changes —
+        proves the estimate tracks what the operator is about to send,
+        not some receiver state this function never reads."""
+        low_baud = throughput_advisory_lines(
+            self._heavy_form(uart1_baud=9600), [PortId.UART1]
+        )
+        high_baud = throughput_advisory_lines(
+            self._heavy_form(uart1_baud=921600), [PortId.UART1]
+        )
+        assert low_baud != []
+        assert high_baud == []
+
+    def test_port_not_carrying_rtcm_is_silent(self) -> None:
+        form = self._heavy_form()
+        assert throughput_advisory_lines(form, [PortId.UART2]) == []
+
+    def test_non_uart_port_with_no_baud_is_skipped(self) -> None:
+        """Mirrors USB's exclusion in the previous driver-baud version
+        (issue #61) — a port the form's ``BaudAssertion`` doesn't cover
+        is skipped rather than treated as zero-capacity."""
+        form = self._heavy_form()
+        assert throughput_advisory_lines(form, [PortId.USB]) == []
 
 
 class TestBuildApplyRequest:
@@ -862,29 +926,29 @@ class TestApplyHeadline:
 
 
 class TestApplyWarningLines:
-    def test_no_warnings_is_empty(self) -> None:
-        assert apply_warning_lines([], []) == []
+    """Issue #102 narrowed this to ``step_warnings`` alone — the apply
+    result's warning channel used to also carry the plain, unprefixed
+    estimated-throughput advisory, now a live caption on the form
+    instead (:func:`throughput_advisory_lines`)."""
 
-    def test_plain_warnings_pass_through_unprefixed(self) -> None:
-        lines = apply_warning_lines(["estimated throughput exceeds baud"], [])
-        assert lines == ["estimated throughput exceeds baud"]
+    def test_no_warnings_is_empty(self) -> None:
+        assert apply_warning_lines([]) == []
 
     def test_step_warnings_are_prefixed_with_their_step(self) -> None:
         lines = apply_warning_lines(
-            [], [ApplyStepWarning(step="rtcm_matrix", message="flash mismatch")]
+            [ApplyStepWarning(step="rtcm_matrix", message="flash mismatch")]
         )
         assert lines == ["rtcm_matrix: flash mismatch"]
 
     def test_never_joins_into_one_string(self) -> None:
         """One line per warning — never a string-joined toast blob."""
         lines = apply_warning_lines(
-            ["a"],
             [
                 ApplyStepWarning(step="ports", message="b"),
                 ApplyStepWarning(step="baud", message="c"),
             ],
         )
-        assert lines == ["a", "ports: b", "baud: c"]
+        assert lines == ["ports: b", "baud: c"]
 
 
 class TestFormatStepLogEntry:

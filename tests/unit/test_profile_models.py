@@ -722,10 +722,9 @@ class TestDiffReceiverAssertions:
 
 
 class TestApplyConfigResult:
-    def test_ok_result_defaults_diff_and_warnings_empty(self) -> None:
+    def test_ok_result_defaults_diff_empty(self) -> None:
         result = ApplyConfigResult(status="ok", read_back=_base_assertion())
         assert result.diff == []
-        assert result.warnings == []
 
     def test_failed_result_carries_the_diff(self) -> None:
         entry = ApplyDiffEntry(path="meas_period_ms", expected=1000, actual=200)

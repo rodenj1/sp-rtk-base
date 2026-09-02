@@ -620,10 +620,6 @@ class TestApplyReceiverConfig:
         )
         driver.get_port_protocols.return_value = PortProtocolConfig()
         driver.get_receiver_scalars.return_value = _scalars_for(_minimal_assertion())
-        driver.get_uart_baud_rates.return_value = {
-            PortId.UART1: 57600,
-            PortId.UART2: 115200,
-        }
         driver.drain_warnings.return_value = []
         # ``_make_mock_driver()`` defaults survey-in to active — most of
         # this class doesn't care, and an active survey would refuse
@@ -1130,49 +1126,6 @@ class TestApplyReceiverConfig:
         assert leaf.expected is True
         assert leaf.actual is False
 
-    @pytest.mark.asyncio()
-    async def test_throughput_warning_when_over_threshold(
-        self, connected_svc: DeviceService
-    ) -> None:
-        assert connected_svc.driver is not None
-        connected_svc.driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
-            PortId.UART1: 9600,
-            PortId.UART2: 115200,
-        }
-        heavy_matrix = RtcmStreamConfig(
-            matrix={
-                RtcmRowId.RTCM_1005: {PortId.UART1: True},
-                RtcmRowId.RTCM_1077: {PortId.UART1: True},
-                RtcmRowId.RTCM_1087: {PortId.UART1: True},
-                RtcmRowId.RTCM_1097: {PortId.UART1: True},
-            }
-        )
-        connected_svc.driver.get_rtcm_port_config.return_value = RtcmPortConfig(  # type: ignore[union-attr]
-            messages={
-                row: {"UART1": 1 if ports.get(PortId.UART1) else 0}
-                for row, ports in heavy_matrix.matrix.items()
-            }
-        )
-        request = _minimal_request(rtcm_stream=heavy_matrix)
-
-        result = await connected_svc.apply_receiver_config(request)
-
-        assert result.status == "ok"
-        assert len(result.warnings) == 1
-        assert "UART1" in result.warnings[0]
-
-    @pytest.mark.asyncio()
-    async def test_no_throughput_warning_under_threshold(
-        self, connected_svc: DeviceService
-    ) -> None:
-        assert connected_svc.driver is not None
-        connected_svc.driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
-            PortId.UART1: 115200,
-            PortId.UART2: 115200,
-        }
-        result = await connected_svc.apply_receiver_config(_minimal_request())
-        assert result.warnings == []
-
     # ------------------------------------------------------------------
     # Per-step outcomes, the service-side no-op, and the warning
     # channel (issue #99)
@@ -1588,10 +1541,6 @@ class TestBaseInvariants:
         per-step skip actually sees it as unchanged."""
         driver = connected_svc.driver
         assert driver is not None
-        driver.get_uart_baud_rates.return_value = {  # type: ignore[union-attr]
-            PortId.UART1: 9600,
-            PortId.UART2: 9600,
-        }
         driver.drain_warnings.return_value = []  # type: ignore[union-attr]
         # The built-in profile doesn't mention USB, so the merged
         # request's USB ports fall back to live — which must keep UBX

@@ -147,6 +147,40 @@ _ADVISORY_PORTS: tuple[RtcmOutputPort, ...] = (RtcmOutputPort.I2C, RtcmOutputPor
 #: The one row every base profile must carry on a data-link port.
 REQUIRED_RTCM_ROW: RtcmRowId = RtcmRowId.RTCM_1005
 
+# ---------------------------------------------------------------------------
+# Live throughput advisory (issue #102, formerly a post-Apply toast —
+# see issue #61 for the original placement).
+#
+# Approximate typical RTCM3 frame sizes in bytes at a moderate satellite
+# count. These are estimates for a heads-up warning only — not exact
+# wire measurements — so precision beyond "roughly right" isn't the
+# goal. MSM4/MSM7 sizes scale with tracked satellite count; the values
+# below assume a typical 8-12 satellites per constellation.
+# ---------------------------------------------------------------------------
+
+_APPROX_RTCM_FRAME_BYTES: dict[RtcmRowId, int] = {
+    RtcmRowId.RTCM_1005: 19,
+    RtcmRowId.RTCM_4072_0: 72,
+    RtcmRowId.RTCM_4072_1: 40,
+    RtcmRowId.RTCM_1074: 150,
+    RtcmRowId.RTCM_1077: 300,
+    RtcmRowId.RTCM_1084: 130,
+    RtcmRowId.RTCM_1087: 260,
+    RtcmRowId.RTCM_1094: 120,
+    RtcmRowId.RTCM_1097: 240,
+    RtcmRowId.RTCM_1124: 130,
+    RtcmRowId.RTCM_1127: 260,
+    RtcmRowId.RTCM_1230: 25,
+}
+
+# 8N1 serial framing: ~10 bits on the wire per payload byte (1 start +
+# 8 data + 1 stop), so baud / 10 approximates byte capacity per second.
+_BITS_PER_BYTE_ON_WIRE = 10.0
+
+# Warn once estimated RTCM throughput crosses this fraction of a
+# data-link port's baud capacity.
+_THROUGHPUT_WARN_THRESHOLD = 0.70
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers — extracted for unit testing (see test_gps_config_helpers.py).
@@ -225,6 +259,51 @@ def i2c_spi_advisory_rows(rtcm: RtcmPortConfig) -> list[RtcmRowId]:
         for row_id in ALL_RTCM_MESSAGE_IDS
         if any(rtcm.is_enabled(row_id, p) for p in _ADVISORY_PORTS)
     ]
+
+
+def throughput_advisory_lines(
+    form: ReceiverAssertion, data_link_port: list[PortId]
+) -> list[str]:
+    """Non-blocking advisories when the form's estimated RTCM output nears
+    a data-link port's capacity (issue #102).
+
+    Live, form-derived sibling of :func:`i2c_spi_advisory_rows` — same
+    idiom (pure predicate here, a render helper plus a caption near the
+    matrix in the page closure), recomputed on every form edit rather
+    than only at seed. Reads the matrix and measurement rate straight
+    off *form*, and the baud off ``form.baud`` — the rate the operator
+    intends, not whatever the receiver's live baud happens to be. This
+    used to run post-Apply against a driver read of the just-written
+    baud (issue #61); that told the operator to undo something they'd
+    already committed. *data_link_port* has no CFG key and isn't part
+    of the assertion (issue #98), so it's still taken separately, same
+    as the RTCM-matrix code that infers it.
+    """
+    matrix = form.rtcm_stream.matrix
+    hz = 1000.0 / form.meas_period_ms
+    baud_by_port = {PortId.UART1: form.baud.uart1, PortId.UART2: form.baud.uart2}
+    lines: list[str] = []
+    for port in data_link_port:
+        baud = baud_by_port.get(port)
+        if not baud:
+            continue
+        bytes_per_sec = (
+            sum(
+                _APPROX_RTCM_FRAME_BYTES.get(row, 0)
+                for row, ports in matrix.items()
+                if ports.get(port, False)
+            )
+            * hz
+        )
+        capacity_bytes_per_sec = baud / _BITS_PER_BYTE_ON_WIRE
+        fraction = bytes_per_sec / capacity_bytes_per_sec
+        if fraction > _THROUGHPUT_WARN_THRESHOLD:
+            lines.append(
+                f"Estimated RTCM throughput on {port.value} is "
+                f"~{round(fraction * 100)}% of its {baud} baud capacity "
+                "— consider a higher baud rate or fewer messages."
+            )
+    return lines
 
 
 def rtcm_config_to_matrix(
@@ -614,13 +693,15 @@ def apply_headline(status: Literal["ok", "failed"], warning_count: int) -> str:
     return f"{verdict} ({warning_count} {_plural(warning_count, 'warning')})"
 
 
-def apply_warning_lines(
-    warnings: list[str], step_warnings: list[ApplyStepWarning]
-) -> list[str]:
+def apply_warning_lines(step_warnings: list[ApplyStepWarning]) -> list[str]:
     """One line per warning for the strip — never joined into a single
-    string. Step warnings are prefixed with the step that produced
-    them; the non-blocking throughput warnings need no prefix."""
-    return [*warnings, *(f"{w.step}: {w.message}" for w in step_warnings)]
+    string. Each line is prefixed with the step that produced it.
+
+    Issue #102 removed the apply result's other, unprefixed warning
+    channel (the estimated-throughput advisory, now a live caption on
+    the form instead) — ``step_warnings`` is the only source left.
+    """
+    return [f"{w.step}: {w.message}" for w in step_warnings]
 
 
 #: Icon per :class:`~sp_rtk_base.models.profile_models.ApplyStepResult`
@@ -951,6 +1032,18 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #5a4520; border-radius: 4px")
             )
             advisory_label.set_visibility(False)
+
+            # Live throughput advisory (issue #102) — form-derived, so it
+            # can hold more than one line (one per data-link port nearing
+            # capacity), unlike the single-line I2C/SPI advisory above.
+            throughput_advisory_card = (
+                ui.card()
+                .classes("throughput-advisory w-full q-pa-sm q-mt-sm")
+                .style("background-color: #3a2a10")
+            )
+            throughput_advisory_card.set_visibility(False)
+            with throughput_advisory_card:
+                throughput_advisory_view = ui.column().classes("gap-0")
 
             ui.label("Data-Link Port(s)").classes("text-subtitle2 text-white q-mt-md")
             data_link_hint = ui.label("").classes(
@@ -1982,18 +2075,38 @@ def gps_config_page() -> None:
                 save_as_enabled(_current_form_request(), selected_profile, live)
             )
 
+        def _render_throughput_advisory() -> None:
+            """The live counterpart to ``_render_advisory`` (issue #102) —
+            purely form-derived, so (unlike the I2C/SPI advisory) it can
+            run from ``_on_form_changed`` on every edit, not just at seed."""
+            lines = throughput_advisory_lines(form, form_data_link_ports)
+            throughput_advisory_view.clear()
+            if not lines:
+                throughput_advisory_card.set_visibility(False)
+                return
+            throughput_advisory_card.set_visibility(True)
+            with throughput_advisory_view:
+                for line in lines:
+                    ui.label(line).classes(
+                        "throughput-advisory-line text-warning text-caption"
+                    )
+
         def _on_form_changed() -> None:
             """Recompute every reactive bit of the form after an edit.
 
             Includes the data-link picker so its "inferred from current
             RTCM state" hint stays current after a matrix toggle, not
-            just after a reseed.
+            just after a reseed. Also includes the throughput advisory
+            (issue #102) — it reacts to the same edits (matrix toggle,
+            meas-rate change, baud change, data-link-port toggle) as
+            everything else recomputed here.
             """
             _render_data_link_picker()
             _render_sync_indicator()
             _render_apply_gate()
             _render_modified_indicator()
             _render_save_as_gate()
+            _render_throughput_advisory()
 
         def _set_apply_result(text: str, *, ok: bool) -> None:
             apply_result_label.text = text
@@ -2103,7 +2216,7 @@ def gps_config_page() -> None:
             step_log.extend(result.steps)
             _render_step_log()
 
-            warning_lines = apply_warning_lines(result.warnings, result.step_warnings)
+            warning_lines = apply_warning_lines(result.step_warnings)
             _render_warning_strip(warning_lines)
 
             headline = apply_headline(result.status, len(warning_lines))

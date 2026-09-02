@@ -108,18 +108,30 @@ def test_hardware_extras_are_editable_and_apply(
     sync_badge = page.locator(".sync-badge")
     expect(sync_badge).to_have_text("In sync", timeout=10_000)
 
+    # Every hardware-field handler (`_set_meas_period_ms`,
+    # `_set_dyn_model`, `_set_elevation_mask`, `_toggle_spi`) rebuilds
+    # the *entire* hw-extras section — including recreating the SPI
+    # checkbox as a fresh DOM node — over a websocket round-trip. So
+    # each edit below waits for its own rebuild to land (mirroring
+    # ``test_gps_apply.py``'s matrix-rebuild wait) before the next one
+    # fires; otherwise a later click can race a still-in-flight rebuild
+    # from the prior edit and land on a node that's about to be torn
+    # down, silently dropping the click.
     meas_rate = page.locator(".hw-field-meas-rate-input input")
     expect(meas_rate).to_have_value("1000")
     meas_rate.fill("500")
     meas_rate.blur()
+    expect(meas_rate).to_have_value("500", timeout=10_000)
 
     dyn_model = page.locator(".hw-field-dyn-model-select")
     dyn_model.click()
     page.get_by_role("option", name="stationary", exact=True).click()
+    expect(dyn_model).to_contain_text("stationary", timeout=10_000)
 
     elevation = page.locator(".hw-field-elevation-mask-input input")
     elevation.fill("10")
     elevation.blur()
+    expect(elevation).to_have_value("10", timeout=10_000)
 
     spi = page.locator(".hw-field-spi-checkbox")
     _expect_checked(spi, checked=True)  # on by default on the fake driver

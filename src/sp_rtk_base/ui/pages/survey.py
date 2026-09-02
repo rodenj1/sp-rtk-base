@@ -705,7 +705,7 @@ def survey_page() -> None:
             except Exception as exc:
                 fb_mode_badge.text = "Error"
                 fb_mode_badge.props("color=negative")
-                logger.debug("Failed to read base config: %s", exc)
+                logger.warning("Failed to read base config: %s", exc)
 
         async def _commit_fixed_base(
             lat: float, lon: float, alt: float, acc: int

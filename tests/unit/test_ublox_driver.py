@@ -1164,21 +1164,21 @@ class TestParseCfgTmode:
 
     def test_parse_llh_pos_type(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """POS_TYPE=1 (LLH) reads LAT/LON/HEIGHT directly."""
-        parsed = SimpleNamespace(
-            CFG_TMODE_MODE=2,  # FIXED
-            CFG_TMODE_POS_TYPE=1,  # LLH
-            CFG_TMODE_LAT=473977000,  # 47.3977° × 1e7
-            CFG_TMODE_LON=85456000,  # 8.5456° × 1e7
-            CFG_TMODE_HEIGHT=40800,  # 408.00m in cm
-            CFG_TMODE_ECEF_X=0,
-            CFG_TMODE_ECEF_Y=0,
-            CFG_TMODE_ECEF_Z=0,
-            CFG_TMODE_ECEF_X_HP=0,
-            CFG_TMODE_ECEF_Y_HP=0,
-            CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=5000,  # 0.1 mm units = 500 mm
-        )
-        result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
+        values = {
+            "CFG_TMODE_MODE": 2,  # FIXED
+            "CFG_TMODE_POS_TYPE": 1,  # LLH
+            "CFG_TMODE_LAT": 473977000,  # 47.3977° × 1e7
+            "CFG_TMODE_LON": 85456000,  # 8.5456° × 1e7
+            "CFG_TMODE_HEIGHT": 40800,  # 408.00m in cm
+            "CFG_TMODE_ECEF_X": 0,
+            "CFG_TMODE_ECEF_Y": 0,
+            "CFG_TMODE_ECEF_Z": 0,
+            "CFG_TMODE_ECEF_X_HP": 0,
+            "CFG_TMODE_ECEF_Y_HP": 0,
+            "CFG_TMODE_ECEF_Z_HP": 0,
+            "CFG_TMODE_FIXED_POS_ACC": 5000,  # 0.1 mm units = 500 mm
+        }
+        result = UbloxDriver._parse_cfg_tmode(values)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "fixed"
         assert result.pos_type == "llh"
         assert abs(result.latitude - 47.3977) < 0.0001
@@ -1190,21 +1190,21 @@ class TestParseCfgTmode:
     def test_parse_ecef_pos_type(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """POS_TYPE=0 (ECEF) reads ECEF_X/Y/Z and converts to LLH."""
         # Real values from u-center: a point near Portland, OR area
-        parsed = SimpleNamespace(
-            CFG_TMODE_MODE=2,  # FIXED
-            CFG_TMODE_POS_TYPE=0,  # ECEF
-            CFG_TMODE_LAT=0,  # unused in ECEF mode
-            CFG_TMODE_LON=0,  # unused
-            CFG_TMODE_HEIGHT=0,  # unused
-            CFG_TMODE_ECEF_X=-245790204,  # cm
-            CFG_TMODE_ECEF_Y=-477512066,  # cm
-            CFG_TMODE_ECEF_Z=342909332,  # cm
-            CFG_TMODE_ECEF_X_HP=0,
-            CFG_TMODE_ECEF_Y_HP=0,
-            CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=47308,  # 0.1 mm units = 4730 mm
-        )
-        result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
+        values = {
+            "CFG_TMODE_MODE": 2,  # FIXED
+            "CFG_TMODE_POS_TYPE": 0,  # ECEF
+            "CFG_TMODE_LAT": 0,  # unused in ECEF mode
+            "CFG_TMODE_LON": 0,  # unused
+            "CFG_TMODE_HEIGHT": 0,  # unused
+            "CFG_TMODE_ECEF_X": -245790204,  # cm
+            "CFG_TMODE_ECEF_Y": -477512066,  # cm
+            "CFG_TMODE_ECEF_Z": 342909332,  # cm
+            "CFG_TMODE_ECEF_X_HP": 0,
+            "CFG_TMODE_ECEF_Y_HP": 0,
+            "CFG_TMODE_ECEF_Z_HP": 0,
+            "CFG_TMODE_FIXED_POS_ACC": 47308,  # 0.1 mm units = 4730 mm
+        }
+        result = UbloxDriver._parse_cfg_tmode(values)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "fixed"
         assert result.pos_type == "ecef"
         # Should produce valid WGS84 coordinates (not zeros)
@@ -1219,43 +1219,195 @@ class TestParseCfgTmode:
 
     def test_parse_ecef_disabled_mode(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """DISABLED mode with ECEF pos_type still parses."""
-        parsed = SimpleNamespace(
-            CFG_TMODE_MODE=0,  # DISABLED
-            CFG_TMODE_POS_TYPE=0,  # ECEF
-            CFG_TMODE_LAT=0,
-            CFG_TMODE_LON=0,
-            CFG_TMODE_HEIGHT=0,
-            CFG_TMODE_ECEF_X=0,
-            CFG_TMODE_ECEF_Y=0,
-            CFG_TMODE_ECEF_Z=0,
-            CFG_TMODE_ECEF_X_HP=0,
-            CFG_TMODE_ECEF_Y_HP=0,
-            CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=0,
-        )
-        result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
+        values = {
+            "CFG_TMODE_MODE": 0,  # DISABLED
+            "CFG_TMODE_POS_TYPE": 0,  # ECEF
+            "CFG_TMODE_LAT": 0,
+            "CFG_TMODE_LON": 0,
+            "CFG_TMODE_HEIGHT": 0,
+            "CFG_TMODE_ECEF_X": 0,
+            "CFG_TMODE_ECEF_Y": 0,
+            "CFG_TMODE_ECEF_Z": 0,
+            "CFG_TMODE_ECEF_X_HP": 0,
+            "CFG_TMODE_ECEF_Y_HP": 0,
+            "CFG_TMODE_ECEF_Z_HP": 0,
+            "CFG_TMODE_FIXED_POS_ACC": 0,
+        }
+        result = UbloxDriver._parse_cfg_tmode(values)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "disabled"
         assert result.pos_type == "ecef"
 
     def test_parse_survey_in_mode(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """Survey-in mode with LLH pos_type."""
-        parsed = SimpleNamespace(
-            CFG_TMODE_MODE=1,  # SURVEY_IN
-            CFG_TMODE_POS_TYPE=1,  # LLH
-            CFG_TMODE_LAT=0,
-            CFG_TMODE_LON=0,
-            CFG_TMODE_HEIGHT=0,
-            CFG_TMODE_ECEF_X=0,
-            CFG_TMODE_ECEF_Y=0,
-            CFG_TMODE_ECEF_Z=0,
-            CFG_TMODE_ECEF_X_HP=0,
-            CFG_TMODE_ECEF_Y_HP=0,
-            CFG_TMODE_ECEF_Z_HP=0,
-            CFG_TMODE_FIXED_POS_ACC=0,
-        )
-        result = UbloxDriver._parse_cfg_tmode(parsed)  # pyright: ignore[reportPrivateUsage]
+        values = {
+            "CFG_TMODE_MODE": 1,  # SURVEY_IN
+            "CFG_TMODE_POS_TYPE": 1,  # LLH
+            "CFG_TMODE_LAT": 0,
+            "CFG_TMODE_LON": 0,
+            "CFG_TMODE_HEIGHT": 0,
+            "CFG_TMODE_ECEF_X": 0,
+            "CFG_TMODE_ECEF_Y": 0,
+            "CFG_TMODE_ECEF_Z": 0,
+            "CFG_TMODE_ECEF_X_HP": 0,
+            "CFG_TMODE_ECEF_Y_HP": 0,
+            "CFG_TMODE_ECEF_Z_HP": 0,
+            "CFG_TMODE_FIXED_POS_ACC": 0,
+        }
+        result = UbloxDriver._parse_cfg_tmode(values)  # pyright: ignore[reportPrivateUsage]
         assert result.mode.value == "survey_in"
         assert result.pos_type == "llh"
+
+
+# ---------------------------------------------------------------------------
+# Driver get_base_config / _read_ecef_locked retry tests (issue #121)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def connected_driver() -> UbloxDriver:
+    driver = UbloxDriver()
+    mock_serial = MagicMock()
+    mock_serial.is_open = True
+    mock_reader = MagicMock()
+    driver._serial = mock_serial  # pyright: ignore[reportPrivateUsage]
+    driver._reader = mock_reader  # pyright: ignore[reportPrivateUsage]
+    return driver
+
+
+class TestUbloxGetBaseConfig:
+    """Tests for UbloxDriver.get_base_config (issue #121)."""
+
+    def test_get_base_config_success(self, connected_driver: UbloxDriver) -> None:
+        response = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_TMODE_MODE=2,
+            CFG_TMODE_POS_TYPE=1,
+            CFG_TMODE_LAT=473977000,
+            CFG_TMODE_LON=85456000,
+            CFG_TMODE_HEIGHT=40800,
+            CFG_TMODE_FIXED_POS_ACC=5000,
+        )
+        connected_driver._reader.read.return_value = (  # pyright: ignore[reportPrivateUsage]
+            b"",
+            response,
+        )
+        config = connected_driver.get_base_config()
+        assert config.mode.value == "fixed"
+        assert config.pos_type == "llh"
+
+    def test_get_base_config_retries_on_timeout_then_succeeds(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A CFG-VALGET reply missed once (busy receiver) doesn't fail
+        the whole read — the poll is re-issued (issue #121, follow-up
+        to #119/#120)."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = [
+                RuntimeError("No CFG-VALGET response for config keys"),
+                {"CFG_TMODE_MODE": 0, "CFG_TMODE_POS_TYPE": 1},
+            ]
+            config = connected_driver.get_base_config()
+            assert config.mode.value == "disabled"
+            assert mock_read.call_count == 2
+
+    def test_get_base_config_gives_up_after_three_attempts(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "No CFG-VALGET response for config keys"
+            )
+            with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+                connected_driver.get_base_config()
+            assert mock_read.call_count == 3
+
+    def test_get_base_config_nak_is_not_retried(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A genuine NAK is a distinct, definitive rejection — it must
+        propagate immediately, not be masked by the timeout retry."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "Device rejected CFG-VALGET poll for [...] (NAK)"
+            )
+            with pytest.raises(RuntimeError, match="NAK"):
+                connected_driver.get_base_config()
+            assert mock_read.call_count == 1
+
+    def test_get_base_config_not_connected(self) -> None:
+        driver = UbloxDriver()
+        with pytest.raises(ConnectionError):
+            driver.get_base_config()
+
+
+class TestUbloxReadEcef:
+    """Tests for UbloxDriver._read_ecef_locked (issue #121)."""
+
+    def test_read_ecef_success(self, connected_driver: UbloxDriver) -> None:
+        response = SimpleNamespace(
+            identity="CFG-VALGET",
+            CFG_TMODE_ECEF_X=-245790204,
+            CFG_TMODE_ECEF_Y=-477512066,
+            CFG_TMODE_ECEF_Z=342909332,
+        )
+        connected_driver._reader.read.return_value = (  # pyright: ignore[reportPrivateUsage]
+            b"",
+            response,
+        )
+        with connected_driver._lock:  # pyright: ignore[reportPrivateUsage]
+            result = connected_driver._read_ecef_locked()  # pyright: ignore[reportPrivateUsage]
+        assert result == (-245790204, -477512066, 342909332)
+
+    def test_read_ecef_retries_on_timeout_then_succeeds(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = [
+                RuntimeError("No CFG-VALGET response for config keys"),
+                {
+                    "CFG_TMODE_ECEF_X": 1,
+                    "CFG_TMODE_ECEF_Y": 2,
+                    "CFG_TMODE_ECEF_Z": 3,
+                },
+            ]
+            with connected_driver._lock:  # pyright: ignore[reportPrivateUsage]
+                result = connected_driver._read_ecef_locked()  # pyright: ignore[reportPrivateUsage]
+            assert result == (1, 2, 3)
+            assert mock_read.call_count == 2
+
+    def test_read_ecef_gives_up_after_three_attempts(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "No CFG-VALGET response for config keys"
+            )
+            with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+                with connected_driver._lock:  # pyright: ignore[reportPrivateUsage]
+                    connected_driver._read_ecef_locked()  # pyright: ignore[reportPrivateUsage]
+            assert mock_read.call_count == 3
+
+    def test_read_ecef_nak_is_not_retried(self, connected_driver: UbloxDriver) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "Device rejected CFG-VALGET poll for [...] (NAK)"
+            )
+            with pytest.raises(RuntimeError, match="NAK"):
+                with connected_driver._lock:  # pyright: ignore[reportPrivateUsage]
+                    connected_driver._read_ecef_locked()  # pyright: ignore[reportPrivateUsage]
+            assert mock_read.call_count == 1
 
 
 class TestEcefToLlh:

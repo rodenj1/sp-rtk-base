@@ -197,6 +197,12 @@ log "Creating directories…"
 install -d -m 0755 -o root            -g root            "$INSTALL_PREFIX"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_DIR"
+# Custom GPS profiles dir (issue #81) — the unit points
+# SP_RTK_BASE_PROFILES_DIR here (see sp-rtk-base.service) since
+# ProtectHome=true hides ~/.config/sp-rtk-base/profiles, ProfileStore's
+# default, from the service user. Provision it up front so a fresh
+# install's first /api/profiles call doesn't need manual intervention.
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "${STATE_DIR}/profiles"
 # Heal pre-existing installs whose CONFIG_DIR was created root:sp-rtk-base
 # (the original v0.2.x installer) — the service user needs ownership so
 # atomic-rename saves and write_text() on config.yaml both succeed.

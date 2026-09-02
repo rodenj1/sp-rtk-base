@@ -58,6 +58,15 @@ class ProfileBusinessRuleError(ProfileStoreError):
     """Raised for a business-rule rejection that isn't a schema violation."""
 
 
+class ProfileStoreUnavailableError(ProfileStoreError):
+    """Raised when the profiles dir can't be read or written.
+
+    Surfaces filesystem failures (e.g. a systemd ``ProtectHome=true``
+    unit hiding ``~``) as one actionable message instead of a raw
+    ``PermissionError`` traceback reaching the API layer.
+    """
+
+
 def _get_profiles_dir() -> Path:
     """Resolve the custom-profiles directory.
 
@@ -85,6 +94,20 @@ class ProfileStore:
 
     def __init__(self, profiles_dir: Path | None = None) -> None:
         self._profiles_dir = profiles_dir or _get_profiles_dir()
+        # Non-fatal startup probe (issue #81): surface an inaccessible
+        # profiles dir in the log at construction time — the singleton is
+        # built at import time, before the first /api/profiles request —
+        # rather than leaving the first caller to discover it as a 503.
+        try:
+            self._profiles_dir.exists()
+        except OSError as exc:
+            logger.warning(
+                "profiles dir '%s' is not accessible (%s); set %s to a "
+                "writable location",
+                self._profiles_dir,
+                exc.strerror or exc,
+                ENV_PROFILES_DIR,
+            )
 
     @property
     def profiles_dir(self) -> Path:
@@ -101,6 +124,9 @@ class ProfileStore:
         Returns:
             Built-in profiles sorted by name, followed by custom
             profiles sorted by name.
+
+        Raises:
+            ProfileStoreUnavailableError: The profiles dir can't be read.
         """
         customs = self._load_customs()
         builtins_sorted = sorted(BUILTIN_PROFILES.values(), key=lambda p: p.name)
@@ -116,6 +142,9 @@ class ProfileStore:
         Returns:
             The matching profile, or None if no built-in or custom
             profile has that name.
+
+        Raises:
+            ProfileStoreUnavailableError: The profiles dir can't be read.
         """
         builtin = BUILTIN_PROFILES.get(name)
         if builtin is not None:
@@ -143,6 +172,8 @@ class ProfileStore:
             ProfileBusinessRuleError: The name isn't filesystem-safe.
             ProfileConflictError: The name collides with a built-in or
                 an existing custom profile.
+            ProfileStoreUnavailableError: The profiles dir can't be
+                read or written.
         """
         self._validate_name_is_safe(profile.name)
         if profile.name in BUILTIN_PROFILES:
@@ -178,6 +209,8 @@ class ProfileStore:
             ProfileImmutableError: *name* identifies a built-in.
             ProfileNotFoundError: No custom profile named *name* exists.
             ProfileBusinessRuleError: *new_display_name* is blank.
+            ProfileStoreUnavailableError: The profiles dir can't be
+                read or written.
         """
         if name in BUILTIN_PROFILES:
             raise ProfileImmutableError(f"'{name}' is a built-in and cannot be renamed")
@@ -213,6 +246,8 @@ class ProfileStore:
             ProfileImmutableError: *profile.name* identifies a built-in.
             ProfileNotFoundError: No custom profile named *profile.name*
                 exists yet — use :meth:`create_profile` instead.
+            ProfileStoreUnavailableError: The profiles dir can't be
+                read or written.
         """
         if profile.name in BUILTIN_PROFILES:
             raise ProfileImmutableError(
@@ -234,12 +269,17 @@ class ProfileStore:
         Raises:
             ProfileImmutableError: *name* identifies a built-in.
             ProfileNotFoundError: No custom profile named *name* exists.
+            ProfileStoreUnavailableError: The profiles dir can't be
+                read, or the file can't be removed.
         """
         if name in BUILTIN_PROFILES:
             raise ProfileImmutableError(f"'{name}' is a built-in and cannot be deleted")
         if name not in self._load_customs():
             raise ProfileNotFoundError(f"No profile named '{name}'")
-        self._custom_path(name).unlink()
+        try:
+            self._custom_path(name).unlink()
+        except OSError as exc:
+            raise self._unavailable_error(exc) from exc
         logger.info("Deleted custom profile: %s", name)
 
     def export_profile(self, name: str) -> Profile:
@@ -253,6 +293,7 @@ class ProfileStore:
 
         Raises:
             ProfileNotFoundError: No profile named *name* exists.
+            ProfileStoreUnavailableError: The profiles dir can't be read.
         """
         profile = self.get_profile(name)
         if profile is None:
@@ -291,11 +332,22 @@ class ProfileStore:
     def _custom_path(self, name: str) -> Path:
         return self._profiles_dir / f"{name}.yaml"
 
+    def _unavailable_error(self, exc: OSError) -> ProfileStoreUnavailableError:
+        return ProfileStoreUnavailableError(
+            f"profiles dir '{self._profiles_dir}' is not accessible "
+            f"({exc.strerror or exc}); set {ENV_PROFILES_DIR} to a writable "
+            "location"
+        )
+
     def _load_customs(self) -> dict[str, Profile]:
         profiles: dict[str, Profile] = {}
-        if not self._profiles_dir.exists():
-            return profiles
-        for path in sorted(self._profiles_dir.glob("*.yaml")):
+        try:
+            if not self._profiles_dir.exists():
+                return profiles
+            paths = sorted(self._profiles_dir.glob("*.yaml"))
+        except OSError as exc:
+            raise self._unavailable_error(exc) from exc
+        for path in paths:
             try:
                 data = yaml.safe_load(path.read_text(encoding="utf-8"))
                 profile = Profile.model_validate(data)
@@ -306,7 +358,10 @@ class ProfileStore:
         return profiles
 
     def _write_custom(self, profile: Profile) -> None:
-        self._profiles_dir.mkdir(parents=True, exist_ok=True)
-        data = profile.model_dump(mode="json", exclude_none=True)
-        yaml_text = yaml.dump(data, default_flow_style=False, sort_keys=False)
-        self._custom_path(profile.name).write_text(yaml_text, encoding="utf-8")
+        try:
+            self._profiles_dir.mkdir(parents=True, exist_ok=True)
+            data = profile.model_dump(mode="json", exclude_none=True)
+            yaml_text = yaml.dump(data, default_flow_style=False, sort_keys=False)
+            self._custom_path(profile.name).write_text(yaml_text, encoding="utf-8")
+        except OSError as exc:
+            raise self._unavailable_error(exc) from exc

@@ -37,6 +37,7 @@ from sp_rtk_base.services.profile_store import (
     ProfileNotFoundError,
     ProfileStore,
     ProfileStoreError,
+    ProfileStoreUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ _STATUS_BY_ERROR: dict[type[ProfileStoreError], int] = {
     ProfileImmutableError: 403,
     ProfileConflictError: 409,
     ProfileBusinessRuleError: 400,
+    ProfileStoreUnavailableError: 503,
 }
 
 
@@ -71,7 +73,7 @@ def _detail(store: ProfileStore, profile: Profile) -> ProfileDetailResponse:
 async def list_profiles(
     store: ProfileStore = Depends(get_profile_store),
     device: DeviceService = Depends(get_device_service),
-) -> ProfileListResponse:
+) -> ProfileListResponse | JSONResponse:
     """List every profile, built-ins before customs, alphabetical within each.
 
     Tags each profile with its compatibility against the connected
@@ -84,7 +86,10 @@ async def list_profiles(
         info.hardware_confidence if info else HardwareConfidence.UNKNOWN,
     )
 
-    profiles = store.list_profiles()
+    try:
+        profiles = store.list_profiles()
+    except ProfileStoreError as exc:
+        return _error_response(exc)
     items = [
         ProfileListItem(
             profile=p,
@@ -111,7 +116,10 @@ async def get_profile(
     store: ProfileStore = Depends(get_profile_store),
 ) -> ProfileDetailResponse | JSONResponse:
     """Get a single profile by name."""
-    profile = store.get_profile(name)
+    try:
+        profile = store.get_profile(name)
+    except ProfileStoreError as exc:
+        return _error_response(exc)
     if profile is None:
         return _error_response(ProfileNotFoundError(f"Profile '{name}' not found"))
     return _detail(store, profile)
@@ -125,7 +133,7 @@ async def export_profile(
     """Export a profile in the shape ``POST /api/profiles/import`` accepts."""
     try:
         return store.export_profile(name)
-    except ProfileNotFoundError as exc:
+    except ProfileStoreError as exc:
         return _error_response(exc)
 
 

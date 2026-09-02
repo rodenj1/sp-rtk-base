@@ -60,7 +60,7 @@ def test_gnss_checkbox_edits_the_form_and_applies(
     sbas = page.locator(".gnss-checkbox-sbas")
     _expect_checked(sbas, checked=False)
     sbas.click()
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
     page.get_by_role("button", name="Apply").click()
     expect(page.locator(".apply-result")).to_contain_text(
@@ -85,7 +85,7 @@ def test_port_protocol_checkbox_edits_the_form_and_applies(
     nmea_in = page.locator(".port-protocol-UART2-in-NMEA")
     _expect_checked(nmea_in, checked=False)
     nmea_in.click()
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
     page.get_by_role("button", name="Apply").click()
     expect(page.locator(".apply-result")).to_contain_text(
@@ -125,7 +125,7 @@ def test_hardware_extras_are_editable_and_apply(
     _expect_checked(spi, checked=True)  # on by default on the fake driver
     spi.click()
 
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
     page.get_by_role("button", name="Apply").click()
     expect(page.locator(".apply-result")).to_contain_text(
@@ -166,7 +166,7 @@ def test_uart_baud_selects_are_editable_and_apply(
 
     uart2.click()
     page.get_by_role("option", name="230400", exact=True).click()
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
     page.get_by_role("button", name="Apply").click()
     expect(page.locator(".apply-result")).to_contain_text(
@@ -246,7 +246,7 @@ def test_base_mode_offers_disabled_and_fixed(
 
     tmode_select.click()
     page.get_by_role("option", name="fixed", exact=True).click()
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")
 
 
 @pytest.mark.e2e
@@ -281,4 +281,4 @@ def test_survey_in_shows_as_locked_current_value(
 
     page.locator(".hw-field-tmode-select").click()
     page.get_by_role("option", name="disabled", exact=True).click()
-    expect(sync_badge).to_have_text("Receiver out of sync")
+    expect(sync_badge).to_contain_text("unapplied change")

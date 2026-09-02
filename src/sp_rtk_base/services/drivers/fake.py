@@ -112,6 +112,15 @@ FAKE_UNKNOWN_HW_PORT: str = "FAKE-UNKNOWN-HW"
 # prompt without real hardware.
 FAKE_FACTORY_PORT: str = "FAKE-FACTORY"
 
+# Sentinel ``port`` value the e2e suite can pass to ``connect()`` to make
+# the fake driver drain a flash-divergence warning after every RTCM
+# matrix write — the write lands (and reads back) fine, but a step
+# warning reports that flash verification is pending, mirroring the
+# real ``UbloxDriver``'s own "flash divergence" warning shape. The only
+# way to reach the GPS page's warning strip (issue #101) without a real
+# producer.
+FAKE_FLASH_DIVERGENCE_PORT: str = "FAKE-FLASH-DIVERGENCE"
+
 
 class FakeGpsDriver(GpsReceiverDriver):
     """In-memory GPS receiver driver for E2E + dev-mode testing.
@@ -130,6 +139,13 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._connected: bool = False
         self._port: str | None = None
         self._baud_rate: int | None = None
+
+        # Flash-divergence sentinel (issue #101) — set by ``connect()``
+        # when the port is ``FAKE_FLASH_DIVERGENCE_PORT``. Queued
+        # warnings are drained (and cleared) by ``drain_warnings()``,
+        # same lifecycle as ``UbloxDriver``'s own warning channel.
+        self._warn_on_rtcm_write: bool = False
+        self._pending_warnings: list[str] = []
 
         # Identity returned by ``connect()`` / ``get_device_info()``.
         # hardware_target/confidence default to a *confirmed* ZED-F9P —
@@ -315,6 +331,8 @@ class FakeGpsDriver(GpsReceiverDriver):
             )
         elif port == FAKE_FACTORY_PORT:
             self._rtcm_ports = RtcmPortConfig()
+        elif port == FAKE_FLASH_DIVERGENCE_PORT:
+            self._warn_on_rtcm_write = True
         return self._device_info
 
     def disconnect(self) -> None:
@@ -482,6 +500,10 @@ class FakeGpsDriver(GpsReceiverDriver):
             cell.setdefault("SPI", 0)
             updated[row] = cell
         self._rtcm_ports = RtcmPortConfig(messages=updated)
+        if self._warn_on_rtcm_write:
+            self._pending_warnings.append(
+                "RTCM matrix write landed in RAM but flash verification is pending"
+            )
 
     def get_uart_baud_rates(self) -> dict[PortId, int]:
         """Return the fixed in-memory UART baud rates."""
@@ -497,9 +519,15 @@ class FakeGpsDriver(GpsReceiverDriver):
             self._uart_baud_rates[PortId.UART2] = uart2
 
     def drain_warnings(self) -> list[str]:
-        """No producer wired up yet — the fake driver never warns (issue #99)."""
+        """Drain and clear queued warnings (issue #99).
+
+        Empty unless connected via :data:`FAKE_FLASH_DIVERGENCE_PORT`,
+        which queues one warning per RTCM matrix write (issue #101).
+        """
         self._ensure_connected()
-        return []
+        drained = self._pending_warnings
+        self._pending_warnings = []
+        return drained
 
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
         """Return the fake driver's in-memory scalar config (issue #97)."""

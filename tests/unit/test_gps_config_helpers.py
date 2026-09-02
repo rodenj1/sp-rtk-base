@@ -25,6 +25,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import (
     HARDWARE_ANY,
@@ -34,12 +35,15 @@ from sp_rtk_base.models.hardware_identity import (
 )
 from sp_rtk_base.models.profile_models import (
     ApplyDiffEntry,
+    ApplyStepResult,
+    ApplyStepWarning,
     BaudAssertion,
     PortProtocolSet,
     Profile,
     ReceiverApplyRequest,
     ReceiverAssertion,
     RtcmStreamConfig,
+    diff_receiver_assertions,
     merge_profile_into_assertion,
 )
 from sp_rtk_base.services.profile_store import ProfileStore
@@ -47,25 +51,36 @@ from sp_rtk_base.ui.pages.gps_config import (
     MATRIX_PORTS,
     REQUIRED_RTCM_ROW,
     SELECTABLE_TMODE_MODES,
+    ResultBadgeState,
     apply_blocked_reason,
+    apply_headline,
+    apply_warning_lines,
+    badge_color,
+    badge_label,
     bds_b2_control_disabled,
     build_apply_request,
     build_picker_entries,
     build_saved_profile,
+    constellation_diff_path,
     display_label,
     fixed_position_step_state,
     format_leaf_diff,
+    format_step_log_entry,
     i2c_spi_advisory_rows,
     infer_data_link_ports,
     is_modified_from_profile,
     matrix_cell_on,
+    partition_diff_by_provenance,
+    port_protocol_diff_path,
     receiver_config_from_profile,
     resolve_gnss_display,
     resolve_identity,
     resolve_ports_display,
     resolve_save_hardware,
+    result_badge_state,
     row_slug,
     rtcm_config_to_matrix,
+    rtcm_diff_path,
     save_as_enabled,
     suggest_profile_name,
     tmode_mode_locked,
@@ -677,3 +692,212 @@ class TestFixedPositionStepState:
             SurveyInProgress(active=True, valid=False),
         )
         assert state.current_step == 3
+
+
+def _diff(path: str) -> ApplyDiffEntry:
+    return ApplyDiffEntry(path=path, expected=True, actual=False)
+
+
+class TestPartitionDiffByProvenance:
+    """Issue #101: failed = in the last apply's diff and not edited since."""
+
+    def test_empty_diff_is_empty_both_ways(self) -> None:
+        failed, pending = partition_diff_by_provenance([], {"meas_period_ms"})
+        assert failed == []
+        assert pending == []
+
+    def test_path_in_failed_set_is_failed(self) -> None:
+        diff = [_diff("meas_period_ms")]
+        failed, pending = partition_diff_by_provenance(diff, {"meas_period_ms"})
+        assert failed == diff
+        assert pending == []
+
+    def test_path_not_in_failed_set_is_pending(self) -> None:
+        diff = [_diff("meas_period_ms")]
+        failed, pending = partition_diff_by_provenance(diff, set())
+        assert failed == []
+        assert pending == diff
+
+    def test_mixed_diff_splits_by_path(self) -> None:
+        failed_entry = _diff("meas_period_ms")
+        pending_entry = _diff("elevation_mask_deg")
+        failed, pending = partition_diff_by_provenance(
+            [failed_entry, pending_entry], {"meas_period_ms"}
+        )
+        assert failed == [failed_entry]
+        assert pending == [pending_entry]
+
+    def test_a_path_no_longer_in_the_diff_is_simply_absent(self) -> None:
+        """Editing a field back to match live removes its diff entry
+        entirely — it doesn't linger as failed just because the path is
+        still in ``failed_paths``."""
+        failed, pending = partition_diff_by_provenance([], {"meas_period_ms"})
+        assert failed == []
+        assert pending == []
+
+
+class TestDiffPathBuildersMatchDiffReceiverAssertions:
+    """The three path builders that back every ``_clear_failed``/
+    ``_mark_mismatch`` call site for enum-keyed fields (issue #101) must
+    build exactly the path ``diff_receiver_assertions`` itself emits —
+    a mismatch here would silently leave a mutation handler unable to
+    clear its own field's failed marker. Round-tripped through the real
+    diff function rather than hand-asserted, so a future change to
+    either side is caught."""
+
+    def test_rtcm_cell_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.rtcm_stream.matrix[RtcmRowId.RTCM_1077][PortId.UART2] = True
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == rtcm_diff_path(RtcmRowId.RTCM_1077, PortId.UART2)
+
+    def test_port_protocol_in_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.ports[PortId.UART1] = PortProtocolSet(
+            **{"in": [UbxProtocol.RTCM3X], "out": []}
+        )
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == port_protocol_diff_path(
+            PortId.UART1, "in", UbxProtocol.RTCM3X
+        )
+
+    def test_port_protocol_out_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.ports[PortId.UART2] = PortProtocolSet(
+            **{"in": [], "out": [UbxProtocol.NMEA]}
+        )
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == port_protocol_diff_path(
+            PortId.UART2, "out", UbxProtocol.NMEA
+        )
+
+    def test_constellation_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(update={"constellations": [GnssConstellation.GPS]})
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == constellation_diff_path(GnssConstellation.GPS)
+
+
+class TestResultBadgeState:
+    def test_no_diff_is_in_sync(self) -> None:
+        state = result_badge_state([], [])
+        assert state == ResultBadgeState(kind="in_sync", count=0)
+
+    def test_pending_only_is_neutral(self) -> None:
+        state = result_badge_state([], [_diff("a"), _diff("b")])
+        assert state == ResultBadgeState(kind="pending", count=2)
+
+    def test_failed_only_is_warning(self) -> None:
+        state = result_badge_state([_diff("a")], [])
+        assert state == ResultBadgeState(kind="failed", count=1)
+
+    def test_failed_takes_priority_over_pending(self) -> None:
+        """Verification failure takes priority — the badge never shows
+        the pending count once any field has failed."""
+        state = result_badge_state([_diff("a")], [_diff("b"), _diff("c")])
+        assert state == ResultBadgeState(kind="failed", count=1)
+
+
+class TestBadgeLabel:
+    def test_in_sync(self) -> None:
+        assert badge_label(ResultBadgeState(kind="in_sync", count=0)) == "In sync"
+
+    def test_pending_singular(self) -> None:
+        text = badge_label(ResultBadgeState(kind="pending", count=1))
+        assert text == "1 unapplied change"
+
+    def test_pending_plural(self) -> None:
+        text = badge_label(ResultBadgeState(kind="pending", count=3))
+        assert text == "3 unapplied changes"
+
+    def test_failed_singular(self) -> None:
+        text = badge_label(ResultBadgeState(kind="failed", count=1))
+        assert text == "1 field failed verification"
+
+    def test_failed_plural(self) -> None:
+        text = badge_label(ResultBadgeState(kind="failed", count=2))
+        assert text == "2 fields failed verification"
+
+
+class TestBadgeColor:
+    def test_in_sync_is_positive(self) -> None:
+        assert badge_color(ResultBadgeState(kind="in_sync", count=0)) == "positive"
+
+    def test_pending_is_neutral_not_amber(self) -> None:
+        color = badge_color(ResultBadgeState(kind="pending", count=1))
+        assert color == "grey-7"
+        assert color != "warning"
+
+    def test_failed_is_warning(self) -> None:
+        assert badge_color(ResultBadgeState(kind="failed", count=1)) == "warning"
+
+
+class TestApplyHeadline:
+    def test_ok_with_no_warnings(self) -> None:
+        assert apply_headline("ok", 0) == "Applied and verified ✓"
+
+    def test_failed_with_no_warnings(self) -> None:
+        text = apply_headline("failed", 0)
+        assert "verification found mismatches" in text
+        assert "warning" not in text
+
+    def test_ok_carries_a_neutral_warning_count(self) -> None:
+        text = apply_headline("ok", 1)
+        assert text.startswith("Applied and verified ✓")
+        assert "1 warning" in text
+
+    def test_warning_count_pluralises(self) -> None:
+        assert "2 warnings" in apply_headline("ok", 2)
+
+
+class TestApplyWarningLines:
+    def test_no_warnings_is_empty(self) -> None:
+        assert apply_warning_lines([], []) == []
+
+    def test_plain_warnings_pass_through_unprefixed(self) -> None:
+        lines = apply_warning_lines(["estimated throughput exceeds baud"], [])
+        assert lines == ["estimated throughput exceeds baud"]
+
+    def test_step_warnings_are_prefixed_with_their_step(self) -> None:
+        lines = apply_warning_lines(
+            [], [ApplyStepWarning(step="rtcm_matrix", message="flash mismatch")]
+        )
+        assert lines == ["rtcm_matrix: flash mismatch"]
+
+    def test_never_joins_into_one_string(self) -> None:
+        """One line per warning — never a string-joined toast blob."""
+        lines = apply_warning_lines(
+            ["a"],
+            [
+                ApplyStepWarning(step="ports", message="b"),
+                ApplyStepWarning(step="baud", message="c"),
+            ],
+        )
+        assert lines == ["a", "ports: b", "baud: c"]
+
+
+class TestFormatStepLogEntry:
+    def test_ok_step(self) -> None:
+        text = format_step_log_entry(ApplyStepResult(step="dyn_model", status="ok"))
+        assert text == "✓ dyn_model: ok"
+
+    def test_failed_step(self) -> None:
+        text = format_step_log_entry(ApplyStepResult(step="baud", status="failed"))
+        assert text == "✗ baud: failed"
+
+    def test_skipped_step(self) -> None:
+        text = format_step_log_entry(
+            ApplyStepResult(step="constellations", status="skipped")
+        )
+        assert text == "— constellations: skipped"

@@ -57,6 +57,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from nicegui import ui
 from pydantic import ValidationError
@@ -94,6 +95,8 @@ from sp_rtk_base.models.hardware_identity import (
 from sp_rtk_base.models.profile_models import (
     MATRIX_PORTS,
     ApplyDiffEntry,
+    ApplyStepResult,
+    ApplyStepWarning,
     BaudAssertion,
     PortProtocolSet,
     Profile,
@@ -499,6 +502,139 @@ def row_slug(row_id: RtcmRowId) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Result surfaces (issue #101) — the three-state badge, inline-marker
+# provenance split, headline verdict, step log and warning strip that
+# turn Apply's already-rich ``ApplyConfigResult`` (issue #99) into
+# something the operator can read at a glance.
+# ---------------------------------------------------------------------------
+
+
+def rtcm_diff_path(msg_id: RtcmRowId, port: PortId) -> str:
+    """The :func:`~sp_rtk_base.models.profile_models.diff_receiver_assertions`
+    path for one matrix cell — the single place that format is built, so
+    a mutation handler clearing provenance and the render function
+    marking it can never drift apart."""
+    return f"rtcm.{msg_id.value}.{port.value}"
+
+
+def port_protocol_diff_path(
+    port: PortId, direction: Literal["in", "out"], protocol: UbxProtocol
+) -> str:
+    """The diff path for one port's one protocol, one direction."""
+    return f"ports.{port.value}.{direction}.{protocol.value}"
+
+
+def constellation_diff_path(constellation: GnssConstellation) -> str:
+    """The diff path for one GNSS constellation."""
+    return f"constellations.{constellation.value}"
+
+
+def partition_diff_by_provenance(
+    diff: list[ApplyDiffEntry], failed_paths: set[str]
+) -> tuple[list[ApplyDiffEntry], list[ApplyDiffEntry]]:
+    """Split *diff* (form vs. live) into ``(failed, pending)`` by provenance.
+
+    A leaf is *failed* when it appears in the last apply's diff and
+    hasn't been edited since — *failed_paths* is exactly that set, and
+    every mutation handler on the page drops a path from it the moment
+    the operator edits that field. Anything else that currently
+    differs is a *pending* edit — the resting state of an editable
+    form, never a fault.
+    """
+    failed = [d for d in diff if d.path in failed_paths]
+    pending = [d for d in diff if d.path not in failed_paths]
+    return failed, pending
+
+
+@dataclass(frozen=True)
+class ResultBadgeState:
+    """One badge, three states — see :func:`result_badge_state`."""
+
+    kind: Literal["in_sync", "pending", "failed"]
+    count: int
+
+
+def result_badge_state(
+    failed: list[ApplyDiffEntry], pending: list[ApplyDiffEntry]
+) -> ResultBadgeState:
+    """The one-badge, three-state verdict.
+
+    Verification failure takes priority over pending edits — the badge
+    never shows both — and either count covers exactly the leaves
+    :func:`partition_diff_by_provenance` produced, which is exactly
+    the set Apply itself asserts: no carve-outs.
+    """
+    if failed:
+        return ResultBadgeState(kind="failed", count=len(failed))
+    if pending:
+        return ResultBadgeState(kind="pending", count=len(pending))
+    return ResultBadgeState(kind="in_sync", count=0)
+
+
+def _plural(count: int, noun: str) -> str:
+    return noun if count == 1 else f"{noun}s"
+
+
+def badge_label(state: ResultBadgeState) -> str:
+    """The badge's text for *state*."""
+    if state.kind == "in_sync":
+        return "In sync"
+    if state.kind == "failed":
+        return f"{state.count} {_plural(state.count, 'field')} failed verification"
+    return f"{state.count} unapplied {_plural(state.count, 'change')}"
+
+
+#: Quasar colour per badge state. ``pending`` stays a neutral grey —
+#: the resting state of an editable form shouldn't train the operator
+#: to read amber as trouble; only a genuine verification failure does.
+_BADGE_COLOR: dict[str, str] = {
+    "in_sync": "positive",
+    "pending": "grey-7",
+    "failed": "warning",
+}
+
+
+def badge_color(state: ResultBadgeState) -> str:
+    """The Quasar colour name for *state*."""
+    return _BADGE_COLOR[state.kind]
+
+
+def apply_headline(status: Literal["ok", "failed"], warning_count: int) -> str:
+    """The headline verdict line — the outcome without reading, plus a
+    neutral warning count when warnings are present so a green verdict
+    never sits directly above an amber strip the operator has no
+    reason to read."""
+    verdict = (
+        "Applied and verified ✓"
+        if status == "ok"
+        else "Applied, but verification found mismatches — nothing was rolled back."
+    )
+    if not warning_count:
+        return verdict
+    return f"{verdict} ({warning_count} {_plural(warning_count, 'warning')})"
+
+
+def apply_warning_lines(
+    warnings: list[str], step_warnings: list[ApplyStepWarning]
+) -> list[str]:
+    """One line per warning for the strip — never joined into a single
+    string. Step warnings are prefixed with the step that produced
+    them; the non-blocking throughput warnings need no prefix."""
+    return [*warnings, *(f"{w.step}: {w.message}" for w in step_warnings)]
+
+
+#: Icon per :class:`~sp_rtk_base.models.profile_models.ApplyStepResult`
+#: status, for the step log's append-only line.
+_STEP_STATUS_ICON: dict[str, str] = {"ok": "✓", "failed": "✗", "skipped": "—"}
+
+
+def format_step_log_entry(step: ApplyStepResult) -> str:
+    """One step-log line. Order and partial application are the two
+    things only this surface can express."""
+    return f"{_STEP_STATUS_ICON[step.status]} {step.step}: {step.status}"
+
+
+# ---------------------------------------------------------------------------
 # Fixed Position three-step card (issue #96) — deliberately separate from
 # the profile-form helpers above. This card's state is derived entirely
 # from live receiver polls (``CurrentBaseConfig`` + ``SurveyInProgress``),
@@ -843,7 +979,31 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #333; border-radius: 4px")
             )
             apply_result_label.set_visibility(False)
-            apply_diff_list = ui.column().classes("apply-diff-list q-mt-xs gap-0")
+
+            # Warning strip (issue #101) — the Survey page's amber-card
+            # idiom for pre-flight advisories, reused here for Apply's
+            # non-blocking step warnings. One ``⚠`` label per warning,
+            # never a string-joined blob; replaced whole on every Apply
+            # attempt and cleared on disconnect. No remedy button — the
+            # remedy is the Apply button already in this action row.
+            warning_strip_card = (
+                ui.card()
+                .classes("warning-strip w-full q-pa-sm q-mt-sm")
+                .style("background-color: #3a2a10")
+            )
+            warning_strip_card.set_visibility(False)
+            with warning_strip_card:
+                warning_strip_view = ui.column().classes("gap-0")
+
+            # Session-only, append-only step log (issue #101) — the only
+            # surface that can express ordering and partial application.
+            # Grows across every Apply this connection makes; cleared on
+            # disconnect, because a surviving log would narrate a
+            # possibly-detached receiver.
+            ui.label("Apply Step Log").classes(
+                "step-log-label text-subtitle2 text-white q-mt-md"
+            )
+            step_log_view = ui.column().classes("step-log q-mt-xs gap-0")
 
         # ---- Save-as dialog ----
         with ui.dialog() as save_as_dialog, ui.card().classes("q-pa-md"):
@@ -1111,6 +1271,9 @@ def gps_config_page() -> None:
             selected_profile = profile
             form = merge_profile_into_assertion(profile, live)
             form_data_link_ports = list(profile.data_link_port)
+            # A profile pick is a bulk edit of every field it touches —
+            # same provenance rule as any other edit (issue #101).
+            failed_paths.clear()
 
             _render_matrix()
             _render_ports_view()
@@ -1321,13 +1484,56 @@ def gps_config_page() -> None:
         delete_target: str | None = None
         delete_target_label: str = ""
 
-        def _out_of_sync() -> bool:
-            """Whole-form comparison (issue #98) — the same per-leaf
-            ``diff_receiver_assertions`` call Apply's read-back verify
-            uses, applied here to form vs. live. Never mentions
-            ``data_link_port`` (it isn't part of either operand), so a
-            data-link-port-only change never shows as out of sync."""
-            return bool(diff_receiver_assertions(form, live))
+        # Provenance for the three-state badge and inline markers (issue
+        # #101): paths that appeared in the *last* Apply's read-back diff
+        # and haven't been edited since. Every form-mutating handler
+        # below drops its own path(s) out of this set the moment the
+        # operator edits that field — see ``_clear_failed``. Reset
+        # wholesale by a fresh Apply, a profile pick, or a live reseed.
+        failed_paths: set[str] = set()
+
+        # Session-only, append-only step log (issue #101) — every Apply
+        # this connection makes extends it; ``_disconnect``/reconnect
+        # clear it (see ``_clear_session_state``).
+        step_log: list[ApplyStepResult] = []
+
+        def _partitioned_diff() -> tuple[list[ApplyDiffEntry], list[ApplyDiffEntry]]:
+            """(failed, pending) leaves — the whole-form ``form`` vs.
+            ``live`` comparison (issue #98's ``diff_receiver_assertions``
+            call, same one Apply's own read-back verify uses), split by
+            provenance (issue #101). Never mentions ``data_link_port``
+            (it isn't part of either operand), so a data-link-port-only
+            change never shows as out of sync."""
+            diff = diff_receiver_assertions(form, live)
+            return partition_diff_by_provenance(diff, failed_paths)
+
+        def _failed_by_path() -> dict[str, ApplyDiffEntry]:
+            """The currently-failed leaves, keyed by path — what the
+            inline markers highlight."""
+            failed, _pending = _partitioned_diff()
+            return {d.path: d for d in failed}
+
+        def _mark_mismatch(
+            element: ui.element, path: str, failed_by_path: dict[str, ApplyDiffEntry]
+        ) -> None:
+            """Ring *element* amber and attach the mismatch detail as a
+            tooltip when *path* is currently failed — the persistent
+            mismatch truth an inline marker gives instead of prose the
+            operator has to hunt a widget down to match (issue #101)."""
+            entry = failed_by_path.get(path)
+            if entry is None:
+                return
+            element.classes("field-failed")
+            element.style(
+                "outline: 2px solid #F2C037; outline-offset: 2px; border-radius: 4px"
+            )
+            element.tooltip(format_leaf_diff(entry))
+
+        def _clear_failed(*paths: str) -> None:
+            """Editing a field after a failed verification moves it from
+            failed to pending (issue #101) — every mutation handler
+            calls this with its own path(s) before re-rendering."""
+            failed_paths.difference_update(paths)
 
         def _current_form_request() -> ReceiverApplyRequest | None:
             """The form as a ``ReceiverApplyRequest``, or ``None`` if it
@@ -1338,7 +1544,10 @@ def gps_config_page() -> None:
                 return None
 
         def _toggle_port_protocol(
-            port: PortId, direction: str, protocol: UbxProtocol, checked: bool
+            port: PortId,
+            direction: Literal["in", "out"],
+            protocol: UbxProtocol,
+            checked: bool,
         ) -> None:
             protocols = form.ports.setdefault(port, PortProtocolSet())
             target = protocols.in_ if direction == "in" else protocols.out
@@ -1346,10 +1555,13 @@ def gps_config_page() -> None:
                 target.append(protocol)
             elif not checked and protocol in target:
                 target.remove(protocol)
+            _clear_failed(port_protocol_diff_path(port, direction, protocol))
+            _render_ports_view()
             _on_form_changed()
 
         def _render_ports_view() -> None:
             ports_view.clear()
+            failed_by_path = _failed_by_path()
             with ports_view:
                 display = resolve_ports_display(form.ports)
                 for port_id in (PortId.UART1, PortId.UART2, PortId.USB):
@@ -1360,7 +1572,7 @@ def gps_config_page() -> None:
                         )
                         ui.label("IN").classes("text-caption text-grey-5")
                         for protocol in UbxProtocol:
-                            ui.checkbox(
+                            checkbox = ui.checkbox(
                                 protocol.value,
                                 value=protocol.value in in_names,
                                 on_change=lambda e, p=port_id, pr=protocol: (
@@ -1369,9 +1581,14 @@ def gps_config_page() -> None:
                             ).classes(
                                 f"port-protocol-{port_id.value}-in-{protocol.value}"
                             )
+                            _mark_mismatch(
+                                checkbox,
+                                port_protocol_diff_path(port_id, "in", protocol),
+                                failed_by_path,
+                            )
                         ui.label("OUT").classes("text-caption text-grey-5 q-ml-md")
                         for protocol in UbxProtocol:
-                            ui.checkbox(
+                            checkbox = ui.checkbox(
                                 protocol.value,
                                 value=protocol.value in out_names,
                                 on_change=lambda e, p=port_id, pr=protocol: (
@@ -1380,8 +1597,14 @@ def gps_config_page() -> None:
                             ).classes(
                                 f"port-protocol-{port_id.value}-out-{protocol.value}"
                             )
+                            _mark_mismatch(
+                                checkbox,
+                                port_protocol_diff_path(port_id, "out", protocol),
+                                failed_by_path,
+                            )
 
         def _toggle_gnss(constellation: GnssConstellation, checked: bool) -> None:
+            _clear_failed(constellation_diff_path(constellation))
             if checked and constellation not in form.constellations:
                 form.constellations.append(constellation)
             elif not checked and constellation in form.constellations:
@@ -1392,30 +1615,37 @@ def gps_config_page() -> None:
                     # off, rather than leaving a stale "on" behind it
                     # (build_apply_request coerces this too, for the
                     # case where the two were already inconsistent on
-                    # seed — see its docstring).
+                    # seed — see its docstring). Counts as an edit to
+                    # bds_b2_enabled too (issue #101).
                     form.bds_b2_enabled = False
+                    _clear_failed("bds_b2_enabled")
             _render_gnss_view()
             _render_hw_extras_view()
             _on_form_changed()
 
         def _render_gnss_view() -> None:
             gnss_view.clear()
+            failed_by_path = _failed_by_path()
             with gnss_view:
                 enabled_map = resolve_gnss_display(form.constellations)
                 for c_val, c_name in _GNSS_DISPLAY:
                     constellation = GnssConstellation(c_val)
-                    ui.checkbox(
+                    checkbox = ui.checkbox(
                         c_name,
                         value=enabled_map.get(c_val, False),
                         on_change=lambda e, c=constellation: _toggle_gnss(
                             c, bool(e.value)
                         ),
                     ).classes(f"gnss-checkbox-{c_val}")
+                    _mark_mismatch(
+                        checkbox, constellation_diff_path(constellation), failed_by_path
+                    )
 
         def _set_meas_period_ms(period_ms: float | None) -> None:
             if period_ms is None:
                 return
             form.meas_period_ms = int(period_ms)
+            _clear_failed("meas_period_ms")
             _render_hw_extras_view()
             _on_form_changed()
 
@@ -1426,18 +1656,23 @@ def gps_config_page() -> None:
                 form.baud.uart1 = int(value)
             else:
                 form.baud.uart2 = int(value)
+            _clear_failed(f"baud.{uart}")
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _set_dyn_model(value: str | None) -> None:
             if value is None:
                 return
             form.dyn_model = DynModel(value)
+            _clear_failed("dyn_model")
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _set_tmode_mode(value: str | None) -> None:
             if value is None:
                 return
             form.tmode_mode = TmodeMode(value)
+            _clear_failed("tmode_mode")
             _render_hw_extras_view()
             _on_form_changed()
 
@@ -1445,57 +1680,83 @@ def gps_config_page() -> None:
             if value is None:
                 return
             form.elevation_mask_deg = int(value)
+            _clear_failed("elevation_mask_deg")
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _toggle_bds_b2(checked: bool) -> None:
             form.bds_b2_enabled = checked
+            _clear_failed("bds_b2_enabled")
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _toggle_spi(checked: bool) -> None:
             form.spi_enabled = checked
+            _clear_failed("spi_enabled")
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _render_hw_extras_view() -> None:
             hw_extras_view.clear()
             tmode_options = {m.value: m.value for m in SELECTABLE_TMODE_MODES}
+            failed_by_path = _failed_by_path()
             with hw_extras_view:
                 with ui.column().classes("hw-field-meas-rate gap-0"):
                     ui.label("Measurement Rate").classes("text-caption text-grey-5")
-                    ui.number(
-                        value=form.meas_period_ms,
-                        min=100,
-                        max=60000,
-                        step=100,
-                        on_change=lambda e: _set_meas_period_ms(e.value),
-                    ).classes("hw-field-meas-rate-input").props(
-                        "dense suffix=ms"
-                    ).style("width: 140px")
+                    meas_input = (
+                        ui.number(
+                            value=form.meas_period_ms,
+                            min=100,
+                            max=60000,
+                            step=100,
+                            on_change=lambda e: _set_meas_period_ms(e.value),
+                        )
+                        .classes("hw-field-meas-rate-input")
+                        .props("dense suffix=ms")
+                        .style("width: 140px")
+                    )
+                    _mark_mismatch(meas_input, "meas_period_ms", failed_by_path)
                     hz = 1000 / form.meas_period_ms
                     ui.label(f"= {hz:g} Hz").classes("text-caption text-grey-5")
 
                 with ui.column().classes("hw-field-baud gap-0"):
                     ui.label("Baud").classes("text-caption text-grey-5")
                     with ui.row().classes("gap-2"):
-                        ui.select(
-                            options={r: str(r) for r in BAUD_RATES},
-                            label="UART1",
-                            value=form.baud.uart1,
-                            on_change=lambda e: _set_baud("uart1", e.value),
-                        ).classes("hw-field-baud-uart1").style("width: 110px")
-                        ui.select(
-                            options={r: str(r) for r in BAUD_RATES},
-                            label="UART2",
-                            value=form.baud.uart2,
-                            on_change=lambda e: _set_baud("uart2", e.value),
-                        ).classes("hw-field-baud-uart2").style("width: 110px")
+                        uart1_select = (
+                            ui.select(
+                                options={r: str(r) for r in BAUD_RATES},
+                                label="UART1",
+                                value=form.baud.uart1,
+                                on_change=lambda e: _set_baud("uart1", e.value),
+                            )
+                            .classes("hw-field-baud-uart1")
+                            .style("width: 110px")
+                        )
+                        _mark_mismatch(uart1_select, "baud.uart1", failed_by_path)
+                        uart2_select = (
+                            ui.select(
+                                options={r: str(r) for r in BAUD_RATES},
+                                label="UART2",
+                                value=form.baud.uart2,
+                                on_change=lambda e: _set_baud("uart2", e.value),
+                            )
+                            .classes("hw-field-baud-uart2")
+                            .style("width: 110px")
+                        )
+                        _mark_mismatch(uart2_select, "baud.uart2", failed_by_path)
 
                 with ui.column().classes("hw-field-dyn-model gap-0"):
                     ui.label("Dynamics Model").classes("text-caption text-grey-5")
-                    ui.select(
-                        options={m.value: m.value for m in DynModel},
-                        value=form.dyn_model.value,
-                        on_change=lambda e: _set_dyn_model(e.value),
-                    ).classes("hw-field-dyn-model-select").style("width: 160px")
+                    dyn_model_select = (
+                        ui.select(
+                            options={m.value: m.value for m in DynModel},
+                            value=form.dyn_model.value,
+                            on_change=lambda e: _set_dyn_model(e.value),
+                        )
+                        .classes("hw-field-dyn-model-select")
+                        .style("width: 160px")
+                    )
+                    _mark_mismatch(dyn_model_select, "dyn_model", failed_by_path)
 
                 with ui.column().classes("hw-field-tmode gap-0"):
                     ui.label("Time Mode").classes("text-caption text-grey-5")
@@ -1508,55 +1769,76 @@ def gps_config_page() -> None:
                         ).props("outline color=primary dense").on(
                             "click", lambda: ui.navigate.to("/survey")
                         )
-                        ui.select(
-                            options=tmode_options,
-                            label="Change to...",
-                            on_change=lambda e: _set_tmode_mode(e.value),
-                        ).classes("hw-field-tmode-select").style("width: 140px")
+                        tmode_select = (
+                            ui.select(
+                                options=tmode_options,
+                                label="Change to...",
+                                on_change=lambda e: _set_tmode_mode(e.value),
+                            )
+                            .classes("hw-field-tmode-select")
+                            .style("width: 140px")
+                        )
                     else:
-                        ui.select(
-                            options=tmode_options,
-                            value=form.tmode_mode.value,
-                            on_change=lambda e: _set_tmode_mode(e.value),
-                        ).classes("hw-field-tmode-select").style("width: 140px")
+                        tmode_select = (
+                            ui.select(
+                                options=tmode_options,
+                                value=form.tmode_mode.value,
+                                on_change=lambda e: _set_tmode_mode(e.value),
+                            )
+                            .classes("hw-field-tmode-select")
+                            .style("width: 140px")
+                        )
+                    _mark_mismatch(tmode_select, "tmode_mode", failed_by_path)
 
                 with ui.column().classes("hw-field-elevation-mask gap-0"):
                     ui.label("Elevation Mask").classes("text-caption text-grey-5")
-                    ui.number(
-                        value=form.elevation_mask_deg,
-                        min=0,
-                        max=90,
-                        step=1,
-                        on_change=lambda e: _set_elevation_mask(e.value),
-                    ).classes("hw-field-elevation-mask-input").props(
-                        "dense suffix=°"
-                    ).style("width: 100px")
+                    elevation_input = (
+                        ui.number(
+                            value=form.elevation_mask_deg,
+                            min=0,
+                            max=90,
+                            step=1,
+                            on_change=lambda e: _set_elevation_mask(e.value),
+                        )
+                        .classes("hw-field-elevation-mask-input")
+                        .props("dense suffix=°")
+                        .style("width: 100px")
+                    )
+                    _mark_mismatch(
+                        elevation_input, "elevation_mask_deg", failed_by_path
+                    )
 
                 with ui.column().classes("hw-field-bds-b2 gap-0"):
                     ui.label("BeiDou B2").classes("text-caption text-grey-5")
-                    ui.checkbox(
-                        value=form.bds_b2_enabled,
-                        on_change=lambda e: _toggle_bds_b2(bool(e.value)),
-                    ).classes("hw-field-bds-b2-checkbox").set_enabled(
-                        not bds_b2_control_disabled(form.constellations)
+                    bds_b2_checkbox = (
+                        ui.checkbox(
+                            value=form.bds_b2_enabled,
+                            on_change=lambda e: _toggle_bds_b2(bool(e.value)),
+                        )
+                        .classes("hw-field-bds-b2-checkbox")
+                        .set_enabled(not bds_b2_control_disabled(form.constellations))
                     )
+                    _mark_mismatch(bds_b2_checkbox, "bds_b2_enabled", failed_by_path)
 
                 with ui.column().classes("hw-field-spi gap-0"):
                     ui.label("SPI").classes("text-caption text-grey-5")
-                    ui.checkbox(
+                    spi_checkbox = ui.checkbox(
                         value=form.spi_enabled,
                         on_change=lambda e: _toggle_spi(bool(e.value)),
                     ).classes("hw-field-spi-checkbox")
+                    _mark_mismatch(spi_checkbox, "spi_enabled", failed_by_path)
 
         def _toggle_matrix_cell(msg_id: RtcmRowId, port: PortId) -> None:
             form.rtcm_stream.matrix[msg_id][port] = not form.rtcm_stream.matrix[msg_id][
                 port
             ]
+            _clear_failed(rtcm_diff_path(msg_id, port))
             _render_matrix()
             _on_form_changed()
 
         def _render_matrix() -> None:
             matrix_view.clear()
+            failed_by_path = _failed_by_path()
             with matrix_view:
                 # Header row
                 with (
@@ -1609,13 +1891,21 @@ def gps_config_page() -> None:
                                     "text-center cursor-pointer"
                                     + (" text-positive" if on else " text-grey-7")
                                 )
-                                ui.label("✓" if on else "-").classes(
-                                    cell_classes
-                                ).style("width: 70px; flex-shrink: 0").on(
-                                    "click",
-                                    lambda _, m=msg_id, p=port: _toggle_matrix_cell(
-                                        m, p
-                                    ),
+                                cell = (
+                                    ui.label("✓" if on else "-")
+                                    .classes(cell_classes)
+                                    .style("width: 70px; flex-shrink: 0")
+                                    .on(
+                                        "click",
+                                        lambda _, m=msg_id, p=port: _toggle_matrix_cell(
+                                            m, p
+                                        ),
+                                    )
+                                )
+                                _mark_mismatch(
+                                    cell,
+                                    rtcm_diff_path(msg_id, port),
+                                    failed_by_path,
                                 )
 
         def _render_data_link_picker() -> None:
@@ -1646,12 +1936,14 @@ def gps_config_page() -> None:
             _on_form_changed()
 
         def _render_sync_indicator() -> None:
-            if _out_of_sync():
-                sync_badge.text = "Receiver out of sync"
-                sync_badge.props("color=warning")
-            else:
-                sync_badge.text = "In sync"
-                sync_badge.props("color=positive")
+            """The one-badge, three-state result surface (issue #101):
+            ``In sync`` / ``n unapplied change(s)`` (neutral — the resting
+            state of an editable form) / ``n field(s) failed verification``
+            (warning colour, priority over pending)."""
+            failed, pending = _partitioned_diff()
+            state = result_badge_state(failed, pending)
+            sync_badge.text = badge_label(state)
+            sync_badge.props(f"color={badge_color(state)}")
 
         def _render_apply_gate() -> None:
             reason = apply_blocked_reason(form_data_link_ports)
@@ -1704,7 +1996,6 @@ def gps_config_page() -> None:
             _render_save_as_gate()
 
         def _set_apply_result(text: str, *, ok: bool) -> None:
-            apply_diff_list.clear()
             apply_result_label.text = text
             apply_result_label.classes(
                 remove="text-negative" if ok else "text-positive",
@@ -1714,15 +2005,49 @@ def gps_config_page() -> None:
 
         def _clear_apply_result() -> None:
             apply_result_label.set_visibility(False)
-            apply_diff_list.clear()
 
-        def _show_apply_diff(diff: list[ApplyDiffEntry]) -> None:
-            apply_diff_list.clear()
-            with apply_diff_list:
-                for leaf in diff:
-                    ui.label(format_leaf_diff(leaf)).classes(
-                        "text-caption text-warning"
+        def _clear_warning_strip() -> None:
+            warning_strip_card.set_visibility(False)
+            warning_strip_view.clear()
+
+        def _render_warning_strip(lines: list[str]) -> None:
+            """Replace the strip whole with *lines* — one ``⚠`` label per
+            warning, never a string-joined blob (issue #101). No remedy
+            button — the remedy is the Apply button already in the
+            action row, named explicitly so the operator doesn't have
+            to guess it."""
+            warning_strip_view.clear()
+            if not lines:
+                warning_strip_card.set_visibility(False)
+                return
+            warning_strip_card.set_visibility(True)
+            with warning_strip_view:
+                for line in lines:
+                    ui.label(f"⚠ {line}").classes(
+                        "warning-strip-line text-warning text-caption"
                     )
+                ui.label("Press Apply to retry.").classes(
+                    "warning-strip-remedy text-warning text-caption"
+                )
+
+        def _render_step_log() -> None:
+            """Re-render the whole append-only log from ``step_log``."""
+            step_log_view.clear()
+            with step_log_view:
+                for step in step_log:
+                    ui.label(format_step_log_entry(step)).classes(
+                        f"step-log-entry step-log-entry-{step.status} "
+                        "text-caption text-grey-4"
+                    )
+
+        def _clear_session_state() -> None:
+            """Session-only surfaces cleared on disconnect (issue #101) —
+            a surviving log or strip would narrate a possibly-detached
+            receiver."""
+            failed_paths.clear()
+            step_log.clear()
+            _render_step_log()
+            _clear_warning_strip()
 
         async def _apply() -> None:
             """Push the whole current form to the receiver (issue #98).
@@ -1736,8 +2061,17 @@ def gps_config_page() -> None:
             — rather than patched field-by-field, so every display
             (matrix, ports, GNSS, hardware section) stays honest after
             both a clean apply and a partial-mismatch one.
+
+            Issue #101: the warning strip is replaced (or cleared) on
+            every Apply attempt, including a pre-write refusal — ``live``
+            and ``failed_paths`` are untouched by a refusal since nothing
+            was written. A completed Apply reseeds ``failed_paths`` from
+            ``result.diff`` (empty on a clean apply) and extends the
+            session's step log with ``result.steps``.
             """
             nonlocal live
+            _clear_warning_strip()
+
             try:
                 request = build_apply_request(form, form_data_link_ports)
             except ValidationError as exc:
@@ -1764,22 +2098,25 @@ def gps_config_page() -> None:
                 return
 
             live = result.read_back
+            failed_paths.clear()
+            failed_paths.update(d.path for d in result.diff)
+            step_log.extend(result.steps)
+            _render_step_log()
 
-            if result.status == "ok":
-                _set_apply_result("Applied and verified ✓", ok=True)
-                ui.notify("Applied and verified ✓", type="positive")
-            else:
-                _set_apply_result(
-                    "Applied, but verification found mismatches — nothing "
-                    "was rolled back.",
-                    ok=False,
-                )
-                _show_apply_diff(result.diff)
-                ui.notify("Verification found mismatches", type="warning")
+            warning_lines = apply_warning_lines(result.warnings, result.step_warnings)
+            _render_warning_strip(warning_lines)
 
-            if result.warnings:
-                ui.notify(" ".join(result.warnings), type="warning")
+            headline = apply_headline(result.status, len(warning_lines))
+            _set_apply_result(headline, ok=(result.status == "ok"))
+            ui.notify(
+                headline,
+                type="positive" if result.status == "ok" else "warning",
+            )
 
+            _render_matrix()
+            _render_ports_view()
+            _render_gnss_view()
+            _render_hw_extras_view()
             _on_form_changed()
 
         def _render_advisory(rtcm: RtcmPortConfig) -> None:
@@ -1862,6 +2199,9 @@ def gps_config_page() -> None:
             form = live.model_copy(deep=True)
             form_data_link_ports = infer_data_link_ports(live.rtcm_stream.matrix)
             selected_profile = None
+            # A full reseed makes form == live by construction, so no
+            # path can still differ — reset provenance defensively too.
+            failed_paths.clear()
 
             # The I2C/SPI advisory (rows enabled on a port the matrix
             # doesn't manage) needs the raw multi-port read-back, which
@@ -1893,6 +2233,7 @@ def gps_config_page() -> None:
             try:
                 if svc.is_connected:
                     await svc.disconnect()
+                    _clear_session_state()
 
                 driver = create_driver(vendor)
                 svc.set_driver(driver)
@@ -1928,6 +2269,7 @@ def gps_config_page() -> None:
         async def _disconnect() -> None:
             """Disconnect from device."""
             await svc.disconnect()
+            _clear_session_state()
             ui.notify("Disconnected", type="info")
             _update_ui_state()
 

@@ -509,6 +509,26 @@ def row_slug(row_id: RtcmRowId) -> str:
 # ---------------------------------------------------------------------------
 
 
+def rtcm_diff_path(msg_id: RtcmRowId, port: PortId) -> str:
+    """The :func:`~sp_rtk_base.models.profile_models.diff_receiver_assertions`
+    path for one matrix cell — the single place that format is built, so
+    a mutation handler clearing provenance and the render function
+    marking it can never drift apart."""
+    return f"rtcm.{msg_id.value}.{port.value}"
+
+
+def port_protocol_diff_path(
+    port: PortId, direction: Literal["in", "out"], protocol: UbxProtocol
+) -> str:
+    """The diff path for one port's one protocol, one direction."""
+    return f"ports.{port.value}.{direction}.{protocol.value}"
+
+
+def constellation_diff_path(constellation: GnssConstellation) -> str:
+    """The diff path for one GNSS constellation."""
+    return f"constellations.{constellation.value}"
+
+
 def partition_diff_by_provenance(
     diff: list[ApplyDiffEntry], failed_paths: set[str]
 ) -> tuple[list[ApplyDiffEntry], list[ApplyDiffEntry]]:
@@ -1524,7 +1544,10 @@ def gps_config_page() -> None:
                 return None
 
         def _toggle_port_protocol(
-            port: PortId, direction: str, protocol: UbxProtocol, checked: bool
+            port: PortId,
+            direction: Literal["in", "out"],
+            protocol: UbxProtocol,
+            checked: bool,
         ) -> None:
             protocols = form.ports.setdefault(port, PortProtocolSet())
             target = protocols.in_ if direction == "in" else protocols.out
@@ -1532,7 +1555,7 @@ def gps_config_page() -> None:
                 target.append(protocol)
             elif not checked and protocol in target:
                 target.remove(protocol)
-            _clear_failed(f"ports.{port.value}.{direction}.{protocol.value}")
+            _clear_failed(port_protocol_diff_path(port, direction, protocol))
             _render_ports_view()
             _on_form_changed()
 
@@ -1560,7 +1583,7 @@ def gps_config_page() -> None:
                             )
                             _mark_mismatch(
                                 checkbox,
-                                f"ports.{port_id.value}.in.{protocol.value}",
+                                port_protocol_diff_path(port_id, "in", protocol),
                                 failed_by_path,
                             )
                         ui.label("OUT").classes("text-caption text-grey-5 q-ml-md")
@@ -1576,12 +1599,12 @@ def gps_config_page() -> None:
                             )
                             _mark_mismatch(
                                 checkbox,
-                                f"ports.{port_id.value}.out.{protocol.value}",
+                                port_protocol_diff_path(port_id, "out", protocol),
                                 failed_by_path,
                             )
 
         def _toggle_gnss(constellation: GnssConstellation, checked: bool) -> None:
-            _clear_failed(f"constellations.{constellation.value}")
+            _clear_failed(constellation_diff_path(constellation))
             if checked and constellation not in form.constellations:
                 form.constellations.append(constellation)
             elif not checked and constellation in form.constellations:
@@ -1614,7 +1637,9 @@ def gps_config_page() -> None:
                             c, bool(e.value)
                         ),
                     ).classes(f"gnss-checkbox-{c_val}")
-                    _mark_mismatch(checkbox, f"constellations.{c_val}", failed_by_path)
+                    _mark_mismatch(
+                        checkbox, constellation_diff_path(constellation), failed_by_path
+                    )
 
         def _set_meas_period_ms(period_ms: float | None) -> None:
             if period_ms is None:
@@ -1807,7 +1832,7 @@ def gps_config_page() -> None:
             form.rtcm_stream.matrix[msg_id][port] = not form.rtcm_stream.matrix[msg_id][
                 port
             ]
-            _clear_failed(f"rtcm.{msg_id.value}.{port.value}")
+            _clear_failed(rtcm_diff_path(msg_id, port))
             _render_matrix()
             _on_form_changed()
 
@@ -1879,7 +1904,7 @@ def gps_config_page() -> None:
                                 )
                                 _mark_mismatch(
                                     cell,
-                                    f"rtcm.{msg_id.value}.{port.value}",
+                                    rtcm_diff_path(msg_id, port),
                                     failed_by_path,
                                 )
 
@@ -1987,7 +2012,10 @@ def gps_config_page() -> None:
 
         def _render_warning_strip(lines: list[str]) -> None:
             """Replace the strip whole with *lines* — one ``⚠`` label per
-            warning, never a string-joined blob (issue #101)."""
+            warning, never a string-joined blob (issue #101). No remedy
+            button — the remedy is the Apply button already in the
+            action row, named explicitly so the operator doesn't have
+            to guess it."""
             warning_strip_view.clear()
             if not lines:
                 warning_strip_card.set_visibility(False)
@@ -1998,6 +2026,9 @@ def gps_config_page() -> None:
                     ui.label(f"⚠ {line}").classes(
                         "warning-strip-line text-warning text-caption"
                     )
+                ui.label("Press Apply to retry.").classes(
+                    "warning-strip-remedy text-warning text-caption"
+                )
 
         def _render_step_log() -> None:
             """Re-render the whole append-only log from ``step_log``."""

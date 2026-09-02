@@ -25,6 +25,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
     SurveyInProgress,
+    UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import (
     HARDWARE_ANY,
@@ -42,6 +43,7 @@ from sp_rtk_base.models.profile_models import (
     ReceiverApplyRequest,
     ReceiverAssertion,
     RtcmStreamConfig,
+    diff_receiver_assertions,
     merge_profile_into_assertion,
 )
 from sp_rtk_base.services.profile_store import ProfileStore
@@ -59,6 +61,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     build_apply_request,
     build_picker_entries,
     build_saved_profile,
+    constellation_diff_path,
     display_label,
     fixed_position_step_state,
     format_leaf_diff,
@@ -68,6 +71,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     is_modified_from_profile,
     matrix_cell_on,
     partition_diff_by_provenance,
+    port_protocol_diff_path,
     receiver_config_from_profile,
     resolve_gnss_display,
     resolve_identity,
@@ -76,6 +80,7 @@ from sp_rtk_base.ui.pages.gps_config import (
     result_badge_state,
     row_slug,
     rtcm_config_to_matrix,
+    rtcm_diff_path,
     save_as_enabled,
     suggest_profile_name,
     tmode_mode_locked,
@@ -729,6 +734,59 @@ class TestPartitionDiffByProvenance:
         failed, pending = partition_diff_by_provenance([], {"meas_period_ms"})
         assert failed == []
         assert pending == []
+
+
+class TestDiffPathBuildersMatchDiffReceiverAssertions:
+    """The three path builders that back every ``_clear_failed``/
+    ``_mark_mismatch`` call site for enum-keyed fields (issue #101) must
+    build exactly the path ``diff_receiver_assertions`` itself emits —
+    a mismatch here would silently leave a mutation handler unable to
+    clear its own field's failed marker. Round-tripped through the real
+    diff function rather than hand-asserted, so a future change to
+    either side is caught."""
+
+    def test_rtcm_cell_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.rtcm_stream.matrix[RtcmRowId.RTCM_1077][PortId.UART2] = True
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == rtcm_diff_path(RtcmRowId.RTCM_1077, PortId.UART2)
+
+    def test_port_protocol_in_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.ports[PortId.UART1] = PortProtocolSet(
+            **{"in": [UbxProtocol.RTCM3X], "out": []}
+        )
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == port_protocol_diff_path(
+            PortId.UART1, "in", UbxProtocol.RTCM3X
+        )
+
+    def test_port_protocol_out_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(deep=True)
+        actual.ports[PortId.UART2] = PortProtocolSet(
+            **{"in": [], "out": [UbxProtocol.NMEA]}
+        )
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == port_protocol_diff_path(
+            PortId.UART2, "out", UbxProtocol.NMEA
+        )
+
+    def test_constellation_path_matches(self) -> None:
+        expected = _minimal_form()
+        actual = expected.model_copy(update={"constellations": [GnssConstellation.GPS]})
+
+        diff = diff_receiver_assertions(expected, actual)
+        assert len(diff) == 1
+        assert diff[0].path == constellation_diff_path(GnssConstellation.GPS)
 
 
 class TestResultBadgeState:

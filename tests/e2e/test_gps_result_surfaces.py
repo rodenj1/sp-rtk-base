@@ -87,6 +87,13 @@ def test_warning_strip_shows_one_line_per_warning_and_headline_counts_it(
     expect(lines).to_have_count(1)
     expect(lines.first).to_contain_text("flash")
 
+    # The remedy is the Apply button already in the action row — named
+    # explicitly, and no second button anywhere in the strip.
+    expect(page.locator(".warning-strip-remedy")).to_contain_text(
+        "Press Apply to retry"
+    )
+    expect(page.locator(".warning-strip button")).to_have_count(0)
+
     headline = page.locator(".apply-result")
     expect(headline).to_contain_text("Applied and verified", timeout=10_000)
     expect(headline).to_contain_text("1 warning")

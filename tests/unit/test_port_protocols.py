@@ -9,7 +9,7 @@ API endpoints for ``GET /api/device/rtcm-ports`` and
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,8 +131,7 @@ class TestParsePortProtocolsValget:
     """Tests for UbloxDriver._parse_port_protocols_valget."""
 
     def test_parse_all_zero(self) -> None:
-        parsed = _FakeValget()
-        config = UbloxDriver._parse_port_protocols_valget(parsed)
+        config = UbloxDriver._parse_port_protocols_valget({})
         assert isinstance(config, PortProtocolConfig)
         for port in PortId:
             assert config.enabled_in(port) == []
@@ -141,23 +140,21 @@ class TestParsePortProtocolsValget:
     def test_parse_reference_receiver_uart_profile(self) -> None:
         """Acceptance criterion: UART1 in [UBX, NMEA, RTCM3] / out
         [RTCM3], UART2 in [UBX, RTCM3] / out [RTCM3]."""
-        parsed = _FakeValget(
-            {
-                "CFG_UART1INPROT_UBX": 1,
-                "CFG_UART1INPROT_NMEA": 1,
-                "CFG_UART1INPROT_RTCM3X": 1,
-                "CFG_UART1OUTPROT_UBX": 0,
-                "CFG_UART1OUTPROT_NMEA": 0,
-                "CFG_UART1OUTPROT_RTCM3X": 1,
-                "CFG_UART2INPROT_UBX": 1,
-                "CFG_UART2INPROT_NMEA": 0,
-                "CFG_UART2INPROT_RTCM3X": 1,
-                "CFG_UART2OUTPROT_UBX": 0,
-                "CFG_UART2OUTPROT_NMEA": 0,
-                "CFG_UART2OUTPROT_RTCM3X": 1,
-            }
-        )
-        config = UbloxDriver._parse_port_protocols_valget(parsed)
+        values = {
+            "CFG_UART1INPROT_UBX": 1,
+            "CFG_UART1INPROT_NMEA": 1,
+            "CFG_UART1INPROT_RTCM3X": 1,
+            "CFG_UART1OUTPROT_UBX": 0,
+            "CFG_UART1OUTPROT_NMEA": 0,
+            "CFG_UART1OUTPROT_RTCM3X": 1,
+            "CFG_UART2INPROT_UBX": 1,
+            "CFG_UART2INPROT_NMEA": 0,
+            "CFG_UART2INPROT_RTCM3X": 1,
+            "CFG_UART2OUTPROT_UBX": 0,
+            "CFG_UART2OUTPROT_NMEA": 0,
+            "CFG_UART2OUTPROT_RTCM3X": 1,
+        }
+        config = UbloxDriver._parse_port_protocols_valget(values)
 
         assert config.enabled_in(PortId.UART1) == [
             UbxProtocol.UBX,
@@ -169,17 +166,15 @@ class TestParsePortProtocolsValget:
         assert config.enabled_out(PortId.UART2) == [UbxProtocol.RTCM3X]
 
     def test_parse_usb_covered(self) -> None:
-        parsed = _FakeValget(
-            {
-                "CFG_USBINPROT_UBX": 1,
-                "CFG_USBINPROT_NMEA": 1,
-                "CFG_USBINPROT_RTCM3X": 1,
-                "CFG_USBOUTPROT_UBX": 1,
-                "CFG_USBOUTPROT_NMEA": 0,
-                "CFG_USBOUTPROT_RTCM3X": 0,
-            }
-        )
-        config = UbloxDriver._parse_port_protocols_valget(parsed)
+        values = {
+            "CFG_USBINPROT_UBX": 1,
+            "CFG_USBINPROT_NMEA": 1,
+            "CFG_USBINPROT_RTCM3X": 1,
+            "CFG_USBOUTPROT_UBX": 1,
+            "CFG_USBOUTPROT_NMEA": 0,
+            "CFG_USBOUTPROT_RTCM3X": 0,
+        }
+        config = UbloxDriver._parse_port_protocols_valget(values)
         assert config.enabled_in(PortId.USB) == [
             UbxProtocol.UBX,
             UbxProtocol.NMEA,
@@ -188,8 +183,7 @@ class TestParsePortProtocolsValget:
         assert config.enabled_out(PortId.USB) == [UbxProtocol.UBX]
 
     def test_all_ports_present_even_when_disabled(self) -> None:
-        parsed = _FakeValget()
-        config = UbloxDriver._parse_port_protocols_valget(parsed)
+        config = UbloxDriver._parse_port_protocols_valget({})
         assert set(config.in_protocols.keys()) == set(PortId)
         assert set(config.out_protocols.keys()) == set(PortId)
 
@@ -231,6 +225,50 @@ class TestUbloxGetPortProtocols:
         connected_driver._reader.read.side_effect = Exception("timeout")
         with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
             connected_driver.get_port_protocols()
+
+    def test_get_port_protocols_retries_on_timeout_then_succeeds(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A CFG-VALGET reply missed once (busy receiver) doesn't fail
+        the whole read — the poll is re-issued (issue #119)."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = [
+                RuntimeError("No CFG-VALGET response for config keys"),
+                {},
+            ]
+            config = connected_driver.get_port_protocols()
+            assert isinstance(config, PortProtocolConfig)
+            assert mock_read.call_count == 2
+
+    def test_get_port_protocols_gives_up_after_three_attempts(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "No CFG-VALGET response for config keys"
+            )
+            with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+                connected_driver.get_port_protocols()
+            assert mock_read.call_count == 3
+
+    def test_get_port_protocols_nak_is_not_retried(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A genuine NAK is a distinct, definitive rejection — it must
+        propagate immediately, not be masked by the timeout retry."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "Device rejected CFG-VALGET poll for [...] (NAK)"
+            )
+            with pytest.raises(RuntimeError, match="NAK"):
+                connected_driver.get_port_protocols()
+            assert mock_read.call_count == 1
 
     def test_get_port_protocols_not_connected(self) -> None:
         driver = UbloxDriver()

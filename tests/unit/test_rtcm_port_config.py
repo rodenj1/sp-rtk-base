@@ -16,6 +16,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
 )
+from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
 # ---------------------------------------------------------------------------
 # Model tests
@@ -207,9 +208,7 @@ class TestParseRtcmPortValget:
     def test_parse_all_zero(self) -> None:
         from sp_rtk_base.services.drivers.ublox import UbloxDriver
 
-        parsed = _FakeValget()  # All defaults to 0
-
-        config = UbloxDriver._parse_rtcm_port_valget(parsed)
+        config = UbloxDriver._parse_rtcm_port_valget({})
         assert isinstance(config, RtcmPortConfig)
         # All messages should be present
         assert len(config.messages) == len(ALL_RTCM_MESSAGE_IDS)
@@ -221,15 +220,13 @@ class TestParseRtcmPortValget:
     def test_parse_some_enabled(self) -> None:
         from sp_rtk_base.services.drivers.ublox import UbloxDriver, _rtcm_key
 
-        parsed = _FakeValget(
-            {
-                _rtcm_key(RtcmRowId.RTCM_1005, "USB"): 1,
-                _rtcm_key(RtcmRowId.RTCM_1005, "UART1"): 2,
-                _rtcm_key(RtcmRowId.RTCM_1077, "USB"): 1,
-            }
-        )
+        values = {
+            _rtcm_key(RtcmRowId.RTCM_1005, "USB"): 1,
+            _rtcm_key(RtcmRowId.RTCM_1005, "UART1"): 2,
+            _rtcm_key(RtcmRowId.RTCM_1077, "USB"): 1,
+        }
 
-        config = UbloxDriver._parse_rtcm_port_valget(parsed)
+        config = UbloxDriver._parse_rtcm_port_valget(values)
         assert config.is_enabled(RtcmRowId.RTCM_1005, RtcmOutputPort.USB)
         assert config.rate(RtcmRowId.RTCM_1005, RtcmOutputPort.UART1) == 2
         assert config.is_enabled(RtcmRowId.RTCM_1077, RtcmOutputPort.USB)
@@ -240,17 +237,95 @@ class TestParseRtcmPortValget:
         with 4072.0 and 4072.1 controllable independently."""
         from sp_rtk_base.services.drivers.ublox import UbloxDriver, _rtcm_key
 
-        parsed = _FakeValget(
-            {
-                _rtcm_key(RtcmRowId.RTCM_4072_0, "USB"): 1,
-                _rtcm_key(RtcmRowId.RTCM_4072_1, "USB"): 0,
-            }
-        )
+        values = {
+            _rtcm_key(RtcmRowId.RTCM_4072_0, "USB"): 1,
+            _rtcm_key(RtcmRowId.RTCM_4072_1, "USB"): 0,
+        }
 
-        config = UbloxDriver._parse_rtcm_port_valget(parsed)
+        config = UbloxDriver._parse_rtcm_port_valget(values)
         assert set(config.messages.keys()) == set(ALL_RTCM_MESSAGE_IDS)
         assert config.is_enabled(RtcmRowId.RTCM_4072_0, RtcmOutputPort.USB)
         assert not config.is_enabled(RtcmRowId.RTCM_4072_1, RtcmOutputPort.USB)
+
+
+# ---------------------------------------------------------------------------
+# Driver get_rtcm_port_config read tests
+# ---------------------------------------------------------------------------
+
+
+class TestUbloxGetRtcmPortConfig:
+    """Tests for UbloxDriver.get_rtcm_port_config (issue #119)."""
+
+    @pytest.fixture()
+    def connected_driver(self) -> UbloxDriver:
+        driver = UbloxDriver()
+        mock_serial = MagicMock()
+        mock_serial.is_open = True
+        mock_reader = MagicMock()
+        driver._serial = mock_serial
+        driver._reader = mock_reader
+        return driver
+
+    def test_get_rtcm_port_config_success(self, connected_driver: UbloxDriver) -> None:
+        from sp_rtk_base.services.drivers.ublox import _rtcm_key
+
+        response = _FakeValget(
+            {
+                _rtcm_key(RtcmRowId.RTCM_1005, "USB"): 1,
+            }
+        )
+        connected_driver._reader.read.return_value = (b"", response)
+        config = connected_driver.get_rtcm_port_config()
+        assert config.is_enabled(RtcmRowId.RTCM_1005, RtcmOutputPort.USB)
+
+    def test_get_rtcm_port_config_retries_on_timeout_then_succeeds(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A CFG-VALGET reply missed once (busy receiver) doesn't fail
+        the whole read — the poll is re-issued (issue #119)."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = [
+                RuntimeError("No CFG-VALGET response for config keys"),
+                {},
+            ]
+            config = connected_driver.get_rtcm_port_config()
+            assert isinstance(config, RtcmPortConfig)
+            assert mock_read.call_count == 2
+
+    def test_get_rtcm_port_config_gives_up_after_three_attempts(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "No CFG-VALGET response for config keys"
+            )
+            with pytest.raises(RuntimeError, match="No CFG-VALGET response"):
+                connected_driver.get_rtcm_port_config()
+            assert mock_read.call_count == 3
+
+    def test_get_rtcm_port_config_nak_is_not_retried(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """A genuine NAK is a distinct, definitive rejection — it must
+        propagate immediately, not be masked by the timeout retry."""
+        with patch.object(
+            UbloxDriver, "_read_cfg_keys_locked", autospec=True
+        ) as mock_read:
+            mock_read.side_effect = RuntimeError(
+                "Device rejected CFG-VALGET poll for [...] (NAK)"
+            )
+            with pytest.raises(RuntimeError, match="NAK"):
+                connected_driver.get_rtcm_port_config()
+            assert mock_read.call_count == 1
+
+    def test_get_rtcm_port_config_not_connected(self) -> None:
+        driver = UbloxDriver()
+        with pytest.raises(ConnectionError):
+            driver.get_rtcm_port_config()
 
 
 # ---------------------------------------------------------------------------

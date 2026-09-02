@@ -121,7 +121,11 @@ from sp_rtk_base.services.device_service import (
 )
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
-from sp_rtk_base.services.profile_store import ProfileStore, ProfileStoreError
+from sp_rtk_base.services.profile_store import (
+    ProfileConflictError,
+    ProfileStore,
+    ProfileStoreError,
+)
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
@@ -416,12 +420,21 @@ def is_modified_from_profile(
 
 
 def save_as_enabled(form_request: ReceiverApplyRequest | None) -> bool:
-    """Save-as (and every other save control) is available whenever the
+    """Whether the action-row Save-as button is available: whenever the
     form is valid — full stop (issue #106). There is no suppression for
     an unmodified copy of the selected profile any more: the dialog
     itself explains that case with a note (see
-    :func:`save_as_unmodified_note`) rather than a page-level control
-    going dead, since a prominent dead button is the bug this replaced."""
+    :func:`save_as_unmodified_note`) rather than this control going
+    dead, since a prominent dead button is the bug this replaced.
+
+    No control on the page is ever *greyed* for any other reason
+    either, though the other two save entry points express that
+    differently: the picker's persistent row and the post-apply prompt
+    are simply never disabled (an invalid form surfaces as an error on
+    submit instead), and the in-place ``Save profile`` control is
+    hidden rather than gated on validity at all — see
+    :func:`save_profile_visible`.
+    """
     return form_request is not None
 
 
@@ -1639,26 +1652,37 @@ def gps_config_page() -> None:
             _on_form_changed()
 
         def _confirm_save_as() -> None:
-            """Create-only path. A slug collision is keyed on the store,
-            never guessed from exception text (issue #106): a built-in
-            collision is rejected outright, a custom collision reveals
-            the explicit overwrite button instead of silently
-            overwriting or merely erroring."""
+            """Create-only path. A slug collision is keyed on the store's
+            own conflict detection — never guessed from exception text,
+            never re-implemented here — with only the *branch* (reject
+            outright vs. offer overwrite) decided in the UI, since only
+            the UI cares which is which (issue #106).
+
+            Every attempt starts by discarding whatever overwrite state
+            a *previous* attempt left behind: without this, editing the
+            name after a collision and re-confirming with a name that
+            fails validation (blank, or pure punctuation) would return
+            early and leave a stale "Overwrite it" wired to the earlier,
+            no-longer-current colliding profile.
+            """
             nonlocal pending_overwrite_profile
+            pending_overwrite_profile = None
+            save_as_overwrite_btn.set_visibility(False)
+
             profile = _build_pending_save_as_profile()
             if profile is None:
                 return
 
-            if profile_store.is_builtin(profile.name):
-                save_as_error_label.text = (
-                    f"'{profile.name}' collides with a built-in profile — "
-                    "choose another name."
-                )
-                save_as_error_label.set_visibility(True)
-                save_as_overwrite_btn.set_visibility(False)
-                return
-
-            if profile_store.get_profile(profile.name) is not None:
+            try:
+                created = profile_store.create_profile(profile)
+            except ProfileConflictError:
+                if profile_store.is_builtin(profile.name):
+                    save_as_error_label.text = (
+                        f"'{profile.name}' collides with a built-in profile — "
+                        "choose another name."
+                    )
+                    save_as_error_label.set_visibility(True)
+                    return
                 save_as_error_label.text = (
                     f"A custom profile named '{profile.name}' already exists."
                 )
@@ -1666,9 +1690,6 @@ def gps_config_page() -> None:
                 pending_overwrite_profile = profile
                 save_as_overwrite_btn.set_visibility(True)
                 return
-
-            try:
-                created = profile_store.create_profile(profile)
             except ProfileStoreError as exc:
                 save_as_error_label.text = str(exc)
                 save_as_error_label.set_visibility(True)

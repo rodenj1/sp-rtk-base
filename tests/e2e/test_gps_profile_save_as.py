@@ -380,6 +380,49 @@ def test_save_as_collision_with_a_custom_offers_an_explicit_overwrite(
 
 
 @pytest.mark.e2e
+def test_overwrite_button_clears_after_an_invalid_retry(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    connected_gps: None,
+    cleanup_profiles: list[str],
+) -> None:
+    """Regression: a custom-name collision reveals "Overwrite it" — but
+    if the operator then edits the name to something that fails
+    validation (blank) and clicks Create again, the stale overwrite
+    button must NOT persist wired to the earlier, no-longer-current
+    colliding profile. Every fresh Create attempt discards whatever
+    overwrite state a previous attempt left behind."""
+    existing = {
+        "name": "e2e-stale-overwrite",
+        "version": 1,
+        "hardware": "any",
+        "data_link_port": ["UART1"],
+        "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+    }
+    resp = httpx.post(f"{api_base_url}/api/profiles", json=existing, timeout=5.0)
+    assert resp.status_code in (201, 409), resp.text
+    cleanup_profiles.append("e2e-stale-overwrite")
+
+    _goto_gps_config(page, base_url)
+    page.locator(".save-as-btn").click()
+    page.locator(".save-as-name input").fill("e2e-stale-overwrite")
+    page.locator(".save-as-confirm-btn").click()
+
+    overwrite_btn = page.locator(".save-as-overwrite-btn")
+    expect(overwrite_btn).to_be_visible(timeout=5_000)
+
+    # Edit to a name that fails validation, then retry — the stale
+    # overwrite affordance from the previous attempt must be gone.
+    page.locator(".save-as-name input").fill("")
+    page.locator(".save-as-confirm-btn").click()
+    expect(page.locator(".save-as-error")).to_contain_text(
+        "Name is required", timeout=5_000
+    )
+    expect(overwrite_btn).to_be_hidden()
+
+
+@pytest.mark.e2e
 def test_rename_delete_export_are_customs_only(
     page: Page,
     base_url: str,

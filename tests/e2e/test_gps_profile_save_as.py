@@ -1,5 +1,5 @@
 """E2E tests for profile pre-fill, Save-as, and the profile-relation
-indicator (issues #66, #105).
+indicator (issues #66, #105, #106).
 
 Extends the GPS page suite (``test_gps_profile_picker.py`` covers the
 picker dropdown itself, ``test_gps_apply.py`` covers #65's out-of-sync
@@ -11,19 +11,23 @@ writing into the form, plus the *second*, independent indicator:
   badge reads "Matches <name>" immediately after the pick (before any
   further edit) — the sparse-vs-dense matrix representation bug this
   guards against is covered at the unit level
-  (``TestIsModifiedFromProfile``/``TestSaveAsEnabled`` in
-  ``test_gps_config_helpers.py``).
-- Editing the form after a pick flips the badge to "Modified from X"
-  and re-enables Save-as.
-- Save-as is available with no profile selected (the bare-capture
-  usage path) and suppressed only while a selected profile still
-  exactly equals the form.
+  (``TestIsModifiedFromProfile`` in ``test_gps_config_helpers.py``).
+- Editing the form after a pick flips the badge to "Modified from X".
+- Save-as is available whenever the form is valid — no save control on
+  the page is ever greyed (issue #106 dropped the old suppression for
+  an unmodified copy of the selected profile; the dialog now explains
+  that case with a note instead).
 - Saving forks an independent custom profile carrying a
-  ``forked_from`` provenance label; a name collision surfaces inline
-  rather than silently overwriting.
+  ``forked_from`` provenance label; a name collision with a built-in
+  is rejected outright, a collision with a custom profile offers an
+  explicit overwrite.
 - Rename/delete/export are customs-only, and act on whichever profile
   is currently selected in the dropdown (issue #105 moved them from a
   per-row icon set to a single icon trio beside the picker).
+- Issue #106's three save entry points (the picker's persistent row,
+  the action row's "Save as new profile…", the post-apply prompt) all
+  open the same dialog; the in-place "Save profile" control is hidden
+  — not greyed — for a built-in or no selection.
 
 Locators target the stable CSS class hooks the page renders (see
 ``ui/pages/gps_config.py``), matching the existing suite's convention.
@@ -144,21 +148,24 @@ def test_selecting_profile_prefills_matrix_and_matches_immediately(
     expect(modified_badge).to_be_visible()
     expect(modified_badge).to_contain_text(f"Matches {BUILTIN_DISPLAY_NAME}")
 
-    expect(page.locator(".save-as-btn")).to_be_disabled()
+    # Issue #106: suppression is dropped — Save-as stays enabled even
+    # on an unmodified copy of the selected profile. No save control on
+    # this page is ever greyed.
+    expect(page.locator(".save-as-btn")).to_be_enabled()
 
 
 @pytest.mark.e2e
-def test_editing_after_pick_flips_to_modified_and_reenables_save_as(
+def test_editing_after_pick_flips_to_modified_and_save_as_stays_enabled(
     page: Page,
     base_url: str,
     connected_gps: None,
 ) -> None:
-    """The T4 fix this ticket exists for: an edit after a successful pick
-    must not take Save-as away — quite the opposite, it's what re-enables
-    it."""
+    """Issue #106: Save-as is enabled the whole time — before *and* after
+    the edit — while the "modified from X" badge is what actually tracks
+    divergence from the picked profile."""
     _goto_gps_config(page, base_url)
     _select_builtin(page)
-    expect(page.locator(".save-as-btn")).to_be_disabled()
+    expect(page.locator(".save-as-btn")).to_be_enabled()
 
     page.locator(".rtcm-cell-1077-UART1").click()
 
@@ -178,7 +185,9 @@ def test_save_as_stays_enabled_after_a_real_successful_apply(
     actual Apply button/endpoint, not just the pure-helper unit test — the
     approved prototype's bug (gating Save-as off the *receiver* comparison)
     would clear "modified from X" the moment Apply clears "out of sync",
-    since both would be the same indicator."""
+    since both would be the same indicator. Also covers the post-apply
+    save prompt (issue #106): offered because the form still differs from
+    the selected profile."""
     _goto_gps_config(page, base_url)
     _select_builtin(page)
     page.locator(".rtcm-cell-1077-UART1").click()
@@ -195,6 +204,29 @@ def test_save_as_stays_enabled_after_a_real_successful_apply(
     # "modified from X" and Save-as exactly as they were.
     expect(modified_badge).to_contain_text(f"Modified from {BUILTIN_DISPLAY_NAME}")
     expect(page.locator(".save-as-btn")).to_be_enabled()
+    expect(page.locator(".post-apply-save-row")).to_be_visible()
+
+
+@pytest.mark.e2e
+def test_no_post_apply_save_prompt_when_form_matches_selected_profile(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: the post-apply prompt is offered only when the form differs
+    from the selected profile or none is selected — an unmodified apply
+    of the picked profile has nothing new worth offering to keep."""
+    _goto_gps_config(page, base_url)
+    _select_builtin(page)
+    expect(page.locator(".modified-badge")).to_contain_text(
+        f"Matches {BUILTIN_DISPLAY_NAME}"
+    )
+
+    page.get_by_role("button", name="Apply").click()
+    expect(page.locator(".apply-result")).to_contain_text(
+        "Applied and verified", timeout=10_000
+    )
+    expect(page.locator(".post-apply-save-row")).to_be_hidden()
 
 
 @pytest.mark.e2e
@@ -276,13 +308,39 @@ def test_save_as_bare_capture_has_no_forked_from(
 
 
 @pytest.mark.e2e
-def test_save_as_name_collision_is_rejected_with_a_clear_error(
+def test_save_as_collision_with_a_builtin_is_rejected_outright(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: "A collision with a built-in profile is rejected outright" —
+    no overwrite offered, since that would let a custom profile shadow a
+    reference configuration."""
+    _goto_gps_config(page, base_url)
+    page.locator(".save-as-btn").click()
+    page.locator(".save-as-name input").fill(BUILTIN_NAME)
+    page.locator(".save-as-confirm-btn").click()
+
+    expect(page.locator(".save-as-error")).to_be_visible(timeout=5_000)
+    expect(page.locator(".save-as-error")).to_contain_text(BUILTIN_NAME)
+    expect(page.locator(".save-as-error")).to_contain_text("built-in")
+    expect(page.locator(".save-as-overwrite-btn")).to_be_hidden()
+    # Rejected, not overwritten — the dialog stays open.
+    expect(page.locator(".save-as-name")).to_be_visible()
+
+
+@pytest.mark.e2e
+def test_save_as_collision_with_a_custom_offers_an_explicit_overwrite(
     page: Page,
     base_url: str,
     api_base_url: str,
     connected_gps: None,
     cleanup_profiles: list[str],
 ) -> None:
+    """AC: "A collision with a custom profile offers an explicit
+    overwrite behind a confirm" — the error names the promise, and the
+    revealed "Overwrite it" button actually replaces its saved content
+    rather than silently failing or duplicating."""
     existing = {
         "name": "e2e-collision",
         "version": 1,
@@ -295,14 +353,73 @@ def test_save_as_name_collision_is_rejected_with_a_clear_error(
     cleanup_profiles.append("e2e-collision")
 
     _goto_gps_config(page, base_url)
+    # 1074 has no live data on any port (see ``_goto_gps_config``'s
+    # sibling docstrings) — a reliable off-to-on edit to verify below.
+    page.locator(".rtcm-cell-1074-UART1").click()
+
     page.locator(".save-as-btn").click()
     page.locator(".save-as-name input").fill("e2e-collision")
     page.locator(".save-as-confirm-btn").click()
 
     expect(page.locator(".save-as-error")).to_be_visible(timeout=5_000)
     expect(page.locator(".save-as-error")).to_contain_text("e2e-collision")
-    # Rejected, not overwritten — the dialog stays open.
-    expect(page.locator(".save-as-name")).to_be_visible()
+    overwrite_btn = page.locator(".save-as-overwrite-btn")
+    expect(overwrite_btn).to_be_visible()
+
+    overwrite_btn.click()
+    expect(page.locator(".save-as-name")).to_be_hidden()  # dialog closed
+
+    resp = httpx.get(f"{api_base_url}/api/profiles/e2e-collision", timeout=5.0)
+    assert resp.status_code == 200, resp.text
+    matrix = resp.json()["profile"]["rtcm_stream"]["matrix"]
+    assert matrix["1074"]["UART1"] is True
+
+    # Overwritten in place, not duplicated — still exactly one option.
+    page.locator(".profile-picker").click()
+    expect(page.locator(".profile-option-e2e-collision")).to_have_count(1)
+
+
+@pytest.mark.e2e
+def test_overwrite_button_clears_after_an_invalid_retry(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    connected_gps: None,
+    cleanup_profiles: list[str],
+) -> None:
+    """Regression: a custom-name collision reveals "Overwrite it" — but
+    if the operator then edits the name to something that fails
+    validation (blank) and clicks Create again, the stale overwrite
+    button must NOT persist wired to the earlier, no-longer-current
+    colliding profile. Every fresh Create attempt discards whatever
+    overwrite state a previous attempt left behind."""
+    existing = {
+        "name": "e2e-stale-overwrite",
+        "version": 1,
+        "hardware": "any",
+        "data_link_port": ["UART1"],
+        "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+    }
+    resp = httpx.post(f"{api_base_url}/api/profiles", json=existing, timeout=5.0)
+    assert resp.status_code in (201, 409), resp.text
+    cleanup_profiles.append("e2e-stale-overwrite")
+
+    _goto_gps_config(page, base_url)
+    page.locator(".save-as-btn").click()
+    page.locator(".save-as-name input").fill("e2e-stale-overwrite")
+    page.locator(".save-as-confirm-btn").click()
+
+    overwrite_btn = page.locator(".save-as-overwrite-btn")
+    expect(overwrite_btn).to_be_visible(timeout=5_000)
+
+    # Edit to a name that fails validation, then retry — the stale
+    # overwrite affordance from the previous attempt must be gone.
+    page.locator(".save-as-name input").fill("")
+    page.locator(".save-as-confirm-btn").click()
+    expect(page.locator(".save-as-error")).to_contain_text(
+        "Name is required", timeout=5_000
+    )
+    expect(overwrite_btn).to_be_hidden()
 
 
 @pytest.mark.e2e
@@ -390,3 +507,229 @@ def test_rename_then_delete_custom_profile(
 
     page.locator(".profile-picker").click()
     expect(page.locator(".profile-option-e2e-rename-me")).to_have_count(0)
+
+
+# ---------------------------------------------------------------------------
+# Issue #106 — three entry points into one dialog, the in-place "Save
+# profile" update, the live-derived slug, the unmodified note, and the
+# picker's empty-state guidance.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+def test_picker_row_entry_point_opens_the_save_as_dialog(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: "All three entry points open the same dialog" — entry point 1,
+    the persistent row at the bottom of the picker."""
+    _goto_gps_config(page, base_url)
+    expect(page.locator(".save-as-picker-row")).to_be_visible()
+    page.locator(".save-as-picker-row").click()
+    expect(page.locator(".save-as-name")).to_be_visible(timeout=5_000)
+
+
+@pytest.mark.e2e
+def test_action_row_entry_point_opens_the_save_as_dialog(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """Entry point 2: "Save as new profile…" in the action row. Every
+    save control names "profile"."""
+    _goto_gps_config(page, base_url)
+    expect(page.locator(".save-as-btn")).to_contain_text("Save as new profile")
+    page.locator(".save-as-btn").click()
+    expect(page.locator(".save-as-name")).to_be_visible(timeout=5_000)
+
+
+@pytest.mark.e2e
+def test_post_apply_prompt_entry_point_opens_the_save_as_dialog(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """Entry point 3: the inline prompt in the post-apply result panel."""
+    _goto_gps_config(page, base_url)
+    page.locator(".rtcm-cell-1077-UART1").click()  # diverge from live, so it's offered
+
+    page.get_by_role("button", name="Apply").click()
+    expect(page.locator(".apply-result")).to_contain_text(
+        "Applied and verified", timeout=10_000
+    )
+    expect(page.locator(".post-apply-save-btn")).to_be_visible()
+    page.locator(".post-apply-save-btn").click()
+    expect(page.locator(".save-as-name")).to_be_visible(timeout=5_000)
+
+
+@pytest.mark.e2e
+def test_apply_versus_save_caption_is_present(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: "the action row carries the Apply-versus-Save caption"."""
+    _goto_gps_config(page, base_url)
+    caption = page.locator(".apply-save-caption")
+    expect(caption).to_be_visible()
+    expect(caption).to_contain_text("Apply writes to the receiver")
+    expect(caption).to_contain_text("Save stores the form as a profile")
+
+
+@pytest.mark.e2e
+def test_save_as_dialog_shows_the_derived_slug_live(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: "The dialog shows the derived slug live as the operator types
+    a display name"."""
+    _goto_gps_config(page, base_url)
+    page.locator(".save-as-btn").click()
+    name_input = page.locator(".save-as-name input")
+    name_input.fill("My Rooftop Base")
+    expect(page.locator(".save-as-slug")).to_contain_text(
+        "my-rooftop-base", timeout=5_000
+    )
+
+
+@pytest.mark.e2e
+def test_save_as_dialog_shows_unmodified_note_instead_of_blocking(
+    page: Page,
+    base_url: str,
+    connected_gps: None,
+) -> None:
+    """AC: "Opening the dialog on an unmodified copy shows an explanatory
+    note instead of blocking" — the note names the source profile, and
+    the dialog is still fully usable (Create stays enabled)."""
+    _goto_gps_config(page, base_url)
+    _select_builtin(page)
+
+    page.locator(".save-as-btn").click()
+    note = page.locator(".save-as-unmodified")
+    expect(note).to_be_visible(timeout=5_000)
+    expect(note).to_contain_text(BUILTIN_DISPLAY_NAME)
+    expect(page.locator(".save-as-confirm-btn")).to_be_enabled()
+    page.keyboard.press("Escape")
+
+    # Diverge, then reopen — the note goes away, there's nothing to explain.
+    page.locator(".rtcm-cell-1077-UART1").click()
+    page.locator(".save-as-btn").click()
+    expect(page.locator(".save-as-unmodified")).to_be_hidden(timeout=5_000)
+
+
+@pytest.mark.e2e
+def test_save_profile_hidden_not_greyed_for_builtin_or_no_selection(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    connected_gps: None,
+    cleanup_profiles: list[str],
+) -> None:
+    """AC: "`Save profile` is hidden, not greyed, when a built-in or
+    nothing is selected"."""
+    custom = {
+        "name": "e2e-save-profile-visibility",
+        "version": 1,
+        "hardware": "any",
+        "data_link_port": ["UART1"],
+        "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+    }
+    resp = httpx.post(f"{api_base_url}/api/profiles", json=custom, timeout=5.0)
+    assert resp.status_code in (201, 409), resp.text
+    cleanup_profiles.append("e2e-save-profile-visibility")
+
+    _goto_gps_config(page, base_url)
+    save_profile_btn = page.locator(".save-profile-btn")
+    expect(save_profile_btn).to_be_hidden()  # nothing selected
+
+    _select_builtin(page)
+    expect(save_profile_btn).to_be_hidden()  # built-in selected
+
+    _select_profile_option(page, "e2e-save-profile-visibility")
+    expect(save_profile_btn).to_be_visible()  # custom selected
+
+
+@pytest.mark.e2e
+def test_save_profile_updates_the_selected_custom_in_place(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    connected_gps: None,
+    cleanup_profiles: list[str],
+) -> None:
+    """AC: "`Save profile` updates the selected custom in place behind a
+    confirm, without asking for a name" — same slug afterwards, new
+    content, and the "modified from X" badge flips back to "Matches"."""
+    custom = {
+        "name": "e2e-save-profile-inplace",
+        "version": 1,
+        "hardware": "any",
+        "data_link_port": ["UART1"],
+        "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+    }
+    resp = httpx.post(f"{api_base_url}/api/profiles", json=custom, timeout=5.0)
+    assert resp.status_code in (201, 409), resp.text
+    cleanup_profiles.append("e2e-save-profile-inplace")
+
+    _goto_gps_config(page, base_url)
+    _select_profile_option(page, "e2e-save-profile-inplace")
+    # Wait for the pick to fully settle before editing — same race
+    # ``_select_builtin`` guards against.
+    expect(page.locator(".modified-badge")).to_contain_text(
+        "Matches e2e-save-profile-inplace", timeout=10_000
+    )
+    page.locator(".rtcm-cell-1077-UART1").click()
+    expect(page.locator(".modified-badge")).to_contain_text(
+        "Modified from e2e-save-profile-inplace"
+    )
+
+    page.locator(".save-profile-btn").click()
+    expect(page.locator(".save-profile-confirm-btn")).to_be_visible(timeout=5_000)
+    page.locator(".save-profile-confirm-btn").click()
+
+    expect(page.locator(".save-profile-confirm-btn")).to_be_hidden(timeout=5_000)
+    expect(page.locator(".modified-badge")).to_contain_text(
+        "Matches e2e-save-profile-inplace"
+    )
+
+    resp = httpx.get(
+        f"{api_base_url}/api/profiles/e2e-save-profile-inplace", timeout=5.0
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["profile"]["rtcm_stream"]["matrix"]["1077"]["UART1"] is True
+
+    # Still exactly one option — an in-place update, not a fork.
+    page.locator(".profile-picker").click()
+    expect(page.locator(".profile-option-e2e-save-profile-inplace")).to_have_count(1)
+
+
+@pytest.mark.e2e
+def test_picker_shows_guidance_when_no_custom_profiles_exist(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    connected_gps: None,
+    cleanup_profiles: list[str],
+) -> None:
+    """AC: "The picker shows guidance when no custom profiles exist"."""
+    _goto_gps_config(page, base_url)
+    expect(page.locator(".no-customs-hint")).to_be_visible(timeout=10_000)
+
+    custom = {
+        "name": "e2e-empty-state-guard",
+        "version": 1,
+        "hardware": "any",
+        "data_link_port": ["UART1"],
+        "rtcm_stream": {"matrix": {"1005": {"UART1": True}}},
+    }
+    resp = httpx.post(f"{api_base_url}/api/profiles", json=custom, timeout=5.0)
+    assert resp.status_code in (201, 409), resp.text
+    cleanup_profiles.append("e2e-empty-state-guard")
+
+    page.reload()
+    expect(page.locator("text=Advanced GPS Configuration").first).to_be_visible(
+        timeout=15_000
+    )
+    expect(page.locator(".no-customs-hint")).to_be_hidden(timeout=10_000)

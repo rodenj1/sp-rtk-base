@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -120,7 +121,11 @@ from sp_rtk_base.services.device_service import (
 )
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
-from sp_rtk_base.services.profile_store import ProfileStore, ProfileStoreError
+from sp_rtk_base.services.profile_store import (
+    ProfileConflictError,
+    ProfileStore,
+    ProfileStoreError,
+)
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
@@ -414,16 +419,84 @@ def is_modified_from_profile(
     return form_request != receiver_config_from_profile(profile, live)
 
 
-def save_as_enabled(
+def save_as_enabled(form_request: ReceiverApplyRequest | None) -> bool:
+    """Whether the action-row Save-as button is available: whenever the
+    form is valid — full stop (issue #106). There is no suppression for
+    an unmodified copy of the selected profile any more: the dialog
+    itself explains that case with a note (see
+    :func:`save_as_unmodified_note`) rather than this control going
+    dead, since a prominent dead button is the bug this replaced.
+
+    No control on the page is ever *greyed* for any other reason
+    either, though the other two save entry points express that
+    differently: the picker's persistent row and the post-apply prompt
+    are simply never disabled (an invalid form surfaces as an error on
+    submit instead), and the in-place ``Save profile`` control is
+    hidden rather than gated on validity at all — see
+    :func:`save_profile_visible`.
+    """
+    return form_request is not None
+
+
+def should_offer_save_after_apply(
     form_request: ReceiverApplyRequest | None,
     profile: Profile | None,
     live: ReceiverAssertion,
 ) -> bool:
-    """Save-as is available whenever the form is valid, suppressed only when
-    a *selected* profile still exactly equals the form."""
+    """Whether a successful Apply should offer to save a profile (issue
+    #106): whenever the form differs from the selected profile, or no
+    profile is selected. ``False`` when the form doesn't currently
+    validate — there is nothing to offer to save."""
     if form_request is None:
         return False
     return profile is None or is_modified_from_profile(form_request, profile, live)
+
+
+def save_as_unmodified_note(profile: Profile | None, is_modified: bool) -> str | None:
+    """The explanatory note the Save-as dialog shows in place of blocking
+    (issue #106) when it's opened on a form that still exactly equals the
+    *selected* profile — ``None`` when there's nothing to explain (no
+    profile selected, or the form has already diverged)."""
+    if profile is None or is_modified:
+        return None
+    return (
+        f"The form still matches '{display_label(profile)}' exactly — "
+        "saving now will create a new copy of it."
+    )
+
+
+def save_profile_visible(profile: Profile | None, is_builtin: bool) -> bool:
+    """Whether the in-place ``Save profile`` control should render at all
+    (issue #106). Hidden — not greyed — for a built-in or no selection:
+    both are genuinely inapplicable, not merely temporarily unavailable."""
+    return profile is not None and not is_builtin
+
+
+def has_custom_profiles(entries: list[ProfilePickerEntry]) -> bool:
+    """Whether the picker has at least one custom (non-built-in) entry —
+    drives the picker's empty-state guidance (issue #106)."""
+    return any(not entry.is_builtin for entry in entries)
+
+
+_SLUG_INVALID_CHARS_RE = re.compile(r"[^a-z0-9_-]+")
+_SLUG_REPEATED_DASH_RE = re.compile(r"-{2,}")
+
+
+def slugify_profile_name(display_name: str) -> str:
+    """Derive a filesystem-/URL-safe profile slug from a human display
+    name (issue #106) — the Save-as dialog shows this live as the
+    operator types.
+
+    Lowercases, collapses any run of characters outside
+    ``profile_store._SAFE_NAME_RE``'s charset (``^[A-Za-z0-9_-]+$``)
+    into a single hyphen, and trims leading/trailing hyphens. A name
+    with no ASCII alphanumeric characters at all (blank, or pure
+    punctuation) derives an empty slug — the caller treats that as
+    "name required", the same as a blank input.
+    """
+    lowered = display_name.strip().lower()
+    collapsed = _SLUG_INVALID_CHARS_RE.sub("-", lowered)
+    return _SLUG_REPEATED_DASH_RE.sub("-", collapsed).strip("-")
 
 
 def suggest_profile_name(profile: Profile | None, hardware_target: str) -> str:
@@ -467,14 +540,20 @@ def build_saved_profile(
     form_request: ReceiverApplyRequest,
     hardware: str,
     forked_from: str | None,
+    display_name: str | None = None,
 ) -> Profile:
-    """Construct the ``Profile`` document Save-as persists.
+    """Construct the ``Profile`` document Save-as (and the in-place
+    ``Save profile`` update) persists.
 
     Flattens *form_request*'s envelope — ``assertion``'s fields plus
     ``data_link_port`` — onto ``Profile``'s own field layout (issue
     #98: ``data_link_port`` moved off ``ReceiverConfig``, so it's no
     longer part of ``assertion.model_dump()`` and must be passed
-    separately).
+    separately). *name* is always the immutable slug; *display_name*
+    (issue #106) is the human label the Save-as dialog derived it
+    from — omitted when it's identical to the slug, so
+    :func:`display_label`'s fallback-to-slug rule stays the single
+    source of truth rather than storing the same string twice.
     """
     return Profile(
         **form_request.assertion.model_dump(),
@@ -483,6 +562,7 @@ def build_saved_profile(
         version=1,
         hardware=hardware,
         forked_from=forked_from,
+        display_name=display_name if display_name != name else None,
     )
 
 
@@ -993,6 +1073,29 @@ def gps_config_page() -> None:
                 )
                 modified_badge.set_visibility(False)
 
+            # Empty-state guidance (issue #106) — shown only while no
+            # custom profile exists yet, so a first run isn't a picker
+            # with nothing but built-ins and no clue how to change that.
+            no_customs_hint = ui.label(
+                "No custom profiles yet — save your current configuration "
+                "below to create one."
+            ).classes("no-customs-hint text-caption text-grey-4 q-mt-xs")
+            no_customs_hint.set_visibility(False)
+
+            # Entry point 1 of 3 (issue #106): a persistent row at the
+            # bottom of the picker, beside its sibling verbs
+            # (rename/delete/export above) — the discoverable home for
+            # saving, rather than something buried in the action row
+            # below the fold. Every save control names "profile" so it
+            # never reads as a bare "save" that could mean the receiver.
+            with (
+                ui.row()
+                .classes("save-as-picker-row items-center gap-2 q-mt-sm cursor-pointer")
+                .on("click", lambda: _open_save_as_dialog())
+            ):
+                ui.icon("add").classes("text-primary")
+                ui.label("Save current config as a profile…").classes("text-primary")
+
         # ================================================================
         # Section C: Receiver configuration — read-only, seeded from the
         # live receiver (hidden until connected)
@@ -1063,11 +1166,36 @@ def gps_config_page() -> None:
             with ui.row().classes("items-center gap-3 q-mt-md"):
                 apply_btn = ui.button("Apply", icon="bolt").props("color=primary")
                 sync_badge = ui.badge("").classes("sync-badge").props("color=positive")
+                # Entry point 2 of 3 (issue #106): "the moment I just
+                # proved this works" — catches an operator who scrolled
+                # down to Apply without going back up to the picker.
+                # Every save control names "profile", never a bare
+                # "save" that could be mistaken for writing the receiver.
                 save_as_btn = (
-                    ui.button("Save as…", icon="save")
+                    ui.button("Save as new profile…", icon="save")
                     .classes("save-as-btn")
                     .props("color=secondary outline")
                 )
+                # Distinct in-place update — hidden (not greyed) unless a
+                # *custom* profile is selected, since a built-in or no
+                # selection is genuinely inapplicable rather than merely
+                # unavailable (issue #106). No name typing: it always
+                # overwrites the selected custom's own slug.
+                save_profile_btn = (
+                    ui.button("Save profile", icon="save")
+                    .classes("save-profile-btn")
+                    .props("color=primary outline")
+                )
+                save_profile_btn.set_visibility(False)
+
+            # The Apply-versus-Save distinction, stated rather than
+            # inferred (issue #106) — every save control on this page
+            # names "profile" precisely so this caption is the only
+            # place the two verbs are spelled out side by side.
+            ui.label(
+                "Apply writes to the receiver. Save stores the form as a "
+                "profile on this machine."
+            ).classes("apply-save-caption text-caption text-grey-5 q-mt-xs")
 
             apply_result_label = (
                 ui.label("")
@@ -1075,6 +1203,22 @@ def gps_config_page() -> None:
                 .style("border: 1px solid #333; border-radius: 4px")
             )
             apply_result_label.set_visibility(False)
+
+            # Entry point 3 of 3 (issue #106): an inline prompt in the
+            # post-apply result panel, offered whenever the form differs
+            # from the selected profile or none is selected — the moment
+            # an Apply just confirmed a configuration works is exactly
+            # the moment worth asking whether to keep it.
+            with ui.row().classes(
+                "post-apply-save-row items-center gap-2 q-mt-xs"
+            ) as post_apply_save_row:
+                ui.label("Keep this configuration?").classes("text-caption text-grey-4")
+                post_apply_save_btn = (
+                    ui.button("Save as profile…", icon="save")
+                    .classes("post-apply-save-btn")
+                    .props("color=secondary outline dense")
+                )
+            post_apply_save_row.set_visibility(False)
 
             # Warning strip (issue #101) — the Survey page's amber-card
             # idiom for pre-flight advisories, reused here for Apply's
@@ -1101,23 +1245,71 @@ def gps_config_page() -> None:
             )
             step_log_view = ui.column().classes("step-log q-mt-xs gap-0")
 
-        # ---- Save-as dialog ----
+        # ---- Save-as dialog (issue #106 — the one dialog all three
+        # entry points open) ----
         with ui.dialog() as save_as_dialog, ui.card().classes("q-pa-md"):
             ui.label("Save as new profile").classes("text-h6 text-white")
             ui.separator()
-            save_as_name_input = ui.input("Name").classes("save-as-name w-full q-mt-sm")
+            save_as_name_input = ui.input("Display name").classes(
+                "save-as-name w-full q-mt-sm"
+            )
+            # The derived slug, live (issue #106) — updates on every
+            # keystroke via ``_update_save_as_slug``, so the operator
+            # always knows what the file will actually be called before
+            # they commit to it.
+            save_as_slug_label = ui.label("").classes(
+                "save-as-slug text-caption text-grey-4 q-mt-xs"
+            )
             save_as_from_label = ui.label("").classes(
                 "save-as-from text-caption text-grey-4 q-mt-xs"
             )
+            # Suppression is dropped (issue #106): opening the dialog on
+            # an unmodified copy of the selected profile no longer
+            # blocks anything — it just explains, here, why saving now
+            # would produce a duplicate.
+            save_as_unmodified_label = ui.label("").classes(
+                "save-as-unmodified text-caption text-grey-4 q-mt-xs"
+            )
+            save_as_unmodified_label.set_visibility(False)
             save_as_error_label = ui.label("").classes(
                 "save-as-error text-negative text-caption q-mt-xs"
             )
             save_as_error_label.set_visibility(False)
             with ui.row().classes("justify-end gap-2 q-mt-md"):
                 ui.button("Cancel", on_click=save_as_dialog.close).props("flat")
+                # Revealed only after a collision with an existing
+                # *custom* profile (issue #106) — a collision with a
+                # built-in is rejected outright and never shows this.
+                # Destructive-styled since it overwrites that profile's
+                # saved content.
+                save_as_overwrite_btn = (
+                    ui.button("Overwrite it")
+                    .classes("save-as-overwrite-btn")
+                    .props("color=negative")
+                )
+                save_as_overwrite_btn.set_visibility(False)
                 save_as_confirm_btn = (
                     ui.button("Create")
                     .classes("save-as-confirm-btn")
+                    .props("color=primary")
+                )
+
+        # ---- Save profile dialog (in-place update, issue #106) —
+        # updates the selected custom profile's saved content behind a
+        # small confirm, with no name typing: always the same slug. ----
+        with ui.dialog() as save_profile_dialog, ui.card().classes("q-pa-md"):
+            ui.label("Update profile?").classes("text-h6 text-white")
+            ui.separator()
+            save_profile_confirm_label = ui.label("").classes("q-mt-sm")
+            ui.label(
+                "This overwrites its saved content with the current form. "
+                "The live receiver is untouched."
+            ).classes("text-caption text-grey-4 q-mt-xs")
+            with ui.row().classes("justify-end gap-2 q-mt-md"):
+                ui.button("Cancel", on_click=save_profile_dialog.close).props("flat")
+                save_profile_confirm_btn = (
+                    ui.button("Save profile")
+                    .classes("save-profile-confirm-btn")
                     .props("color=primary")
                 )
 
@@ -1296,9 +1488,15 @@ def gps_config_page() -> None:
             picker_select.update()
 
             # Rename/delete/export act on whichever profile is currently
-            # selected (issue #105) — customs-only, same as before.
-            is_custom_selected = selected_profile is not None and not (
+            # selected (issue #105) — customs-only, same as before. The
+            # in-place "Save profile" control (issue #106) is gated the
+            # same way — hidden, not greyed, for a built-in or nothing
+            # selected.
+            is_builtin_selected = selected_profile is not None and (
                 profile_store.is_builtin(selected_profile.name)
+            )
+            is_custom_selected = (
+                selected_profile is not None and not is_builtin_selected
             )
             for icon in (
                 picker_rename_icon,
@@ -1306,6 +1504,13 @@ def gps_config_page() -> None:
                 picker_export_icon,
             ):
                 icon.set_visibility(is_custom_selected)
+            save_profile_btn.set_visibility(
+                save_profile_visible(selected_profile, is_builtin_selected)
+            )
+
+            # Empty-state guidance (issue #106) — shown only while the
+            # picker has no custom profile at all.
+            no_customs_hint.set_visibility(not has_custom_profiles(entries))
 
         def _select_profile_by_name(name: str | None) -> None:
             """``update:model-value`` handler for the picker dropdown.
@@ -1354,27 +1559,68 @@ def gps_config_page() -> None:
                 info.hardware_confidence if info else None,
             )
 
+        def _update_save_as_slug() -> None:
+            """Live slug preview (issue #106) — recomputed on every
+            keystroke in the display-name input."""
+            slug = slugify_profile_name(save_as_name_input.value or "")
+            save_as_slug_label.text = (
+                f"Will be saved as: {slug}" if slug else "Enter a name to derive a slug"
+            )
+
         def _open_save_as_dialog() -> None:
+            """Open the one Save-as dialog every entry point shares
+            (issue #106): the picker's persistent row, the action row's
+            "Save as new profile…", and the post-apply prompt all call
+            this."""
+            nonlocal pending_overwrite_profile
+            pending_overwrite_profile = None
             identity = _current_identity()
             save_as_name_input.value = suggest_profile_name(
                 selected_profile, identity.target
             )
+            _update_save_as_slug()
             save_as_from_label.text = (
                 f"Forked from: {display_label(selected_profile)}"
                 if selected_profile
                 else ""
             )
             save_as_from_label.set_visibility(selected_profile is not None)
+
+            # Suppression is dropped (issue #106) — an unmodified copy
+            # of the selected profile no longer blocks the dialog, it
+            # just explains itself here.
+            form_request = _current_form_request()
+            note = save_as_unmodified_note(
+                selected_profile,
+                is_modified=(
+                    form_request is None
+                    or is_modified_from_profile(form_request, selected_profile, live)
+                ),
+            )
+            save_as_unmodified_label.text = note or ""
+            save_as_unmodified_label.set_visibility(note is not None)
+
             save_as_error_label.set_visibility(False)
+            save_as_overwrite_btn.set_visibility(False)
             save_as_dialog.open()
 
-        def _confirm_save_as() -> None:
-            nonlocal selected_profile
-            name = (save_as_name_input.value or "").strip()
-            if not name:
+        def _build_pending_save_as_profile() -> Profile | None:
+            """The ``Profile`` a Save-as confirm would persist, or
+            ``None`` with the dialog's error already set when the form
+            or name doesn't currently validate."""
+            display_name = (save_as_name_input.value or "").strip()
+            if not display_name:
                 save_as_error_label.text = "Name is required"
                 save_as_error_label.set_visibility(True)
-                return
+                return None
+
+            slug = slugify_profile_name(display_name)
+            if not slug:
+                save_as_error_label.text = (
+                    "Name must contain at least one letter or digit."
+                )
+                save_as_error_label.set_visibility(True)
+                return None
 
             form_request = _current_form_request()
             if form_request is None:
@@ -1383,22 +1629,131 @@ def gps_config_page() -> None:
                     "matrix / data-link ports before saving."
                 )
                 save_as_error_label.set_visibility(True)
-                return
+                return None
 
             hardware = resolve_save_hardware(selected_profile, _current_identity())
             forked_from = selected_profile.name if selected_profile else None
+            try:
+                return build_saved_profile(
+                    slug, form_request, hardware, forked_from, display_name=display_name
+                )
+            except ValidationError as exc:
+                save_as_error_label.text = str(exc)
+                save_as_error_label.set_visibility(True)
+                return None
+
+        def _finish_save_as(saved: Profile) -> None:
+            nonlocal selected_profile, pending_overwrite_profile
+            selected_profile = saved
+            pending_overwrite_profile = None
+            save_as_dialog.close()
+            ui.notify(f"Saved profile '{display_label(saved)}'", type="positive")
+            _render_picker()
+            _on_form_changed()
+
+        def _confirm_save_as() -> None:
+            """Create-only path. A slug collision is keyed on the store's
+            own conflict detection — never guessed from exception text,
+            never re-implemented here — with only the *branch* (reject
+            outright vs. offer overwrite) decided in the UI, since only
+            the UI cares which is which (issue #106).
+
+            Every attempt starts by discarding whatever overwrite state
+            a *previous* attempt left behind: without this, editing the
+            name after a collision and re-confirming with a name that
+            fails validation (blank, or pure punctuation) would return
+            early and leave a stale "Overwrite it" wired to the earlier,
+            no-longer-current colliding profile.
+            """
+            nonlocal pending_overwrite_profile
+            pending_overwrite_profile = None
+            save_as_overwrite_btn.set_visibility(False)
+
+            profile = _build_pending_save_as_profile()
+            if profile is None:
+                return
 
             try:
-                profile = build_saved_profile(name, form_request, hardware, forked_from)
                 created = profile_store.create_profile(profile)
-            except (ValidationError, ProfileStoreError) as exc:
+            except ProfileConflictError:
+                if profile_store.is_builtin(profile.name):
+                    save_as_error_label.text = (
+                        f"'{profile.name}' collides with a built-in profile — "
+                        "choose another name."
+                    )
+                    save_as_error_label.set_visibility(True)
+                    return
+                save_as_error_label.text = (
+                    f"A custom profile named '{profile.name}' already exists."
+                )
+                save_as_error_label.set_visibility(True)
+                pending_overwrite_profile = profile
+                save_as_overwrite_btn.set_visibility(True)
+                return
+            except ProfileStoreError as exc:
                 save_as_error_label.text = str(exc)
                 save_as_error_label.set_visibility(True)
                 return
+            _finish_save_as(created)
 
-            selected_profile = created
-            save_as_dialog.close()
-            ui.notify(f"Saved profile '{created.name}'", type="positive")
+        def _confirm_overwrite_save_as() -> None:
+            """The explicit, destructive-styled overwrite path (issue
+            #106) — only reachable once ``_confirm_save_as`` has already
+            found a custom-profile collision."""
+            if pending_overwrite_profile is None:
+                return
+            try:
+                updated = profile_store.update_profile(pending_overwrite_profile)
+            except ProfileStoreError as exc:
+                save_as_error_label.text = str(exc)
+                save_as_error_label.set_visibility(True)
+                return
+            _finish_save_as(updated)
+
+        def _open_save_profile_dialog() -> None:
+            """In-place update entry point (issue #106) — no name
+            typing, just a confirm, since it always overwrites the
+            already-selected custom profile's own slug."""
+            if selected_profile is None:
+                return
+            save_profile_confirm_label.text = (
+                f"Update profile '{display_label(selected_profile)}' with the "
+                "current form?"
+            )
+            save_profile_dialog.open()
+
+        def _confirm_save_profile_update() -> None:
+            nonlocal selected_profile
+            if selected_profile is None:
+                save_profile_dialog.close()
+                return
+            form_request = _current_form_request()
+            if form_request is None:
+                save_profile_dialog.close()
+                ui.notify(
+                    "The form doesn't currently validate — fix the RTCM "
+                    "matrix / data-link ports before saving.",
+                    type="negative",
+                )
+                return
+
+            updated = build_saved_profile(
+                selected_profile.name,
+                form_request,
+                selected_profile.hardware,
+                selected_profile.forked_from,
+                display_name=selected_profile.display_name,
+            )
+            try:
+                saved = profile_store.update_profile(updated)
+            except ProfileStoreError as exc:
+                save_profile_dialog.close()
+                ui.notify(str(exc), type="negative")
+                return
+
+            selected_profile = saved
+            save_profile_dialog.close()
+            ui.notify(f"Updated profile '{display_label(saved)}'", type="positive")
             _render_picker()
             _on_form_changed()
 
@@ -1545,6 +1900,12 @@ def gps_config_page() -> None:
         rename_target: str | None = None
         delete_target: str | None = None
         delete_target_label: str = ""
+
+        # The profile a Save-as attempt just collided with (issue #106)
+        # — set only while the dialog's revealed "Overwrite it" button
+        # is showing, and only ever a *custom* collision (a built-in
+        # collision is rejected outright and never populates this).
+        pending_overwrite_profile: Profile | None = None
 
         # Provenance for the three-state badge and inline markers (issue
         # #101): paths that appeared in the *last* Apply's read-back diff
@@ -2040,9 +2401,10 @@ def gps_config_page() -> None:
                 modified_badge.props("color=grey-7 outline")
 
         def _render_save_as_gate() -> None:
-            save_as_btn.set_enabled(
-                save_as_enabled(_current_form_request(), selected_profile, live)
-            )
+            """Save-as is gated on form validity alone (issue #106) — no
+            save control on this page is ever greyed for any other
+            reason."""
+            save_as_btn.set_enabled(save_as_enabled(_current_form_request()))
 
         def _render_throughput_advisory() -> None:
             """The live counterpart to ``_render_advisory`` (issue #102) —
@@ -2087,6 +2449,17 @@ def gps_config_page() -> None:
 
         def _clear_apply_result() -> None:
             apply_result_label.set_visibility(False)
+            post_apply_save_row.set_visibility(False)
+
+        def _render_post_apply_save_prompt(status: Literal["ok", "failed"]) -> None:
+            """Entry point 3 of 3 (issue #106): offered only after a
+            *successful* apply, and only when there's actually something
+            worth offering to keep — the form differs from the selected
+            profile, or none is selected."""
+            offer = status == "ok" and should_offer_save_after_apply(
+                _current_form_request(), selected_profile, live
+            )
+            post_apply_save_row.set_visibility(offer)
 
         def _clear_warning_strip() -> None:
             warning_strip_card.set_visibility(False)
@@ -2153,6 +2526,7 @@ def gps_config_page() -> None:
             """
             nonlocal live
             _clear_warning_strip()
+            post_apply_save_row.set_visibility(False)
 
             try:
                 request = build_apply_request(form, form_data_link_ports)
@@ -2190,6 +2564,7 @@ def gps_config_page() -> None:
 
             headline = apply_headline(result.status, len(warning_lines))
             _set_apply_result(headline, ok=(result.status == "ok"))
+            _render_post_apply_save_prompt(result.status)
             ui.notify(
                 headline,
                 type="positive" if result.status == "ok" else "warning",
@@ -2375,7 +2750,12 @@ def gps_config_page() -> None:
         reload_device_btn.on_click(_reload_device_config)
         apply_btn.on_click(_apply)
         save_as_btn.on_click(_open_save_as_dialog)
+        save_as_name_input.on_value_change(lambda: _update_save_as_slug())
         save_as_confirm_btn.on_click(_confirm_save_as)
+        save_as_overwrite_btn.on_click(_confirm_overwrite_save_as)
+        save_profile_btn.on_click(_open_save_profile_dialog)
+        save_profile_confirm_btn.on_click(_confirm_save_profile_update)
+        post_apply_save_btn.on_click(_open_save_as_dialog)
         rename_confirm_btn.on_click(_confirm_rename)
         delete_confirm_btn.on_click(_confirm_delete)
 

@@ -12,7 +12,7 @@ and API endpoints for GNSS constellation selection.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -218,7 +218,7 @@ class TestUbloxParseCfgGnss:
 
 
 class TestUbloxGnssDriver:
-    """Tests for get_gnss_config and configure_gnss on UbloxDriver."""
+    """Tests for get_gnss_config (legacy probe) on UbloxDriver."""
 
     @pytest.fixture()
     def connected_driver(self) -> UbloxDriver:
@@ -255,49 +255,164 @@ class TestUbloxGnssDriver:
         with pytest.raises(ConnectionError):
             driver.get_gnss_config()
 
-    def test_configure_gnss_success(self, connected_driver: UbloxDriver) -> None:
-        # Mock ACK response
-        ack = SimpleNamespace(identity="ACK-ACK")
-        connected_driver._reader.read.return_value = (b"raw", ack)  # pyright: ignore[reportPrivateUsage]
-
-        config = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-                GnssSystemConfig(
-                    constellation=GnssConstellation.GLONASS, enabled=False
-                ),
-            ]
-        )
-        connected_driver.configure_gnss(config)
-        # Should have written something to serial
-        connected_driver._serial.write.assert_called()  # pyright: ignore[reportPrivateUsage]
-
-    def test_configure_gnss_nak(self, connected_driver: UbloxDriver) -> None:
-        nak = SimpleNamespace(identity="ACK-NAK")
-        connected_driver._reader.read.return_value = (b"raw", nak)  # pyright: ignore[reportPrivateUsage]
-
-        config = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            ]
-        )
-        with pytest.raises(RuntimeError, match="NAK"):
-            connected_driver.configure_gnss(config)
-
-    def test_configure_gnss_not_connected(self) -> None:
-        driver = UbloxDriver()
-        config = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            ]
-        )
-        with pytest.raises(ConnectionError):
-            driver.configure_gnss(config)
-
     def test_gnss_select_in_capabilities(self) -> None:
         driver = UbloxDriver()
         caps = driver.get_capabilities()
         assert DeviceCapability.GNSS_SELECT in caps
+
+
+# ---------------------------------------------------------------------------
+# UbloxDriver.configure_gnss() tests (issue #104) — assertive durable write
+# of the six CFG_SIGNAL_*_ENA keys, plus the legacy-block probe-disagreement
+# warning.
+# ---------------------------------------------------------------------------
+
+
+_GNSS_SIGNAL_ENA_KEYS: dict[GnssConstellation, str] = {
+    GnssConstellation.GPS: "CFG_SIGNAL_GPS_ENA",
+    GnssConstellation.GLONASS: "CFG_SIGNAL_GLO_ENA",
+    GnssConstellation.GALILEO: "CFG_SIGNAL_GAL_ENA",
+    GnssConstellation.BEIDOU: "CFG_SIGNAL_BDS_ENA",
+    GnssConstellation.SBAS: "CFG_SIGNAL_SBAS_ENA",
+    GnssConstellation.QZSS: "CFG_SIGNAL_QZSS_ENA",
+}
+
+_GNSS_ID_BY_CONSTELLATION: dict[GnssConstellation, int] = {
+    v: k
+    for k, v in UbloxDriver._GNSS_ID_MAP.items()  # pyright: ignore[reportPrivateUsage]
+}
+
+
+def _make_ack_response() -> SimpleNamespace:
+    return SimpleNamespace(identity="ACK-ACK")
+
+
+def _make_nak_response() -> SimpleNamespace:
+    return SimpleNamespace(identity="ACK-NAK")
+
+
+def _make_signal_ena_readback(enabled: set[GnssConstellation]) -> SimpleNamespace:
+    """A CFG-VALGET response for the six enable keys reflecting *enabled*."""
+    return SimpleNamespace(
+        identity="CFG-VALGET",
+        **{
+            key: int(constellation in enabled)
+            for constellation, key in _GNSS_SIGNAL_ENA_KEYS.items()
+        },
+    )
+
+
+def _make_gnss_block_probe(enabled: set[GnssConstellation]) -> SimpleNamespace:
+    """A legacy CFG-GNSS block POLL response reflecting *enabled*."""
+    kwargs: dict[str, object] = {"numConfigBlocks": len(GnssConstellation)}
+    for i, constellation in enumerate(GnssConstellation, start=1):
+        suffix = f"_{i:02d}"
+        kwargs[f"gnssId{suffix}"] = _GNSS_ID_BY_CONSTELLATION[constellation]
+        kwargs[f"enable{suffix}"] = int(constellation in enabled)
+    return _make_cfg_gnss(**kwargs)
+
+
+class TestUbloxConfigureGnss:
+    """Tests for ``UbloxDriver.configure_gnss`` (issue #104)."""
+
+    @pytest.fixture()
+    def connected_driver(self) -> UbloxDriver:
+        driver = UbloxDriver()
+        mock_serial = MagicMock()
+        mock_serial.is_open = True
+        mock_reader = MagicMock()
+        driver._serial = mock_serial  # pyright: ignore[reportPrivateUsage]
+        driver._reader = mock_reader  # pyright: ignore[reportPrivateUsage]
+        return driver
+
+    def test_writes_all_six_keys_assertively(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        wanted = {GnssConstellation.GPS, GnssConstellation.GLONASS}
+        connected_driver._reader.read.side_effect = [  # pyright: ignore[reportPrivateUsage]
+            (b"", _make_ack_response()),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_gnss_block_probe(wanted)),
+        ]
+
+        connected_driver.configure_gnss(wanted)
+
+        connected_driver._serial.write.assert_called()  # pyright: ignore[reportPrivateUsage]
+        assert connected_driver.drain_warnings() == []
+
+    def test_write_nak_raises(self, connected_driver: UbloxDriver) -> None:
+        connected_driver._reader.read.return_value = (  # pyright: ignore[reportPrivateUsage]
+            b"",
+            _make_nak_response(),
+        )
+
+        with pytest.raises(RuntimeError, match="NAK"):
+            connected_driver.configure_gnss({GnssConstellation.GPS})
+
+    def test_never_touches_imes_or_navic(self, connected_driver: UbloxDriver) -> None:
+        """No ``GnssConstellation`` member exists for IMES/NavIC, so there
+        is no key for this write to ever include."""
+        wanted = set(GnssConstellation)
+        connected_driver._reader.read.side_effect = [  # pyright: ignore[reportPrivateUsage]
+            (b"", _make_ack_response()),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_gnss_block_probe(wanted)),
+        ]
+
+        with patch("sp_rtk_base.services.drivers.ublox.UBXMessage") as mock_ubx_msg:
+            mock_ubx_msg.config_set.return_value.serialize.return_value = b"\x00"
+            connected_driver.configure_gnss(wanted)
+            _layer, _reserved, cfg_data = mock_ubx_msg.config_set.call_args[0]
+
+        written_keys = {key for key, _ in cfg_data}
+        assert "CFG_SIGNAL_IMES_ENA" not in written_keys
+        assert "CFG_SIGNAL_NAVIC_ENA" not in written_keys
+        assert written_keys == set(_GNSS_SIGNAL_ENA_KEYS.values())
+
+    def test_probe_disagreement_queues_warning_not_a_raise(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        """The write ACKs and both RAM/flash read-backs match, but the
+        legacy block still reports something else — the honest signal is
+        a warning, never a failed step."""
+        wanted = {GnssConstellation.GALILEO}
+        probed = {GnssConstellation.GPS}
+        connected_driver._reader.read.side_effect = [  # pyright: ignore[reportPrivateUsage]
+            (b"", _make_ack_response()),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_signal_ena_readback(wanted)),
+            (b"", _make_gnss_block_probe(probed)),
+        ]
+
+        connected_driver.configure_gnss(wanted)
+
+        warnings = connected_driver.drain_warnings()
+        assert len(warnings) == 1
+        assert "galileo" in warnings[0]
+        assert "gps" in warnings[0]
+
+    def test_ram_mismatch_after_retry_raises(
+        self, connected_driver: UbloxDriver
+    ) -> None:
+        wanted = {GnssConstellation.GPS}
+        never_took = _make_signal_ena_readback(set())
+        connected_driver._reader.read.side_effect = [  # pyright: ignore[reportPrivateUsage]
+            (b"", _make_ack_response()),  # first write
+            (b"", never_took),  # RAM read-back — mismatch
+            (b"", never_took),  # flash read-back — runs regardless (issue #103)
+            (b"", _make_ack_response()),  # retry write
+            (b"", never_took),  # RAM read-back — still mismatched, raises
+        ]
+
+        with pytest.raises(RuntimeError, match="GNSS constellations"):
+            connected_driver.configure_gnss(wanted)
+
+    def test_not_connected(self) -> None:
+        driver = UbloxDriver()
+        with pytest.raises(ConnectionError):
+            driver.configure_gnss({GnssConstellation.GPS})
 
 
 # ---------------------------------------------------------------------------
@@ -337,13 +452,9 @@ class TestDeviceServiceGnss:
 
     @pytest.mark.asyncio()
     async def test_configure_gnss(self, service_with_driver: DeviceService) -> None:
-        config = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            ]
-        )
-        await service_with_driver.configure_gnss(config)
-        service_with_driver._driver.configure_gnss.assert_called_once_with(config)  # pyright: ignore[reportPrivateUsage]
+        wanted = {GnssConstellation.GPS}
+        await service_with_driver.configure_gnss(wanted)
+        service_with_driver._driver.configure_gnss.assert_called_once_with(wanted)  # pyright: ignore[reportPrivateUsage]
         assert service_with_driver.state == DeviceConnectionState.CONNECTED
 
     @pytest.mark.asyncio()
@@ -351,13 +462,8 @@ class TestDeviceServiceGnss:
         self, service_with_driver: DeviceService
     ) -> None:
         service_with_driver._driver.configure_gnss.side_effect = RuntimeError("fail")  # pyright: ignore[reportPrivateUsage]
-        config = GnssConfig(
-            systems=[
-                GnssSystemConfig(constellation=GnssConstellation.GPS, enabled=True),
-            ]
-        )
         with pytest.raises(RuntimeError, match="fail"):
-            await service_with_driver.configure_gnss(config)
+            await service_with_driver.configure_gnss({GnssConstellation.GPS})
         # State should be restored to CONNECTED (not stuck in CONFIGURING)
         assert service_with_driver.state == DeviceConnectionState.CONNECTED
 
@@ -419,16 +525,13 @@ class TestGnssApiEndpoints:
         self, client: TestClient, mock_device_service: MagicMock
     ) -> None:
         mock_device_service.configure_gnss = AsyncMock()
-        payload = {
-            "systems": [
-                {"constellation": "gps", "enabled": True},
-                {"constellation": "glonass", "enabled": False},
-            ]
-        }
+        payload = {"constellations": ["gps", "glonass"]}
         resp = client.put("/api/device/gnss", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
-        mock_device_service.configure_gnss.assert_called_once()
+        mock_device_service.configure_gnss.assert_called_once_with(
+            {GnssConstellation.GPS, GnssConstellation.GLONASS}
+        )
 
     def test_put_gnss_config_not_connected(
         self, client: TestClient, mock_device_service: MagicMock
@@ -436,7 +539,7 @@ class TestGnssApiEndpoints:
         mock_device_service.configure_gnss = AsyncMock(
             side_effect=RuntimeError("Device not connected")
         )
-        payload = {"systems": [{"constellation": "gps", "enabled": True}]}
+        payload = {"constellations": ["gps"]}
         resp = client.put("/api/device/gnss", json=payload)
         assert resp.status_code == 409
 
@@ -458,9 +561,12 @@ class TestUbloxGnssIdMapping:
         assert GnssConstellation.SBAS in mapped
         assert GnssConstellation.QZSS in mapped
 
-    def test_reverse_map_roundtrip(self) -> None:
-        for gnss_id, constellation in UbloxDriver._GNSS_ID_MAP.items():  # pyright: ignore[reportPrivateUsage]
-            assert UbloxDriver._GNSS_ID_REVERSE[constellation] == gnss_id  # pyright: ignore[reportPrivateUsage]
+    def test_forward_map_is_injective(self) -> None:
+        """Every gnssId maps to a distinct constellation — the legacy
+        block probe's parse (issue #104) relies on this to describe a
+        disagreement unambiguously."""
+        mapped = list(UbloxDriver._GNSS_ID_MAP.values())  # pyright: ignore[reportPrivateUsage]
+        assert len(mapped) == len(set(mapped))
 
     def test_known_ublox_ids(self) -> None:
         m = UbloxDriver._GNSS_ID_MAP  # pyright: ignore[reportPrivateUsage]

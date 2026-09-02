@@ -107,25 +107,27 @@ class TestGnssEndpoint:
         api_base_url: str,
         connected_gps: None,
     ) -> None:
-        """Writing ``galileo.enabled=false`` is reflected by the next GET."""
-        # Get current to use as the base — keeps payload schema-correct
-        # without us reproducing the full default here.
+        """Writing a set that omits Galileo is reflected by the next GET.
+
+        Issue #104: the write is now an assertive enable-key write —
+        the request body names exactly the constellations that should
+        end up enabled, not a full ``GnssConfig`` block replay.
+        """
         current = httpx.get(f"{api_base_url}/api/device/gnss", timeout=5.0).json()
         current_d = cast(dict[str, Any], current)
         systems_list_raw = cast(list[Any], current_d.get("systems", []))
         systems_list: list[dict[str, Any]] = [
             cast(dict[str, Any], s) for s in systems_list_raw if isinstance(s, dict)
         ]
-        for s in systems_list:
-            if str(s.get("constellation", "")).lower() == "galileo":
-                s["enabled"] = False
+        wanted = [
+            str(s.get("constellation", ""))
+            for s in systems_list
+            if bool(s.get("enabled")) and str(s.get("constellation", "")) != "galileo"
+        ]
 
-        # Re-encode and write.  The configuration endpoint is
-        # ``PUT /api/device/gnss`` (it replaces the entire GNSS
-        # config), not the older ``POST /configure/gnss`` shape.
         resp = httpx.put(
             f"{api_base_url}/api/device/gnss",
-            json={"systems": systems_list},
+            json={"constellations": wanted},
             timeout=10.0,
         )
         # We don't enforce 200 vs 204; just no server error.
@@ -216,17 +218,14 @@ def test_gps_config_page_renders_when_connected(
 
     We're not asserting on every widget — that would be brittle —
     just that the top-level page renders its title and that the
-    "Save to Flash" button (a high-signal indicator that the
-    capability gating worked) becomes visible after the device
-    is connected.
+    "Reload Device Config" button (a high-signal indicator that the
+    connected-state UI assembly fired) becomes visible after the
+    device is connected.
     """
     page.goto(f"{base_url}/gps-config")
     expect(page.locator("text=Advanced GPS Configuration").first).to_be_visible(
         timeout=15_000
     )
-    # The Save to Flash button is gated on the SAVE_TO_FLASH capability,
-    # which the FakeGpsDriver claims.  Its visibility proves the
-    # capability-driven UI assembly fired.
-    expect(page.get_by_role("button", name="Save to Flash")).to_be_visible(
+    expect(page.get_by_role("button", name="Reload Device Config")).to_be_visible(
         timeout=10_000
     )

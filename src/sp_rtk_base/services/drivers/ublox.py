@@ -146,8 +146,24 @@ _TMODE_MODE_VALUES: dict[BaseMode, int] = {
 # read-back and ``_parse_cfg_tmode``.
 _TMODE_MODE_NAMES: dict[int, BaseMode] = {v: k for k, v in _TMODE_MODE_VALUES.items()}
 
+# The six per-constellation enable keys (issue #104) — CFG-GNSS SET is
+# deprecated on the F9 config interface in favour of these. GLONASS,
+# Galileo and BeiDou use their three-letter IDs; the rest match the
+# ``GnssConstellation`` member name. IMES and NavIC are deliberately
+# absent — they have no ``GnssConstellation`` member, so there is no
+# key here for a write to ever touch.
+_GNSS_SIGNAL_ENA_KEYS: dict[GnssConstellation, str] = {
+    GnssConstellation.GPS: "CFG_SIGNAL_GPS_ENA",
+    GnssConstellation.GLONASS: "CFG_SIGNAL_GLO_ENA",
+    GnssConstellation.GALILEO: "CFG_SIGNAL_GAL_ENA",
+    GnssConstellation.BEIDOU: "CFG_SIGNAL_BDS_ENA",
+    GnssConstellation.SBAS: "CFG_SIGNAL_SBAS_ENA",
+    GnssConstellation.QZSS: "CFG_SIGNAL_QZSS_ENA",
+}
+
 # The scalar CFG keys ``get_receiver_scalars`` polls in one CFG-VALGET
-# round trip (issue #97) — 8 keys, well under the 64-key poll cap.
+# round trip (issue #97) — 14 keys (8 original + the 6 constellation
+# enable keys added by issue #104), well under the 64-key poll cap.
 _RECEIVER_SCALAR_KEYS: list[str] = [
     "CFG_UART1_BAUDRATE",
     "CFG_UART2_BAUDRATE",
@@ -157,6 +173,7 @@ _RECEIVER_SCALAR_KEYS: list[str] = [
     "CFG_NAVSPG_INFIL_MINELEV",
     "CFG_SIGNAL_BDS_B2_ENA",
     "CFG_SPI_ENABLED",
+    *_GNSS_SIGNAL_ENA_KEYS.values(),
 ]
 
 # Ports the RTCM matrix write covers — deliberately excludes I2C/SPI,
@@ -1068,10 +1085,6 @@ class UbloxDriver(GpsReceiverDriver):
         6: GnssConstellation.GLONASS,
     }
 
-    _GNSS_ID_REVERSE: dict[GnssConstellation, int] = {
-        v: k for k, v in _GNSS_ID_MAP.items()
-    }
-
     def get_gnss_config(self) -> GnssConfig:
         """Poll CFG-GNSS and return current constellation configuration."""
         with self._lock:
@@ -1129,42 +1142,69 @@ class UbloxDriver(GpsReceiverDriver):
 
         return GnssConfig(systems=systems)
 
-    def configure_gnss(self, config: GnssConfig) -> None:
-        """Send CFG-GNSS to configure constellation selection."""
-        # Build CFG-GNSS SET message
-        # We need numTrkChHw, numTrkChUse, numConfigBlocks + per-system data
-        num_blocks = len(config.systems)
+    def configure_gnss(self, constellations: set[GnssConstellation]) -> None:
+        """Assertive durable write of the six per-constellation enable keys (issue #104).
 
-        # Build kwargs for UBXMessage
-        kwargs: dict[str, int] = {
-            "msgVer": 0,
-            "numTrkChHw": 0,  # read-only, set to 0
-            "numTrkChUse": 0xFF,  # use max available
-            "numConfigBlocks": num_blocks,
-        }
+        Replaces the legacy CFG-GNSS SET block write, which has no
+        layer concept and was therefore RAM-only on every unit — a
+        constellation change made through it never survived a power
+        cycle. Every key in :data:`_GNSS_SIGNAL_ENA_KEYS` is written
+        explicitly (on for a wanted constellation, off otherwise) at
+        layer=5 (RAM+Flash) via ``_write_and_verify_locked``, which
+        gives this write the same RAM read-back retry and flash
+        read-back divergence advisory as every other durable writer —
+        including the flash divergence case this method's docstring in
+        ``_write_and_verify_locked`` describes. Channel allocation is
+        untouched: this call has no channel parameter, by design —
+        allocation is left to the firmware.
 
-        for i, sys_cfg in enumerate(config.systems):
-            # pyubx2 always uses 1-indexed suffixes: _01, _02, ...
-            suffix = f"_{i + 1:02d}"
-            gnss_id = self._GNSS_ID_REVERSE.get(sys_cfg.constellation, 0)
-            flags = (1 if sys_cfg.enabled else 0) | (sys_cfg.sig_cfg_mask << 16)
-
-            kwargs[f"gnssId{suffix}"] = gnss_id
-            kwargs[f"resTrkCh{suffix}"] = sys_cfg.min_channels
-            kwargs[f"maxTrkCh{suffix}"] = sys_cfg.max_channels
-            kwargs[f"flags{suffix}"] = flags
-
-        msg = UBXMessage("CFG", "CFG-GNSS", SET, **kwargs)  # type: ignore[arg-type]
+        Immediately after the write lands, the legacy CFG-GNSS block
+        is polled again and compared against ``constellations``. A
+        disagreement — the write ACKed and reads back correctly at
+        both RAM and Flash, but the firmware's own block still
+        disagrees — is queued on ``self._warnings`` rather than
+        raised: this can never show up as a field difference, since
+        ``ReceiverAssertion.constellations`` and this write both read
+        the same six keys and would simply report a match. See
+        ``GpsReceiverDriver.drain_warnings`` for the channel this
+        lands on.
+        """
+        cfg_data = [
+            (key, int(constellation in constellations))
+            for constellation, key in _GNSS_SIGNAL_ENA_KEYS.items()
+        ]
         with self._lock:
-            ser, _ = self._require_connection()
-            ser.reset_input_buffer()
-            ser.write(msg.serialize())
-            self._wait_for_ack("CFG-GNSS")
+            self._write_and_verify_locked(
+                cfg_data, layer=5, label="GNSS constellations"
+            )
+            disagreement = self._gnss_probe_disagreement_locked(constellations)
+            if disagreement is not None:
+                self._warnings.append(f"GNSS constellations: {disagreement}")
 
-        enabled = config.enabled_constellations()
         logger.info(
             "GNSS constellations configured: %s",
-            [c.value for c in enabled],
+            sorted(c.value for c in constellations),
+        )
+
+    def _gnss_probe_disagreement_locked(
+        self, expected: set[GnssConstellation]
+    ) -> str | None:
+        """Poll the legacy CFG-GNSS block and describe any disagreement with ``expected``.
+
+        Must hold ``self._lock``. The block SET is deprecated in
+        favour of the six ``CFG_SIGNAL_*_ENA`` keys (issue #104), but
+        the block POLL survives as a capability probe — the only way
+        to see whether the firmware actually acts on an enable key it
+        ACKed. Returns ``None`` when the block agrees with
+        ``expected``.
+        """
+        probed = set(self._get_gnss_config_locked().enabled_constellations())
+        if probed == expected:
+            return None
+        return (
+            f"legacy CFG-GNSS block reports {sorted(c.value for c in probed)}, "
+            f"enable keys report {sorted(c.value for c in expected)} — the "
+            "write landed but this firmware may not act on it"
         )
 
     # ------------------------------------------------------------------
@@ -1340,23 +1380,33 @@ class UbloxDriver(GpsReceiverDriver):
         return drained
 
     def get_receiver_scalars(self) -> ReceiverScalarConfig:
-        """Batched read of baud, meas rate, dyn model, tmode mode and the
-        three optimisation fields — one CFG-VALGET poll (issue #97).
+        """Batched read of baud, meas rate, dyn model, tmode mode, the
+        enabled constellations and the three optimisation fields — one
+        CFG-VALGET poll (issue #97, extended by issue #104).
 
         Replaces what would otherwise be up to seven separate getters:
         the three that already existed (``get_dyn_model``,
         ``get_uart_baud_rates``, the TMODE portion of ``get_base_config``)
         plus the four that had no standalone getter at all
-        (measurement rate, elevation mask, BeiDou B2, SPI).
+        (measurement rate, elevation mask, BeiDou B2, SPI). The six
+        ``CFG_SIGNAL_*_ENA`` constellation-enable keys (issue #104) fold
+        into this same poll for free — ``ReceiverAssertion.constellations``
+        no longer needs a separate CFG-GNSS block read to populate.
         """
         with self._lock:
             raw = self._read_cfg_keys_locked(_RECEIVER_SCALAR_KEYS)
+        constellations = [
+            constellation
+            for constellation, key in _GNSS_SIGNAL_ENA_KEYS.items()
+            if raw[key]
+        ]
         return ReceiverScalarConfig(
             uart1_baud=raw["CFG_UART1_BAUDRATE"],
             uart2_baud=raw["CFG_UART2_BAUDRATE"],
             meas_period_ms=raw["CFG_RATE_MEAS"],
             dyn_model=_DYN_MODEL_NAMES[raw["CFG_NAVSPG_DYNMODEL"]],
             tmode_mode=_TMODE_MODE_NAMES[raw["CFG_TMODE_MODE"]],
+            constellations=constellations,
             elevation_mask_deg=raw["CFG_NAVSPG_INFIL_MINELEV"],
             bds_b2_enabled=bool(raw["CFG_SIGNAL_BDS_B2_ENA"]),
             spi_enabled=bool(raw["CFG_SPI_ENABLED"]),

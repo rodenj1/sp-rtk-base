@@ -23,6 +23,7 @@ from sp_rtk_base.models.device_models import (
     DeviceCapability,
     DynModel,
     FixedBaseConfig,
+    GnssConstellation,
     PortId,
     RtcmRowId,
     SurveyInConfig,
@@ -2210,6 +2211,12 @@ class TestGetReceiverScalars:
             CFG_NAVSPG_INFIL_MINELEV=15,
             CFG_SIGNAL_BDS_B2_ENA=0,
             CFG_SPI_ENABLED=1,
+            CFG_SIGNAL_GPS_ENA=1,
+            CFG_SIGNAL_GLO_ENA=0,
+            CFG_SIGNAL_GAL_ENA=1,
+            CFG_SIGNAL_BDS_ENA=0,
+            CFG_SIGNAL_SBAS_ENA=1,
+            CFG_SIGNAL_QZSS_ENA=0,
         )
         driver, _reader = _connect_driver(
             mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
@@ -2222,6 +2229,11 @@ class TestGetReceiverScalars:
         assert result.meas_period_ms == 250
         assert result.dyn_model == DynModel.STATIONARY
         assert result.tmode_mode == BaseMode.FIXED
+        assert set(result.constellations) == {
+            GnssConstellation.GPS,
+            GnssConstellation.GALILEO,
+            GnssConstellation.SBAS,
+        }
         assert result.elevation_mask_deg == 15
         assert result.bds_b2_enabled is False
         assert result.spi_enabled is True
@@ -2229,7 +2241,7 @@ class TestGetReceiverScalars:
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
     @patch("sp_rtk_base.services.drivers.ublox.UBXReader")
     @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
-    def test_polls_all_eight_keys_in_a_single_message(
+    def test_polls_all_fourteen_keys_in_a_single_message(
         self,
         mock_serial_cls: MagicMock,
         mock_reader_cls: MagicMock,
@@ -2245,6 +2257,12 @@ class TestGetReceiverScalars:
             CFG_NAVSPG_INFIL_MINELEV=5,
             CFG_SIGNAL_BDS_B2_ENA=1,
             CFG_SPI_ENABLED=0,
+            CFG_SIGNAL_GPS_ENA=1,
+            CFG_SIGNAL_GLO_ENA=1,
+            CFG_SIGNAL_GAL_ENA=1,
+            CFG_SIGNAL_BDS_ENA=1,
+            CFG_SIGNAL_SBAS_ENA=1,
+            CFG_SIGNAL_QZSS_ENA=1,
         )
         driver, _reader = _connect_driver(
             mock_serial_cls, mock_reader_cls, mock_ubx_msg, [read_back]
@@ -2263,6 +2281,12 @@ class TestGetReceiverScalars:
             "CFG_NAVSPG_INFIL_MINELEV",
             "CFG_SIGNAL_BDS_B2_ENA",
             "CFG_SPI_ENABLED",
+            "CFG_SIGNAL_GPS_ENA",
+            "CFG_SIGNAL_GLO_ENA",
+            "CFG_SIGNAL_GAL_ENA",
+            "CFG_SIGNAL_BDS_ENA",
+            "CFG_SIGNAL_SBAS_ENA",
+            "CFG_SIGNAL_QZSS_ENA",
         }
 
 

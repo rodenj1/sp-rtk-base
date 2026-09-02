@@ -17,6 +17,7 @@ from sp_rtk_base.models.device_models import (
     DynModel,
     FixedBaseConfig,
     GnssConfig,
+    GnssConstellation,
     GpsPosition,
     PortId,
     PortProtocolConfig,
@@ -404,11 +405,21 @@ class GpsReceiverDriver(abc.ABC):
         """
 
     @abc.abstractmethod
-    def configure_gnss(self, config: GnssConfig) -> None:
-        """Write GNSS constellation configuration to the receiver.
+    def configure_gnss(self, constellations: set[GnssConstellation]) -> None:
+        """Assertive durable write of the per-constellation enable keys (issue #104).
+
+        Every constellation the vendor-neutral :class:`GnssConstellation`
+        enum knows about is written explicitly — on for the members of
+        ``constellations``, off for every other member — at whatever
+        layer the concrete driver considers durable. Channel allocation
+        is left entirely to the firmware; this call has no channel
+        parameter. IMES and NavIC are never touched — they have no
+        member in :class:`GnssConstellation`, so there is no key for
+        this call to write for them.
 
         Args:
-            config: Desired GNSS system configuration.
+            constellations: Exactly the constellations that should end
+                up enabled.
 
         Raises:
             ConnectionError: If not connected.

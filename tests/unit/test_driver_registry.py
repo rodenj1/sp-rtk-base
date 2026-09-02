@@ -12,6 +12,7 @@ from sp_rtk_base.models.device_models import (
     DynModel,
     FixedBaseConfig,
     GnssConfig,
+    GnssConstellation,
     GpsPosition,
     PortId,
     PortProtocolConfig,
@@ -75,7 +76,7 @@ class StubDriver(GpsReceiverDriver):
     def get_gnss_config(self) -> GnssConfig:
         return GnssConfig()
 
-    def configure_gnss(self, config: GnssConfig) -> None:
+    def configure_gnss(self, constellations: set[GnssConstellation]) -> None:
         pass
 
     def save_to_flash(self) -> None:
@@ -139,6 +140,7 @@ class StubDriver(GpsReceiverDriver):
             meas_period_ms=1000,
             dyn_model=DynModel.PORTABLE,
             tmode_mode=BaseMode.DISABLED,
+            constellations=[],
             elevation_mask_deg=0,
             bds_b2_enabled=False,
             spi_enabled=False,

@@ -10,9 +10,13 @@ Buttons covered here:
 
 1. **Disconnect** → Quasar ``Disconnected`` toast → REST device
    status flips to disconnected.
-2. **Save to Flash** → Quasar ``Saved to flash!`` toast → REST
-   confirms (the fake driver's ``save_to_flash`` is a no-op that
-   succeeds, so we only assert the toast appears).
+
+Issue #104 removed the Save-to-Flash button from this page (every
+profile write, constellations included, is now durable via
+CFG-VALSET, so the card's sole justification no longer holds) — the
+``save_to_flash`` service/driver/API paths stay, just without a UI
+trigger here, so there is no button-click coverage for it in this file
+any more.
 
 The shave-by-shave RTCM/GNSS editing controls (checkboxes, switches,
 their own Load/Apply buttons) this page used to have were replaced by
@@ -66,28 +70,3 @@ def test_disconnect_button_emits_toast_and_changes_status(
     assert payload.get("state") == "disconnected", (
         f"expected device.state=='disconnected' after click; got {payload!r}"
     )
-
-
-@pytest.mark.e2e
-def test_save_to_flash_button_emits_success_toast(
-    page: Page,
-    base_url: str,
-    connected_gps: None,
-) -> None:
-    """Click **Save to Flash** → ``Saved to flash!`` Quasar toast.
-
-    The fake driver's ``save_to_flash`` is a no-op that returns
-    success, so we only verify the click reaches the handler and the
-    handler emits its positive notification.  REST-level persistence
-    is already covered by ``test_gps_data_flow.py``.
-    """
-    page.goto(f"{base_url}/gps-config")
-    expect(page.locator("text=Advanced GPS Configuration").first).to_be_visible(
-        timeout=15_000
-    )
-
-    save_btn = page.get_by_role("button", name="Save to Flash")
-    expect(save_btn).to_be_visible(timeout=10_000)
-    save_btn.click()
-
-    expect(page.locator("text=Saved to flash!").first).to_be_visible(timeout=10_000)

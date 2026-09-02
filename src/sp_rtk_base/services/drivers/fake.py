@@ -538,6 +538,7 @@ class FakeGpsDriver(GpsReceiverDriver):
             meas_period_ms=self._meas_period_ms,
             dyn_model=self._dyn_model,
             tmode_mode=self._base_config.mode,
+            constellations=self._gnss.enabled_constellations(),
             elevation_mask_deg=self._elevation_mask_deg,
             bds_b2_enabled=self._bds_b2_enabled,
             spi_enabled=self._spi_enabled,
@@ -554,14 +555,21 @@ class FakeGpsDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     def get_gnss_config(self) -> GnssConfig:
-        """Return the most recently stored GNSS configuration."""
+        """Return the most recently stored GNSS configuration (legacy block probe)."""
         self._ensure_connected()
         return self._gnss
 
-    def configure_gnss(self, config: GnssConfig) -> None:
-        """Store the GNSS configuration in memory."""
+    def configure_gnss(self, constellations: set[GnssConstellation]) -> None:
+        """Flip ``enabled`` on the six known systems; channels untouched (issue #104)."""
         self._ensure_connected()
-        self._gnss = config
+        self._gnss = GnssConfig(
+            systems=[
+                system.model_copy(
+                    update={"enabled": system.constellation in constellations}
+                )
+                for system in self._gnss.systems
+            ]
+        )
 
     # ------------------------------------------------------------------
     # Status polling

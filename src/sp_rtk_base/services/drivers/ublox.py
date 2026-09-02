@@ -1780,33 +1780,13 @@ class UbloxDriver(GpsReceiverDriver):
         Must hold ``self._lock``. Used to verify a fixed-base ECEF
         write actually took effect.
         """
-        ser, reader = self._require_connection()
-
-        keys: list[str | int] = [
-            "CFG_TMODE_ECEF_X",
-            "CFG_TMODE_ECEF_Y",
-            "CFG_TMODE_ECEF_Z",
-        ]
-        msg = UBXMessage.config_poll(0, 0, keys)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        for _ in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    continue
-                identity = getattr(parsed, "identity", "")
-                if identity == "CFG-VALGET":
-                    return (
-                        int(getattr(parsed, "CFG_TMODE_ECEF_X", 0)),
-                        int(getattr(parsed, "CFG_TMODE_ECEF_Y", 0)),
-                        int(getattr(parsed, "CFG_TMODE_ECEF_Z", 0)),
-                    )
-            except Exception:
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for ECEF position")
+        keys = ["CFG_TMODE_ECEF_X", "CFG_TMODE_ECEF_Y", "CFG_TMODE_ECEF_Z"]
+        values = self._read_cfg_keys_with_retry_locked(keys)
+        return (
+            values.get("CFG_TMODE_ECEF_X", 0),
+            values.get("CFG_TMODE_ECEF_Y", 0),
+            values.get("CFG_TMODE_ECEF_Z", 0),
+        )
 
     @staticmethod
     def extract_svin_position(parsed: object) -> tuple[float, float, float]:
@@ -1850,9 +1830,6 @@ class UbloxDriver(GpsReceiverDriver):
 
     def _get_base_config_locked(self) -> CurrentBaseConfig:
         """Read base config (must hold self._lock)."""
-        ser, reader = self._require_connection()
-
-        # Poll configuration values (layer 0 = RAM)
         # Request both LLH and ECEF fields — the receiver populates
         # whichever set matches POS_TYPE.
         keys = [
@@ -1869,54 +1846,35 @@ class UbloxDriver(GpsReceiverDriver):
             "CFG_TMODE_ECEF_Z_HP",
             "CFG_TMODE_FIXED_POS_ACC",
         ]
-        keys_any: list[str | int] = list(keys)
-        msg = UBXMessage.config_poll(0, 0, keys_any)
-        ser.reset_input_buffer()
-        ser.write(msg.serialize())  # type: ignore[union-attr]
-
-        # Read response — may take a few reads
-        for i in range(_MAX_READ_ATTEMPTS):
-            try:
-                raw, parsed = reader.read()  # type: ignore[misc]
-                if parsed is None:
-                    logger.debug("get_base_config read %d: None", i)
-                    continue
-                identity = getattr(parsed, "identity", "")
-                logger.debug("get_base_config read %d: %s", i, identity)
-                if identity == "CFG-VALGET":
-                    return self._parse_cfg_tmode(parsed)
-            except Exception as exc:
-                logger.debug("get_base_config read %d: exception %s", i, exc)
-                continue
-
-        raise RuntimeError("No CFG-VALGET response for TMODE config")
+        values = self._read_cfg_keys_with_retry_locked(keys)
+        return self._parse_cfg_tmode(values)
 
     @staticmethod
-    def _parse_cfg_tmode(parsed: object) -> CurrentBaseConfig:
-        """Parse CFG-VALGET TMODE response into CurrentBaseConfig.
+    def _parse_cfg_tmode(values: dict[str, int]) -> CurrentBaseConfig:
+        """Build a CurrentBaseConfig from polled TMODE CFG key values.
 
         Handles both position storage formats:
         - POS_TYPE=0 (ECEF): reads ECEF_X/Y/Z + HP, converts to LLH
         - POS_TYPE=1 (LLH): reads LAT/LON/HEIGHT directly
         """
-        mode_raw = int(getattr(parsed, "CFG_TMODE_MODE", 0))
+        mode_raw = values.get("CFG_TMODE_MODE", 0)
         mode = _TMODE_MODE_NAMES.get(mode_raw, BaseMode.DISABLED)
 
-        pos_type_raw = int(getattr(parsed, "CFG_TMODE_POS_TYPE", 1))
+        pos_type_raw = values.get("CFG_TMODE_POS_TYPE", 1)
         # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm units on the wire —
         # divide by 10 to surface mm at the Python API boundary
         # (matches CurrentBaseConfig.accuracy_mm units).
-        acc_raw = int(getattr(parsed, "CFG_TMODE_FIXED_POS_ACC", 0))
+        acc_raw = values.get("CFG_TMODE_FIXED_POS_ACC", 0)
         acc_mm = acc_raw // 10
 
         if pos_type_raw == 0:
             # ECEF mode — convert to LLH for display
-            ecef_x_cm = int(getattr(parsed, "CFG_TMODE_ECEF_X", 0))
-            ecef_y_cm = int(getattr(parsed, "CFG_TMODE_ECEF_Y", 0))
-            ecef_z_cm = int(getattr(parsed, "CFG_TMODE_ECEF_Z", 0))
-            ecef_x_hp = int(getattr(parsed, "CFG_TMODE_ECEF_X_HP", 0))
-            ecef_y_hp = int(getattr(parsed, "CFG_TMODE_ECEF_Y_HP", 0))
-            ecef_z_hp = int(getattr(parsed, "CFG_TMODE_ECEF_Z_HP", 0))
+            ecef_x_cm = values.get("CFG_TMODE_ECEF_X", 0)
+            ecef_y_cm = values.get("CFG_TMODE_ECEF_Y", 0)
+            ecef_z_cm = values.get("CFG_TMODE_ECEF_Z", 0)
+            ecef_x_hp = values.get("CFG_TMODE_ECEF_X_HP", 0)
+            ecef_y_hp = values.get("CFG_TMODE_ECEF_Y_HP", 0)
+            ecef_z_hp = values.get("CFG_TMODE_ECEF_Z_HP", 0)
 
             # cm → m, HP is in 0.1mm = 0.0001m
             x_m = ecef_x_cm / 100.0 + ecef_x_hp * 0.0001
@@ -1927,9 +1885,9 @@ class UbloxDriver(GpsReceiverDriver):
             pos_type = "ecef"
         else:
             # LLH mode — direct lat/lon/height
-            lat_raw = int(getattr(parsed, "CFG_TMODE_LAT", 0))
-            lon_raw = int(getattr(parsed, "CFG_TMODE_LON", 0))
-            height_cm = int(getattr(parsed, "CFG_TMODE_HEIGHT", 0))
+            lat_raw = values.get("CFG_TMODE_LAT", 0)
+            lon_raw = values.get("CFG_TMODE_LON", 0)
+            height_cm = values.get("CFG_TMODE_HEIGHT", 0)
             lat = lat_raw * 1e-7
             lon = lon_raw * 1e-7
             alt_m = height_cm / 100.0

@@ -31,9 +31,11 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.ui.bluetooth_status import (
+    GreenLostReason,
     HeldGreen,
     StatusLine,
     countdown_label,
+    describe_green_lost,
     describe_refusal,
     describe_result,
 )
@@ -464,50 +466,45 @@ def input_page() -> None:
                         bt_state["held_green"] = None
                         green_actions_row.set_visibility(False)
 
-                    def _held_green_if_valid() -> HeldGreen | None:
-                        """The held Green, if it still describes the form."""
+                    def _green_loss_reason() -> GreenLostReason | None:
+                        """Why the held Green no longer stands, if it doesn't."""
                         held = bt_state.get("held_green")
                         if held is None:
                             return None
                         mac, pin = _current_values()
-                        if not held.is_valid_for(mac, pin):
-                            return None
-                        return held
+                        return held.loss_reason(mac, pin)
 
                     def _tick_green() -> None:
                         """Refresh the countdown; retire the Green when void.
 
                         Runs once a second so expiry is visible.  Edits
-                        are handled by the field handlers below rather
-                        than waited for here, so an edited Green dies at
-                        once instead of up to a second later.
+                        are handled by the field handlers below too, so
+                        an edited Green dies at once rather than up to a
+                        second later.
                         """
-                        held = _held_green_if_valid()
+                        held = bt_state.get("held_green")
                         if held is None:
-                            if bt_state.get("held_green") is not None:
-                                _expire_green()
+                            return
+                        reason = _green_loss_reason()
+                        if reason is not None:
+                            _lose_green(reason)
                             return
                         label = countdown_label(held.result.expires_at)
-                        if label is None:
-                            _expire_green()
-                            return
-                        countdown_lbl.text = f"expires in {label}"
+                        if label is not None:
+                            countdown_lbl.text = f"expires in {label}"
 
-                    def _expire_green() -> None:
-                        """Retire a Green and say why it is gone.
+                    def _lose_green(reason: GreenLostReason) -> None:
+                        """Retire the Green and say which way it died.
 
-                        Said out loud rather than by the row silently
-                        vanishing: an operator who reached for "Save &
-                        Start now →" and found it missing would have no
-                        way to tell whether it had expired or had never
-                        been offered.
+                        The two causes get different sentences for the
+                        same reason the two Warnings do: "the clock ran
+                        out" and "you changed the PIN" are different
+                        facts, and an operator who reached for "Save &
+                        Start now →" and found it gone needs to know
+                        which one happened.
                         """
                         _clear_green()
-                        test_status_label.set_visibility(True)
-                        test_status_label.text = (
-                            "The test result has expired — test again before starting."
-                        )
-                        test_status_label.classes(replace="text-warning q-mt-xs")
+                        _set_status(describe_green_lost(reason))
 
                     def _on_field_edited() -> None:
                         """Any edit to the MAC or PIN voids the Green.
@@ -517,10 +514,9 @@ def input_page() -> None:
                         is a promise about something the operator is no
                         longer looking at.
                         """
-                        if bt_state.get("held_green") is None:
-                            return
-                        if _held_green_if_valid() is None:
-                            _expire_green()
+                        reason = _green_loss_reason()
+                        if reason is not None:
+                            _lose_green(reason)
 
                     addr_input.on("update:model-value", lambda _: _on_field_edited())
                     pin_input.on("update:model-value", lambda _: _on_field_edited())
@@ -633,8 +629,9 @@ def input_page() -> None:
 
                     async def _save_and_start() -> None:
                         """Save the Verified config, then start the relay."""
-                        if _held_green_if_valid() is None:
-                            _expire_green()
+                        reason = _green_loss_reason()
+                        if reason is not None or bt_state.get("held_green") is None:
+                            _lose_green(reason or "expired")
                             return
                         if not _save_input():
                             return
@@ -787,8 +784,8 @@ def input_page() -> None:
                     pin_now = str(config.get("pin", ""))
                     if held is not None and held.is_valid_for(mac_now, pin_now):
                         proven = {
-                            "verified_pin": held.pin,
-                            "pin_verified_at": held.result.verified_at,
+                            "proven_pin": held.pin,
+                            "pin_proven_at": held.result.verified_at,
                         }
 
                 try:

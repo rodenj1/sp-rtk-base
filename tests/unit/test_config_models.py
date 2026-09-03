@@ -620,18 +620,18 @@ class TestInputProfileProvenPin:
 
     def test_proven_pin_defaults_to_absent(self) -> None:
         ip = InputProfile(source="bluetooth", config={"mac_address": "AA"})
-        assert ip.verified_pin is None
-        assert ip.pin_verified_at is None
+        assert ip.proven_pin is None
+        assert ip.pin_proven_at is None
 
     def test_proven_pin_is_a_sibling_field_not_config(self) -> None:
         """Storing it in `config` is what would break relay start."""
         ip = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
-        assert ip.verified_pin == "1234"
-        assert "verified_pin" not in ip.config
+        assert ip.proven_pin == "1234"
+        assert "proven_pin" not in ip.config
 
     def test_to_relay_config_does_not_forward_the_proven_pin(self) -> None:
         """Regression: `input_factory` builds `BluetoothConfig(**cfg)`.
@@ -645,12 +645,12 @@ class TestInputProfileProvenPin:
         ip = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA", "pin": "1234"},
-            verified_pin="1234",
-            pin_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            proven_pin="1234",
+            pin_proven_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         relay_cfg = ip.to_relay_config()
-        assert "verified_pin" not in relay_cfg.config
-        assert "pin_verified_at" not in relay_cfg.config
+        assert "proven_pin" not in relay_cfg.config
+        assert "pin_proven_at" not in relay_cfg.config
 
     def test_the_relay_really_rejects_the_sibling_fields(self) -> None:
         """Pins *why* the previous test matters, against the real dataclass.
@@ -660,15 +660,15 @@ class TestInputProfileProvenPin:
         stays red-on-violation, the guard above is load-bearing.
         """
         with pytest.raises(TypeError):
-            BluetoothConfig(mac_address="AA", pin="1234", verified_pin="1234")  # type: ignore[call-arg]
+            BluetoothConfig(mac_address="AA", pin="1234", proven_pin="1234")  # type: ignore[call-arg]
 
     def test_to_relay_config_accepts_what_it_produces(self) -> None:
         """The whole point: the produced config must construct cleanly."""
         ip = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA", "pin": "1234"},
-            verified_pin="1234",
-            pin_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            proven_pin="1234",
+            pin_proven_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         cfg = BluetoothConfig(**ip.to_relay_config().config)
         assert cfg.pin == "1234"

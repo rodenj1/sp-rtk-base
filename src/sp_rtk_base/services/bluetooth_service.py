@@ -37,6 +37,10 @@ from sp_rtk_base.models.bluetooth_models import (
 )
 
 if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.input_sources.bluetooth_input import (
+        BluetoothConfig,
+    )
+
     from sp_rtk_base.services.config_service import ConfigService
     from sp_rtk_base.services.relay_service import RelayService
 
@@ -72,6 +76,30 @@ class VerificationRefusedError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+#: The Stages ``ensure_device_ready`` and ``force_repair`` each cover in
+#: one opaque call.  Named once so the two paths that pass them cannot
+#: drift apart.
+_PRE_CONNECT_STAGES = (
+    VerificationStage.DISCOVER,
+    VerificationStage.PAIR,
+    VerificationStage.TRUST,
+)
+
+
+def _mark_passed(
+    recorded: dict[VerificationStage, StageResult],
+    stages: tuple[VerificationStage, ...],
+) -> None:
+    """Record *stages* as passed.
+
+    Args:
+        recorded: The Stage results accumulated so far, mutated in place.
+        stages: The Stages to mark.
+    """
+    for stage in stages:
+        recorded[stage] = StageResult(stage=stage, status=StageStatus.PASSED)
 
 
 def _default_manager_factory(adapter: str) -> Any:
@@ -185,8 +213,8 @@ class BluetoothVerificationService:
             return False
         stored_mac = profile.config.get("mac_address")
         return bool(
-            profile.verified_pin
-            and profile.verified_pin == normalised
+            profile.proven_pin
+            and normalize_pin(profile.proven_pin) == normalised
             and stored_mac == mac_address
         )
 
@@ -354,7 +382,7 @@ class BluetoothVerificationService:
         # keeps the Verification and the run waiting *identically*: if
         # the relay changes a default, this follows it, instead of
         # drifting until a Green stops predicting a Start.
-        cfg = BluetoothConfig(
+        cfg: BluetoothConfig = BluetoothConfig(
             mac_address=mac_address,
             pin=pin,
             adapter_name=adapter,
@@ -396,7 +424,7 @@ class BluetoothVerificationService:
         manager: Any,
         mac_address: str,
         pin: str,
-        cfg: Any,
+        cfg: BluetoothConfig,
         recorded: dict[VerificationStage, StageResult],
     ) -> bool:
         """Exercise *pin* against a fresh Bond, and attribute exactly.
@@ -416,12 +444,7 @@ class BluetoothVerificationService:
         # Only a force-repair the server performed mints proof.
         self._proven.add((mac_address, pin))
         self._stranded.discard(mac_address)
-        for stage in (
-            VerificationStage.DISCOVER,
-            VerificationStage.PAIR,
-            VerificationStage.TRUST,
-        ):
-            recorded[stage] = StageResult(stage=stage, status=StageStatus.PASSED)
+        _mark_passed(recorded, _PRE_CONNECT_STAGES)
         return True
 
     def _attribute_repair_failure(
@@ -485,7 +508,7 @@ class BluetoothVerificationService:
         manager: Any,
         mac_address: str,
         pin: str,
-        cfg: Any,
+        cfg: BluetoothConfig,
         recorded: dict[VerificationStage, StageResult],
     ) -> bool:
         """Take the relay's own ``ensure_device_ready``, and infer on failure.
@@ -508,12 +531,16 @@ class BluetoothVerificationService:
             self._attribute_bundled_failure(manager, mac_address, exc, recorded)
             return False
 
-        for stage in (
-            VerificationStage.DISCOVER,
-            VerificationStage.PAIR,
-            VerificationStage.TRUST,
-        ):
-            recorded[stage] = StageResult(stage=stage, status=StageStatus.PASSED)
+        # This path pairs and trusts, so a Bond demonstrably exists now
+        # — even if the device had been Stranded before.  Forgetting to
+        # say so would leave the memo believing there is nothing left to
+        # destroy, and the *next* unproven PIN would force-repair this
+        # live Bond with no dialog: the silent demolition the consent
+        # handshake exists to prevent.  It mints no *proof*, though:
+        # ``pair_device`` fast-paths on an existing Bond, so a pass here
+        # still says nothing about the PIN.
+        self._stranded.discard(mac_address)
+        _mark_passed(recorded, _PRE_CONNECT_STAGES)
         return True
 
     def _attribute_bundled_failure(
@@ -566,7 +593,7 @@ class BluetoothVerificationService:
         self,
         mac_address: str,
         channel: int,
-        cfg: Any,
+        cfg: BluetoothConfig,
         recorded: dict[VerificationStage, StageResult],
     ) -> Any:
         """Open the RFCOMM socket — the ``connect`` Stage.
@@ -609,7 +636,7 @@ class BluetoothVerificationService:
     def _read_first_frame(
         self,
         sock: Any,
-        cfg: Any,
+        cfg: BluetoothConfig,
         recorded: dict[VerificationStage, StageResult],
     ) -> None:
         """Listen for a first RTCM frame — the ``data`` Stage.
@@ -633,10 +660,20 @@ class BluetoothVerificationService:
         while time.monotonic() < deadline:
             try:
                 chunk = sock.recv(8192)
-            except (TimeoutError, OSError):
+            except TimeoutError:
+                # The paced case: ``read_timeout`` elapsed with nothing
+                # to read.  This is what spends the window.
                 continue
+            except OSError as exc:
+                # The socket is gone; further reads cannot succeed, and
+                # retrying would burn a core for the rest of the window
+                # since a failing ``recv`` returns instantly.
+                logger.debug("RFCOMM read ended early: %s", exc)
+                break
             if not chunk:
-                continue
+                # A zero-length read means the peer closed.  Same
+                # reasoning: nothing more is coming.
+                break
             buffer.extend(chunk)
             if _contains_rtcm_frame(bytes(buffer), RTCMMessageDecoder):
                 recorded[VerificationStage.DATA] = StageResult(

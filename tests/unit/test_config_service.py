@@ -438,7 +438,7 @@ class TestConfigPath:
 def _bt(
     mac: str = "AA:BB:CC:DD:EE:FF",
     pin: str = "1234",
-    verified_pin: str | None = None,
+    proven_pin: str | None = None,
     age_seconds: float | None = None,
 ) -> InputProfile:
     """A Bluetooth profile, optionally carrying a Proven-PIN record."""
@@ -448,8 +448,8 @@ def _bt(
     return InputProfile(
         source="bluetooth",
         config={"mac_address": mac, "pin": pin},
-        verified_pin=verified_pin,
-        pin_verified_at=verified_at,
+        proven_pin=proven_pin,
+        pin_proven_at=verified_at,
     )
 
 
@@ -465,10 +465,10 @@ class TestSaveCorroboratesTheProvenPin:
     def test_a_corroborated_fresh_record_is_kept(self, tmp_path: Path) -> None:
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(verified_pin="1234", age_seconds=1),
+            _bt(proven_pin="1234", age_seconds=1),
             corroborate=lambda mac, pin: True,
         )
-        assert svc.get_input_config().verified_pin == "1234"  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin == "1234"  # type: ignore[union-attr]
 
     def test_an_uncorroborated_record_is_dropped(self, tmp_path: Path) -> None:
         """Dropping is a non-event: the save still succeeds and loses no
@@ -476,12 +476,12 @@ class TestSaveCorroboratesTheProvenPin:
         Verification re-proves it."""
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(verified_pin="1234", age_seconds=1),
+            _bt(proven_pin="1234", age_seconds=1),
             corroborate=lambda mac, pin: False,
         )
         saved = svc.get_input_config()
         assert saved is not None
-        assert saved.verified_pin is None
+        assert saved.proven_pin is None
         assert saved.config["mac_address"] == "AA:BB:CC:DD:EE:FF"
 
     def test_a_record_with_no_corroborator_at_all_is_dropped(
@@ -489,27 +489,27 @@ class TestSaveCorroboratesTheProvenPin:
     ) -> None:
         """`PUT /api/input` must not be a way to write a Proven PIN."""
         svc = ConfigService(config_path=tmp_path / "config.yaml")
-        svc.save_input_config(_bt(verified_pin="1234", age_seconds=1))
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        svc.save_input_config(_bt(proven_pin="1234", age_seconds=1))
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
     def test_a_stale_record_is_rejected(self, tmp_path: Path) -> None:
         """Enforced server-side; otherwise the promise is only the page's."""
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(verified_pin="1234", age_seconds=31),
+            _bt(proven_pin="1234", age_seconds=31),
             corroborate=lambda mac, pin: True,
         )
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
     def test_a_record_for_a_different_pin_than_submitted_is_rejected(
         self, tmp_path: Path
     ) -> None:
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(pin="9999", verified_pin="1234", age_seconds=1),
+            _bt(pin="9999", proven_pin="1234", age_seconds=1),
             corroborate=lambda mac, pin: True,
         )
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
 
 class TestProvenPinInvalidationOnSave:
@@ -523,7 +523,7 @@ class TestProvenPinInvalidationOnSave:
     def _seed(self, tmp_path: Path) -> ConfigService:
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(verified_pin="1234", age_seconds=1),
+            _bt(proven_pin="1234", age_seconds=1),
             corroborate=lambda mac, pin: True,
         )
         return svc
@@ -539,18 +539,18 @@ class TestProvenPinInvalidationOnSave:
             },
         )
         svc.save_input_config(profile)
-        assert svc.get_input_config().verified_pin == "1234"  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin == "1234"  # type: ignore[union-attr]
 
     def test_changing_the_pin_clears_the_record(self, tmp_path: Path) -> None:
         svc = self._seed(tmp_path)
         svc.save_input_config(_bt(pin="9999"))
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
     def test_changing_the_mac_clears_the_record(self, tmp_path: Path) -> None:
         """Otherwise a MAC change inherits another device's proof."""
         svc = self._seed(tmp_path)
         svc.save_input_config(_bt(mac="11:22:33:44:55:66"))
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
     def test_switching_away_from_bluetooth_clears_the_record(
         self, tmp_path: Path
@@ -559,13 +559,13 @@ class TestProvenPinInvalidationOnSave:
         svc.save_input_config(
             InputProfile(source="serial", config={"port": "/dev/ttyACM0"})
         )
-        assert svc.get_input_config().verified_pin is None  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin is None  # type: ignore[union-attr]
 
     def test_a_blank_pin_still_matches_a_proven_default(self, tmp_path: Path) -> None:
         """Normalisation means a blank field is not read as a PIN change."""
         svc = ConfigService(config_path=tmp_path / "config.yaml")
         svc.save_input_config(
-            _bt(pin="0000", verified_pin="0000", age_seconds=1),
+            _bt(pin="0000", proven_pin="0000", age_seconds=1),
             corroborate=lambda mac, pin: True,
         )
         svc.save_input_config(
@@ -574,4 +574,4 @@ class TestProvenPinInvalidationOnSave:
                 config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": ""},
             )
         )
-        assert svc.get_input_config().verified_pin == "0000"  # type: ignore[union-attr]
+        assert svc.get_input_config().proven_pin == "0000"  # type: ignore[union-attr]

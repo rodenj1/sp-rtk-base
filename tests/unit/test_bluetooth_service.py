@@ -163,7 +163,7 @@ class TestGreenPathWithAProvenPin:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, mgr, skt = build_service(input_profile=profile)
 
@@ -180,7 +180,7 @@ class TestGreenPathWithAProvenPin:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, mgr, _ = build_service(input_profile=profile)
 
@@ -201,7 +201,7 @@ class TestGreenPathWithAProvenPin:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, _, skt = build_service(input_profile=profile)
 
@@ -313,7 +313,7 @@ class TestForceRepairTriggerPredicate:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, mgr, _ = build_service(input_profile=profile)
         await service.verify(mac_address="AA:BB:CC:DD:EE:FF", pin="1234")
@@ -328,7 +328,7 @@ class TestForceRepairTriggerPredicate:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "0000"},
-            verified_pin="0000",
+            proven_pin="0000",
         )
         service, _, _ = build_service(input_profile=profile)
         assert service.is_pin_proven("AA:BB:CC:DD:EE:FF", "")
@@ -340,7 +340,7 @@ class TestForceRepairTriggerPredicate:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "11:22:33:44:55:66", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, _, _ = build_service(input_profile=profile)
         assert not service.is_pin_proven("AA:BB:CC:DD:EE:FF", "1234")
@@ -384,7 +384,7 @@ class TestConsentHandshake:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         service, _, _ = build_service(input_profile=profile)
         result = await service.verify(mac_address="AA:BB:CC:DD:EE:FF", pin="1234")
@@ -527,7 +527,7 @@ class TestBundledPathAttribution:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         mgr = FakeManager(
             ready_error=_bt_error("Device not found"), device_present=False
@@ -549,7 +549,7 @@ class TestBundledPathAttribution:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         mgr = FakeManager(ready_error=_bt_error("Failed to pair"), device_present=True)
         service, _, _ = build_service(manager=mgr, input_profile=profile)
@@ -568,7 +568,7 @@ class TestBundledPathAttribution:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         mgr = FakeManager(
             ready_error=_bt_error("interface not found on this object"),
@@ -589,7 +589,7 @@ class TestBundledPathAttribution:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         mgr = FakeManager(
             ready_error=_bt_error("Device not found"), device_present=False
@@ -938,7 +938,7 @@ class TestDegradedAttribution:
         profile = InputProfile(
             source="bluetooth",
             config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-            verified_pin="1234",
+            proven_pin="1234",
         )
         mgr = BlindManager(ready_error=_bt_error("something went wrong"))
         service, _, _ = build_service(manager=mgr, input_profile=profile)
@@ -1009,3 +1009,131 @@ class TestTheChannelIsReportedAsAConnectDetail:
             mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
         )
         assert result.rfcomm_channel == 1
+
+
+class TestARebuiltBondIsBelievedInAgain:
+    """A Stranding is not permanent, and the memo must not think it is.
+
+    After a Stranding the server knows the Bond is gone, so a retry
+    prompts nothing. But the plain (non-repair) path can rebuild a real
+    Bond — reverting to a Proven PIN and testing "skips the repair and
+    pairs normally". If the memo still believed the device stranded, the
+    *next* unproven PIN would force-repair that live Bond with no
+    dialog: exactly the silent demolition the consent handshake exists
+    to prevent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_bundled_pass_restores_the_belief_in_a_bond(self) -> None:
+        from sp_rtk_base.models.config_models import InputProfile
+
+        # 1. Strand the device with a wrong PIN.
+        mgr = FakeManager(
+            repair_error=_bt_error("force_repair: pair stage failed: PIN rejected")
+        )
+        profile = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
+            proven_pin="1234",
+        )
+        service, _, _ = build_service(manager=mgr, input_profile=profile)
+        await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="9999", confirm_repair=True
+        )
+        assert not service.believes_bond_exists("AA:BB:CC:DD:EE:FF")
+
+        # 2. Revert to the Proven PIN: the plain path pairs normally and
+        #    a real Bond exists again.
+        mgr.repair_error = None
+        result = await service.verify(mac_address="AA:BB:CC:DD:EE:FF", pin="1234")
+        assert result.verdict == "green"
+
+        # 3. So the server must believe in that Bond once more.
+        assert service.believes_bond_exists("AA:BB:CC:DD:EE:FF")
+
+    @pytest.mark.asyncio
+    async def test_the_next_unproven_pin_asks_again(self) -> None:
+        """The observable consequence: consent is required once more."""
+        from sp_rtk_base.models.config_models import InputProfile
+
+        mgr = FakeManager(
+            repair_error=_bt_error("force_repair: pair stage failed: PIN rejected")
+        )
+        profile = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
+            proven_pin="1234",
+        )
+        service, _, _ = build_service(manager=mgr, input_profile=profile)
+        await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="9999", confirm_repair=True
+        )
+        mgr.repair_error = None
+        await service.verify(mac_address="AA:BB:CC:DD:EE:FF", pin="1234")
+
+        with pytest.raises(VerificationRefusedError) as exc:
+            await service.verify(mac_address="AA:BB:CC:DD:EE:FF", pin="5555")
+        assert exc.value.code == "repair_confirmation_required"
+
+
+class TestTheDataWindowDoesNotSpin:
+    """The window is meant to be spent waiting, not burning a core.
+
+    Its pacing comes from the socket's own `read_timeout`, so the only
+    outcome that should loop is a timeout. A closed peer or a dead
+    socket returns instantly, and retrying either would spin for the
+    whole three seconds.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_closed_peer_ends_the_window_immediately(self) -> None:
+        class CountingSocket(FakeSocket):
+            def __init__(self) -> None:
+                super().__init__([])
+                self.reads = 0
+
+            def recv(self, size: int) -> bytes:
+                self.reads += 1
+                return b""
+
+        sock = CountingSocket()
+        service, _, _ = build_service(sock=sock, data_window_seconds=5.0)
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+
+        assert sock.reads == 1
+        data = next(s for s in result.stages if s.stage == VerificationStage.DATA)
+        assert data.code == "no_data"
+
+    @pytest.mark.asyncio
+    async def test_a_dead_socket_ends_the_window_immediately(self) -> None:
+        class BrokenSocket(FakeSocket):
+            def __init__(self) -> None:
+                super().__init__([])
+                self.reads = 0
+
+            def recv(self, size: int) -> bytes:
+                self.reads += 1
+                raise OSError(107, "Transport endpoint is not connected")
+
+        sock = BrokenSocket()
+        service, _, _ = build_service(sock=sock, data_window_seconds=5.0)
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+
+        assert sock.reads == 1
+        assert result.verdict == "green"
+
+    @pytest.mark.asyncio
+    async def test_bytes_already_read_still_count_when_the_peer_closes(self) -> None:
+        """Leaving early must not discard what was already received."""
+        service, _, _ = build_service(
+            sock=FakeSocket([b"$GPGGA,junk\r\n", b""]), data_window_seconds=5.0
+        )
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+        data = next(s for s in result.stages if s.stage == VerificationStage.DATA)
+        assert data.code == "non_rtcm_data"

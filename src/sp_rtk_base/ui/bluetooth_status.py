@@ -12,6 +12,16 @@ failed, never to whatever error text the layer below produced; and the
 two **Warning** cases must not share wording, because a silent receiver
 mid-survey and a receiver answering with something that is not RTCM are
 very different evidence about the same configuration.
+
+**On vocabulary in the copy.** ``CONTEXT.md``'s ``_Avoid_`` lists govern
+what *we* call things — in identifiers, logs, and design discussion — so
+that one concept has one name.  They are deliberately not applied to the
+sentences an operator reads: "the **Bond** is lost" and the device is
+"**Stranded**" are precise to us and opaque to someone holding a GPS
+receiver, who knows the word "pairing".  So the copy below says
+"pairing" and "unpaired" on purpose.  What the copy does keep is the
+part that carries meaning rather than jargon: a Red still names its
+Stage, and the two Warnings still refuse to share wording.
 """
 
 from __future__ import annotations
@@ -32,6 +42,13 @@ from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 #: How the status line should be coloured.  These are NiceGUI's own
 #: tone names, so the page can use them directly.
 StatusTone = Literal["positive", "warning", "negative"]
+
+#: Why a Green stopped standing.  A Green dies two ways and the two
+#: must not share wording, for the same reason the two Warnings must
+#: not: an operator who reached for the action and found it gone
+#: needs to know whether the clock ran out or their own edit voided
+#: it.
+GreenLostReason = Literal["expired", "edited"]
 
 
 @dataclass(frozen=True)
@@ -139,9 +156,22 @@ def describe_result(result: VerificationResult) -> StatusLine:
         text = _DATA_WARNING_COPY.get(data.code or "")
         if text is None:
             text = f"Green — connected. {data.message or 'No RTCM seen.'}"
-        return StatusLine(text=text, tone="warning")
+        return StatusLine(text=_with_channel(text, result), tone="warning")
 
-    return StatusLine(text=_GREEN_TEXT, tone="positive")
+    return StatusLine(text=_with_channel(_GREEN_TEXT, result), tone="positive")
+
+
+def _with_channel(text: str, result: VerificationResult) -> str:
+    """Append the RFCOMM channel the socket actually used.
+
+    This is where the removed "RFCOMM Channel" form field went.  The
+    field was a control that controlled nothing, but the channel itself
+    is still worth reporting — so it is stated as a fact about what
+    happened rather than offered as a choice the operator does not have.
+    """
+    if result.rfcomm_channel is None:
+        return text
+    return f"{text} (RFCOMM channel {result.rfcomm_channel})"
 
 
 def describe_refusal(exc: VerificationRefusedError) -> StatusLine:
@@ -204,6 +234,39 @@ class HeldGreen:
         if self.result.verdict != "green":
             raise ValueError("Only a Green can be held")
 
+    def loss_reason(
+        self, mac_address: str, pin: str, now: datetime | None = None
+    ) -> GreenLostReason | None:
+        """Why this Green no longer stands, or ``None`` while it does.
+
+        The caller needs the *reason*, not just the fact: "the clock ran
+        out" and "you changed the PIN" are different facts with
+        different sentences, and deciding which is which belongs here
+        rather than being re-derived at each call site.
+
+        An edit is reported ahead of an expiry when both are true. The
+        edit is the more useful thing to say: the values on screen are
+        no longer the ones that were tested, and that would still be so
+        however much time was left.
+
+        Args:
+            mac_address: The MAC currently in the form.
+            pin: The PIN currently in the form, as typed.
+            now: Override for the current moment; defaults to now (UTC).
+
+        Returns:
+            ``"edited"``, ``"expired"``, or ``None`` if still valid.
+        """
+        # Normalised, so that typing a space into the PIN field — or
+        # clearing it when the relay default was what got proven — is
+        # not mistaken for a change of PIN.
+        if self.mac_address != mac_address or self.pin != normalize_pin(pin):
+            return "edited"
+        moment = now or datetime.now(timezone.utc)
+        if moment >= self.result.expires_at:
+            return "expired"
+        return None
+
     def is_valid_for(
         self, mac_address: str, pin: str, now: datetime | None = None
     ) -> bool:
@@ -218,10 +281,30 @@ class HeldGreen:
             ``True`` while the Green is unexpired and still describes
             these values.
         """
-        moment = now or datetime.now(timezone.utc)
-        if moment >= self.result.expires_at:
-            return False
-        # Normalised, so that typing a space into the PIN field — or
-        # clearing it when the relay default was what got proven — is
-        # not mistaken for a change of PIN.
-        return self.mac_address == mac_address and self.pin == normalize_pin(pin)
+        return self.loss_reason(mac_address, pin, now) is None
+
+
+_GREEN_LOST_COPY: dict[str, str] = {
+    "expired": ("That test result has expired. Test again before starting."),
+    "edited": (
+        "You changed the device or PIN, so the last test no longer "
+        "describes what is in the form. Test again."
+    ),
+}
+
+
+def describe_green_lost(reason: GreenLostReason) -> StatusLine:
+    """Say why the Green — and the action it offered — is gone.
+
+    Said out loud rather than letting the row silently vanish: an
+    operator who reached for "Save & Start now →" and found it missing
+    would otherwise have no way to tell an expiry from an edit, or
+    either from never having been offered one.
+
+    Args:
+        reason: Whether the Green aged out or was voided by an edit.
+
+    Returns:
+        The status line and its tone.
+    """
+    return StatusLine(text=_GREEN_LOST_COPY[reason], tone="warning")

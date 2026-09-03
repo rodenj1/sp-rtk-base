@@ -22,6 +22,7 @@ from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 from sp_rtk_base.ui.bluetooth_status import (
     HeldGreen,
     countdown_label,
+    describe_green_lost,
     describe_refusal,
     describe_result,
 )
@@ -291,3 +292,97 @@ class TestHeldGreen:
                 mac_address="AA:BB:CC:DD:EE:FF",
                 pin="1234",
             )
+
+
+class TestWhyAGreenWentAway:
+    """A Green dies two ways, and the two must not share wording.
+
+    The same rule the two Warnings follow: an operator who reached for
+    "Save & Start now →" and found it gone needs to know whether the
+    clock ran out or their own edit voided it, because the remedies read
+    differently even though both end in "test again".
+    """
+
+    def test_expiry_says_the_result_aged_out(self) -> None:
+        line = describe_green_lost("expired")
+        assert line.tone == "warning"
+        assert "expired" in line.text.lower()
+
+    def test_an_edit_says_the_values_changed(self) -> None:
+        line = describe_green_lost("edited")
+        assert line.tone == "warning"
+        assert "changed" in line.text.lower()
+
+    def test_the_two_reasons_do_not_share_wording(self) -> None:
+        assert describe_green_lost("expired").text != describe_green_lost("edited").text
+
+    def test_both_tell_the_operator_to_test_again(self) -> None:
+        for reason in ("expired", "edited"):
+            assert "test again" in describe_green_lost(reason).text.lower()
+
+
+class TestWhichWayTheGreenDied:
+    """`HeldGreen` owns the discrimination, so no call site re-derives it."""
+
+    def _held(self) -> HeldGreen:
+        return HeldGreen(
+            result=_result(),  # type: ignore[arg-type]
+            mac_address="AA:BB:CC:DD:EE:FF",
+            pin="1234",
+        )
+
+    def test_a_standing_green_has_no_loss_reason(self) -> None:
+        assert self._held().loss_reason("AA:BB:CC:DD:EE:FF", "1234") is None
+
+    def test_a_changed_pin_reads_as_edited(self) -> None:
+        assert self._held().loss_reason("AA:BB:CC:DD:EE:FF", "9999") == "edited"
+
+    def test_a_changed_mac_reads_as_edited(self) -> None:
+        assert self._held().loss_reason("11:22:33:44:55:66", "1234") == "edited"
+
+    def test_running_out_of_time_reads_as_expired(self) -> None:
+        held = self._held()
+        after = held.result.expires_at + timedelta(seconds=1)
+        assert held.loss_reason("AA:BB:CC:DD:EE:FF", "1234", now=after) == "expired"
+
+    def test_an_edit_is_reported_ahead_of_an_expiry(self) -> None:
+        """Both true at once: the edit is the more useful thing to say.
+
+        The values on screen are not the ones that were tested, and that
+        stays true however much time was left on the clock.
+        """
+        held = self._held()
+        after = held.result.expires_at + timedelta(seconds=1)
+        assert held.loss_reason("AA:BB:CC:DD:EE:FF", "9999", now=after) == "edited"
+
+
+class TestTheChannelReachesTheOperator:
+    """Where the removed "RFCOMM Channel" form field went.
+
+    The field was a control that controlled nothing, so it went — but
+    the channel the socket actually used is still worth reporting, as a
+    fact about what happened rather than a choice on offer.
+    """
+
+    def test_a_green_names_the_channel_it_used(self) -> None:
+        line = describe_result(_result())  # type: ignore[arg-type]
+        assert "RFCOMM channel 1" in line.text
+
+    def test_a_warning_green_names_it_too(self) -> None:
+        line = describe_result(  # type: ignore[arg-type]
+            _result(
+                data=StageResult(
+                    stage=VerificationStage.DATA,
+                    status=StageStatus.WARNING,
+                    code="no_data",
+                )
+            )
+        )
+        assert "RFCOMM channel 1" in line.text
+
+    def test_a_red_that_never_connected_names_no_channel(self) -> None:
+        """There is no channel to report when the socket never opened."""
+        line = describe_result(  # type: ignore[arg-type]
+            _failed(VerificationStage.PAIR, "pin_rejected")
+        )
+        assert "RFCOMM" not in line.text

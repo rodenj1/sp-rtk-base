@@ -281,11 +281,11 @@ class InputProfile(BaseModel):
     # PIN carries no expiry and is cleared only when the PIN or the MAC
     # changes.  Collapsing the two would let a profile saved yesterday
     # read as Green today.
-    verified_pin: str | None = Field(
+    proven_pin: str | None = Field(
         default=None,
         description="PIN last exercised against a fresh Bond with this device",
     )
-    pin_verified_at: datetime | None = Field(
+    pin_proven_at: datetime | None = Field(
         default=None,
         description="When that PIN was exercised (UTC)",
     )

@@ -33,6 +33,22 @@ DEFAULT_CONFIG_FILENAME = "config.yaml"
 ENV_CONFIG_PATH = "SP_RTK_BASE_CONFIG"
 
 
+def _without_proof(profile: InputProfile) -> InputProfile:
+    """Return *profile* with any Proven-PIN record dropped.
+
+    Dropping is a non-event: the save still succeeds and loses no
+    configuration.  The PIN simply reads unproven, and the next
+    Verification re-proves it.
+
+    Args:
+        profile: The profile to strip.
+
+    Returns:
+        A copy carrying no Proven PIN.
+    """
+    return profile.model_copy(update={"proven_pin": None, "pin_proven_at": None})
+
+
 def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
     """Drop ``base_positions`` entries that fail individual validation.
 
@@ -281,11 +297,11 @@ class ConfigService:
 
         A submitted record is kept only when all three hold:
 
-        * it is **fresh** — a ``pin_verified_at`` older than the Green's
+        * it is **fresh** — a ``pin_proven_at`` older than the Green's
           lifetime is rejected rather than silently trusted, or the
           30-second promise would be enforced by the page alone and the
           API would become a way to write a record that was never proven;
-        * its ``verified_pin`` equals the PIN being saved; and
+        * its ``proven_pin`` equals the PIN being saved; and
         * *corroborate* agrees.  The server believes only proof it
           created itself, so a record it cannot corroborate is dropped.
           Dropping is a non-event — the save still succeeds and loses no
@@ -319,22 +335,20 @@ class ConfigService:
     ) -> InputProfile:
         """Decide which Proven-PIN record survives *incoming*."""
         if incoming.source != "bluetooth":
-            return incoming.model_copy(
-                update={"verified_pin": None, "pin_verified_at": None}
-            )
+            return _without_proof(incoming)
 
         pin = normalize_pin(incoming.config.get("pin"))
         mac = incoming.config.get("mac_address")
 
-        if incoming.verified_pin is not None:
+        if incoming.proven_pin is not None:
             fresh = (
-                incoming.pin_verified_at is not None
+                incoming.pin_proven_at is not None
                 and (
-                    datetime.now(timezone.utc) - incoming.pin_verified_at
+                    datetime.now(timezone.utc) - incoming.pin_proven_at
                 ).total_seconds()
                 <= GREEN_TTL_SECONDS
             )
-            matches = normalize_pin(incoming.verified_pin) == pin
+            matches = normalize_pin(incoming.proven_pin) == pin
             agreed = (
                 corroborate is not None
                 and isinstance(mac, str)
@@ -348,20 +362,18 @@ class ConfigService:
         if (
             stored is not None
             and stored.source == "bluetooth"
-            and stored.verified_pin is not None
+            and stored.proven_pin is not None
             and normalize_pin(stored.config.get("pin")) == pin
             and stored.config.get("mac_address") == mac
         ):
             return incoming.model_copy(
                 update={
-                    "verified_pin": stored.verified_pin,
-                    "pin_verified_at": stored.pin_verified_at,
+                    "proven_pin": stored.proven_pin,
+                    "pin_proven_at": stored.pin_proven_at,
                 }
             )
 
-        return incoming.model_copy(
-            update={"verified_pin": None, "pin_verified_at": None}
-        )
+        return _without_proof(incoming)
 
     # ------------------------------------------------------------------
     # Application settings

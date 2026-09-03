@@ -161,13 +161,13 @@ class TestPutInputCannotMintAProvenPin:
             json={
                 "source": "bluetooth",
                 "config": {"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-                "verified_pin": "1234",
+                "proven_pin": "1234",
             },
         )
         assert resp.status_code == 200
         saved = mock_config_service.get_input_config()
         assert saved is not None
-        assert saved.verified_pin is None
+        assert saved.proven_pin is None
 
     def test_an_unrelated_edit_preserves_an_existing_record(
         self,
@@ -179,8 +179,8 @@ class TestPutInputCannotMintAProvenPin:
             InputProfile(
                 source="bluetooth",
                 config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-                verified_pin="1234",
-                pin_verified_at=datetime.now(timezone.utc),
+                proven_pin="1234",
+                pin_proven_at=datetime.now(timezone.utc),
             ),
             corroborate=lambda mac, pin: True,
         )
@@ -199,7 +199,7 @@ class TestPutInputCannotMintAProvenPin:
 
         saved = mock_config_service.get_input_config()
         assert saved is not None
-        assert saved.verified_pin == "1234"
+        assert saved.proven_pin == "1234"
 
     def test_changing_the_mac_clears_the_record(
         self,
@@ -211,8 +211,8 @@ class TestPutInputCannotMintAProvenPin:
             InputProfile(
                 source="bluetooth",
                 config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
-                verified_pin="1234",
-                pin_verified_at=datetime.now(timezone.utc),
+                proven_pin="1234",
+                pin_proven_at=datetime.now(timezone.utc),
             ),
             corroborate=lambda mac, pin: True,
         )
@@ -227,4 +227,4 @@ class TestPutInputCannotMintAProvenPin:
 
         saved = mock_config_service.get_input_config()
         assert saved is not None
-        assert saved.verified_pin is None
+        assert saved.proven_pin is None

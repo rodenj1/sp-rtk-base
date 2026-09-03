@@ -35,9 +35,12 @@ whatever error text the layer below produced.
 _Avoid_: step, phase, check
 
 **Green**:
-A Verification outcome meaning Save and Start will connect **right now**. A
-Green is a promise with a short life: it expires on its own and is void the
-moment any field is edited. It is never persisted.
+A Verification outcome meaning Save and Start will connect **and will
+reconnect after the Bond is lost**. The second half is the load-bearing one: a
+Bond already in place carries the connection whatever the configured PIN says,
+so only a PIN exercised against a fresh Bond promises anything about the next
+reboot or eviction. A Green is a promise with a short life: it expires on its
+own and is void the moment any field is edited. It is never persisted.
 _Avoid_: success, passed, verified, OK
 
 **Warning**:
@@ -68,3 +71,10 @@ Discarding an existing Bond so that a PIN can be exercised against a fresh
 one. The only way to make a PIN Proven when a Bond already exists, and
 destructive enough that it is done only when the configured PIN is unproven.
 _Avoid_: re-pair, reset pairing
+
+**Stranded**:
+A device left with no Bond by a Verification that removed the old one and
+could not build a new one. Named because it is damage the application caused,
+not a neutral state a device may innocently be in. Recovered by correcting the
+PIN and running the Verification again, which simply pairs.
+_Avoid_: unbonded, unpaired, broken pairing

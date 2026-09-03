@@ -22,6 +22,8 @@ from sp_rtk_base_relay.config import (
     TcpServerDestinationConfig,
 )
 
+from sp_rtk_base.models.bluetooth_models import normalize_pin
+
 # ---------------------------------------------------------------------------
 # Filter profile
 # ---------------------------------------------------------------------------
@@ -254,6 +256,54 @@ class InputProfile(BaseModel):
 
     source: Literal["serial", "usb_serial", "tcp", "bluetooth"]
     config: dict[str, Any] = Field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Proven PIN — a durable record, deliberately NOT in ``config``
+    # ------------------------------------------------------------------
+    #
+    # A *Proven PIN* is one that has actually been exercised against a
+    # Bond with this device, as opposed to one merely typed into the
+    # form.  It is what the Verification reads to decide whether a
+    # force-repair is needed, so it has to outlive the process.
+    #
+    # These are **sibling** fields rather than entries in ``config``,
+    # and that placement is load-bearing rather than stylistic:
+    # ``input_factory`` builds the relay's config as
+    # ``BluetoothConfig(**cfg)``, so any unrecognised key inside
+    # ``config`` raises ``TypeError`` at *relay start* — long after the
+    # save that introduced it appeared to succeed.  As siblings they
+    # are safe by construction, because :meth:`to_relay_config` copies
+    # ``self.config`` only and has no way to reach them.  (The "RFCOMM
+    # Channel" field was dropped for exactly this reason.)
+    #
+    # Note this is *not* a Green: a Green promises "Save and Start will
+    # connect right now", lives 30 s, and is never persisted.  A Proven
+    # PIN carries no expiry and is cleared only when the PIN or the MAC
+    # changes.  Collapsing the two would let a profile saved yesterday
+    # read as Green today.
+    verified_pin: str | None = Field(
+        default=None,
+        description="PIN last exercised against a fresh Bond with this device",
+    )
+    pin_verified_at: datetime | None = Field(
+        default=None,
+        description="When that PIN was exercised (UTC)",
+    )
+
+    @model_validator(mode="after")
+    def _normalise_bluetooth_pin(self) -> InputProfile:
+        """Normalise the PIN for Bluetooth profiles, on every path.
+
+        The UI save, ``PUT /api/input`` and profile import all land
+        here, so a blank field cannot persist as ``""`` on one path and
+        ``"0000"`` on another.  Without this, Test Connection and Save
+        could send different PINs for the same form state — a Green
+        describing a pairing Save would not reproduce, which is the
+        exact failure class the Verification exists to eliminate.
+        """
+        if self.source == "bluetooth":
+            self.config["pin"] = normalize_pin(self.config.get("pin"))
+        return self
 
     def to_relay_config(self) -> InputConfig:
         """Convert to sp-rtk-base-relay InputConfig dataclass.

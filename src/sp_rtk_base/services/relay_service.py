@@ -151,6 +151,26 @@ class RelayService:
         if self._engine is not None and self._engine.is_running:
             raise ServiceError("Relay engine is already running")
 
+        # Best-effort stale-handle release, on *every* path into the
+        # relay.  This used to live in ``init_services`` behind the
+        # auto-start check, so the four manual Start paths never got it
+        # — which would have made the Verification more forgiving than
+        # the Start it predicts, handing out a Green for a Start that
+        # then failed on a handle BlueZ was still holding.
+        if input_config.source == "bluetooth":
+            from sp_rtk_base.services import bluetooth_service
+
+            mac = bluetooth_service.mac_from_input_config(input_config.config)
+            if mac is not None:
+                try:
+                    await bluetooth_service.release_stale_bluetooth_handle(mac)
+                except Exception as exc:
+                    logger.debug(
+                        "Stale-handle release for %s raised (%s); starting anyway",
+                        mac,
+                        exc,
+                    )
+
         # Recreate engine if input config changed or first start
         if self._engine is None or self._input_config != input_config:
             self._engine = RelayEngine(input_config)

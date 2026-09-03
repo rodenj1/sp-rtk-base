@@ -424,6 +424,7 @@ def input_page() -> None:
                     async def _test_bluetooth_connection() -> None:
                         """Test pair + trust + RFCOMM discovery."""
                         mac = str(addr_input.value or "").strip()
+                        pin = str(pin_input.value or "").strip() or "0000"
                         if not mac:
                             ui.notify(
                                 "Enter a device address first",
@@ -445,11 +446,17 @@ def input_page() -> None:
                                 )
                                 bt_state["bt_manager"] = mgr
 
-                            # ensure_device_ready: pair + trust + RFCOMM
+                            # ensure_device_ready: pair + trust + RFCOMM.
+                            # Keyword-only: relay v3.0.0 made ``pin`` the
+                            # first required positional, so the previous
+                            # positional ``(None, mac)`` call would now
+                            # bind ``pin=None, device_name=<the MAC>``
+                            # and name-scan for a MAC string.
                             result_mac, channel = await asyncio.to_thread(
                                 mgr.ensure_device_ready,  # type: ignore[union-attr]
-                                None,  # device_name
-                                mac,  # mac_address
+                                pin=pin,
+                                device_name=None,
+                                mac_address=mac,
                             )
 
                             # Auto-fill channel

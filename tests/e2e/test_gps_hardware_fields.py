@@ -137,6 +137,16 @@ def test_hardware_extras_are_editable_and_apply(
     _expect_checked(spi, checked=True)  # on by default on the fake driver
     spi.click()
 
+    # Wait for *this* edit's own effect, exactly as the three edits
+    # above do.  The obvious wait — the sync badge going dirty — is a
+    # no-op here: the meas-rate, dyn-model and elevation edits already
+    # made it say "unapplied change", so it is satisfied the instant it
+    # is evaluated and proves nothing about whether the SPI click
+    # landed.  That left the click racing the elevation edit's still
+    # in-flight section rebuild, and on a slow runner it lost: the
+    # click hit a node about to be torn down, SPI stayed on, and the
+    # post-Apply assertion below saw `true`.
+    _expect_checked(spi, checked=False)
     expect(sync_badge).to_contain_text("unapplied change")
 
     page.get_by_role("button", name="Apply").click()

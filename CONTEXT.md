@@ -31,7 +31,9 @@ _Avoid_: test, connection test, probe
 One named, operator-meaningful step of a Verification. The stage names are a
 single shared vocabulary — the UI, the logs, and the tests all use the same
 ones, so that a failure can be described by *which step* failed rather than by
-whatever error text the layer below produced.
+whatever error text the layer below produced. A step earns the name only if it
+can actually fail: a step whose outcome is structurally fixed reports nothing
+and teaches the operator to stop reading stages.
 _Avoid_: step, phase, check
 
 **Green**:
@@ -45,8 +47,13 @@ _Avoid_: success, passed, verified, OK
 
 **Warning**:
 A stage that did not pass but does not void a Green, because failing on it
-would produce a false Red. A receiver that is mid-survey and not yet emitting
-is the motivating case.
+would produce a false Red. Two unlike cases share the outcome and must not
+share wording: a receiver that is **silent** because it is mid-survey — the
+motivating case, and benign — versus one that is **answering with something
+that is not RTCM**, which is benign only while a receiver is still emitting
+NMEA or a boot banner, and otherwise means the wrong device was reached. The
+second is weaker evidence of a working configuration than the first, and says
+so in as many words.
 
 **Red**:
 A Verification outcome meaning the connect path failed, always attributed to

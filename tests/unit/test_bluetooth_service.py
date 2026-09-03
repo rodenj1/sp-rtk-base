@@ -983,3 +983,29 @@ class TestDegradedAttribution:
         )
         data = next(s for s in result.stages if s.stage == VerificationStage.DATA)
         assert data.code == "no_data"
+
+
+class TestTheChannelIsReportedAsAConnectDetail:
+    """#129 dropped the `channel` Stage and #131 removed the form field.
+
+    Both for the same reason: `discover_rfcomm_channel` is a stub
+    `return 1`, so there is nothing to choose and nothing that can fail.
+    Which channel the socket actually used is still worth saying.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_connect_stage_names_the_channel(self) -> None:
+        service, _, _ = build_service()
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+        connect = next(s for s in result.stages if s.stage == VerificationStage.CONNECT)
+        assert connect.message == "RFCOMM channel 1"
+
+    @pytest.mark.asyncio
+    async def test_the_result_still_carries_the_channel_for_api_consumers(self) -> None:
+        service, _, _ = build_service()
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+        assert result.rfcomm_channel == 1

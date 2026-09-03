@@ -593,8 +593,16 @@ class BluetoothVerificationService:
                 logger.debug("Ignoring error closing a socket that never opened")
             return None
 
+        # The channel is reported as a *detail on this Stage* rather
+        # than as its own Stage or a form field: issue #129 dropped the
+        # `channel` Stage because `discover_rfcomm_channel` is a stub
+        # `return 1` that cannot fail, and #131 removed the form field
+        # for the same reason. It is still worth saying which channel
+        # the socket actually used.
         recorded[VerificationStage.CONNECT] = StageResult(
-            stage=VerificationStage.CONNECT, status=StageStatus.PASSED
+            stage=VerificationStage.CONNECT,
+            status=StageStatus.PASSED,
+            message=f"RFCOMM channel {channel}",
         )
         return sock
 

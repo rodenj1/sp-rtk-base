@@ -22,6 +22,7 @@ import logging
 from fastapi import FastAPI
 
 from sp_rtk_base import __version__
+from sp_rtk_base.api.bluetooth import router as bluetooth_router
 from sp_rtk_base.api.config import router as config_router
 from sp_rtk_base.api.destinations import router as destinations_router
 from sp_rtk_base.api.device import router as device_router
@@ -75,6 +76,7 @@ def create_api_app() -> FastAPI:
     api.include_router(device_router)
     api.include_router(network_router)
     api.include_router(profiles_router)
+    api.include_router(bluetooth_router)
     return api
 
 

@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
+from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.event_bridge import EventBridge
@@ -110,6 +111,12 @@ metrics_service: MetricsService = MetricsService()
 device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
+bluetooth_verification_service: BluetoothVerificationService = (
+    BluetoothVerificationService(
+        relay_service=relay_service,
+        config_service=config_service,
+    )
+)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +178,20 @@ def get_network_service() -> NetworkService:
     return network_service
 
 
+def get_bluetooth_verification_service() -> BluetoothVerificationService:
+    """Get the singleton BluetoothVerificationService instance.
+
+    A singleton because the Proven-PIN memo and the one-at-a-time slot
+    are process-wide facts: a per-request service would forget what it
+    had proven and would let two Verifications race BlueZ's default
+    agent.
+
+    Returns:
+        The application's BluetoothVerificationService instance.
+    """
+    return bluetooth_verification_service
+
+
 def get_profile_store() -> ProfileStore:
     """Get the singleton ProfileStore instance.
 
@@ -183,73 +204,6 @@ def get_profile_store() -> ProfileStore:
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
-
-
-async def _release_stale_bluetooth_handle(mac_address: str) -> None:
-    """Best-effort: disconnect a stale BlueZ-side connection for *mac_address*.
-
-    Called from :func:`init_services` before the relay engine is asked to
-    open the same Bluetooth source.  If a previous instance exited
-    uncleanly (``SIGKILL``, OOM, power-loss during shutdown) BlueZ can
-    still believe the GPS receiver is connected — opening RFCOMM will
-    then fail with ``Address already in use`` or hang waiting for an
-    already-leased channel.
-
-    This helper *only* asks BlueZ to drop the connection on its side;
-    it does **not** un-pair, un-trust, or remove the device.  Errors
-    are swallowed and logged — startup must not fail just because
-    we couldn't pre-clean a handle that may not even have been stuck.
-
-    Args:
-        mac_address: The Bluetooth MAC of the configured GPS.
-    """
-    try:
-        # Imported lazily so test environments that don't have dbus-fast
-        # installed (CI, macOS dev boxes) don't pay the import cost or
-        # fail at module load.
-        from sp_rtk_base_relay.core.bluetooth_manager import BluetoothManager
-    except ImportError:
-        logger.debug(
-            "BluetoothManager unavailable; skipping stale-handle release for %s",
-            mac_address,
-        )
-        return
-
-    mgr: BluetoothManager | None = None
-    try:
-        mgr = BluetoothManager()
-        # disconnect_device is sync-but-blocks-on-D-Bus; push it off-loop
-        # so a wedged BlueZ can't stall startup.  A short budget is fine:
-        # if BlueZ doesn't ack quickly, the handle wasn't really held.
-        import asyncio
-
-        await asyncio.wait_for(
-            asyncio.to_thread(mgr.disconnect_device, mac_address),
-            timeout=5.0,
-        )
-        logger.info(
-            "Pre-disconnected stale Bluetooth handle for %s on startup",
-            mac_address,
-        )
-    except TimeoutError:
-        logger.warning(
-            "Timed out releasing stale Bluetooth handle for %s; "
-            "continuing startup anyway",
-            mac_address,
-        )
-    except Exception as exc:
-        # Most common cause: device wasn't connected — entirely fine.
-        logger.debug(
-            "Stale-handle release for %s skipped (%s); continuing startup",
-            mac_address,
-            exc,
-        )
-    finally:
-        if mgr is not None:
-            try:
-                mgr.close()
-            except Exception:
-                logger.debug("BluetoothManager.close() raised; ignoring", exc_info=True)
 
 
 async def _auto_start_with_retry(
@@ -338,9 +292,10 @@ async def init_services() -> None:
     rest of application startup (FastAPI routes, NiceGUI pages) is not
     blocked while the relay engine tries to come up.
 
-    Before scheduling auto-start, also releases any stale Bluetooth
-    handle a previous unclean shutdown may have left behind (see
-    :func:`_release_stale_bluetooth_handle`).
+    The stale Bluetooth handle a previous unclean shutdown may have
+    left behind is *not* released here any more: that now happens in
+    :meth:`RelayService.start_relay`, so every path into the relay gets
+    it rather than auto-start alone.
     """
     global relay_service, config_service, event_bridge, device_service
     global auto_start_task
@@ -362,16 +317,6 @@ async def init_services() -> None:
             "Auto-start enabled but no input source configured — skipping",
         )
         return
-
-    # Bug D — best-effort: if a previous instance exited uncleanly
-    # we may need to ask BlueZ to drop a stale handle before the
-    # relay engine tries to claim the same RFCOMM channel.
-    if config.input.source == "bluetooth":
-        mac = config.input.config.get("mac_address") or config.input.config.get(
-            "address"
-        )
-        if isinstance(mac, str) and mac:
-            await _release_stale_bluetooth_handle(mac)
 
     dest_configs = [d.to_relay_config() for d in config.destinations if d.enabled]
     input_config = config.input.to_relay_config()

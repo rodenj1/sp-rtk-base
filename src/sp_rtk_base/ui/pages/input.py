@@ -21,13 +21,27 @@ from typing import Any
 
 from nicegui import ui
 
+from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.config_models import InputProfile
-from sp_rtk_base.services import get_config_service
+from sp_rtk_base.services import (
+    get_bluetooth_verification_service,
+    get_config_service,
+    get_relay_service,
+)
+from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.ui.bluetooth_status import (
+    GreenLostReason,
+    HeldGreen,
+    StatusLine,
+    countdown_label,
+    describe_green_lost,
+    describe_refusal,
+    describe_result,
+)
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import (
     FieldDef,
-    numeric_validation,
     port_validation,
     required,
 )
@@ -73,6 +87,8 @@ def _try_import_bluetooth_manager() -> type | None:
 def input_page() -> None:
     """Render the input source configuration page."""
     config_svc = get_config_service()
+    verification_svc = get_bluetooth_verification_service()
+    relay_svc = get_relay_service()
 
     with page_layout("Input"):
         ui.label("Input Source").classes("text-h4 text-white q-mb-md")
@@ -107,15 +123,17 @@ def input_page() -> None:
             serial_port_select: dict[str, Any] = {}  # "widget" key
             serial_baud_select: dict[str, Any] = {}
 
-            # For bluetooth: address input + channel input + scan results
+            # For bluetooth: address + PIN inputs, scan results, and the
+            # Green currently in hand (a :class:`HeldGreen`, or None).
             bt_state: dict[str, Any] = {
                 "address_input": None,
-                "channel_input": None,
                 "pin_input": None,
                 "bt_manager": None,
                 "test_status_label": None,
                 "scan_container": None,
                 "scan_results": [],
+                "held_green": None,
+                "green_timer": None,
             }
 
             # ============================================================
@@ -376,13 +394,23 @@ def input_page() -> None:
 
                         scan_btn.on_click(_scan_bluetooth)
 
-                # ---- Address + Channel + PIN fields ----
+                # ---- Address + PIN fields ----
+                #
+                # There is no "RFCOMM Channel" field.  It was removed in
+                # #131: it was never persisted, it read a config key
+                # nothing ever wrote (so it always showed 1), and the
+                # relay's ``BluetoothConfig`` has no channel parameter,
+                # so the value could not have been honoured even if it
+                # had been saved.  ``discover_rfcomm_channel`` is a stub
+                # ``return 1``, so there is nothing for an operator to
+                # choose.  The channel a Verification actually used is
+                # reported as a detail on its ``connect`` Stage — and on
+                # ``rfcomm_channel`` in the API response — rather than
+                # as a field that pretends to be a control.
                 saved_address = ""
-                saved_channel = "1"
                 saved_pin = "0000"
                 if current_input and current_input.source == "bluetooth":
                     saved_address = str(current_input.config.get("mac_address", ""))
-                    saved_channel = str(current_input.config.get("channel", "1"))
                     saved_pin = str(current_input.config.get("pin", "0000"))
 
                 addr_input = ui.input(
@@ -393,20 +421,12 @@ def input_page() -> None:
                 ).classes("w-full")
                 bt_state["address_input"] = addr_input
 
-                with ui.row().classes("w-full gap-4"):
-                    chan_input = ui.input(
-                        "RFCOMM Channel",
-                        value=saved_channel,
-                        validation=numeric_validation("Channel"),
-                    ).classes("col-grow")
-                    bt_state["channel_input"] = chan_input
-
-                    pin_input = ui.input(
-                        "PIN Code",
-                        value=saved_pin,
-                        placeholder="0000",
-                    ).classes("col-grow")
-                    bt_state["pin_input"] = pin_input
+                pin_input = ui.input(
+                    "PIN Code",
+                    value=saved_pin,
+                    placeholder="0000",
+                ).classes("w-full")
+                bt_state["pin_input"] = pin_input
 
                 # ---- Test Connection section ----
                 if bt_available:
@@ -421,79 +441,228 @@ def input_page() -> None:
                     test_status_label.set_visibility(False)
                     bt_state["test_status_label"] = test_status_label
 
-                    async def _test_bluetooth_connection() -> None:
-                        """Test pair + trust + RFCOMM discovery."""
-                        mac = str(addr_input.value or "").strip()
-                        pin = str(pin_input.value or "").strip() or "0000"
+                    # The Green's remaining life and the action it
+                    # entitles the operator to, shown together: the
+                    # countdown exists to tell them how long the offer
+                    # stands, so it belongs beside the offer.
+                    with ui.row().classes(
+                        "gap-2 items-center q-mt-xs"
+                    ) as green_actions_row:
+                        save_start_btn = ui.button(
+                            "Save & Start now →", icon="play_arrow"
+                        ).props("color=positive flat dense")
+                        countdown_lbl = ui.label("").classes("text-caption text-grey-7")
+                    green_actions_row.set_visibility(False)
+
+                    def _current_values() -> tuple[str, str]:
+                        """The MAC and PIN as they stand in the form now."""
+                        return (
+                            str(addr_input.value or "").strip(),
+                            str(pin_input.value or ""),
+                        )
+
+                    def _clear_green() -> None:
+                        """Drop the held Green and hide what it entitled."""
+                        bt_state["held_green"] = None
+                        green_actions_row.set_visibility(False)
+
+                    def _green_loss_reason() -> GreenLostReason | None:
+                        """Why the held Green no longer stands, if it doesn't."""
+                        held = bt_state.get("held_green")
+                        if held is None:
+                            return None
+                        mac, pin = _current_values()
+                        return held.loss_reason(mac, pin)
+
+                    def _tick_green() -> None:
+                        """Refresh the countdown; retire the Green when void.
+
+                        Runs once a second so expiry is visible.  Edits
+                        are handled by the field handlers below too, so
+                        an edited Green dies at once rather than up to a
+                        second later.
+                        """
+                        held = bt_state.get("held_green")
+                        if held is None:
+                            return
+                        reason = _green_loss_reason()
+                        if reason is not None:
+                            _lose_green(reason)
+                            return
+                        label = countdown_label(held.result.expires_at)
+                        if label is not None:
+                            countdown_lbl.text = f"expires in {label}"
+
+                    def _lose_green(reason: GreenLostReason) -> None:
+                        """Retire the Green and say which way it died.
+
+                        The two causes get different sentences for the
+                        same reason the two Warnings do: "the clock ran
+                        out" and "you changed the PIN" are different
+                        facts, and an operator who reached for "Save &
+                        Start now →" and found it gone needs to know
+                        which one happened.
+                        """
+                        _clear_green()
+                        _set_status(describe_green_lost(reason))
+
+                    def _on_field_edited() -> None:
+                        """Any edit to the MAC or PIN voids the Green.
+
+                        The Green promises that Save and Start will
+                        connect *with these values*; once they change it
+                        is a promise about something the operator is no
+                        longer looking at.
+                        """
+                        reason = _green_loss_reason()
+                        if reason is not None:
+                            _lose_green(reason)
+
+                    addr_input.on("update:model-value", lambda _: _on_field_edited())
+                    pin_input.on("update:model-value", lambda _: _on_field_edited())
+
+                    # Switching source away and back rebuilds this whole
+                    # section, so cancel the previous tick explicitly
+                    # rather than trusting the container teardown to
+                    # collect it.  A leaked timer would keep writing to
+                    # the labels of a section that no longer exists,
+                    # once a second, for the life of the page.
+                    prior_timer = bt_state.get("green_timer")
+                    if prior_timer is not None:
+                        try:
+                            prior_timer.cancel()
+                        except Exception:
+                            logger.debug("Prior Green timer was already cancelled")
+                    bt_state["green_timer"] = ui.timer(1.0, _tick_green)
+
+                    def _set_status(line: StatusLine) -> None:
+                        test_status_label.set_visibility(True)
+                        test_status_label.text = line.text
+                        test_status_label.classes(replace=f"text-{line.tone} q-mt-xs")
+
+                    async def _run_verification(confirm_repair: bool = False) -> None:
+                        """Run a Verification against the form's values.
+
+                        Args:
+                            confirm_repair: The operator has seen the
+                                force-repair dialog and agreed.
+                        """
+                        mac, pin = _current_values()
                         if not mac:
-                            ui.notify(
-                                "Enter a device address first",
-                                type="warning",
-                            )
+                            ui.notify("Enter a device address first", type="warning")
                             return
 
+                        _clear_green()
                         test_btn.disable()
                         test_spinner.set_visibility(True)
                         test_status_label.set_visibility(True)
-                        test_status_label.text = "Testing connection..."
+                        test_status_label.text = "Testing connection…"
                         test_status_label.classes(replace="text-warning q-mt-xs")
 
                         try:
-                            mgr = bt_state.get("bt_manager")
-                            if mgr is None:
-                                mgr = await asyncio.to_thread(
-                                    bt_manager_cls  # type: ignore[misc]
-                                )
-                                bt_state["bt_manager"] = mgr
-
-                            # ensure_device_ready: pair + trust + RFCOMM.
-                            # Keyword-only: relay v3.0.0 made ``pin`` the
-                            # first required positional, so the previous
-                            # positional ``(None, mac)`` call would now
-                            # bind ``pin=None, device_name=<the MAC>``
-                            # and name-scan for a MAC string.
-                            result_mac, channel = await asyncio.to_thread(
-                                mgr.ensure_device_ready,  # type: ignore[union-attr]
-                                pin=pin,
-                                device_name=None,
+                            result = await verification_svc.verify(
                                 mac_address=mac,
+                                pin=pin,
+                                confirm_repair=confirm_repair,
                             )
-
-                            # Auto-fill channel
-                            chan_input.value = str(channel)
-
-                            test_status_label.text = (
-                                f"✓ Connection successful! "
-                                f"Device: {result_mac}, "
-                                f"RFCOMM Channel: {channel}"
-                            )
-                            test_status_label.classes(replace="text-positive q-mt-xs")
-                            ui.notify(
-                                "Bluetooth test connection successful!",
-                                type="positive",
-                            )
-
+                        except VerificationRefusedError as exc:
+                            # Three refusals share HTTP 409 with
+                            # unrelated remedies, so branch on the code.
+                            # This one is answered by a dialog rather
+                            # than by the status line, because it is a
+                            # question, not a verdict.
+                            if exc.code == "repair_confirmation_required":
+                                test_status_label.set_visibility(False)
+                                _confirm_repair_dialog.open()
+                            else:
+                                _set_status(describe_refusal(exc))
+                            return
                         except Exception as exc:
-                            logger.warning("Bluetooth test connection failed: %s", exc)
-                            test_status_label.text = f"✗ Connection failed: {exc}"
-                            test_status_label.classes(replace="text-negative q-mt-xs")
-                            ui.notify(
-                                f"Test connection failed: {exc}",
-                                type="negative",
+                            logger.exception("Verification failed unexpectedly")
+                            _set_status(
+                                StatusLine(
+                                    text=f"The test could not run: {exc}",
+                                    tone="negative",
+                                )
                             )
+                            return
                         finally:
-                            # Release Bluetooth resources so relay can use the device
-                            _mgr = bt_state.get("bt_manager")
-                            if _mgr is not None:
-                                try:
-                                    await asyncio.to_thread(_mgr.close)
-                                except Exception:
-                                    pass
-                                bt_state["bt_manager"] = None
                             test_btn.enable()
                             test_spinner.set_visibility(False)
 
-                    test_btn.on_click(_test_bluetooth_connection)
+                        _set_status(describe_result(result))
+
+                        if result.verdict == "green":
+                            bt_state["held_green"] = HeldGreen(
+                                result=result,
+                                mac_address=mac,
+                                pin=normalize_pin(pin),
+                            )
+                            countdown_lbl.text = ""
+                            green_actions_row.set_visibility(True)
+                            _tick_green()
+
+                    with ui.dialog() as _confirm_repair_dialog, ui.card():
+                        ui.label("Re-pair with this PIN?").classes("text-subtitle1")
+                        ui.label(
+                            "This will remove the existing pairing and re-pair "
+                            "with the PIN you entered. If the PIN is wrong, the "
+                            "device will be left unpaired."
+                        ).classes("text-body2")
+                        # Stated here rather than as a standing UI wart:
+                        # this is the only moment the operator can weigh
+                        # the risk, with the device in front of them.
+                        with ui.row().classes("justify-end gap-2 w-full"):
+                            ui.button(
+                                "Cancel",
+                                on_click=_confirm_repair_dialog.close,
+                            ).props("flat")
+
+                            async def _confirm_and_retest() -> None:
+                                _confirm_repair_dialog.close()
+                                await _run_verification(confirm_repair=True)
+
+                            ui.button(
+                                "Remove pairing and test",
+                                on_click=_confirm_and_retest,
+                            ).props("color=negative")
+
+                    async def _save_and_start() -> None:
+                        """Save the Verified config, then start the relay."""
+                        reason = _green_loss_reason()
+                        if reason is not None or bt_state.get("held_green") is None:
+                            _lose_green(reason or "expired")
+                            return
+                        if not _save_input():
+                            return
+                        try:
+                            config = config_svc.get_config()
+                            enabled = [d for d in config.destinations if d.enabled]
+                            if not enabled:
+                                ui.notify(
+                                    "No enabled destinations — add one in "
+                                    "Outputs first",
+                                    type="warning",
+                                )
+                                return
+                            if config.input is None:
+                                ui.notify("No input configured", type="warning")
+                                return
+                            await relay_svc.start_relay(
+                                config.input.to_relay_config(),
+                                [d.to_relay_config() for d in enabled],
+                                trigger="verification-handoff",
+                            )
+                            ui.notify("Relay started ✓", type="positive")
+                            _clear_green()
+                        except Exception as exc:
+                            logger.exception("Start after Verification failed")
+                            ui.notify(
+                                f"Could not start the relay: {exc}", type="negative"
+                            )
+
+                    save_start_btn.on_click(_save_and_start)
+                    test_btn.on_click(lambda: _run_verification())
 
             # ============================================================
             # Source type change handler
@@ -506,9 +675,11 @@ def input_page() -> None:
                 serial_port_select.clear()
                 serial_baud_select.clear()
                 bt_state["address_input"] = None
-                bt_state["channel_input"] = None
                 bt_state["pin_input"] = None
                 bt_state["bt_manager"] = None
+                # A Green describes a specific device; switching source
+                # away from Bluetooth leaves nothing for it to describe.
+                bt_state["held_green"] = None
 
                 src = source_select.value or "tcp"
                 with fields_container:
@@ -526,8 +697,16 @@ def input_page() -> None:
             # Save handler
             # ============================================================
 
-            def _save_input() -> None:
-                """Save input source configuration."""
+            def _save_input() -> bool:
+                """Save input source configuration.
+
+                Returns:
+                    ``True`` when the configuration was persisted.  The
+                    "Save & Start now →" action needs this: starting the
+                    relay after a save that bailed on a validation error
+                    would start it on the *previous* configuration, which
+                    is not the one the operator just had verified.
+                """
                 src = source_select.value or "tcp"
 
                 # Gather config values based on source type
@@ -541,7 +720,7 @@ def input_page() -> None:
                                 "Fix validation errors before saving",
                                 type="warning",
                             )
-                            return
+                            return False
                     # NiceGUI ui.input() returns strings.  The TCP port
                     # must be an integer for the relay's InputConfig
                     # validation to accept it — coerce here.  Without
@@ -560,7 +739,7 @@ def input_page() -> None:
                                     "Port must be a whole number (1-65535)",
                                     type="warning",
                                 )
-                                return
+                                return False
                         else:
                             config[k] = v.value
 
@@ -571,7 +750,7 @@ def input_page() -> None:
                     baud_val = str(baud_widget.value if baud_widget else DEFAULT_BAUD)
                     if not port_val:
                         ui.notify("Select a serial port", type="warning")
-                        return
+                        return False
                     config = {"port": port_val, "baud_rate": baud_val}
 
                 elif src == "bluetooth":
@@ -586,26 +765,55 @@ def input_page() -> None:
                             "Enter a Bluetooth device address",
                             type="warning",
                         )
-                        return
+                        return False
                     config = {
                         "mac_address": addr_val,
                         "pin": pin_val,
                     }
 
+                # A Green in hand is what entitles this save to record
+                # a Proven PIN.  The record is still corroborated
+                # server-side against the memo of pairings the server
+                # itself performed — passing it here is an offer, not an
+                # assertion, and a save that cannot be corroborated
+                # simply persists without one.
+                proven: dict[str, Any] = {}
+                if src == "bluetooth":
+                    held = bt_state.get("held_green")
+                    mac_now = str(config.get("mac_address", ""))
+                    pin_now = str(config.get("pin", ""))
+                    if held is not None and held.is_valid_for(mac_now, pin_now):
+                        proven = {
+                            "proven_pin": held.pin,
+                            "pin_proven_at": held.result.verified_at,
+                        }
+
                 try:
                     profile = InputProfile(
                         source=src,  # type: ignore[arg-type]
                         config=config,
+                        **proven,
                     )
-                    config_svc.save_input_config(profile)
+                    # Without the corroborator the service drops every
+                    # Proven PIN it is handed — which is correct for
+                    # callers with no memo to consult, and wrong here:
+                    # the page would silently discard the proof the
+                    # Verification just earned, and the next test would
+                    # force-repair a Bond that was only just built.
+                    config_svc.save_input_config(
+                        profile,
+                        corroborate=verification_svc.corroborates,
+                    )
                     ui.notify("Input source saved ✓", type="positive")
+                    return True
                 except Exception as exc:
                     logger.exception("Failed to save input config")
                     ui.notify(f"Error saving input: {exc}", type="negative")
+                    return False
 
-            ui.button("Save Input Config", icon="save", on_click=_save_input).props(
-                "color=primary"
-            ).classes("q-mt-md")
+            ui.button(
+                "Save Input Config", icon="save", on_click=lambda: _save_input()
+            ).props("color=primary").classes("q-mt-md")
 
 
 # ---------------------------------------------------------------------------

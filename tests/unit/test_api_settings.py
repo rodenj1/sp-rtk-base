@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 
 from sp_rtk_base.models.config_models import InputProfile
@@ -137,3 +139,92 @@ class TestUpdateInputConfig:
         )
         assert resp.status_code == 200
         assert resp.json()["source"] == "serial"
+
+
+class TestPutInputCannotMintAProvenPin:
+    """`PUT /api/input` has no memo to consult, so it can only preserve.
+
+    The durable Proven-PIN record is the one part of the design that
+    outlives the process. Leaving it writable through an endpoint that
+    cannot corroborate would make it a way to assert proof that was
+    never proven — and asking for less destruction would then buy a
+    stronger promise, which is the bug the Verification exists to kill.
+    """
+
+    def test_a_submitted_proven_pin_is_not_persisted(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
+                "proven_pin": "1234",
+            },
+        )
+        assert resp.status_code == 200
+        saved = mock_config_service.get_input_config()
+        assert saved is not None
+        assert saved.proven_pin is None
+
+    def test_an_unrelated_edit_preserves_an_existing_record(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        """Clearing on every save would make force-repair fire constantly."""
+        mock_config_service.save_input_config(
+            InputProfile(
+                source="bluetooth",
+                config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
+                proven_pin="1234",
+                pin_proven_at=datetime.now(timezone.utc),
+            ),
+            corroborate=lambda mac, pin: True,
+        )
+
+        api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {
+                    "mac_address": "AA:BB:CC:DD:EE:FF",
+                    "pin": "1234",
+                    "adapter_name": "hci1",
+                },
+            },
+        )
+
+        saved = mock_config_service.get_input_config()
+        assert saved is not None
+        assert saved.proven_pin == "1234"
+
+    def test_changing_the_mac_clears_the_record(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        """Otherwise a MAC change inherits another device's proof."""
+        mock_config_service.save_input_config(
+            InputProfile(
+                source="bluetooth",
+                config={"mac_address": "AA:BB:CC:DD:EE:FF", "pin": "1234"},
+                proven_pin="1234",
+                pin_proven_at=datetime.now(timezone.utc),
+            ),
+            corroborate=lambda mac, pin: True,
+        )
+
+        api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {"mac_address": "11:22:33:44:55:66", "pin": "1234"},
+            },
+        )
+
+        saved = mock_config_service.get_input_config()
+        assert saved is not None
+        assert saved.proven_pin is None

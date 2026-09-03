@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ from sp_rtk_base_relay.config import (
     SurePathDestinationConfig,
     TcpServerDestinationConfig,
 )
+from sp_rtk_base_relay.core.input_sources.bluetooth_input import BluetoothConfig
 
 from sp_rtk_base.models.config_models import (
     DEFAULT_BT_SCAN_TIMEOUT_SECONDS,
@@ -578,3 +580,95 @@ class TestDestinationProfileUnknownType:
         )
         with pytest.raises(ValueError, match="Unknown destination type"):
             dp.to_relay_config()
+
+
+# ---------------------------------------------------------------------------
+# InputProfile — Proven PIN siblings and PIN normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestInputProfilePinNormalisation:
+    """A blank PIN must persist as the PIN the relay would really use.
+
+    `_save_input` stored `""` for a blank field while the relay's
+    `BluetoothConfig.pin` defaults to `"0000"`, so Test Connection and
+    Save could send different PINs for the same form state.  Normalising
+    inside the model means there is *one* call site rather than several
+    that agree by accident (issue #127 §9).
+    """
+
+    def test_blank_pin_is_normalised_on_construction(self) -> None:
+        ip = InputProfile(source="bluetooth", config={"mac_address": "AA", "pin": ""})
+        assert ip.config["pin"] == "0000"
+
+    def test_missing_pin_is_filled_in(self) -> None:
+        ip = InputProfile(source="bluetooth", config={"mac_address": "AA"})
+        assert ip.config["pin"] == "0000"
+
+    def test_pin_whitespace_is_stripped(self) -> None:
+        ip = InputProfile(source="bluetooth", config={"pin": " 1234 "})
+        assert ip.config["pin"] == "1234"
+
+    def test_non_bluetooth_sources_are_untouched(self) -> None:
+        """A serial profile has no PIN and must not grow one."""
+        ip = InputProfile(source="serial", config={"port": "/dev/ttyUSB0"})
+        assert "pin" not in ip.config
+
+
+class TestInputProfileProvenPin:
+    """The durable Proven-PIN record, and why it cannot reach the relay."""
+
+    def test_proven_pin_defaults_to_absent(self) -> None:
+        ip = InputProfile(source="bluetooth", config={"mac_address": "AA"})
+        assert ip.proven_pin is None
+        assert ip.pin_proven_at is None
+
+    def test_proven_pin_is_a_sibling_field_not_config(self) -> None:
+        """Storing it in `config` is what would break relay start."""
+        ip = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA", "pin": "1234"},
+            proven_pin="1234",
+        )
+        assert ip.proven_pin == "1234"
+        assert "proven_pin" not in ip.config
+
+    def test_to_relay_config_does_not_forward_the_proven_pin(self) -> None:
+        """Regression: `input_factory` builds `BluetoothConfig(**cfg)`.
+
+        Any unrecognised key raises `TypeError` at *relay start* — long
+        after the save that introduced it looked fine.  This is the same
+        reason the "RFCOMM Channel" field was never persisted.  Assert
+        the keys, so moving these fields into `config` fails here rather
+        than on a base station at boot.
+        """
+        ip = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA", "pin": "1234"},
+            proven_pin="1234",
+            pin_proven_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        relay_cfg = ip.to_relay_config()
+        assert "proven_pin" not in relay_cfg.config
+        assert "pin_proven_at" not in relay_cfg.config
+
+    def test_the_relay_really_rejects_the_sibling_fields(self) -> None:
+        """Pins *why* the previous test matters, against the real dataclass.
+
+        If a future relay release started accepting unknown keys this
+        would go green and the constraint could be revisited; while it
+        stays red-on-violation, the guard above is load-bearing.
+        """
+        with pytest.raises(TypeError):
+            BluetoothConfig(mac_address="AA", pin="1234", proven_pin="1234")  # type: ignore[call-arg]
+
+    def test_to_relay_config_accepts_what_it_produces(self) -> None:
+        """The whole point: the produced config must construct cleanly."""
+        ip = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "AA", "pin": "1234"},
+            proven_pin="1234",
+            pin_proven_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        cfg = BluetoothConfig(**ip.to_relay_config().config)
+        assert cfg.pin == "1234"

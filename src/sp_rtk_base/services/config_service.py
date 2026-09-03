@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
+from sp_rtk_base.models.bluetooth_models import GREEN_TTL_SECONDS, normalize_pin
 from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
@@ -28,6 +31,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sp-rtk-base"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 ENV_CONFIG_PATH = "SP_RTK_BASE_CONFIG"
+
+
+def _without_proof(profile: InputProfile) -> InputProfile:
+    """Return *profile* with any Proven-PIN record dropped.
+
+    Dropping is a non-event: the save still succeeds and loses no
+    configuration.  The PIN simply reads unproven, and the next
+    Verification re-proves it.
+
+    Args:
+        profile: The profile to strip.
+
+    Returns:
+        A copy carrying no Proven PIN.
+    """
+    return profile.model_copy(update={"proven_pin": None, "pin_proven_at": None})
 
 
 def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
@@ -264,15 +283,97 @@ class ConfigService:
         """
         return self.get_config().input
 
-    def save_input_config(self, input_config: InputProfile) -> None:
-        """Save the input source configuration.
+    def save_input_config(
+        self,
+        input_config: InputProfile,
+        corroborate: Callable[[str, str], bool] | None = None,
+    ) -> None:
+        """Save the input source configuration, settling the Proven PIN.
+
+        A *Proven PIN* is one that has actually been exercised against a
+        Bond with a specific device.  It is durable, and it is what the
+        Verification reads to decide whether a force-repair is needed —
+        so what may be written here is deliberately narrow.
+
+        A submitted record is kept only when all three hold:
+
+        * it is **fresh** — a ``pin_proven_at`` older than the Green's
+          lifetime is rejected rather than silently trusted, or the
+          30-second promise would be enforced by the page alone and the
+          API would become a way to write a record that was never proven;
+        * its ``proven_pin`` equals the PIN being saved; and
+        * *corroborate* agrees.  The server believes only proof it
+          created itself, so a record it cannot corroborate is dropped.
+          Dropping is a non-event — the save still succeeds and loses no
+          configuration; the PIN simply reads unproven and the next
+          Verification re-proves it.
+
+        Otherwise the **stored** record carries over iff both the PIN and
+        the MAC are unchanged.  Clearing on every save would make
+        force-repair fire constantly, which is needlessly destructive;
+        never clearing would let a MAC change inherit another device's
+        proof.
 
         Args:
             input_config: The input profile to persist.
+            corroborate: Asked whether ``(mac, pin)`` was proven by this
+                server.  Omitted by callers that have no memo to consult
+                — ``PUT /api/input`` and profile import — which is why
+                omitting it drops the record rather than trusting it.
         """
+        stored = self.get_input_config()
+        input_config = self._settle_proven_pin(input_config, stored, corroborate)
         config = self.get_config()
         updated = config.model_copy(update={"input": input_config})
         self.save_config(updated)
+
+    @staticmethod
+    def _settle_proven_pin(
+        incoming: InputProfile,
+        stored: InputProfile | None,
+        corroborate: Callable[[str, str], bool] | None,
+    ) -> InputProfile:
+        """Decide which Proven-PIN record survives *incoming*."""
+        if incoming.source != "bluetooth":
+            return _without_proof(incoming)
+
+        pin = normalize_pin(incoming.config.get("pin"))
+        mac = incoming.config.get("mac_address")
+
+        if incoming.proven_pin is not None:
+            fresh = (
+                incoming.pin_proven_at is not None
+                and (
+                    datetime.now(timezone.utc) - incoming.pin_proven_at
+                ).total_seconds()
+                <= GREEN_TTL_SECONDS
+            )
+            matches = normalize_pin(incoming.proven_pin) == pin
+            agreed = (
+                corroborate is not None
+                and isinstance(mac, str)
+                and corroborate(mac, pin)
+            )
+            if fresh and matches and agreed:
+                return incoming
+
+        # No acceptable submitted record — fall back to what is stored,
+        # which survives only while it still describes this device.
+        if (
+            stored is not None
+            and stored.source == "bluetooth"
+            and stored.proven_pin is not None
+            and normalize_pin(stored.config.get("pin")) == pin
+            and stored.config.get("mac_address") == mac
+        ):
+            return incoming.model_copy(
+                update={
+                    "proven_pin": stored.proven_pin,
+                    "pin_proven_at": stored.pin_proven_at,
+                }
+            )
+
+        return _without_proof(incoming)
 
     # ------------------------------------------------------------------
     # Application settings

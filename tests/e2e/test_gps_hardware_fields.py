@@ -21,6 +21,8 @@ don't see these) — see :func:`_expect_checked`/:func:`_expect_disabled`.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -35,6 +37,65 @@ def _goto_gps_config(page: Page, base_url: str) -> None:
 
 def _expect_checked(checkbox: Locator, *, checked: bool) -> None:
     expect(checkbox).to_have_attribute("aria-checked", "true" if checked else "false")
+
+
+def _wait_for_hw_section_settled(
+    page: Page,
+    probe: Locator,
+    quiet_ms: int = 750,
+    timeout_ms: int = 15_000,
+) -> None:
+    """Wait until the hw-extras section stops being re-rendered.
+
+    Every hardware-field handler re-renders the *entire* section over a
+    websocket round trip, replacing each node in it with a fresh one.
+    Waiting on a text input cannot detect that: ``fill()`` sets the
+    value client-side, so ``to_have_value("10")`` is satisfied before
+    the server has even heard about the edit, let alone re-rendered.
+
+    A click that lands inside that window is simply lost — the incoming
+    node is rendered from state that never saw it — and Playwright's
+    actionability checks cannot help, because the node it clicks is
+    attached, visible and stable right up until the moment it is
+    replaced. Asserting the toggle afterwards only *detects* the loss.
+
+    So the section's churn is watched directly. NiceGUI gives each
+    element a fresh ``id`` on re-render, so an id that holds still for
+    *quiet_ms* means no further rebuild is in flight.
+
+    Args:
+        page: The page under test.
+        probe: Any element inside the section; its ``id`` is the signal.
+        quiet_ms: How long the id must hold still to count as settled.
+        timeout_ms: How long to wait for that to happen.
+
+    Raises:
+        AssertionError: If the section never settles in *timeout_ms*.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    last_id: str | None = None
+    unchanged_since: float | None = None
+
+    while time.monotonic() < deadline:
+        try:
+            current = probe.get_attribute("id", timeout=1_000)
+        except Exception:  # mid-rebuild the node can briefly vanish
+            current = None
+
+        if current is not None and current == last_id:
+            if unchanged_since is None:
+                unchanged_since = time.monotonic()
+            elif (time.monotonic() - unchanged_since) * 1000 >= quiet_ms:
+                return
+        else:
+            last_id = current
+            unchanged_since = None
+
+        page.wait_for_timeout(100)
+
+    raise AssertionError(
+        f"hw-extras section was still re-rendering after {timeout_ms} ms"
+    )
 
 
 def _expect_disabled(checkbox: Locator, *, disabled: bool) -> None:
@@ -134,18 +195,24 @@ def test_hardware_extras_are_editable_and_apply(
     expect(elevation).to_have_value("10", timeout=10_000)
 
     spi = page.locator(".hw-field-spi-checkbox")
+
+    # The elevation edit above re-renders this whole section, and
+    # `to_have_value("10")` did not wait for that — `fill()` satisfies
+    # it client-side. Clicking now would race the incoming re-render and
+    # the toggle would be discarded with the outgoing node, so wait for
+    # the churn to stop first. Observed on CI as the checkbox's id
+    # changing from c412 to c438 mid-assertion, the replacement arriving
+    # still checked.
+    _wait_for_hw_section_settled(page, spi)
+
     _expect_checked(spi, checked=True)  # on by default on the fake driver
     spi.click()
 
-    # Wait for *this* edit's own effect, exactly as the three edits
-    # above do.  The obvious wait — the sync badge going dirty — is a
-    # no-op here: the meas-rate, dyn-model and elevation edits already
-    # made it say "unapplied change", so it is satisfied the instant it
-    # is evaluated and proves nothing about whether the SPI click
-    # landed.  That left the click racing the elevation edit's still
-    # in-flight section rebuild, and on a slow runner it lost: the
-    # click hit a node about to be torn down, SPI stayed on, and the
-    # post-Apply assertion below saw `true`.
+    # Assert this edit's own effect, as the three edits above do. The
+    # obvious wait — the sync badge going dirty — is a no-op here: the
+    # meas-rate, dyn-model and elevation edits already made it say
+    # "unapplied change", so it is satisfied the instant it is evaluated
+    # and says nothing about whether the SPI click landed.
     _expect_checked(spi, checked=False)
     expect(sync_badge).to_contain_text("unapplied change")
 

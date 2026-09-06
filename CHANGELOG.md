@@ -11,6 +11,78 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.6.0 (2026-09-06)
+
+### Bluetooth "Test Connection" now actually validates the configured PIN
+
+Previously it reported success for **any** already-bonded device, whatever
+PIN was in the form — so the field that exists to be checked was never
+checked (#124). It is now a dress rehearsal of the relay's own connect
+path, walking five named stages: `discover` → `pair` → `trust` →
+`connect` → `data`.
+
+- **A green means more than "it connects right now."** It means Save and
+  Start will connect **and will reconnect after the pairing is lost**.
+  That second clause is the load-bearing one: an existing bond carries
+  the connection whatever the PIN says, so a promise about "now" would
+  bless exactly the configuration that strands a base station on its
+  next reboot.
+- **A red names the step that failed** — "pair: the PIN was rejected" —
+  instead of surfacing a raw D-Bus string.
+- **A green is a short-lived promise.** It shows a 30-second countdown,
+  is void the moment the MAC or PIN is edited, and is never persisted.
+  While it stands it offers an inline **Save & Start now →**.
+- **Re-pairing asks first.** Testing an unproven PIN against a device
+  that is believed to be paired requires confirmation, because it must
+  remove the existing pairing to test the PIN, and a wrong PIN then
+  leaves the device unpaired. That outcome is named and its recovery
+  stated: correct the PIN and test again.
+- **Requires `sp_rtk_base_relay>=3.1.1`**, which is the first release
+  where automatic pairing works at all — see below.
+- The inert **RFCOMM Channel** field is gone. It was never persisted,
+  read a config key nothing wrote, and the relay has no channel
+  parameter to honour it with. The channel actually used is now reported
+  on the `connect` stage.
+- New `POST /api/input/bluetooth/test`. Refusals (relay running, another
+  test in flight, confirmation required) are HTTP 409 with a
+  machine-readable `code`.
+
+### Fixed
+
+- **Bluetooth pairing never worked on any earlier relay release.**
+  `Properties.Get` answers with a D-Bus `Variant`, which is always
+  truthy — including one wrapping `False` — so the "already paired"
+  branch was taken unconditionally and `Device1.Pair()` was never
+  called. Relay 3.1.1 fixes it; this release requires that floor.
+- The stale Bluetooth-handle release now runs on **every** path into the
+  relay, not just auto-start, so a manual Start no longer trips over a
+  handle BlueZ is still holding.
+- u-blox: retry `TMODE`/`ECEF` and RTCM/port-protocol `CFG-VALGET` polls
+  on timeout, so a receiver under load no longer reports a write as
+  failed when it succeeded (#119, #121).
+- Appliance installs provision the custom-profiles directory, so the
+  Profiles page no longer 500s under `ProtectHome` (#81).
+
+### GPS configuration
+
+- Saving a profile is a first-class action, with per-constellation
+  enable keys written at the durable layer (#104, #106).
+- Result surfaces on Apply: a three-state badge, inline markers, a step
+  log, and a warning strip; the throughput advisory is live and derived
+  from the form (#101, #102).
+- The dynamics model is forced to stationary (`DYN_MODEL=2`) on
+  base-mode transitions, since a fresh ZED-F9P defaults to portable —
+  the wrong nav class for a fixed base (#38).
+
+### Notes for operators upgrading
+
+- **The first test of any device will ask to re-pair it**, including one
+  that already works. Existing profiles carry no record that their PIN
+  was ever exercised, and that is deliberate: assuming it was would mint
+  proof for exactly the population known to contain the bug.
+- **Test Connection refuses to run while the relay is running.** Stop it
+  first — silently interrupting a base station that rovers depend on is
+  a worse surprise than a blocked button.
 ## v0.5.2 (2026-08-26)
 
 - feat(ublox): force stationary dynamics model (DYN_MODEL=2) on base-mode transitions

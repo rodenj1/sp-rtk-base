@@ -32,11 +32,12 @@ every test that inspects an option opens the picker first via
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Iterator
 
 import httpx
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from sp_rtk_base.services.drivers.fake import FAKE_UNKNOWN_HW_PORT
 
@@ -119,6 +120,43 @@ def _open_picker(page: Page) -> None:
     page.locator(".profile-picker").click()
 
 
+def _settled_bounding_box(
+    locator: Locator, timeout_ms: int = 10_000
+) -> dict[str, float]:
+    """Return *locator*'s box once it has one, not whatever is there now.
+
+    ``bounding_box()`` is a plain read. Unlike ``expect()`` it does not
+    auto-wait, and it answers ``None`` for an element that is attached
+    but has no layout box yet. The Quasar ``q-menu`` mounts its options
+    and *then* animates open, and NiceGUI can re-render a node inside
+    that window — so an option can satisfy ``to_be_visible()`` and still
+    have no box a moment later when we ask for geometry.
+
+    That window is narrow enough never to lose on a developer machine
+    and wide enough to lose on a loaded CI runner, which is exactly how
+    it showed up: green locally on every run, red on GitHub Actions.
+
+    Args:
+        locator: The element to measure.
+        timeout_ms: How long to keep asking before giving up.
+
+    Returns:
+        The element's bounding box.
+
+    Raises:
+        AssertionError: If no box appears within *timeout_ms*.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    box = locator.bounding_box()
+    while box is None and time.monotonic() < deadline:
+        locator.page.wait_for_timeout(50)
+        box = locator.bounding_box()
+    assert box is not None, (
+        f"{locator} never produced a layout box within {timeout_ms} ms"
+    )
+    return box
+
+
 @pytest.mark.e2e
 def test_form_seeds_matrix_and_gnss_from_live_receiver(
     page: Page,
@@ -198,9 +236,8 @@ def test_picker_is_a_dropdown_listing_builtin_before_custom(
     expect(builtin_option).to_be_visible(timeout=10_000)
     expect(custom_option).to_be_visible(timeout=10_000)
 
-    builtin_box = builtin_option.bounding_box()
-    custom_box = custom_option.bounding_box()
-    assert builtin_box is not None and custom_box is not None
+    builtin_box = _settled_bounding_box(builtin_option)
+    custom_box = _settled_bounding_box(custom_option)
     assert builtin_box["y"] < custom_box["y"], (
         "built-in profile should render above the custom profile"
     )

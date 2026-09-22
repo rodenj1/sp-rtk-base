@@ -9,10 +9,12 @@ database), and status is read via MON-VER and NAV-SVIN messages.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import logging
 import threading
 import time
+from collections.abc import Generator
 from typing import Literal
 
 import serial  # type: ignore[import-untyped]
@@ -28,6 +30,7 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    CandidateVerdict,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -244,6 +247,87 @@ class UbloxDriver(GpsReceiverDriver):
             except Exception:
                 pass
         logger.info("Connect cancelled by user")
+
+    def is_detection_cancelled(self) -> bool:
+        """Whether the shared cancel signal has been raised.
+
+        Detection reuses ``_cancel_event`` deliberately: ``cancel_connect``
+        already sets it and force-closes the port, and both pages already
+        wire a Cancel button to it, so a sweep becomes cancellable with no
+        new plumbing (map #140 decision 4).
+        """
+        return self._cancel_event.is_set()
+
+    @contextlib.contextmanager
+    def detection_session(self) -> Generator[None]:
+        """Lower a stale cancel on the way in, release the port on the way out.
+
+        ``cancel_connect`` raises ``_cancel_event`` and only ``connect``
+        ever lowers it, so a Detection started after the operator gave up
+        on a connect would otherwise see a raised cancel it never asked
+        for and return having tried nothing.
+
+        The closing ``_cleanup`` is belt-and-braces: every
+        :meth:`try_baud_candidate` already closes its own port, but a
+        sweep that dies between Candidates must not leave a handle open
+        on a port the operator is about to Connect on.
+        """
+        self._cancel_event.clear()
+        try:
+            yield
+        finally:
+            self._cleanup()
+
+    def try_baud_candidate(
+        self, port: str, baud_rate: int, budget_s: float
+    ) -> tuple[CandidateVerdict, DeviceInfo | None]:
+        """Open *port* at one rate, poll MON-VER, and classify the answer.
+
+        Deliberately the same read path a connect uses
+        (:meth:`_read_for_mon_ver`), because a Detection that accepted
+        weaker evidence than a connect does would hand back a rate at
+        which Connect then fails.
+
+        The serial read timeout is clamped to the Candidate's budget:
+        ``_READ_TIMEOUT``'s 3s is longer than a whole Candidate is
+        allowed to take, so a silent port would otherwise overshoot.
+
+        Leaves the port closed on every path, so the sweep's next
+        Candidate finds it free.
+
+        Raises:
+            serial.SerialException: If the port cannot be opened at all.
+                Not a verdict — the sweep decides what an unopenable
+                port means once it knows whether *any* rate opened it.
+        """
+        self._serial = serial.Serial(
+            port=port,
+            baudrate=baud_rate,
+            timeout=min(_READ_TIMEOUT, budget_s),
+            exclusive=True,
+        )
+        try:
+            fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._reader = UBXReader(
+                self._serial,
+                protfilter=7,  # NMEA + UBX + RTCM3
+                quitonerror=0,
+            )
+            info, saw_frame, _ = self._read_for_mon_ver(budget_s)
+        except Exception:
+            # A cancel arrives here as ConnectionError, and an unreadable
+            # port as anything at all. Neither is evidence about the rate:
+            # report the weakest verdict and let the sweep's own cancel
+            # check decide whether to keep going.
+            return CandidateVerdict.SILENT, None
+        finally:
+            self._cleanup()
+
+        if info is not None:
+            return CandidateVerdict.ANSWERED, info
+        if saw_frame:
+            return CandidateVerdict.BYTES_NO_ANSWER, None
+        return CandidateVerdict.SILENT, None
 
     def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
         if self._serial is not None and self._serial.is_open:
@@ -1906,13 +1990,58 @@ class UbloxDriver(GpsReceiverDriver):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _poll_mon_ver(self) -> DeviceInfo:
+    def _poll_mon_ver(self, timeout_s: float | None = None) -> DeviceInfo:
         """Poll MON-VER and parse device identity.
 
-        Uses a wall-clock timeout (``CONNECT_TIMEOUT``) to fail fast
-        when the baud rate is wrong and the device returns only garbage.
-        Also checks ``_cancel_event`` each iteration so the UI can
-        abort a stuck connect.
+        Uses a wall-clock timeout to fail fast when the baud rate is
+        wrong and the device returns only garbage. The default is
+        ``CONNECT_TIMEOUT``, sized for a real connect to a receiver
+        buried under RTCM traffic; a Detection passes its own far
+        smaller per-Candidate budget instead, because eight connects'
+        worth of patience is not a spinner anyone sits through
+        (issue #142, map #140 decision 5). Also checks ``_cancel_event``
+        each iteration so the UI can abort a stuck connect.
+
+        Args:
+            timeout_s: Wall-clock budget. Defaults to ``CONNECT_TIMEOUT``.
+
+        Raises:
+            ConnectionError: If cancelled mid-poll.
+            TimeoutError: If no MON-VER arrives in the budget.
+        """
+        budget = self.CONNECT_TIMEOUT if timeout_s is None else timeout_s
+        info, _, timed_out = self._read_for_mon_ver(budget)
+        if info is not None:
+            return info
+        if timed_out:
+            raise TimeoutError(
+                f"No response from device within {budget:.0f}s — check baud rate"
+            )
+        raise TimeoutError("No MON-VER response from device")
+
+    def _read_for_mon_ver(
+        self, budget_s: float
+    ) -> tuple[DeviceInfo | None, bool, bool]:
+        """Poll MON-VER and read until it answers, or the budget runs out.
+
+        Split out of :meth:`_poll_mon_ver` so a Detection trial can share
+        the identical read path — a Detection that accepted weaker
+        evidence than a connect does would hand back a rate at which
+        Connect then fails.
+
+        The second element of the return is the Detection diagnostic:
+        whether *any* well-framed message was parsed. ``UBXReader`` is
+        built with ``protfilter=7``, so UBX, NMEA and RTCM3 all count.
+        Framed traffic at a rate that never answers means the link is at
+        that rate and the receiver is not accepting commands on the
+        port — a diagnosis rather than a dead end. Raw garbage at a
+        wrong baud does not parse and so is not evidence of anything.
+
+        Returns:
+            ``(identity or None, saw_any_frame, hit_the_deadline)``.
+
+        Raises:
+            ConnectionError: If cancelled mid-read.
         """
         ser, reader = self._require_connection()
 
@@ -1920,6 +2049,7 @@ class UbloxDriver(GpsReceiverDriver):
         ser.reset_input_buffer()
         ser.write(poll_msg.serialize())
 
+        saw_frame = False
         sw_version_str = ""
         fwver = ""
         protocol = ""
@@ -1927,7 +2057,7 @@ class UbloxDriver(GpsReceiverDriver):
         mod = ""
         explicit_model = ""
 
-        deadline = time.monotonic() + self.CONNECT_TIMEOUT
+        deadline = time.monotonic() + budget_s
 
         for _ in range(_MAX_READ_ATTEMPTS):
             # Check cancel
@@ -1936,14 +2066,12 @@ class UbloxDriver(GpsReceiverDriver):
 
             # Check wall-clock timeout
             if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"No response from device within {self.CONNECT_TIMEOUT:.0f}s "
-                    "— check baud rate"
-                )
+                return None, saw_frame, True
 
             try:
                 raw, parsed = reader.read()  # type: ignore[misc]
                 if parsed is not None and hasattr(parsed, "identity"):
+                    saw_frame = True
                     if parsed.identity == "MON-VER":
                         sw_raw = getattr(parsed, "swVersion", b"")
                         hw_raw = getattr(parsed, "hwVersion", b"")
@@ -2019,19 +2147,23 @@ class UbloxDriver(GpsReceiverDriver):
                             identity.target if identity.is_specific_model else "Unknown"
                         )
 
-                        return DeviceInfo(
-                            vendor="u-blox",
-                            model=model,
-                            firmware_version=firmware,
-                            protocol_version=protocol,
-                            hardware_version=hardware,
-                            hardware_target=identity.target,
-                            hardware_confidence=identity.confidence,
+                        return (
+                            DeviceInfo(
+                                vendor="u-blox",
+                                model=model,
+                                firmware_version=firmware,
+                                protocol_version=protocol,
+                                hardware_version=hardware,
+                                hardware_target=identity.target,
+                                hardware_confidence=identity.confidence,
+                            ),
+                            saw_frame,
+                            False,
                         )
             except Exception:
                 continue
 
-        raise TimeoutError("No MON-VER response from device")
+        return None, saw_frame, False
 
     def _send_cfg_valset(
         self,

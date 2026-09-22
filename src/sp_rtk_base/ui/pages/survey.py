@@ -25,9 +25,18 @@ from sp_rtk_base.models.device_models import (
     DeviceConnectionState,
 )
 from sp_rtk_base.services import get_config_service, get_device_service
+from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.ui.detection_status import (
+    describe_connect_failure,
+    describe_detection,
+    describe_detection_refusal,
+    describe_port_failure,
+    detected_rate_to_apply,
+)
 from sp_rtk_base.ui.layout import page_layout
+from sp_rtk_base.ui.status_line import StatusLine
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +75,15 @@ def survey_page() -> None:
                     label="Baud Rate",
                     value=DEFAULT_BAUD,
                 ).classes("w-40")
+                detect_btn = (
+                    ui.button("Detect", icon="search")
+                    .props("outline color=info")
+                    .classes("self-center sp-detect-baud")
+                    .tooltip(
+                        "Try each baud rate on the selected port until the "
+                        "receiver answers"
+                    )
+                )
                 driver_select = ui.select(
                     options=list_drivers(),
                     label="Driver",
@@ -90,6 +108,13 @@ def survey_page() -> None:
                     .props("flat round color=white")
                     .tooltip("Refresh serial port list")
                 )
+
+            # Detection result. A persistent label rather than a toast:
+            # the useful outcomes are two sentences of diagnosis, and a
+            # notification that vanishes is no good to someone reading
+            # it while looking at a cable.
+            detect_label = ui.label("").classes("text-caption q-mt-xs sp-detect-status")
+            detect_label.set_visibility(False)
 
             info_card = ui.card().classes("w-full q-pa-md q-mt-md")
             info_card.set_visibility(False)
@@ -556,6 +581,11 @@ def survey_page() -> None:
             disconnect_btn.set_visibility(connected)
             cancel_btn.set_visibility(connecting)
             reload_device_btn.set_visibility(connected)
+            # Detect stays visible but goes dead once there is a live
+            # session: the rate is known, so there is nothing to find,
+            # and the sweep would be fighting for a port this process
+            # already holds (map #140 decision 10).
+            detect_btn.set_enabled(not connected and not connecting)
 
             info_card.set_visibility(connected)
             info_card.clear()
@@ -968,26 +998,17 @@ def survey_page() -> None:
                     pos_timer.active = False
                 pos_timer = ui.timer(2.0, _poll_position)
             except Exception as exc:
-                # The driver already wraps its errors with
-                # "Connection failed: ...".  Don't double-prefix.
-                msg = str(exc)
-                # The DeviceService raises RuntimeError("Cannot
-                # connect to device while relay is running...") when
-                # the operator clicks Connect with an active relay.
-                # Surface that specifically with a clearer hint
-                # rather than the generic "Connection failed:" wrap,
-                # so the operator knows the next action is "Stop the
-                # relay first" not "fix the device wiring".
-                if "relay is running" in msg.lower():
-                    ui.notify(
-                        f"Cannot connect: {msg}.  Go to Dashboard "
-                        "and Stop the relay first.",
-                        type="warning",
-                    )
-                elif msg.startswith("Connection failed:"):
-                    ui.notify(msg, type="negative")
-                else:
-                    ui.notify(f"Connection failed: {msg}", type="negative")
+                # Which failure deserves which words is decided in
+                # ``detection_status`` — a covered module — rather than
+                # here, where it would be untested and written twice.
+                # A "nothing answered" failure now points at Detect
+                # instead of telling the operator to go and think about
+                # baud rates (map #140 decision 13); the line is also
+                # left on screen, because a toast that vanishes is no
+                # use to someone who then goes looking for the button.
+                line = describe_connect_failure(str(exc))
+                ui.notify(line.text, type=line.tone)
+                _show_detect(line)
                 logger.exception("Device connect failed")
             _update_ui_state()
             if svc.is_connected:
@@ -995,6 +1016,53 @@ def survey_page() -> None:
                     await _read_fixed_base()
                 except Exception:
                     logger.warning("Failed to read base config on connect")
+
+        def _show_detect(line: StatusLine) -> None:
+            """Render one status line in its tone."""
+            detect_label.text = line.text
+            detect_label.classes(
+                replace=f"text-caption q-mt-xs sp-detect-status text-{line.tone}"
+            )
+            detect_label.set_visibility(True)
+
+        async def _detect_baud() -> None:
+            """Sweep the selected port and fill in the rate that answered.
+
+            Persists nothing and connects nothing — a detected rate
+            becomes the remembered one only when the operator acts on it
+            and Connect saves it. Deliberately never touches the
+            receiver-config form: this observes the wire, it does not
+            form an intent about what the receiver should be set to.
+            """
+            port = port_select.value
+            if not port:
+                ui.notify("Select a serial port", type="warning")
+                return
+
+            vendor = str(driver_select.value or "ublox")
+            preferred = int(baud_select.value) if baud_select.value else None
+
+            detect_btn.disable()
+            _show_detect(StatusLine("Detecting — trying each baud rate…", "warning"))
+            try:
+                result = await svc.detect_baud(
+                    str(port), vendor=vendor, preferred_baud=preferred
+                )
+            except DetectionRefusedError as exc:
+                _show_detect(describe_detection_refusal(exc))
+            except (ConnectionError, OSError) as exc:
+                _show_detect(describe_port_failure(str(exc)))
+            except Exception as exc:
+                _show_detect(StatusLine(str(exc), "negative"))
+                logger.exception("Baud detection failed")
+            else:
+                _show_detect(describe_detection(result))
+                rate = detected_rate_to_apply(result)
+                if rate is not None:
+                    baud_select.value = rate
+            finally:
+                detect_btn.enable()
+                _update_ui_state()
 
         def _cancel_connect() -> None:
             svc.cancel_connect()
@@ -1636,6 +1704,7 @@ def survey_page() -> None:
 
         # ---- Wire up events ----
         connect_btn.on_click(_connect)
+        detect_btn.on_click(_detect_baud)
         disconnect_btn.on_click(_disconnect)
         cancel_btn.on_click(lambda: _cancel_connect())
         refresh_btn.on_click(lambda: _refresh_ports())

@@ -38,10 +38,7 @@ from sp_rtk_base.models.bluetooth_models import (
     normalize_pin,
 )
 from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
-
-#: How the status line should be coloured.  These are NiceGUI's own
-#: tone names, so the page can use them directly.
-StatusTone = Literal["positive", "warning", "negative"]
+from sp_rtk_base.ui.status_line import StatusLine
 
 #: Why a Green stopped standing.  A Green dies two ways and the two
 #: must not share wording, for the same reason the two Warnings must
@@ -49,14 +46,6 @@ StatusTone = Literal["positive", "warning", "negative"]
 #: needs to know whether the clock ran out or their own edit voided
 #: it.
 GreenLostReason = Literal["expired", "edited"]
-
-
-@dataclass(frozen=True)
-class StatusLine:
-    """One line of status, and the tone to render it in."""
-
-    text: str
-    tone: StatusTone
 
 
 #: Red copy, keyed by result code.  Each says which Stage failed *and*

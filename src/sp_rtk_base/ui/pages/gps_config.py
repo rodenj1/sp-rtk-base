@@ -70,6 +70,8 @@ from pydantic import ValidationError
 from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
+    BAUD_RATES,
+    DEFAULT_BAUD,
     RTCM_MESSAGE_GROUPS,
     CurrentBaseConfig,
     DeviceConnectionState,
@@ -139,8 +141,6 @@ from sp_rtk_base.ui.status_line import StatusLine
 
 logger = logging.getLogger(__name__)
 
-BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
-DEFAULT_BAUD = 115200
 
 # GNSS constellations shown in the read-only form, in display order.
 _GNSS_DISPLAY: list[tuple[str, str]] = [

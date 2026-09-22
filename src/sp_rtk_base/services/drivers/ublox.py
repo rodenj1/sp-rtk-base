@@ -29,6 +29,7 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
 )
 from sp_rtk_base.models.device_models import (
+    DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
     CurrentBaseConfig,
@@ -332,7 +333,7 @@ class UbloxDriver(GpsReceiverDriver):
             return CandidateVerdict.BYTES_NO_ANSWER, None
         return CandidateVerdict.SILENT, None
 
-    def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
+    def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
         if self._serial is not None and self._serial.is_open:
             raise ConnectionError("Already connected — disconnect first")
 

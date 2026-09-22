@@ -24,6 +24,7 @@ from sp_rtk_base.models.config_models import (
     InputProfile,
 )
 from sp_rtk_base.models.device_models import (
+    DEFAULT_BAUD,
     BaseInvariantsCheck,
     CurrentBaseConfig,
     DetectionResult,
@@ -676,7 +677,7 @@ async def handoff_to_relay(
 
     status = svc.get_status()
     port = status.port or ""
-    baud = status.baud_rate or 115200
+    baud = status.baud_rate or DEFAULT_BAUD
 
     # 1. Persist device profile
     cfg.save_device_profile(

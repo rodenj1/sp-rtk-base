@@ -1,7 +1,7 @@
 # Research: what does UBX-MON-COMMS report on a ZED-F9P, and can it identify which receiver port the console is on?
 
 > **Resolved: 2026-09-22** · Ticket [#151](https://github.com/rodenj1/sp-rtk-base/issues/151) · Map [#150](https://github.com/rodenj1/sp-rtk-base/issues/150) · Type: research (AFK, paper-only — no hardware touched)
-> **Verdict: the mechanism in map #150 decision 2 is sound on paper, at our exact protocol version — but one detail of the `portId` encoding will silently break the obvious implementation, and the "attribute by an exact byte delta" half of the plan is weaker than the "attribute by which port moved at all" half.** `UBX-MON-COMMS` is documented `Periodic/polled` at interface version **27.31** (our reference receiver's `PROTVER`), it is *not* output by default so polling is the only cost-free way to read it, and `rxBytes` is documented as "Number of bytes ever received" per port. The trap: u-blox's own port table gives **UART2 the `portId` `0x0201`, not `0x0200`** — an equality test against a tidy `bank << 8` table matches I2C, UART1, USB and SPI and silently never matches UART2, which is exactly the port this app writes RTCM to. Decode by the **high byte**, not by equality.
+> **Verdict: the mechanism in map #150 decision 2 is sound on paper, at our exact protocol version — but one detail of the `portId` encoding will silently break the obvious implementation, and the "attribute by an exact byte delta" half of the plan is weaker than the "attribute by which port moved at all" half.** `UBX-MON-COMMS` is documented `Periodic/polled` at interface version **27.31** (our reference receiver's `PROTVER`), it is *not* output by default so polling is the only cost-free way to read it, and `rxBytes` is documented as "Number of bytes ever received" per port. The trap: u-blox's own port table gives **UART2 the `portId` `0x0201`, not `0x0200`** — an equality test against a tidy `bank << 8` table matches I2C, UART1, USB and SPI and silently never matches UART2, which is exactly the port this app writes RTCM to. Decode by the **high byte**, not by equality — as u-blox's own `ubxlib` does. Two further traps recorded below: `txErrors.outputPort` looks like a blessed "which port am I on" answer and is decoded by our pyubx2, but it does not exist at 27.31 and reads `N/A` on real F9P hardware even at 27.50; and gpsd's decoder has the `0x0201` mapping wrong today, so other implementations are not a safe cross-check.
 
 ---
 
@@ -34,6 +34,8 @@ Gen8 answer which does not hold on Gen9 is worse than no answer.
 | **[ID-27.11]** | *u-blox ZED-F9P Interface Description* | UBX-18010854 R07, 10-Jul-2019 | Title page: "v27.11". Used **only** to show the message is stable across 27.x. |
 | **[IM-R08]** | *ZED-F9P — Integration manual* | UBX-18010802 R08, 02-Jun-2020 | Superseded. Cited **only** in §4.1 to explain a contradictory table still circulating. |
 | **[pyubx2]** | pyubx2 1.3.0, as pinned and installed in this repo | `.venv/lib/python3.10/site-packages/pyubx2` | The decoder we would actually use. |
+| **[ubxlib]** | u-blox's **own** C library, `gnss/src/u_gnss_info.c` | GitHub `u-blox/ubxlib`, master | First-party vendor *code* — the only non-document u-blox statement on `portId`. |
+| **[CAP-27.50]** | A real ZED-F9P MON capture shipped in pyubx2's test suite, `tests/pygpsdata-MON.log` | — | Self-identifies as `MOD=ZED-F9P`, `FWVER=HPG 1.50`, `PROTVER=27.50`. **Observed hardware behaviour**, one minor version above ours. |
 
 Note on the ticket's framing: it names **UBX-18010854** as the interface description to trust. That
 document exists and was read, but it is **v27.11** (R07, 2019) — it is *not* the document for our
@@ -78,6 +80,14 @@ The payload layout is byte-identical between 27.11 and 27.31. The only substanti
 `protIds` legend: 27.11 lists "0: UBX, 1: NMEA, 2: RTCM2, 5: RTCM3, 256: No protocol reported"
 (the `256` is a typo in a `U1[4]` field), 27.31 lists "0: UBX, 1: NMEA, 2: RTCM2, 5: RTCM3,
 **6: SPARTN**, **0xFF**: No protocol reported".
+
+**One counter-claim you may run into, and it is wrong.** gpsd's own documentation
+(`www/ubxtool-examples.adoc`) states: *"Gen9 does not officially support the UBX-MON-COMMS message,
+and Gen10 removes it completely."* Both halves are contradicted by u-blox's documents — [ID-27.11]
+says in as many words "Supported on: u-blox 9 with protocol version 27.11", and M10 (protVer 34.10)
+still lists `MON-COMMS` as `Periodic/polled` — and by gpsd's *own driver*, which polls the message
+whenever protVer ≥ 27. Treat the sentence as stale; the real point buried in that page is the port
+*numbering* problem (§4.3), not message availability.
 
 ### 3.1 It is not emitted by default, so polling is the whole cost
 
@@ -156,10 +166,18 @@ came from first.
 
 ### 4.2 `0x0201` is ZED-F9P-specific — do not generalise across Gen9
 
-The **NEO-D9C** integration manual (UBX-21031631 R04, 11-May-2025) lists **`0x0200` for UART2**,
-with no Reserved rows at all. **Established fact**, and a pointed one: the `0x0201` quirk is a
-property of *this module's* port table, not of Gen9 or of `MON-COMMS`. The high-byte decode rule in
-§4.3 is the one that survives both parts; a hard-coded `0x0201` literal would not.
+Two other u-blox parts assign UART2 differently: the **NEO-D9C** integration manual
+(UBX-21031631 R04) lists **`0x0200`** with no Reserved rows, and the **ZED-X20P** integration manual
+(Table 35) likewise uses **`0x0200`**, dropping `0x0101`/`0x0201` entirely. **Established fact**,
+and a pointed one: `0x0201` is a property of *this module's* port table, not of Gen9 or of
+`MON-COMMS`.
+
+Real tooling already branches on it — PyGPSClient keys its table on `("F9", 0x0201)` vs
+`("X20", 0x0200)`, and SparkFun's RTK Everywhere firmware picks `0x0201` or `0x200` at runtime from
+the detected module. **Implication for us:** the high-byte decode rule in §4.3 survives every part;
+a hard-coded `0x0201` literal would not. Since `hardware_identity` already resolves the model, a
+future non-F9P receiver is a table entry, not a rewrite — but the high-byte rule means we probably
+never need one.
 
 ### 4.3 Why this is a trap and not a curiosity
 
@@ -186,9 +204,57 @@ name = _PORT_BY_BANK.get(port_id >> 8)
 ```
 
 `0x0201 >> 8 == 2 == UART2`, and this also absorbs the reserved `0x0101` / `0x0200` rows into the
-right bank rather than dropping them. **This is inference** — the manual gives a table, not a
-formula, and does not say the low byte is a sub-index — but it is inference that is correct on
-every documented row, which the equality table is not.
+right bank rather than dropping them.
+
+**u-blox's own code confirms both the table and the rule.** [ubxlib] `gnss/src/u_gnss_info.c` — a
+first-party source, and the only place u-blox states this outside a PDF table:
+
+```c
+// The encoding of the port number in this message is _different_
+// to that in UBX-CFG-PORT ... which is AFTER endian conversion:
+//
+// 0 ==> 0x0000 I2C
+// 1 ==> 0x0100 UART1
+// 2 ==> 0x0201 UART2
+// 3 ==> 0x0300 USB
+// 4 ==> 0x0400 SPI
+//
+// This is because there are additional UARTs internal to the
+// GNSS device which need to be accounted for.  The ones listed
+// above are those that may be connected to a host MCU, but note
+// that others (e.g. 0x0101) may appear in the output of
+// UBX-MON-COMMS, which we will ignore.
+port = ((uint32_t) port) << 8;
+if (port == (((uint32_t) U_GNSS_PORT_UART2) << 8)) {
+    port++;
+}
+```
+
+So the high-byte reading is **not** merely our inference: u-blox implements exactly `bank << 8`
+with a `+1` special case for UART2, says in so many words that the encoding differs from
+`CFG-PRT`, explains *why* `0x0201` is odd (internal UARTs), and confirms that undocumented IDs such
+as `0x0101` do appear on real hardware and should be ignored rather than treated as errors.
+
+**And the mistake is not hypothetical — it has already shipped twice.** The Rust `ublox` crate
+decoded `portId` as a 0–5 index ([ublox-rs/ublox#288](https://github.com/ublox-rs/ublox/issues/288),
+fixed in #290): "only I2C decodes correctly and every other port falls through to
+`PortId::Unknown`". And **gpsd still has it wrong today** — `drivers/driver_ubx.c`, verified
+verbatim on master:
+
+```c
+static const struct vlist_t vtarget[] = {
+    {0, "DDC"}, {1, "UART1"}, {2, "UART2"}, {3, "USB"}, {4, "SPI"},
+    {0x100, "UART1"},       // MON-COMMS
+    {0x200, "UART2"},       // MON-COMMS   <-- Reserved on ZED-F9P
+    {0x300, "USB"},         // MON-COMMS
+    {0x400, "SPI"},         // MON-COMMS
+    {0, NULL},
+};
+```
+
+No `0x201` entry, and `0x200` — Reserved per Table 27 — mapped to UART2. **Consequence for us:
+"check what another decoder does" is not a safe cross-check for this field.** The reference
+implementations disagree, and the widely-trusted one is wrong for our exact part.
 
 ### 4.4 Relationship to Gen8 `CFG-PRT` numbering
 
@@ -206,6 +272,50 @@ holding a *different, wider* identifier whose high byte happens to equal that po
 that assumes `MON-COMMS.portId` can be compared directly against a Gen8 `CFG-PRT` port number is
 wrong for every port (it would need `>> 8`), and tooling that assumes the U2 is just the port
 number zero-extended is wrong for all of them too (`0x0100 != 1`).
+
+---
+
+### 4.5 What a real ZED-F9P actually emits
+
+Everything above is paper. There is one piece of *observed* Gen9 behaviour available without a
+bench: [CAP-27.50], a live ZED-F9P capture shipped as a pyubx2 test fixture. Decoded here **with
+this repo's own pinned pyubx2 1.3.0**, so it is reproducible in-tree:
+
+```
+MON-VER: hwVersion=00190000, FWVER=HPG 1.50, PROTVER=27.50, MOD=ZED-F9P
+
+MON-COMMS raw: b5 62 0a 36 58 00 00 02 00 00 00 01 05 ff ...
+  version=0  nPorts=2  mem=0 alloc=0 outputPort=0
+  protIds = [0=UBX, 1=NMEA, 5=RTCM3, 255=none]
+  portId_01 = 256 (0x0100, UART1)  txBytes=18620  rxBytes=0     msgs=[0,0,0,0]
+  portId_02 = 768 (0x0300, USB)    txBytes=13105  rxBytes=1937  msgs=[123,0,0,0]
+
+MON-MSGPP: the only non-zero counter in the whole 120-byte payload is msg4_01 = 123
+```
+
+Four things this establishes as **observed fact on real ZED-F9P hardware** (at 27.50 — one minor
+version above ours, same part, same generation):
+
+1. **`0x0100` = UART1 and `0x0300` = USB appear on the wire exactly as Table 27 says.** Two of the
+   five rows are now confirmed by hardware, not just by a PDF. (UART2 is not exercised in this
+   capture, so `0x0201` remains document-and-vendor-code only — that is the row #153 should
+   prioritise.)
+2. **`nPorts` was 2 on a five-port module.** UART2, I2C and SPI are simply absent, exactly as the
+   "only included if communication has been initiated" clause predicts. Confirms §9.2(d): never
+   index by position, never assume a port count.
+3. **`MON-MSGPP`'s port indices resolve empirically.** The single non-zero MSGPP counter is
+   `msg4_01 = 123`, and MON-COMMS in the same session reports `msgs_02_01 = 123` for `portId_02 =
+   0x0300` (USB) with `protIds_01 = 0` (UBX). Same count, same protocol slot, same session — so
+   `msg4` → `port3` → USB, i.e. `msgN` is port `N−1` in the **legacy 0-based port space**
+   (0=I2C, 1=UART1, 2=UART2, 3=USB, 4=SPI), *not* the MON-COMMS `portId` space. This promotes §6's
+   inference to a corroborated reading — though MON-MSGPP stays the weaker signal for the other
+   three reasons in §6.
+4. **`outputPort` read 0 ("N/A") on a message that was unambiguously emitted from one of those two
+   ports.** See §7.1 — this is the finding that kills the one field that looks like a blessed
+   answer.
+
+**Caveat, stated plainly:** this is 27.50, not our 27.31, and it is a captured log rather than a
+receiver we polled. It corroborates the documents; it does not replace #153.
 
 ---
 
@@ -303,12 +413,12 @@ So the useful idea from `MON-MSGPP` — "count parsed UBX messages per port" —
 
 ---
 
-## 7. Does u-blox document a blessed way to learn which port you are on? — **no. Not found.**
+## 7. Does u-blox document a blessed way to learn which port you are on? — **not at 27.31**
 
 Searched both interface descriptions and the integration manual for any statement of the form "to
-determine which port the host is connected to". **Nothing.** This is a "not found", offered as a
-useful result rather than a gap: there is no self-identification message, no "current port" query,
-and no worked example.
+determine which port the host is connected to". **Nothing at our protocol version** — no
+self-identification message, no "current port" query, no worked example. (u-blox *did* add a field
+for exactly this at **27.50**, after ours; §7.1 explains why it still does not help.)
 
 The three near-misses, and why none of them is the answer:
 
@@ -328,13 +438,50 @@ The three near-misses, and why none of them is the answer:
 use of `MON-COMMS` — it is the message u-blox points at for per-port receive accounting — but it is
 **our construction, not a documented recipe**. Nobody should cite u-blox as having blessed it.
 
+### 7.1 `txErrors.outputPort` — the blessed answer exists, but not for us, and not anywhere
+
+This qualifies the "not found" above, and it is the one place where a later firmware looks like it
+might solve the whole ticket. It does not.
+
+**u-blox did add exactly the field you would want** — but only at **protocol version 27.50**, in
+the HPG 1.51 interface description, as three previously-reserved bits of `txErrors`:
+
+> `bits 4…2  U:3  outputPort` — "Output port: **Reports the port from which this message was output
+> from.** • 0 = N/A • 1 = I2C • 2 = UART1 • 3 = UART2 • 4 = USB • 5 = SPI"
+
+That is a direct, first-party, self-identification mechanism, and it would make map #150 decision 2
+unnecessary — no probe write, no delta, no ambiguity.
+
+**Two independent reasons it does not help this app:**
+
+1. **It does not exist at 27.31.** Verified by searching our own copies: the string `outputPort`
+   appears **zero times** in [ID-27.31] and **zero times** in [ID-27.11]. At 27.31 the `txErrors`
+   bitfield documents only `bit 0 mem` and `bit 1 alloc`; bits 2–4 are undocumented. Our reference
+   receiver is 27.31.
+2. **Even where it is documented, real F9P hardware returns 0 = N/A.** [CAP-27.50] is a ZED-F9P at
+   **27.50** — the very version that introduced the field — and its `MON-COMMS` decodes to
+   `outputPort = 0` on a message that was demonstrably emitted from either UART1 or USB (§4.5).
+   Corroborated independently by the `satpulse` project's in-code note: *"The output port feature is
+   documented for protocol version 40, but returns not available on F10N and F10T. It seems to work
+   properly on protocol version 50 (X20 series)."*
+
+**The trap this creates, and it is a live one:** pyubx2 1.3.0 **does** decode `outputPort` (§8), so
+a `MON-COMMS` parse against our 27.31 receiver will cheerfully surface `outputPort=0` — from bits
+the receiver's own protocol version does not define. A developer who spots that field in the parsed
+output has every reason to think it is the easy answer. It is not: `0` means "N/A" at 27.50 and
+means *nothing at all* at 27.31. **Do not branch on it.**
+
+**Consequence for the map:** upgrading the rig's firmware is **not** a shortcut past decision 2.
+The field only works on X20-class parts (protVer 50+), which is different silicon, not a newer
+build of ours.
+
 ---
 
 ## 8. What pyubx2 1.3.0 contributes, and what it does not
 
 Verified locally against the pinned install (`.venv/.../pyubx2`, `pyubx2.version == "1.3.0"`):
 
-**The payload definition matches [ID-27.31] byte-for-byte.** `ubxtypes_get.py:1621` declares the
+**The payload byte layout matches [ID-27.31] exactly** (with one bitfield caveat, below). `ubxtypes_get.py:1621` declares the
 header (`version`, `nPorts`, `txErrors` bitfield, `reserved0`, `protgroup`×4) and a `portsgroup`
 repeated `nPorts` times with `portId U2`, `txPending U2`, `txBytes U4`, `txUsage U1`,
 `txPeakUsage U1`, `rxPending U2`, `rxBytes U4`, `rxUsage U1`, `rxPeakUsage U1`, `overrunErrs U2`,
@@ -348,6 +495,11 @@ confirming the stride.
 ```
 b5 62 0a 36 00 00 40 ca
 ```
+
+**Caveat: pyubx2's `txErrors` bitfield is from a *newer* revision than ours.** It declares
+`{"mem": U1, "alloc": U1, "outputPort": U3}` — and `outputPort` is a **27.50** addition that does
+not exist at 27.31 (§7.1). The byte layout is unaffected (`txErrors` is one `X1` either way), but
+the decoded field is meaningless against our receiver. See §7.1 — this is a trap, not a bonus.
 
 **`PROTIDS` matches 27.31, not 27.11.** `ubxtypes_decodes.py:234` has `{0: UBX, 1: NMEA,
 2: RTCM2, 5: RTCM3, 6: SPARTN, 0xFF: "No protocol reported"}` — including SPARTN and the corrected
@@ -436,10 +588,20 @@ single fragile equality into a cross-check.
 
 **(d) Absence is informative, presence is not enumerable.** "A port is only included if
 communication, either send or receive, has been initiated on that port" (§3) means `nPorts` is not
-5, and a port the console has never touched may simply not appear. Code must not index by position
-or assume a fixed port list — iterate the group and key on `portId`. It also means the *first* poll
-may not list the console's port at all if the poll itself is what initiates communication; the
-second poll will.
+5, and a port the console has never touched may simply not appear. **Observed, not just
+documented:** [CAP-27.50] reports `nPorts = 2` on a five-port ZED-F9P (§4.5). Code must not index by
+position or assume a fixed port list — iterate the group and key on `portId`. It also means the
+*first* poll may not list the console's port at all if the poll itself is what initiates
+communication; the second poll will. Allow for up to 7 entries, since the Reserved `0x0101` and
+`0x0200` banks do appear on real hardware ([ubxlib]: "others (e.g. 0x0101) may appear ... which we
+will ignore") — skip unknown banks, never error on them.
+
+**(e) Do not cross-check the decode against other libraries.** §4.3: gpsd's C driver maps `0x200`
+(Reserved) to UART2 and has no `0x201` entry, and the Rust `ublox` crate shipped a 0–5 index decode
+until 2024. [IM-R16] Table 27 and [ubxlib] are the sources; a third-party table agreeing or
+disagreeing proves nothing.
+
+**(f) Ignore `txErrors.outputPort`, however tempting it looks in the parsed output.** §7.1.
 
 ### 9.3 What this ticket cannot settle
 
@@ -462,7 +624,9 @@ from the documents:
 | Sub-question | Answer | Status |
 |---|---|---|
 | `portId` encoding on Gen9 | I2C `0x0000`, UART1 `0x0100`, **UART2 `0x0201`**, USB `0x0300`, SPI `0x0400`; `0x0101`/`0x0200` Reserved | **Fact** — [IM-R16] §3.8 Table 27 |
-| Decode rule | High byte = port number; low byte a sub-index | **Inference**, correct on every documented row |
+| Decode rule | High byte = port number; low byte a sub-index | **Confirmed by u-blox's own code** — [ubxlib] implements `bank << 8` with a `+1` for UART2 |
+| Do other decoders agree? | **No** — gpsd maps Reserved `0x200` to UART2 and lacks `0x201`; `ublox` crate shipped a 0–5 index bug | **Fact**, both verified verbatim |
+| Real-hardware confirmation | `0x0100`=UART1 and `0x0300`=USB seen on a ZED-F9P at 27.50; `nPorts=2` on a 5-port module | **Observed** — [CAP-27.50], decoded with our pinned pyubx2 |
 | Differs from Gen8 `CFG-PRT`? | Port *numbers* identical (0=I2C…4=SPI); the *field* differs — `U1` number vs `U2` identifier | **Fact** — [ID-27.31] deprecated `CFG-PRT` variants |
 | Supported at 27.31? | Yes | **Fact** — [ID-27.31] §3.14.1 |
 | POLL-able? | Yes, `Periodic/polled`, zero-payload `0x0A 0x36` | **Fact** — [ID-27.31] §3.14.1 + §3.5.2 |
@@ -472,8 +636,10 @@ from the documents:
 | Wrapping | Not documented anywhere | **Not found**; wrap-at-2³² is inference, ~8.6 yr at 57600 baud |
 | Promptness | Not documented | **Not found** — #153 |
 | `MON-MSGPP` better? | No — deprecated at 27.31, counts messages not bytes, `U2` counters, port indices unnamed | **Fact** — [ID-27.31] §3.14.7 |
+| `MON-MSGPP` port indices | `msgN` = port `N−1` in legacy 0-based space (msg4 → USB) | **Observed** — [CAP-27.50], §4.5 |
 | `MON-MSGPP` complementary? | Superseded — `MON-COMMS.msgs[]` gives the same signal *with* an explicit `portId` | **Inference** |
-| Blessed way to learn your own port? | **No such thing documented** | **Not found** — searched both IDs + IM |
+| Blessed way to learn your own port? | **None at 27.31.** `txErrors.outputPort` was added at **27.50** and would be exactly that — but it is absent from our protocol version *and* reads `0 = N/A` on real F9P hardware at 27.50 | **Fact** (absent at 27.31, verified) + **observed** (reads N/A) |
+| Is a firmware upgrade a shortcut? | **No** — `outputPort` only works on X20-class parts (protVer 50+) | **Inference** from [CAP-27.50] + satpulse |
 | pyubx2 1.3.0 support | Parses and polls correctly; **no `portId` decode table** — mapping is ours to write | **Fact**, verified locally |
 | Conflicting `portId` tables in the wild | [IM-R08] (2020) prints every value byte-swapped (`0x0102` for UART2); superseded by R16 | **Fact**; byte-order explanation is **inference** |
 | Does `0x0201` generalise to other Gen9 parts? | **No** — NEO-D9C's manual lists `0x0200` for UART2 | **Fact** — UBX-21031631 R04 |

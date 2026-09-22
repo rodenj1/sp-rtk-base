@@ -7,10 +7,17 @@ survey-in progress.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from sp_rtk_base.models.api_models import DeviceActionResponse, DeviceConnectRequest
+from sp_rtk_base.models.api_models import (
+    DetectBaudRequest,
+    DeviceActionResponse,
+    DeviceConnectRequest,
+)
 from sp_rtk_base.models.config_models import (
     BaseStationPosition,
     DeviceProfile,
@@ -19,6 +26,7 @@ from sp_rtk_base.models.config_models import (
 from sp_rtk_base.models.device_models import (
     BaseInvariantsCheck,
     CurrentBaseConfig,
+    DetectionResult,
     DeviceStatus,
     FixedBaseConfig,
     GnssConfig,
@@ -40,10 +48,13 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import (
     ApplyConfigLinkLostError,
     ApplyConfigRefusedError,
+    DetectionRefusedError,
     DeviceService,
 )
 from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/device", tags=["device"])
 
@@ -98,6 +109,38 @@ async def connect_device(
         status="ok",
         message=f"Connected to {info.vendor} {info.model} on {request.port}",
     )
+
+
+@router.post("/detect-baud", response_model=DetectionResult)
+async def detect_baud(
+    request: DetectBaudRequest,
+    svc: DeviceService = Depends(get_device_service),
+) -> DetectionResult | JSONResponse:
+    """Sweep Candidate rates on a port and report the rate found.
+
+    Persists nothing and connects nothing — the caller decides whether
+    to act on the answer. Returns 409 when the Detection was refused and
+    nothing was touched; two unrelated refusals share that status, so
+    the machine-readable ``code`` is what a client branches on.
+    """
+    try:
+        return await svc.detect_baud(
+            request.port,
+            vendor=request.vendor,
+            preferred_baud=request.preferred_baud,
+        )
+    except DetectionRefusedError as exc:
+        logger.info("Detection refused (%s): %s", exc.code, exc.message)
+        return JSONResponse(
+            status_code=409,
+            content={"status": "error", "message": exc.message, "code": exc.code},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ConnectionError, OSError) as exc:
+        # The port could not be opened at any rate — a broken path, not
+        # a Detection outcome, and the operator needs the real reason.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/disconnect", response_model=DeviceActionResponse)

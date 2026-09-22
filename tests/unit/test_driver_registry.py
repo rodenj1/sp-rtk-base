@@ -6,6 +6,7 @@ import pytest
 
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    CandidateVerdict,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -50,6 +51,11 @@ class StubDriver(GpsReceiverDriver):
 
     def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
         return DeviceInfo(vendor="StubVendor", model="StubModel")
+
+    def try_baud_candidate(
+        self, port: str, baud_rate: int, budget_s: float
+    ) -> tuple[CandidateVerdict, DeviceInfo | None]:
+        return CandidateVerdict.SILENT, None
 
     def disconnect(self) -> None:
         pass

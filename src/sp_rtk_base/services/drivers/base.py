@@ -8,10 +8,16 @@ without knowing the vendor-specific protocol (UBX, SBF, etc.).
 from __future__ import annotations
 
 import abc
+import contextlib
+from collections.abc import Generator
 
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    Candidate,
+    CandidateVerdict,
     CurrentBaseConfig,
+    DetectionOutcome,
+    DetectionResult,
     DeviceCapability,
     DeviceInfo,
     DynModel,
@@ -29,6 +35,57 @@ from sp_rtk_base.models.device_models import (
     SurveyInProgress,
     UbxProtocol,
 )
+
+# ---------------------------------------------------------------------------
+# Detection constants (issue #142)
+# ---------------------------------------------------------------------------
+
+#: Candidate rates in likelihood order. 115200 leads because it is what
+#: the UI has always defaulted to; 57600 follows because it is what the
+#: documented reference deployment actually runs at.
+DETECTION_CANDIDATES: tuple[int, ...] = (
+    115200,
+    57600,
+    38400,
+    9600,
+    230400,
+    460800,
+    921600,
+    19200,
+)
+
+#: Wall-clock seconds per Candidate. Deliberately far below
+#: ``UbloxDriver.CONNECT_TIMEOUT``: that 10s is sized for a real connect
+#: to a receiver buried under RTCM traffic, and eight of them would be a
+#: eighty-second spinner. A receiver that is going to answer answers in
+#: tens of milliseconds.
+DETECTION_BUDGET_S: float = 1.5
+
+
+def detection_order(preferred_baud: int | None = None) -> tuple[int, ...]:
+    """Candidate rates in the order a Detection should try them.
+
+    *preferred_baud* leads when given — it is whatever the operator has
+    selected — and is never tried twice. A preferred rate outside the
+    standard set is still honoured: the operator may know something the
+    likelihood order does not.
+    """
+    if preferred_baud is None:
+        return DETECTION_CANDIDATES
+    rest = tuple(r for r in DETECTION_CANDIDATES if r != preferred_baud)
+    return (preferred_baud, *rest)
+
+
+def _confirmation_rate(found: int) -> int:
+    """A rate the receiver is deliberately *not* expected to answer at.
+
+    A rate-sensitive UART runs at exactly one rate, so any other rate
+    disconfirms. Picking from the standard set keeps it a rate the OS
+    will actually open, and picking the far end of that set keeps the
+    choice deterministic and obvious in a result.
+    """
+    slowest, fastest = min(DETECTION_CANDIDATES), max(DETECTION_CANDIDATES)
+    return fastest if found == slowest else slowest
 
 
 class GpsReceiverDriver(abc.ABC):
@@ -92,6 +149,153 @@ class GpsReceiverDriver(abc.ABC):
     @abc.abstractmethod
     def is_connected(self) -> bool:
         """Whether the driver currently has an open connection."""
+
+    # ------------------------------------------------------------------
+    # Detection — the baud-rate sweep (issue #142)
+    # ------------------------------------------------------------------
+
+    @abc.abstractmethod
+    def try_baud_candidate(
+        self, port: str, baud_rate: int, budget_s: float
+    ) -> tuple[CandidateVerdict, DeviceInfo | None]:
+        """Open *port* at one rate and classify what came back.
+
+        The only vendor-specific half of a Detection: what counts as an
+        answer is a protocol question (MON-VER on u-blox), while the
+        sweep around it is not. Implementations must leave the port
+        closed on the way out, whatever the verdict.
+
+        Args:
+            port: Serial port path.
+            baud_rate: The single Candidate rate to try.
+            budget_s: Wall-clock seconds to spend before giving up.
+
+        Returns:
+            The Candidate's verdict, plus the identity read when — and
+            only when — that verdict is ``ANSWERED``.
+        """
+
+    def is_detection_cancelled(self) -> bool:
+        """Whether an in-flight Detection has been asked to stop.
+
+        Concrete by default because a driver with no cancellation story
+        is simply never cancelled. Drivers that already carry a cancel
+        signal override this, which is what lets the existing Cancel
+        button abort a sweep with no new plumbing.
+        """
+        return False
+
+    @contextlib.contextmanager
+    def detection_session(self) -> Generator[None]:
+        """Wrap one whole sweep: set up before it, tear down after it.
+
+        Exists because reusing the connect-cancel signal buys Detection a
+        Cancel button for free but makes it inherit that signal's
+        lifetime. ``cancel_connect`` raises the signal and only
+        ``connect`` ever lowers it, so a driver whose last connect the
+        operator *abandoned* still holds a raised cancel — and a
+        Detection that trusted it would return having tried nothing.
+        Drivers that carry such a signal lower it here, the way
+        ``connect()`` already does on its own way in.
+
+        The default does nothing, because a driver with no cancel signal
+        and no port to release has nothing to do on either side.
+        """
+        yield
+
+    def detect_baud(
+        self,
+        port: str,
+        preferred_baud: int | None = None,
+        budget_s: float = DETECTION_BUDGET_S,
+    ) -> DetectionResult:
+        """Sweep Candidate rates on *port* until the receiver answers.
+
+        Vendor-neutral, and deliberately concrete: the ordering, the
+        confirmation rule and the outcome classification are decisions
+        that must not be re-made per driver. Only
+        :meth:`try_baud_candidate` varies.
+
+        *preferred_baud* is tried first — it is whatever the operator
+        currently has selected, which is usually the remembered one and
+        usually right. The rest follow in likelihood order.
+
+        **Confirmation fires only on a first-Candidate hit.** A sweep
+        that hit on a later Candidate has already watched earlier rates
+        fail, so the port has proven itself rate-sensitive and there is
+        nothing left to confirm. A hit on the very first Candidate
+        carries no such disconfirming evidence, so one deliberately
+        wrong rate is tried: if *that* answers too, the port ignores its
+        baud setting entirely and the outcome is ``RATE_INDIFFERENT``.
+        The confirming Candidate is recorded like any other, so the
+        result stays auditable.
+
+        Args:
+            port: Serial port path to sweep.
+            preferred_baud: Rate to try first, if any.
+            budget_s: Wall-clock seconds allowed per Candidate.
+
+        Returns:
+            The :class:`DetectionResult` — never raises for a port that
+            simply did not answer; that is ``NOT_FOUND``.
+        """
+        candidates: list[Candidate] = []
+        opened_any = False
+        first_open_error: Exception | None = None
+
+        def attempt(rate: int) -> tuple[CandidateVerdict, DeviceInfo | None]:
+            nonlocal opened_any, first_open_error
+            try:
+                verdict, info = self.try_baud_candidate(port, rate, budget_s)
+                opened_any = True
+            except Exception as exc:
+                if first_open_error is None:
+                    first_open_error = exc
+                verdict, info = CandidateVerdict.SILENT, None
+            candidates.append(Candidate(baud_rate=rate, verdict=verdict))
+            return verdict, info
+
+        with self.detection_session():
+            for index, rate in enumerate(detection_order(preferred_baud)):
+                if self.is_detection_cancelled():
+                    break
+
+                verdict, info = attempt(rate)
+                if verdict is not CandidateVerdict.ANSWERED:
+                    continue
+
+                if index == 0 and not self.is_detection_cancelled():
+                    disconfirming = _confirmation_rate(rate)
+                    confirm_verdict, _ = attempt(disconfirming)
+                    if confirm_verdict is CandidateVerdict.ANSWERED:
+                        return DetectionResult(
+                            outcome=DetectionOutcome.RATE_INDIFFERENT,
+                            baud_rate=rate,
+                            device=info,
+                            candidates=candidates,
+                        )
+
+                return DetectionResult(
+                    outcome=DetectionOutcome.FOUND,
+                    baud_rate=rate,
+                    device=info,
+                    candidates=candidates,
+                )
+
+        # A port that never opened at *any* rate is not a Detection
+        # outcome — it is a broken path the operator has to be told
+        # about. Reporting "not found" for a permission error or a
+        # missing device would send someone hunting a baud rate that
+        # was never the problem, which is the opposite of the point.
+        if not opened_any and first_open_error is not None:
+            raise ConnectionError(
+                f"Could not open {port} at any rate: {first_open_error}"
+            ) from first_open_error
+
+        return DetectionResult(
+            outcome=DetectionOutcome.NOT_FOUND,
+            candidates=candidates,
+        )
 
     # ------------------------------------------------------------------
     # Base station configuration

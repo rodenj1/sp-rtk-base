@@ -551,3 +551,64 @@ class DeviceStatus(BaseModel):
     connected_at: datetime | None = Field(
         default=None, description="Connection timestamp"
     )
+
+
+# ---------------------------------------------------------------------------
+# Detection — the baud-rate sweep (issue #142)
+# ---------------------------------------------------------------------------
+
+
+class CandidateVerdict(str, enum.Enum):
+    """What happened when one Candidate rate was tried.
+
+    ``BYTES_NO_ANSWER`` is the informative one: at exactly one rate with
+    silence elsewhere, it means the link is at that rate and the
+    receiver is not accepting commands on that port.
+    """
+
+    ANSWERED = "answered"
+    BYTES_NO_ANSWER = "bytes_no_answer"
+    SILENT = "silent"
+
+
+class Candidate(BaseModel):
+    """One baud rate a Detection tried, together with what happened.
+
+    Never the bare rate — a Candidate without its verdict is just a
+    number (see ``CONTEXT.md``).
+    """
+
+    baud_rate: int = Field(description="The rate tried")
+    verdict: CandidateVerdict = Field(description="What came back at that rate")
+
+
+class DetectionOutcome(str, enum.Enum):
+    """The result of a whole Detection.
+
+    ``RATE_INDIFFERENT`` reports a **property of the port** — one whose
+    baud setting the kernel accepts and discards — rather than a verdict
+    on the Detection that met it. It is not a failure.
+    """
+
+    FOUND = "found"
+    RATE_INDIFFERENT = "rate_indifferent"
+    NOT_FOUND = "not_found"
+
+
+class DetectionResult(BaseModel):
+    """What a Detection discovered, and the evidence it discovered it from."""
+
+    outcome: DetectionOutcome = Field(description="The Detection's overall result")
+    baud_rate: int | None = Field(
+        default=None,
+        description="The rate the receiver answered at, when there is one",
+    )
+    device: DeviceInfo | None = Field(
+        default=None,
+        description="Identity read while confirming the rate — free, because "
+        "an answer to the identity poll is what 'answered' means",
+    )
+    candidates: list[Candidate] = Field(
+        default_factory=lambda: list[Candidate](),
+        description="Every Candidate tried, in the order they were tried",
+    )

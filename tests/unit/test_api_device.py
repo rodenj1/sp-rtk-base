@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    Candidate,
+    CandidateVerdict,
     CurrentBaseConfig,
+    DetectionOutcome,
+    DetectionResult,
     DeviceCapability,
     DeviceConnectionState,
     DeviceInfo,
@@ -18,7 +22,10 @@ from sp_rtk_base.models.device_models import (
     SurveyInProgress,
 )
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.device_service import (
+    DetectionRefusedError,
+    DeviceService,
+)
 from sp_rtk_base.services.relay_service import RelayService
 
 # ---------------------------------------------------------------------------
@@ -920,3 +927,103 @@ class TestHandoff:
         relay_dests = call_args[0][1]  # second positional arg
         assert len(relay_dests) == 1
         assert relay_dests[0].name == "tcp1"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/device/detect-baud (issue #142)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectBaudEndpoint:
+    def test_reports_the_rate_and_every_candidate(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        mock_device_service.detect_baud = AsyncMock(
+            return_value=DetectionResult(
+                outcome=DetectionOutcome.FOUND,
+                baud_rate=57600,
+                device=DeviceInfo(vendor="u-blox", model="ZED-F9P"),
+                candidates=[
+                    Candidate(baud_rate=115200, verdict=CandidateVerdict.SILENT),
+                    Candidate(baud_rate=57600, verdict=CandidateVerdict.ANSWERED),
+                ],
+            )
+        )
+
+        resp = client.post("/api/device/detect-baud", json={"port": "/dev/ttyUSB0"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["outcome"] == "found"
+        assert body["baud_rate"] == 57600
+        assert body["device"]["model"] == "ZED-F9P"
+        assert [c["verdict"] for c in body["candidates"]] == ["silent", "answered"]
+
+    def test_the_preferred_rate_is_passed_through(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        mock_device_service.detect_baud = AsyncMock(
+            return_value=DetectionResult(outcome=DetectionOutcome.NOT_FOUND)
+        )
+
+        client.post(
+            "/api/device/detect-baud",
+            json={"port": "/dev/ttyUSB0", "preferred_baud": 38400},
+        )
+
+        call = mock_device_service.detect_baud.await_args
+        assert call is not None
+        assert call.kwargs["preferred_baud"] == 38400
+
+    def test_a_relay_running_refusal_is_a_409_with_its_code(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        mock_device_service.detect_baud = AsyncMock(
+            side_effect=DetectionRefusedError("relay_running", "stop the relay first")
+        )
+
+        resp = client.post("/api/device/detect-baud", json={"port": "/dev/ttyUSB0"})
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "relay_running"
+
+    def test_an_already_connected_refusal_is_a_409_with_its_code(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        """Two refusals share the status, so the code is what clients branch on."""
+        mock_device_service.detect_baud = AsyncMock(
+            side_effect=DetectionRefusedError("device_connected", "already connected")
+        )
+
+        resp = client.post("/api/device/detect-baud", json={"port": "/dev/ttyUSB0"})
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "device_connected"
+
+    def test_an_unopenable_port_is_a_502_naming_the_real_reason(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        mock_device_service.detect_baud = AsyncMock(
+            side_effect=ConnectionError(
+                "Could not open /dev/ttyUSB0 at any rate: permission denied"
+            )
+        )
+
+        resp = client.post("/api/device/detect-baud", json={"port": "/dev/ttyUSB0"})
+
+        assert resp.status_code == 502
+        assert "permission denied" in resp.json()["detail"]
+
+    def test_an_unknown_vendor_is_a_400(
+        self, client: TestClient, mock_device_service: DeviceService
+    ) -> None:
+        mock_device_service.detect_baud = AsyncMock(
+            side_effect=ValueError("Unknown GPS driver 'nope'")
+        )
+
+        resp = client.post(
+            "/api/device/detect-baud",
+            json={"port": "/dev/ttyUSB0", "vendor": "nope"},
+        )
+
+        assert resp.status_code == 400

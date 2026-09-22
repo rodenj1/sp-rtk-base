@@ -18,6 +18,7 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     BaseInvariantsCheck,
     CurrentBaseConfig,
+    DetectionResult,
     DeviceCapability,
     DeviceConnectionState,
     DeviceInfo,
@@ -54,7 +55,10 @@ from sp_rtk_base.models.profile_models import (
     step_for_diff_path,
 )
 from sp_rtk_base.profiles import BUILTIN_PROFILES
-from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.drivers.base import (
+    DETECTION_BUDGET_S,
+    GpsReceiverDriver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,26 @@ class ApplyConfigRefusedError(Exception):
     def __init__(self, rule: str, message: str) -> None:
         self.rule = rule
         super().__init__(message)
+
+
+class DetectionRefusedError(Exception):
+    """A Detection did not run, and nothing was touched.
+
+    A refusal is deliberately not a fourth outcome: ``DetectionOutcome``
+    describes what a sweep *saw*, and folding a refusal in would force
+    every consumer to handle a case where ``candidates`` is meaningless
+    — the same reasoning that kept refusals out of the Bluetooth
+    Verification's verdict (issue #127 §5).
+
+    Two unrelated refusals share HTTP 409 with unrelated remedies
+    (``relay_running``, ``device_connected``), so ``code`` — not the
+    status — is what a client branches on.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 class ApplyConfigLinkLostError(Exception):
@@ -335,6 +359,69 @@ class DeviceService:
             self._last_error = str(exc)
             logger.error("Failed to connect to %s: %s", port, exc)
             raise
+
+    async def detect_baud(
+        self,
+        port: str,
+        vendor: str = "ublox",
+        preferred_baud: int | None = None,
+    ) -> DetectionResult:
+        """Run a Detection on *port* and report what it found.
+
+        Detection **persists nothing and connects nothing** (map #140
+        decision 9). It runs on a throwaway driver rather than
+        ``self._driver``, which makes "leaves the service exactly as it
+        found it" structural rather than a discipline about which
+        attributes to avoid assigning: there is no loaded driver to
+        disturb, and ``_state`` / ``_port`` / ``_baud_rate`` / ``_info``
+        are never touched on any path.
+
+        Args:
+            port: Serial port path to sweep.
+            vendor: Driver vendor key — which protocol counts as an answer.
+            preferred_baud: Rate to try first, usually the one the
+                operator currently has selected.
+
+        Returns:
+            The :class:`DetectionResult`.
+
+        Raises:
+            DetectionRefusedError: If the relay is running or a device is
+                already connected. Nothing was touched.
+            ValueError: If *vendor* is not a registered driver.
+            ConnectionError: If the port could not be opened at any rate.
+        """
+        # Both refusals exist because a Detection genuinely takes the
+        # port — exclusive open plus an flock — so running one behind a
+        # live relay or an open device session would fight for a handle
+        # somebody else is mid-sentence on.
+        if self._relay_running_check is not None and self._relay_running_check():
+            raise DetectionRefusedError(
+                "relay_running",
+                "Cannot detect the baud rate while the relay is running — "
+                "stop the relay first",
+            )
+
+        if self._state == DeviceConnectionState.CONNECTED:
+            raise DetectionRefusedError(
+                "device_connected",
+                "Already connected — the baud rate is known, so there is "
+                "nothing to detect. Disconnect first to sweep again.",
+            )
+
+        from sp_rtk_base.services.drivers import create_driver
+
+        driver = create_driver(vendor)
+        result = await asyncio.to_thread(
+            driver.detect_baud, port, preferred_baud, DETECTION_BUDGET_S
+        )
+        logger.info(
+            "Detection on %s: %s%s",
+            port,
+            result.outcome.value,
+            f" at {result.baud_rate}" if result.baud_rate else "",
+        )
+        return result
 
     @staticmethod
     async def _probe_gnss_capability_once(driver: GpsReceiverDriver) -> None:

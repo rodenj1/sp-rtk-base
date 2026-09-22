@@ -220,6 +220,24 @@ class DeviceConnectRequest(BaseModel):
     )
 
 
+class DetectBaudRequest(BaseModel):
+    """What a Detection needs, and deliberately nothing more.
+
+    There is no candidate list and no per-Candidate budget: the sweep
+    order and its timing are the server's, so a Detection and the
+    Connect it predicts agree by construction. A client-chosen budget
+    would be a way to manufacture a rate that Connect will not reproduce.
+    """
+
+    vendor: str = Field(default="ublox", description="Driver vendor key")
+    port: str = Field(description="Serial port path (e.g. /dev/ttyUSB0)")
+    #: Tried first. Whatever the operator currently has selected —
+    #: usually the remembered rate, and usually right.
+    preferred_baud: int | None = Field(
+        default=None, ge=4800, le=921600, description="Rate to try first"
+    )
+
+
 class DeviceActionResponse(BaseModel):
     """Generic response for device control actions."""
 

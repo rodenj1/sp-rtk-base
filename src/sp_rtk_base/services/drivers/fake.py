@@ -52,6 +52,7 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    CandidateVerdict,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -120,6 +121,19 @@ FAKE_FACTORY_PORT: str = "FAKE-FACTORY"
 # way to reach the GPS page's warning strip (issue #101) without a real
 # producer.
 FAKE_FLASH_DIVERGENCE_PORT: str = "FAKE-FLASH-DIVERGENCE"
+
+# The one rate the fake receiver "answers" at. Deliberately 57600 — the
+# rate the documented reference deployment runs at, and deliberately not
+# the UI's 115200 default, so a Detection in demo mode tells the same
+# story the feature exists for: the pre-filled rate is wrong, and Detect
+# finds the right one.
+FAKE_DETECTED_BAUD: int = 57600
+
+# Sentinel ``port`` value the e2e suite can pass to a Detection to make
+# the fake port answer at *every* rate, the way a directly USB-connected
+# receiver does — the only way to reach the Rate-indifferent outcome
+# without hardware that has no baud rate to get wrong.
+FAKE_RATE_INDIFFERENT_PORT: str = "FAKE-RATE-INDIFFERENT"
 
 
 class FakeGpsDriver(GpsReceiverDriver):
@@ -334,6 +348,20 @@ class FakeGpsDriver(GpsReceiverDriver):
         elif port == FAKE_FLASH_DIVERGENCE_PORT:
             self._warn_on_rtcm_write = True
         return self._device_info
+
+    def try_baud_candidate(
+        self, port: str, baud_rate: int, budget_s: float
+    ) -> tuple[CandidateVerdict, DeviceInfo | None]:
+        """Answer at :data:`FAKE_DETECTED_BAUD`, or at everything on the
+        Rate-indifferent sentinel port.
+
+        Does no I/O and takes no time — *budget_s* is accepted to honour
+        the interface and ignored, since there is nothing to wait for.
+        """
+        answers = port == FAKE_RATE_INDIFFERENT_PORT or baud_rate == FAKE_DETECTED_BAUD
+        if answers:
+            return CandidateVerdict.ANSWERED, self._device_info
+        return CandidateVerdict.SILENT, None
 
     def disconnect(self) -> None:
         """Mark the driver disconnected.  Safe when already disconnected."""

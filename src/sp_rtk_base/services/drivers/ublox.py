@@ -202,6 +202,34 @@ _RECEIVER_SCALAR_KEYS: list[str] = [
 _MATRIX_PORTS: tuple[PortId, ...] = (PortId.UART1, PortId.UART2, PortId.USB)
 
 
+class _DeadlineStream:
+    """The stream ``UBXReader`` reads through, so a deadline can end a read.
+
+    ``UBXReader.read()`` returns only on a valid frame or on end-of-stream,
+    and it treats end-of-stream as "the serial timeout expired with *no*
+    bytes". It swallows parse errors and keeps reading. So on a line where
+    bytes keep arriving but never form a frame — a receiver streaming RTCM,
+    read at the wrong baud rate — it never returns, and a deadline checked
+    *between* ``read()`` calls is never reached. That hung Detection on the
+    bench (the base on test-base.lan, which streams RTCM continuously): the
+    sweep held the port and its flock until the app restarted.
+
+    Reporting end-of-stream once an armed deadline passes makes
+    ``read()`` return ``(None, None)`` through its own EOF path, whatever
+    pyubx2 does internally. Unarmed, it is a transparent pass-through; the
+    overshoot past a deadline is at most one serial read timeout.
+    """
+
+    def __init__(self, stream: object) -> None:
+        self._stream = stream
+        self.deadline: float | None = None
+
+    def read(self, size: int = 1) -> bytes:
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            return b""
+        return self._stream.read(size)  # type: ignore[attr-defined,no-any-return]
+
+
 class UbloxDriver(GpsReceiverDriver):
     """u-blox GPS receiver driver using UBX protocol via PyUBX2.
 
@@ -215,6 +243,7 @@ class UbloxDriver(GpsReceiverDriver):
     def __init__(self) -> None:
         self._serial: serial.Serial | None = None  # type: ignore[no-any-unimported]
         self._reader: UBXReader | None = None  # type: ignore[no-any-unimported]
+        self._stream: _DeadlineStream | None = None
         self._device_info: DeviceInfo | None = None
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
@@ -326,8 +355,9 @@ class UbloxDriver(GpsReceiverDriver):
         )
         try:
             fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._stream = _DeadlineStream(self._serial)
             self._reader = UBXReader(
-                self._serial,
+                self._stream,
                 protfilter=7,  # NMEA + UBX + RTCM3
                 quitonerror=0,
             )
@@ -368,8 +398,9 @@ class UbloxDriver(GpsReceiverDriver):
                     f"Serial port {port} is locked by another process"
                 ) from lock_err
 
+            self._stream = _DeadlineStream(self._serial)
             self._reader = UBXReader(
-                self._serial,
+                self._stream,
                 protfilter=7,  # NMEA + UBX + RTCM3
                 quitonerror=0,  # ERR_IGNORE — suppress console noise from corrupt frames
             )
@@ -495,6 +526,18 @@ class UbloxDriver(GpsReceiverDriver):
                 pass
         self._serial = None
         self._reader = None
+        self._stream = None
+
+    @contextlib.contextmanager
+    def _reads_end_at(self, deadline: float) -> Generator[None]:
+        """Arm the read deadline for one bounded read loop, then disarm it."""
+        if self._stream is not None:
+            self._stream.deadline = deadline
+        try:
+            yield
+        finally:
+            if self._stream is not None:
+                self._stream.deadline = None
 
     def _require_connection(self) -> tuple[serial.Serial, UBXReader]:  # type: ignore[no-any-unimported]
         """Return serial + reader, raising if not connected."""
@@ -2065,6 +2108,15 @@ class UbloxDriver(GpsReceiverDriver):
         ser.reset_input_buffer()
         ser.write(UBXMessage("MON", "MON-COMMS", POLL).serialize())
         deadline = time.monotonic() + _READ_TIMEOUT
+        with self._reads_end_at(deadline):
+            return self._read_mon_comms_until(reader, deadline)
+
+    def _read_mon_comms_until(
+        self,
+        reader: UBXReader,
+        deadline: float,  # type: ignore[no-any-unimported]
+    ) -> dict[int, PortCounters]:
+        """The MON-COMMS read loop, run with the stream's deadline armed."""
         for _ in range(_MAX_READ_ATTEMPTS):
             if time.monotonic() > deadline:
                 break
@@ -2143,6 +2195,16 @@ class UbloxDriver(GpsReceiverDriver):
         ser.reset_input_buffer()
         ser.write(poll_msg.serialize())
 
+        deadline = time.monotonic() + budget_s
+        with self._reads_end_at(deadline):
+            return self._read_mon_ver_until(reader, deadline)
+
+    def _read_mon_ver_until(
+        self,
+        reader: UBXReader,
+        deadline: float,  # type: ignore[no-any-unimported]
+    ) -> tuple[DeviceInfo | None, bool, bool]:
+        """The MON-VER read loop, run with the stream's deadline armed."""
         saw_frame = False
         sw_version_str = ""
         fwver = ""
@@ -2150,8 +2212,6 @@ class UbloxDriver(GpsReceiverDriver):
         hardware = ""
         mod = ""
         explicit_model = ""
-
-        deadline = time.monotonic() + budget_s
 
         for _ in range(_MAX_READ_ATTEMPTS):
             # Check cancel

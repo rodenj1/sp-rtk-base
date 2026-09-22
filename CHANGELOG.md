@@ -11,6 +11,59 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.6.1 (2026-09-22)
+
+### Detect finds the receiver's baud rate for you
+
+Survey-In and Advanced GPS Settings now have a **Detect** button beside
+the Baud Rate dropdown (#140). It tries each rate on the selected port
+until the receiver answers, fills the dropdown in, and tells you what it
+found: "Found ZED-F9P (firmware HPG 1.51) at 57600 baud." Nothing is
+saved and nothing connects until you press Connect.
+
+- **When nothing is found, it says why.** Silence on every rate says to
+  check the cable and port. Traffic at exactly one rate that won't answer
+  says the link is there but the receiver isn't accepting commands on
+  that port. A port that can't be opened at all says so, with the real
+  reason — and for a permission error, the `dialout`/`plugdev` fix.
+- **A failed Connect now points at it.** "No response from device within
+  10s" ends with "click Detect to find the rate the receiver is listening
+  at" instead of "check baud rate".
+- **Also on the API:** `POST /api/device/detect-baud`.
+
+### The pre-filled baud rate is 57600
+
+It was 115200, which matched neither the reference deployment (57600) nor
+a factory ZED-F9P (38400), so a fresh install failed its first Connect
+(#146). It is now 57600 everywhere the app falls back to a default,
+including the saved device profile.
+
+### The app now knows which receiver port it is talking over
+
+On connect, the app asks the receiver which of its ports — UART1, UART2
+or USB — its own link is attached to (the **console port**; ADR 0003).
+It is shown in `GET /api/device/status` as `console_port`, or with the
+reason when it can't be identified.
+
+- **Fixes a guard that protected the wrong port (#145).** Advanced GPS's
+  Apply refused to turn off UBX input on USB, on the assumption that the
+  console was always on USB — while leaving the UART1 link it was
+  actually running over unprotected. It now protects the console port
+  itself and names it in the refusal. If the port can't be identified,
+  it protects every port instead.
+- **Baud-rate changes follow the same fact.** After an Apply changes a
+  UART's rate, the app reopens its own link only if that was the console
+  port's rate — and if the port is unknown, it checks the link and
+  recovers it at the new rate.
+
+### Fixed
+
+- **Detect and Connect could hang forever on a busy receiver** read at
+  the wrong rate, holding the serial port until the app restarted. A
+  receiver streaming RTCM delivers a steady trickle of mis-framed bytes
+  that never form a message, and the read never gave up. Reads now end
+  at their deadline regardless.
+
 ## v0.6.0 (2026-09-06)
 
 ### Bluetooth "Test Connection" now actually validates the configured PIN

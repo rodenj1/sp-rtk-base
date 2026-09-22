@@ -9,6 +9,8 @@ import pytest
 
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    ConsolePortReading,
+    ConsolePortUnknownReason,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceConnectionState,
@@ -617,6 +619,11 @@ def _mock_read_back_matches(driver: MagicMock, assertion: ReceiverAssertion) -> 
     driver.get_receiver_scalars.return_value = _scalars_for(assertion)
 
 
+def _no_ubx_in() -> PortProtocolSet:
+    """A port protocol set with UBX input turned off."""
+    return PortProtocolSet(**{"in": [UbxProtocol.RTCM3X], "out": []})
+
+
 class TestApplyReceiverConfig:
     """Tests for ``DeviceService.apply_receiver_config`` (issue #98)."""
 
@@ -645,6 +652,10 @@ class TestApplyReceiverConfig:
         svc._state = DeviceConnectionState.CONNECTED
         svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
         svc._baud_rate = 57600
+        # The reference rig's console port (#153: identified as UART1 on
+        # real hardware). Known-UART1 is exactly the old premise, so the
+        # pre-#155 reopen tests below keep their meaning unchanged.
+        svc._console_port = ConsolePortReading.known(PortId.UART1)
         return svc
 
     @pytest.mark.asyncio()
@@ -855,14 +866,15 @@ class TestApplyReceiverConfig:
         # the sibling test above.
         driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]
 
+    # ---- UBX-in liveness guard, keyed on the console port (#155) ----
+
     @pytest.mark.asyncio()
     async def test_ubx_in_liveness_guard_refuses_before_any_write(
         self, connected_svc: DeviceService
     ) -> None:
+        """Dropping UBX-in on the console port would cut our own link."""
         assert connected_svc.driver is not None
-        request = _minimal_request(
-            ports={PortId.USB: PortProtocolSet(**{"in": [UbxProtocol.NMEA], "out": []})}
-        )
+        request = _minimal_request(ports={PortId.UART1: _no_ubx_in()})
 
         with pytest.raises(ApplyConfigRefusedError) as exc_info:
             await connected_svc.apply_receiver_config(request)
@@ -870,6 +882,187 @@ class TestApplyReceiverConfig:
         assert exc_info.value.rule == "ubx_in_liveness"
         connected_svc.driver.configure_measurement_rate.assert_not_called()  # type: ignore[union-attr]
         connected_svc.driver.apply_rtcm_matrix.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_the_refusal_names_the_console_port(
+        self, connected_svc: DeviceService
+    ) -> None:
+        request = _minimal_request(ports={PortId.UART1: _no_ubx_in()})
+
+        with pytest.raises(ApplyConfigRefusedError, match="UART1"):
+            await connected_svc.apply_receiver_config(request)
+
+    @pytest.mark.asyncio()
+    async def test_dropping_ubx_in_on_a_port_the_console_is_not_on_is_allowed(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """The #145 bug: the old guard refused this on USB while leaving
+        the UART1 link it was actually running over unprotected."""
+        request = _minimal_request(ports={PortId.USB: _no_ubx_in()})
+
+        await connected_svc.apply_receiver_config(request)  # no refusal
+
+    @pytest.mark.asyncio()
+    async def test_the_guard_follows_the_console_port_to_usb(
+        self, connected_svc: DeviceService
+    ) -> None:
+        connected_svc._console_port = ConsolePortReading.known(PortId.USB)
+        request = _minimal_request(ports={PortId.USB: _no_ubx_in()})
+
+        with pytest.raises(ApplyConfigRefusedError, match="USB"):
+            await connected_svc.apply_receiver_config(request)
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_port_protects_every_port(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Unknown is made safe, not guessed (ADR 0003)."""
+        assert connected_svc.driver is not None
+        connected_svc._console_port = ConsolePortReading.unknown(
+            ConsolePortUnknownReason.NO_ANSWER
+        )
+        connected_svc.driver.get_port_protocols.return_value = PortProtocolConfig(  # type: ignore[union-attr]
+            in_protocols={PortId.UART2: [UbxProtocol.UBX, UbxProtocol.RTCM3X]},
+            out_protocols={},
+        )
+        request = _minimal_request(ports={PortId.UART2: _no_ubx_in()})
+
+        with pytest.raises(ApplyConfigRefusedError) as exc_info:
+            await connected_svc.apply_receiver_config(request)
+
+        assert exc_info.value.rule == "ubx_in_liveness"
+        assert "UART2" in str(exc_info.value)
+        assert "no_answer" in str(exc_info.value)
+        connected_svc.driver.apply_rtcm_matrix.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_port_still_allows_a_port_already_off(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """ "Drops" means on-before, off-after. A data-link UART that is
+        already RTCM-only must not lock the receiver out of every Apply."""
+        assert connected_svc.driver is not None
+        connected_svc._console_port = None  # never identified
+        connected_svc.driver.get_port_protocols.return_value = PortProtocolConfig(  # type: ignore[union-attr]
+            in_protocols={PortId.UART2: [UbxProtocol.RTCM3X]},
+            out_protocols={},
+        )
+        request = _minimal_request(ports={PortId.UART2: _no_ubx_in()})
+
+        await connected_svc.apply_receiver_config(request)  # no refusal
+
+    # ---- post-baud-write reopen, keyed on the console port (#155) ----
+
+    @pytest.mark.asyncio()
+    async def test_a_baud_change_off_the_console_port_does_not_reopen(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = ConsolePortReading.known(PortId.UART2)
+        # Live is UART1 57600 / UART2 115200: only UART1 moves here.
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_a_baud_change_on_a_uart2_console_reopens_at_its_rate(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = ConsolePortReading.known(PortId.UART2)
+        driver.reconnect_at_baud.return_value = DeviceInfo(vendor="V", model="M")  # type: ignore[union-attr]
+        request = _minimal_request(baud=BaudAssertion(uart1=57600, uart2=230400))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.reconnect_at_baud.assert_called_once_with(230400)  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_a_usb_console_never_reopens_for_a_uart_change(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = ConsolePortReading.known(PortId.USB)
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=115200))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_a_live_link_after_a_baud_write_is_left_alone(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = None
+        driver.get_device_info.return_value = DeviceInfo(vendor="V", model="M")  # type: ignore[union-attr]
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=57600))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.get_device_info.assert_called()  # type: ignore[union-attr]
+        driver.reconnect_at_baud.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_a_dead_link_recovers_and_learns_the_port(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Whichever changed UART answers becomes the cached console port."""
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = None
+        driver.get_device_info.side_effect = TimeoutError("link cut")  # type: ignore[union-attr]
+        driver.reconnect_at_baud.return_value = DeviceInfo(vendor="V", model="M")  # type: ignore[union-attr]
+        request = _minimal_request(baud=BaudAssertion(uart1=57600, uart2=230400))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.reconnect_at_baud.assert_called_once_with(230400)  # type: ignore[union-attr]
+        assert connected_svc.console_port == ConsolePortReading.known(PortId.UART2)
+        assert connected_svc.get_status().baud_rate == 230400
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_two_uarts_at_one_new_rate_re_identify(
+        self, connected_svc: DeviceService
+    ) -> None:
+        """Both UARTs moved to the same rate, so the rate cannot say which
+        port answered — observe instead of guessing."""
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = None
+        driver.get_device_info.side_effect = TimeoutError("link cut")  # type: ignore[union-attr]
+        driver.reconnect_at_baud.return_value = DeviceInfo(vendor="V", model="M")  # type: ignore[union-attr]
+        driver.identify_console_port.return_value = ConsolePortReading.known(  # type: ignore[union-attr]
+            PortId.UART2
+        )
+        request = _minimal_request(baud=BaudAssertion(uart1=230400, uart2=230400))
+
+        await connected_svc.apply_receiver_config(request)
+
+        driver.identify_console_port.assert_called_once()  # type: ignore[union-attr]
+        assert connected_svc.console_port == ConsolePortReading.known(PortId.UART2)
+
+    @pytest.mark.asyncio()
+    async def test_unknown_console_nothing_answers_is_link_lost(
+        self, connected_svc: DeviceService
+    ) -> None:
+        driver = connected_svc.driver
+        assert driver is not None
+        connected_svc._console_port = None
+        driver.get_device_info.side_effect = TimeoutError("link cut")  # type: ignore[union-attr]
+        driver.reconnect_at_baud.side_effect = ConnectionError("silent")  # type: ignore[union-attr]
+        request = _minimal_request(baud=BaudAssertion(uart1=115200, uart2=57600))
+
+        with pytest.raises(ApplyConfigLinkLostError):
+            await connected_svc.apply_receiver_config(request)
+
+        assert connected_svc.state is DeviceConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio()
     async def test_ubx_in_present_on_usb_is_allowed(

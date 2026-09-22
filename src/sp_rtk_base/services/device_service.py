@@ -12,12 +12,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import NamedTuple, Protocol
+from typing import NamedTuple, Protocol, cast
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     DEFAULT_BAUD,
     BaseInvariantsCheck,
+    ConsolePortReading,
+    ConsolePortUnknownReason,
     CurrentBaseConfig,
     DetectionResult,
     DeviceCapability,
@@ -212,6 +214,9 @@ class DeviceService:
         self._driver: GpsReceiverDriver | None = None
         self._state = DeviceConnectionState.DISCONNECTED
         self._port: str | None = None
+        # The console port (ADR 0003): identified once per connect, kept
+        # through baud reopens and hardware resets, cleared on disconnect.
+        self._console_port: ConsolePortReading | None = None
         self._baud_rate: int | None = None
         self._info: DeviceInfo | None = None
         self._last_error: str | None = None
@@ -354,6 +359,7 @@ class DeviceService:
                 port,
             )
             await self._probe_gnss_capability_once(self._driver)
+            self._console_port = await self._identify_console_port_once(self._driver)
             return info
         except Exception as exc:
             self._state = DeviceConnectionState.ERROR
@@ -424,6 +430,36 @@ class DeviceService:
         )
         return result
 
+    @property
+    def console_port(self) -> ConsolePortReading | None:
+        """The console port found at connect, or ``None`` when not connected."""
+        return self._console_port
+
+    @staticmethod
+    async def _identify_console_port_once(
+        driver: GpsReceiverDriver,
+    ) -> ConsolePortReading:
+        """Identify the console port once, right after connect (ADR 0003).
+
+        **Connect never fails because of this.** The driver contract says
+        ``identify_console_port`` must not raise; this does not rely on it.
+        Anything that goes wrong — an exception, or a driver returning
+        something that is not a reading — becomes an unknown console
+        port, which the guard and the reopen both handle safely.
+        """
+        try:
+            # Typed ``object`` on purpose: the driver's return is not
+            # trusted here, which is the whole point of this wrapper.
+            reading = cast(
+                object, await asyncio.to_thread(driver.identify_console_port)
+            )
+        except Exception as exc:
+            logger.warning("Console port identification raised: %s", exc)
+            return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
+        if not isinstance(reading, ConsolePortReading):
+            return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
+        return reading
+
     @staticmethod
     async def _probe_gnss_capability_once(driver: GpsReceiverDriver) -> None:
         """Run the legacy CFG-GNSS block poll once, right after connect (issue #104).
@@ -479,6 +515,7 @@ class DeviceService:
         self._port = None
         self._baud_rate = None
         self._info = None
+        self._console_port = None
         self._connected_at = None
         self._last_error = None
         logger.info("Device disconnected")
@@ -981,13 +1018,15 @@ class DeviceService:
 
         Guards run before any write and refuse with nothing written:
 
-        - **UBX-in liveness.** This console always manages the receiver
-          over its own USB connection — UART1/UART2 are reserved for
-          RTCM data-link output. So "the connected port" is always
-          ``PortId.USB``; a submitted ``ports`` section that would turn
-          UBX off on USB IN is refused, since it would cut the
-          console's own control channel with nothing left to write it
-          back with.
+        - **UBX-in liveness.** Turning UBX input off on the **console
+          port** — the receiver port this application's own link is
+          attached to, identified at connect (ADR 0003) — would cut our
+          control channel with nothing left to write it back with, so
+          it is refused, naming the port. When the console port is
+          unknown, every port is protected instead, against a real drop
+          only (UBX-in on in the live read, off in the submission) — so
+          a data-link UART that is already RTCM-only does not lock the
+          receiver out of every Apply.
         - **Survey-in active.** Whole-form assert makes ``tmode_mode``
           a required assertion field, so an Apply that leaves it alone
           would otherwise silently cancel an in-progress survey-in that
@@ -1000,25 +1039,20 @@ class DeviceService:
           otherwise a fresh receiver becomes a base broadcasting 1005
           from ECEF/LLH 0,0,0.
 
-        ``request.assertion.baud.uart1`` is treated as the port the
-        console's own management link is on, per the documented
-        deployment (FTDI -> UART1 at 57600, see
-        docs/zed-f9p-base-station-config-reference.md) — a separate,
-        narrower premise from the UBX-in guard's "always USB" one
-        above; the two guard different concerns (which named port must
-        keep UBX in, vs. which physical serial link this process
-        itself has open) and issue #62 doesn't ask for them to be
-        reconciled. When UART1's baud actually changes, this reopens
-        the connection at the new baud once the write lands, before
-        anything else runs. Reopening is deterministic — the baud was
-        just written — so one attempt normally suffices; a failure
-        retries once at the previous baud purely to leave the caller
-        with *some* link back, then raises ``ApplyConfigLinkLostError``
-        regardless of that retry's outcome: the flash write stands
+        A UART baud write can cut the console's own link, so what
+        happens after one depends on the same console port. **Known:**
+        reopen only when the console port's own rate changed; a change
+        on any other port, or any UART change under a USB console,
+        cannot have touched our link. **Unknown:** check whether the
+        link still answers; if not, try each changed UART's new rate and
+        cache the port that answers as the console port (see
+        :meth:`_keep_console_link_after_baud_write`). A known reopen is
+        deterministic — the baud was just written — so one attempt
+        normally suffices; a failure retries once at the previous baud
+        purely to leave the caller with *some* link back, then raises
+        ``ApplyConfigLinkLostError`` regardless: the flash write stands
         either way (rolling it back would fight the write that just
-        landed, and retrying the old rate forever would hang). A
-        changed UART2 baud never triggers a reopen — it isn't the port
-        this console is on.
+        landed, and retrying the old rate forever would hang).
 
         After the writes land, a fresh full read-back
         (:meth:`get_receiver_assertion`) is
@@ -1041,16 +1075,22 @@ class DeviceService:
         driver = self._require_connected()
         assertion = request.assertion
 
-        usb_ports = assertion.ports.get(PortId.USB)
-        if usb_ports is not None and UbxProtocol.UBX not in usb_ports.in_:
-            raise ApplyConfigRefusedError(
-                "ubx_in_liveness",
-                "ports.USB.in must keep UBX enabled — the console manages "
-                "the receiver over its own USB connection",
-            )
+        console = self._console_port
+        if console is not None and console.port is not None:
+            console_ports = assertion.ports.get(console.port)
+            if console_ports is not None and UbxProtocol.UBX not in console_ports.in_:
+                raise ApplyConfigRefusedError(
+                    "ubx_in_liveness",
+                    f"ports.{console.port.value}.in must keep UBX enabled — "
+                    f"{console.port.value} is the console port, the link this "
+                    "application manages the receiver over",
+                )
 
         pre_read = await self._read_full_assertion(driver)
         pre_assertion = pre_read.assertion
+
+        if console is None or console.port is None:
+            self._refuse_dropping_ubx_in_anywhere(assertion, pre_assertion)
 
         if assertion.tmode_mode != pre_assertion.tmode_mode:
             survey = await asyncio.to_thread(driver.get_survey_in_status)
@@ -1090,7 +1130,9 @@ class DeviceService:
         # carries forward untouched rather than being dropped just
         # because this particular Apply didn't reach it.
         updated_warned_steps = set(self._steps_warned_last_apply)
-        new_uart1: int | None = None
+        # UART rates this Apply actually changed — whether any of them was
+        # the console port's own is decided after the loop (ADR 0003).
+        changed_bauds: dict[PortId, int] = {}
         blocked = False
 
         for step_name in APPLY_STEPS:
@@ -1114,8 +1156,11 @@ class DeviceService:
                 blocked = True
                 continue
 
-            if step_name == "baud" and assertion.baud.uart1 != pre_assertion.baud.uart1:
-                new_uart1 = assertion.baud.uart1
+            if step_name == "baud":
+                if assertion.baud.uart1 != pre_assertion.baud.uart1:
+                    changed_bauds[PortId.UART1] = assertion.baud.uart1
+                if assertion.baud.uart2 != pre_assertion.baud.uart2:
+                    changed_bauds[PortId.UART2] = assertion.baud.uart2
 
             drained = await asyncio.to_thread(driver.drain_warnings)
             if drained:
@@ -1131,8 +1176,8 @@ class DeviceService:
         self._state = DeviceConnectionState.CONNECTED
         self._steps_warned_last_apply = updated_warned_steps
 
-        if new_uart1 is not None:
-            await self._reopen_after_baud_write(driver, new_uart1)
+        if changed_bauds:
+            await self._keep_console_link_after_baud_write(driver, changed_bauds)
 
         read = await self.get_receiver_assertion()
         diff = diff_receiver_assertions(assertion, read.assertion)
@@ -1203,10 +1248,109 @@ class DeviceService:
         else:  # pragma: no cover
             raise AssertionError(f"unhandled apply step: {step_name!r}")
 
+    def _refuse_dropping_ubx_in_anywhere(
+        self, assertion: ReceiverAssertion, pre_assertion: ReceiverAssertion
+    ) -> None:
+        """The UBX-in guard when the console port is unknown (ADR 0003).
+
+        Not knowing which port carries our own link, protect every port —
+        but only against a real *drop*: UBX input on in the live read and
+        off in the submitted one. A data-link UART that is already
+        RTCM-only stays allowed, or a receiver configured that way could
+        never Apply anything while its console port is unknown.
+        """
+        dropped = sorted(
+            port.value
+            for port, cfg in assertion.ports.items()
+            if UbxProtocol.UBX not in cfg.in_
+            and (live := pre_assertion.ports.get(port)) is not None
+            and UbxProtocol.UBX in live.in_
+        )
+        if not dropped:
+            return
+        why = (
+            self._console_port.unknown_reason.value
+            if self._console_port is not None
+            and self._console_port.unknown_reason is not None
+            else "not identified"
+        )
+        raise ApplyConfigRefusedError(
+            "ubx_in_liveness",
+            f"UBX input must stay enabled on every port while the console "
+            f"port is unknown ({why}) — this would turn it off on "
+            f"{', '.join(dropped)}, which could be the link this application "
+            "manages the receiver over",
+        )
+
+    async def _keep_console_link_after_baud_write(
+        self, driver: GpsReceiverDriver, changed_bauds: dict[PortId, int]
+    ) -> None:
+        """Keep our own link alive after a UART baud write (ADR 0003).
+
+        **Console port known:** reopen only if the console port's own rate
+        changed. A rate change on any other port — or any UART change
+        under a USB console — cannot have touched our link.
+
+        **Console port unknown:** we cannot tell whether that write cut
+        us off, so ask. If the link still answers, nothing happened to
+        it. If it does not, try each changed UART's new rate; the one
+        that answers is where the console is, and becomes the cached
+        console port. When two changed UARTs share that rate, the rate
+        cannot say which one answered, so the port is re-identified by
+        observation instead of guessed. If nothing answers, the link is
+        lost, exactly as before (``ApplyConfigLinkLostError``).
+        """
+        console = self._console_port
+        if console is not None and console.port is not None:
+            new_baud = changed_bauds.get(console.port)
+            if new_baud is not None:
+                await self._reopen_after_baud_write(driver, new_baud)
+            return
+
+        try:
+            await asyncio.to_thread(driver.get_device_info)
+            return
+        except Exception as exc:
+            logger.warning(
+                "apply-config: console port unknown and the link no longer "
+                "answers after a UART baud write (%s) — trying the new rates",
+                exc,
+            )
+
+        previous_baud = self._baud_rate
+        for rate in dict.fromkeys(changed_bauds.values()):
+            try:
+                info = await asyncio.to_thread(driver.reconnect_at_baud, rate)
+            except Exception:
+                continue
+            self._baud_rate = rate
+            self._info = info
+            self._state = DeviceConnectionState.CONNECTED
+            ports_at_rate = [p for p, r in changed_bauds.items() if r == rate]
+            if len(ports_at_rate) == 1:
+                self._console_port = ConsolePortReading.known(ports_at_rate[0])
+            else:
+                self._console_port = await self._identify_console_port_once(driver)
+            logger.info(
+                "apply-config: link recovered at %d; console port is now %s",
+                rate,
+                self._console_port.port or self._console_port.unknown_reason,
+            )
+            return
+
+        self._state = DeviceConnectionState.DISCONNECTED
+        first_new = next(iter(changed_bauds.values()))
+        self._last_error = (
+            "Receiver reconfigured but link lost — the console port was "
+            "unknown and nothing answered at the previous or any new UART rate"
+        )
+        logger.error(self._last_error)
+        raise ApplyConfigLinkLostError(previous_baud or first_new, first_new)
+
     async def _reopen_after_baud_write(
         self, driver: GpsReceiverDriver, new_baud: int
     ) -> None:
-        """Reopen the console's own link after a UART1 baud write (issue #62).
+        """Reopen the console's own link after its own baud write (issue #62).
 
         Reopening is deterministic — the new baud was just written —
         so a single attempt normally suffices. A failure retries once
@@ -1299,6 +1443,10 @@ class DeviceService:
             survey_in=None,
             last_error=self._last_error,
             connected_at=self._connected_at,
+            console_port=self._console_port.port if self._console_port else None,
+            console_port_unknown_reason=(
+                self._console_port.unknown_reason if self._console_port else None
+            ),
         )
 
 

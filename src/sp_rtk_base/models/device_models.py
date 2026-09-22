@@ -350,6 +350,53 @@ class PortId(str, enum.Enum):
     USB = "USB"
 
 
+class ConsolePortUnknownReason(str, enum.Enum):
+    """Why the console port could not be identified (ADR 0003).
+
+    The four do not share a remedy, which is why the reason travels with
+    the reading rather than collapsing into a bare ``None``:
+
+    - ``NO_ANSWER`` — no port carried the probe's fingerprint.
+    - ``AMBIGUOUS`` — more than one port did.
+    - ``UNRECOGNISED`` — the receiver answered clearly, but with a port
+      this application cannot use: a ``portId`` outside Table 27 (our
+      decode bug — the UART2 trap is exactly this), or I2C/SPI, which no
+      host serial device can be attached to. Logged as a bug, not as the
+      receiver's fault.
+    - ``UNSUPPORTED`` — the driver or receiver cannot answer at all.
+    """
+
+    NO_ANSWER = "no_answer"
+    AMBIGUOUS = "ambiguous"
+    UNRECOGNISED = "unrecognised"
+    UNSUPPORTED = "unsupported"
+
+
+class ConsolePortReading(BaseModel):
+    """What identifying the **console port** found (see ``CONTEXT.md``).
+
+    Exactly one of ``port`` / ``unknown_reason`` is set. Unknown is a
+    state to handle, not an error: Connect never fails because of it.
+    """
+
+    model_config = {"frozen": True}
+
+    port: PortId | None = None
+    unknown_reason: ConsolePortUnknownReason | None = None
+
+    @classmethod
+    def known(cls, port: PortId) -> ConsolePortReading:
+        return cls(port=port)
+
+    @classmethod
+    def unknown(cls, reason: ConsolePortUnknownReason) -> ConsolePortReading:
+        return cls(unknown_reason=reason)
+
+    @property
+    def is_known(self) -> bool:
+        return self.port is not None
+
+
 class UbxProtocol(str, enum.Enum):
     """I/O protocol a u-blox port can be configured to speak."""
 
@@ -581,6 +628,15 @@ class DeviceStatus(BaseModel):
     survey_in: SurveyInProgress | None = Field(
         default=None,
         description="Survey-in progress (when active)",
+    )
+    console_port: PortId | None = Field(
+        default=None,
+        description="The receiver port this application's link is attached to "
+        "(the console port), when it could be identified",
+    )
+    console_port_unknown_reason: ConsolePortUnknownReason | None = Field(
+        default=None,
+        description="Why the console port is unknown, when connected but unidentified",
     )
     last_error: str | None = Field(default=None, description="Last error message")
     connected_at: datetime | None = Field(

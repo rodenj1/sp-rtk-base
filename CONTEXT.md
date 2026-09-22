@@ -85,3 +85,33 @@ could not build a new one. Named because it is damage the application caused,
 not a neutral state a device may innocently be in. Recovered by correcting the
 PIN and running the Verification again, which simply pairs.
 _Avoid_: unbonded, unpaired, broken pairing
+
+### Baud detection
+
+**Detection**:
+An operator-initiated sweep of candidate baud rates on one serial port,
+answering one question: what rate is the receiver listening at? It
+discovers a value rather than promising an outcome — unlike a Verification,
+which rehearses the relay's connect path. Nothing detects on its own:
+Connect never falls back to it, and no page runs it on load. A detected rate
+is **not a Green** — it does not expire, because a baud rate is a property
+of the wiring, not of a Bond that can be evicted underneath it.
+_Avoid_: auto-detect, autobaud, probe, scan
+
+**Candidate**:
+One baud rate a Detection tried, together with what happened when it did:
+the receiver *answered*, or the port carried *bytes but no answer*, or it
+was *silent*. Never the bare rate on its own — a Candidate without its
+verdict is just a number. The middle verdict is the informative one: at
+exactly one rate, with silence elsewhere, it means the link is at that rate
+and the receiver is not accepting commands on that port.
+_Avoid_: attempt, trial, step, stage
+
+**Rate-indifferent**:
+A port whose baud setting the kernel accepts and discards, so that every
+Candidate answers. A directly USB-connected receiver is the case: the u-blox
+configuration database has a baud key for each UART and none for USB,
+because the USB interface is not a UART. A property of the port, not a
+verdict on the Detection that met it — reporting it is an observation about
+the hardware, not a failure to find anything.
+_Avoid_: baud-agnostic, ignores baud, fake serial port

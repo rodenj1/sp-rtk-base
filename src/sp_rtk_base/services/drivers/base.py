@@ -16,6 +16,8 @@ from sp_rtk_base.models.device_models import (
     BaseMode,
     Candidate,
     CandidateVerdict,
+    ConsolePortReading,
+    ConsolePortUnknownReason,
     CurrentBaseConfig,
     DetectionOutcome,
     DetectionResult,
@@ -162,6 +164,21 @@ class GpsReceiverDriver(abc.ABC):
     @abc.abstractmethod
     def is_connected(self) -> bool:
         """Whether the driver currently has an open connection."""
+
+    # ------------------------------------------------------------------
+    # Console port (issue #155, ADR 0003)
+    # ------------------------------------------------------------------
+
+    def identify_console_port(self) -> ConsolePortReading:
+        """Ask the receiver which of its ports this link is attached to.
+
+        Concrete by default: a driver with no way to ask simply reports
+        the console port as unknown (``UNSUPPORTED``) rather than being
+        forced to implement a MON-COMMS equivalent it may not have. Only
+        called on an open connection. Must never raise — Connect never
+        fails because the console port could not be identified.
+        """
+        return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
 
     # ------------------------------------------------------------------
     # Detection — the baud-rate sweep (issue #142)

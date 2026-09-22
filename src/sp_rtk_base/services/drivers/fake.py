@@ -54,6 +54,8 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
+    ConsolePortReading,
+    ConsolePortUnknownReason,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -140,6 +142,13 @@ FAKE_DETECTED_BAUD: int = 38400
 # receiver does — the only way to reach the Rate-indifferent outcome
 # without hardware that has no baud rate to get wrong.
 FAKE_RATE_INDIFFERENT_PORT: str = "FAKE-RATE-INDIFFERENT"
+
+
+# Sentinel ``port`` value the e2e suite can pass to ``connect()`` to make
+# the fake report an **unknown** console port (reason ``no_answer``)
+# instead of its normal UART1 — the only way to reach the guard's
+# protect-every-port path without a receiver that won't answer.
+FAKE_CONSOLE_UNKNOWN_PORT: str = "FAKE-CONSOLE-UNKNOWN"
 
 
 class FakeGpsDriver(GpsReceiverDriver):
@@ -354,6 +363,16 @@ class FakeGpsDriver(GpsReceiverDriver):
         elif port == FAKE_FLASH_DIVERGENCE_PORT:
             self._warn_on_rtcm_write = True
         return self._device_info
+
+    def identify_console_port(self) -> ConsolePortReading:
+        """UART1, like the reference rig this fake mirrors (issue #155).
+
+        :data:`FAKE_CONSOLE_UNKNOWN_PORT` yields an unknown console port
+        instead, so the protect-every-port path is reachable end to end.
+        """
+        if self._port == FAKE_CONSOLE_UNKNOWN_PORT:
+            return ConsolePortReading.unknown(ConsolePortUnknownReason.NO_ANSWER)
+        return ConsolePortReading.known(PortId.UART1)
 
     def try_baud_candidate(
         self, port: str, baud_rate: int, budget_s: float

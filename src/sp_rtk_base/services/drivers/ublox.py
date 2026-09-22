@@ -32,6 +32,8 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
+    ConsolePortReading,
+    ConsolePortUnknownReason,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -57,6 +59,10 @@ from sp_rtk_base.services.drivers.base import (
     BAUD_MISMATCH_HINT,
     GpsReceiverDriver,
 )
+from sp_rtk_base.services.drivers.ublox_console_port import (
+    PortCounters,
+    attribute_console_port,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,14 @@ _READ_TIMEOUT = 3.0
 # Needs to be high enough to skip interleaved RTCM/NAV messages
 # on a busy receiver (base station mode streams many RTCM frames).
 _MAX_READ_ATTEMPTS = 50
+
+# Console-port probe (issue #155, ADR 0003): a burst of well-formed UBX
+# polls, so the UBX message count corroborates the byte count. Sixteen
+# NAV-STATUS polls is what proved unambiguous 10/10 on the bench (#153).
+_CONSOLE_PROBE_FRAMES = 16
+_CONSOLE_PROBE_FRAME: bytes = UBXMessage("NAV", "NAV-STATUS", POLL).serialize()
+# Let the receiver consume the burst before the second snapshot.
+_CONSOLE_PROBE_SETTLE_S = 0.2
 
 # u-blox output port suffixes for CFG key names
 _RTCM_PORTS: list[str] = [p.value for p in RtcmOutputPort]
@@ -1993,6 +2007,82 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def identify_console_port(self) -> ConsolePortReading:
+        """Ask the receiver which of its ports this link is attached to.
+
+        Polls ``UBX-MON-COMMS``, writes a burst of well-formed NAV-STATUS
+        polls, polls again, and hands both snapshots to
+        :func:`attribute_console_port`, which owns the decision (ADR 0003).
+        Makes no configuration writes and leaves no state: MON-COMMS is a
+        zero-payload poll and its periodic output defaults to off.
+
+        Never raises. A receiver that does not answer MON-COMMS (or a
+        driver with no open link) reports ``UNSUPPORTED``; an unclear
+        answer reports the specific unknown reason.
+        """
+        try:
+            with self._lock:
+                ser, _ = self._require_connection()
+                before = self._poll_mon_comms_locked()
+                ser.write(_CONSOLE_PROBE_FRAME * _CONSOLE_PROBE_FRAMES)
+                ser.flush()
+                time.sleep(_CONSOLE_PROBE_SETTLE_S)
+                after = self._poll_mon_comms_locked()
+        except Exception as exc:
+            logger.info("Console port unknown — MON-COMMS unavailable: %s", exc)
+            return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
+
+        reading = attribute_console_port(
+            before,
+            after,
+            len(_CONSOLE_PROBE_FRAME) * _CONSOLE_PROBE_FRAMES,
+            _CONSOLE_PROBE_FRAMES,
+        )
+        if reading.unknown_reason is ConsolePortUnknownReason.UNRECOGNISED:
+            # A clear answer we cannot use is our problem, not the
+            # receiver's — log it as one (ADR 0003).
+            logger.warning(
+                "Console port UNRECOGNISED — MON-COMMS portIds %s; this is a "
+                "decode bug or an I2C/SPI answer, not a receiver fault",
+                sorted(f"0x{p:04x}" for p in after),
+            )
+        else:
+            logger.info("Console port: %s", reading.port or reading.unknown_reason)
+        return reading
+
+    def _poll_mon_comms_locked(self) -> dict[int, PortCounters]:
+        """Poll MON-COMMS once and return per-port counters, keyed on portId.
+
+        Keyed on ``portId`` and never on position: a real receiver
+        reported ``nPorts=4`` on a five-port module, including two
+        *Reserved* ports. Caller must hold ``self._lock``.
+
+        Raises:
+            TimeoutError: If no MON-COMMS reply arrives.
+        """
+        ser, reader = self._require_connection()
+        ser.reset_input_buffer()
+        ser.write(UBXMessage("MON", "MON-COMMS", POLL).serialize())
+        deadline = time.monotonic() + _READ_TIMEOUT
+        for _ in range(_MAX_READ_ATTEMPTS):
+            if time.monotonic() > deadline:
+                break
+            try:
+                _, parsed = reader.read()  # type: ignore[misc]
+            except Exception:
+                continue
+            if parsed is None or getattr(parsed, "identity", "") != "MON-COMMS":
+                continue
+            counters: dict[int, PortCounters] = {}
+            for i in range(1, int(getattr(parsed, "nPorts", 0)) + 1):
+                n = f"{i:02d}"
+                counters[int(getattr(parsed, f"portId_{n}"))] = PortCounters(
+                    rx_bytes=int(getattr(parsed, f"rxBytes_{n}")),
+                    ubx_msgs=int(getattr(parsed, f"msgs_{n}_01", 0)),
+                )
+            return counters
+        raise TimeoutError("No MON-COMMS response from device")
 
     def _poll_mon_ver(self, timeout_s: float | None = None) -> DeviceInfo:
         """Poll MON-VER and parse device identity.

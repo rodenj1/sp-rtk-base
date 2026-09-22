@@ -51,6 +51,7 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
 )
 from sp_rtk_base.models.device_models import (
+    DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
     CurrentBaseConfig,
@@ -122,12 +123,17 @@ FAKE_FACTORY_PORT: str = "FAKE-FACTORY"
 # producer.
 FAKE_FLASH_DIVERGENCE_PORT: str = "FAKE-FLASH-DIVERGENCE"
 
-# The one rate the fake receiver "answers" at. Deliberately 57600 — the
-# rate the documented reference deployment runs at, and deliberately not
-# the UI's 115200 default, so a Detection in demo mode tells the same
-# story the feature exists for: the pre-filled rate is wrong, and Detect
-# finds the right one.
-FAKE_DETECTED_BAUD: int = 57600
+# The one rate the fake receiver "answers" at. Deliberately *not*
+# ``DEFAULT_BAUD``, so a Detection in demo mode tells the story the
+# feature exists for: the pre-filled rate is wrong, and Detect finds the
+# right one. A demo where the default already works demonstrates
+# nothing.
+#
+# It was 57600 when the default was 115200 (issue #142). Issue #146 made
+# 57600 the default, which silently voided that contrast — so this moved
+# to the ZED-F9P's own factory rate, which is both a different number and
+# a more honest scenario: a receiver nobody has configured yet.
+FAKE_DETECTED_BAUD: int = 38400
 
 # Sentinel ``port`` value the e2e suite can pass to a Detection to make
 # the fake port answer at *every* rate, the way a directly USB-connected
@@ -321,7 +327,7 @@ class FakeGpsDriver(GpsReceiverDriver):
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
+    def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
         """Accept the connection request unconditionally.
 
         Args:

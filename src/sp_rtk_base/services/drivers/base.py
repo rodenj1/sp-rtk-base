@@ -12,6 +12,7 @@ import contextlib
 from collections.abc import Generator
 
 from sp_rtk_base.models.device_models import (
+    DEFAULT_BAUD,
     BaseMode,
     Candidate,
     CandidateVerdict,
@@ -132,7 +133,7 @@ class GpsReceiverDriver(abc.ABC):
     # ------------------------------------------------------------------
 
     @abc.abstractmethod
-    def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
+    def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
         """Open a serial connection and identify the device.
 
         Must read device identity information (model, firmware, etc.)

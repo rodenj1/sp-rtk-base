@@ -23,6 +23,7 @@ from nicegui import ui
 
 from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.config_models import InputProfile
+from sp_rtk_base.models.device_models import BAUD_RATES, DEFAULT_BAUD
 from sp_rtk_base.services import (
     get_bluetooth_verification_service,
     get_config_service,
@@ -50,8 +51,6 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPES = ["tcp", "serial", "bluetooth"]
 
-BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
-DEFAULT_BAUD = 115200
 
 # Bluetooth discovery scan durations (seconds).
 # Some GPS receivers advertise on long intervals (1.2-2.0 s) and can miss

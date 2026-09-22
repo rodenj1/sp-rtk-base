@@ -34,6 +34,41 @@ class DeviceConnectionState(str, enum.Enum):
 
 
 # ---------------------------------------------------------------------------
+# Serial rates (issue #146)
+# ---------------------------------------------------------------------------
+
+#: Serial rates the UI offers, in the order a dropdown reads best in.
+#: ``DETECTION_CANDIDATES`` in ``services/drivers/base.py`` covers the same
+#: set in likelihood order instead; a test asserts the two never drift,
+#: because a rate an operator can pick that Detection never tries is a
+#: rate they can be stuck on with no way to find it.
+BAUD_RATES: tuple[int, ...] = (
+    9600,
+    19200,
+    38400,
+    57600,
+    115200,
+    230400,
+    460800,
+    921600,
+)
+
+#: The rate every baud selector pre-fills, every driver signature falls
+#: back to, and every persisted profile defaults to.
+#:
+#: **57600 because that is what the hardware runs at** — FTDI -> UART1,
+#: per ``docs/zed-f9p-base-station-config-reference.md``. It was 115200,
+#: which matched neither that nor the ZED-F9P's own factory default of
+#: 38400, so the shipped default was a rate nothing in the project
+#: actually used and a fresh install failed its first Connect.
+#:
+#: Lives here rather than beside the Detection constants because
+#: ``models/`` is the bottom layer: ``api_models`` and ``config_models``
+#: both need this value, and neither may import from ``services/``.
+DEFAULT_BAUD: int = 57600
+
+
+# ---------------------------------------------------------------------------
 # Serial port discovery
 # ---------------------------------------------------------------------------
 

@@ -23,6 +23,7 @@ from sp_rtk_base_relay.config import (
 )
 
 from sp_rtk_base.models.bluetooth_models import normalize_pin
+from sp_rtk_base.models.device_models import DEFAULT_BAUD
 
 # ---------------------------------------------------------------------------
 # Filter profile
@@ -350,7 +351,7 @@ class DeviceProfile(BaseModel):
 
     vendor: str = "ublox"
     port: str = ""
-    baud_rate: int = 115200
+    baud_rate: int = DEFAULT_BAUD
 
 
 # ---------------------------------------------------------------------------

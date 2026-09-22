@@ -18,6 +18,8 @@ import pytest
 import serial  # type: ignore[import-untyped]
 
 from sp_rtk_base.models.device_models import (
+    BAUD_RATES,
+    DEFAULT_BAUD,
     CandidateVerdict,
     DetectionOutcome,
     DeviceInfo,
@@ -560,3 +562,40 @@ class TestStaleCancelSignal:
 
         assert result.outcome is not DetectionOutcome.NOT_FOUND
         assert result.candidates != []
+
+
+# ---------------------------------------------------------------------------
+# The offered rates and the swept rates must not drift apart
+# ---------------------------------------------------------------------------
+
+
+class TestRateSetsAgree:
+    """A rate an operator can pick must be a rate Detection tries.
+
+    The two lists are deliberately separate — ``BAUD_RATES`` is the
+    order a dropdown reads best in, ``DETECTION_CANDIDATES`` is
+    likelihood order — but they must cover the same set. Adding a rate
+    to one and not the other gives an operator a rate Detect can never
+    find, or sweeps a rate they cannot then select.
+    """
+
+    def test_every_offered_rate_is_swept(self) -> None:
+        assert set(BAUD_RATES) == set(DETECTION_CANDIDATES)
+
+    def test_the_default_is_one_of_the_offered_rates(self) -> None:
+        assert DEFAULT_BAUD in BAUD_RATES
+
+    def test_the_default_matches_the_documented_deployment(self) -> None:
+        """docs/zed-f9p-base-station-config-reference.md: FTDI -> UART1
+        at 57600. The UI used to pre-fill a rate matching nothing."""
+        assert DEFAULT_BAUD == 57600
+
+    def test_the_fake_answers_at_a_rate_the_default_does_not_preselect(self) -> None:
+        """Demo mode has to demonstrate something.
+
+        The fake's rate is only interesting while it differs from the
+        pre-filled one — a Detection that confirms the default was right
+        all along shows an operator nothing. Issue #146 moving the
+        default to 57600 silently voided that contrast once already.
+        """
+        assert FAKE_DETECTED_BAUD != DEFAULT_BAUD

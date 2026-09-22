@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.models.device_models import DEFAULT_BAUD
 from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
 from sp_rtk_base.models.net_provision_models import ActiveLink
 from sp_rtk_base.models.profile_models import Profile
@@ -216,7 +217,7 @@ class DeviceConnectRequest(BaseModel):
     vendor: str = Field(default="ublox", description="Driver vendor key")
     port: str = Field(description="Serial port path (e.g. /dev/ttyUSB0)")
     baud_rate: int = Field(
-        default=115200, ge=4800, le=921600, description="Serial baud rate"
+        default=DEFAULT_BAUD, ge=4800, le=921600, description="Serial baud rate"
     )
 
 

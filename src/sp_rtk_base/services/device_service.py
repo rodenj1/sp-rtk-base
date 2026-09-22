@@ -16,6 +16,7 @@ from typing import NamedTuple, Protocol
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
+    DEFAULT_BAUD,
     BaseInvariantsCheck,
     CurrentBaseConfig,
     DetectionResult,
@@ -295,7 +296,7 @@ class DeviceService:
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self, port: str, baud_rate: int = 115200) -> DeviceInfo:
+    async def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
         """Connect to a GPS receiver on the given serial port.
 
         Args:

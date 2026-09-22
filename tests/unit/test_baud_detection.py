@@ -10,6 +10,8 @@ the outcome classification — never MON-VER.
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -29,7 +31,7 @@ from sp_rtk_base.services.device_service import (
     DeviceService,
 )
 from sp_rtk_base.services.drivers import create_driver
-from sp_rtk_base.services.drivers.base import DETECTION_CANDIDATES
+from sp_rtk_base.services.drivers.base import BAUD_MISMATCH_HINT, DETECTION_CANDIDATES
 from sp_rtk_base.services.drivers.fake import (
     FAKE_DETECTED_BAUD,
     FAKE_RATE_INDIFFERENT_PORT,
@@ -599,3 +601,106 @@ class TestRateSetsAgree:
         default to 57600 silently voided that contrast once already.
         """
         assert FAKE_DETECTED_BAUD != DEFAULT_BAUD
+
+
+# ---------------------------------------------------------------------------
+# A busy line at the wrong rate (found on the bench, test-base.lan)
+# ---------------------------------------------------------------------------
+
+
+class _MisframedBusyLine:
+    """A receiver streaming RTCM, read at the wrong rate.
+
+    Bytes never stop arriving and none of them form a protocol header, so
+    the serial timeout — which only fires on silence — never fires, and
+    ``UBXReader.read()`` never returns on its own. This is the base on the
+    bench: it streams RTCM on UART1, and Detection's confirmation step
+    deliberately tries a wrong rate on exactly that line.
+    """
+
+    is_open = True
+
+    def read(self, size: int = 1) -> bytes:
+        time.sleep(0.001)
+        return b"\x00" * size
+
+    def fileno(self) -> int:
+        return 0
+
+    def reset_input_buffer(self) -> None:
+        pass
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+class TestABusyLineCannotHangATrial:
+    @pytest.fixture(autouse=True)
+    def _mock_fcntl(self) -> Iterator[None]:
+        with patch("sp_rtk_base.services.drivers.ublox.fcntl.flock"):
+            yield
+
+    def _run_with_watchdog(self, fn: object, limit_s: float) -> tuple[bool, object]:
+        result: list[object] = []
+        t = threading.Thread(target=lambda: result.append(fn()), daemon=True)  # type: ignore[operator]
+        t.start()
+        t.join(limit_s)
+        return (not t.is_alive(), result[0] if result else None)
+
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_a_trial_on_a_busy_misframed_line_ends_within_its_budget(
+        self, mock_serial_cls: MagicMock
+    ) -> None:
+        """The real UBXReader, not a mock — the hang lives inside it."""
+        mock_serial_cls.return_value = _MisframedBusyLine()
+        driver = UbloxDriver()
+
+        finished, outcome = self._run_with_watchdog(
+            lambda: driver.try_baud_candidate("/dev/ttyUSB0", 9600, 0.3), 3.0
+        )
+
+        assert finished, "try_baud_candidate hung on a busy line"
+        assert outcome == (CandidateVerdict.SILENT, None)
+
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_a_trial_on_a_busy_line_releases_the_port(
+        self, mock_serial_cls: MagicMock
+    ) -> None:
+        """A hung trial held the port and its flock until the app restarted."""
+        line = _MisframedBusyLine()
+        mock_serial_cls.return_value = line
+        driver = UbloxDriver()
+
+        finished, _ = self._run_with_watchdog(
+            lambda: driver.try_baud_candidate("/dev/ttyUSB0", 9600, 0.3), 3.0
+        )
+
+        assert finished
+        assert not line.is_open
+
+    @patch("sp_rtk_base.services.drivers.ublox.serial.Serial")
+    def test_a_connect_at_the_wrong_rate_on_a_busy_line_times_out(
+        self, mock_serial_cls: MagicMock
+    ) -> None:
+        """Same trap in Connect: 'No response within 10s' could never fire."""
+        mock_serial_cls.return_value = _MisframedBusyLine()
+        driver = UbloxDriver()
+        driver.CONNECT_TIMEOUT = 0.3  # type: ignore[misc]
+
+        def attempt() -> str:
+            try:
+                driver.connect("/dev/ttyUSB0", 9600)
+            except ConnectionError as exc:
+                return str(exc)
+            return "connected?!"
+
+        finished, message = self._run_with_watchdog(attempt, 3.0)
+
+        assert finished, "connect hung on a busy line"
+        assert BAUD_MISMATCH_HINT in str(message)

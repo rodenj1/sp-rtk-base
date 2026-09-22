@@ -54,6 +54,18 @@ DETECTION_CANDIDATES: tuple[int, ...] = (
     19200,
 )
 
+#: The phrase a driver puts in a "nothing answered" connect failure to
+#: mark it as *possibly a wrong baud rate*, as opposed to a port that
+#: could not be opened or a device that refused.
+#:
+#: It exists as a shared constant rather than a string each end spells
+#: for itself because the UI copy has to recognise this one failure to
+#: point the operator at Detect (map #140 decision 13) — that pointer is
+#: the whole mitigation for Detect being a button someone has to find.
+#: A driver stays UI-agnostic: it reports what happened, and the copy
+#: layer decides that this particular what-happened deserves a next step.
+BAUD_MISMATCH_HINT: str = "check baud rate"
+
 #: Wall-clock seconds per Candidate. Deliberately far below
 #: ``UbloxDriver.CONNECT_TIMEOUT``: that 10s is sized for a real connect
 #: to a receiver buried under RTCM traffic, and eight of them would be a

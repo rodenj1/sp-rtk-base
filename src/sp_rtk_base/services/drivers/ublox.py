@@ -52,7 +52,10 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import resolve_hardware_identity
-from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.drivers.base import (
+    BAUD_MISMATCH_HINT,
+    GpsReceiverDriver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2015,7 +2018,7 @@ class UbloxDriver(GpsReceiverDriver):
             return info
         if timed_out:
             raise TimeoutError(
-                f"No response from device within {budget:.0f}s — check baud rate"
+                f"No response from device within {budget:.0f}s — {BAUD_MISMATCH_HINT}"
             )
         raise TimeoutError("No MON-VER response from device")
 

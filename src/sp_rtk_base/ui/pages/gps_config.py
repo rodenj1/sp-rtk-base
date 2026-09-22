@@ -118,6 +118,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.device_service import (
     ApplyConfigLinkLostError,
     ApplyConfigRefusedError,
+    DetectionRefusedError,
 )
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -126,7 +127,15 @@ from sp_rtk_base.services.profile_store import (
     ProfileStore,
     ProfileStoreError,
 )
+from sp_rtk_base.ui.detection_status import (
+    describe_connect_failure,
+    describe_detection,
+    describe_detection_refusal,
+    describe_port_failure,
+    detected_rate_to_apply,
+)
 from sp_rtk_base.ui.layout import page_layout
+from sp_rtk_base.ui.status_line import StatusLine
 
 logger = logging.getLogger(__name__)
 
@@ -897,6 +906,16 @@ def gps_config_page() -> None:
                     value=DEFAULT_BAUD,
                 ).classes("w-40")
 
+                detect_btn = (
+                    ui.button("Detect", icon="search")
+                    .props("outline color=info")
+                    .classes("self-center sp-detect-baud")
+                    .tooltip(
+                        "Try each baud rate on the selected port until the "
+                        "receiver answers"
+                    )
+                )
+
                 driver_select = ui.select(
                     options=list_drivers(),
                     label="Driver",
@@ -922,6 +941,13 @@ def gps_config_page() -> None:
                     .props("flat round color=white")
                     .tooltip("Refresh serial port list")
                 )
+
+            # Detection result. A persistent label rather than a toast:
+            # the useful outcomes are two sentences of diagnosis, and a
+            # notification that vanishes is no good to someone reading
+            # it while looking at a cable.
+            detect_label = ui.label("").classes("text-caption q-mt-xs sp-detect-status")
+            detect_label.set_visibility(False)
 
             # Device info card (hidden until connected)
             info_card = ui.card().classes("w-full q-pa-md q-mt-md")
@@ -1846,6 +1872,11 @@ def gps_config_page() -> None:
             # Buttons
             connecting = state == DeviceConnectionState.CONNECTING
             connect_btn.set_visibility(not connected and not connecting)
+            # Detect stays visible but goes dead once there is a live
+            # session: the rate is known, so there is nothing to find,
+            # and the sweep would be fighting for a port this process
+            # already holds (map #140 decision 10).
+            detect_btn.set_enabled(not connected and not connecting)
             disconnect_btn.set_visibility(connected)
             cancel_btn.set_visibility(connecting)
 
@@ -2705,7 +2736,14 @@ def gps_config_page() -> None:
                 _save_device_settings()
 
             except Exception as exc:
-                ui.notify(f"Connection failed: {exc}", type="negative")
+                # Decided in ``detection_status`` — a covered module —
+                # rather than here. This page used to report the raw
+                # service error, so it also gains the relay-busy wording
+                # the Survey page already had, and a "nothing answered"
+                # failure now points at Detect (map #140 decision 13).
+                line = describe_connect_failure(str(exc))
+                ui.notify(line.text, type=line.tone)
+                _show_detect(line)
                 logger.exception("Device connect failed")
 
             _update_ui_state()
@@ -2716,6 +2754,53 @@ def gps_config_page() -> None:
                     await _load_receiver_config_form()
                 except Exception:
                     logger.warning("Failed to load receiver config on connect")
+
+        def _show_detect(line: StatusLine) -> None:
+            """Render one status line in its tone."""
+            detect_label.text = line.text
+            detect_label.classes(
+                replace=f"text-caption q-mt-xs sp-detect-status text-{line.tone}"
+            )
+            detect_label.set_visibility(True)
+
+        async def _detect_baud() -> None:
+            """Sweep the selected port and fill in the rate that answered.
+
+            Fills the *connection* baud selector only. It deliberately
+            never touches ``form.baud.uart1``/``uart2``: those are an
+            assertion Apply will write to the receiver, and a Detection
+            observes the wire rather than forming an intent about how
+            the receiver should be configured (map #140 decision 11).
+            """
+            port = port_select.value
+            if not port:
+                ui.notify("Select a serial port", type="warning")
+                return
+
+            vendor = str(driver_select.value or "ublox")
+            preferred = int(baud_select.value) if baud_select.value else None
+
+            detect_btn.disable()
+            _show_detect(StatusLine("Detecting — trying each baud rate…", "warning"))
+            try:
+                result = await svc.detect_baud(
+                    str(port), vendor=vendor, preferred_baud=preferred
+                )
+            except DetectionRefusedError as exc:
+                _show_detect(describe_detection_refusal(exc))
+            except (ConnectionError, OSError) as exc:
+                _show_detect(describe_port_failure(str(exc)))
+            except Exception as exc:
+                _show_detect(StatusLine(str(exc), "negative"))
+                logger.exception("Baud detection failed")
+            else:
+                _show_detect(describe_detection(result))
+                rate = detected_rate_to_apply(result)
+                if rate is not None:
+                    baud_select.value = rate
+            finally:
+                detect_btn.enable()
+                _update_ui_state()
 
         def _cancel_connect() -> None:
             """Cancel an in-progress connect attempt."""
@@ -2744,6 +2829,7 @@ def gps_config_page() -> None:
 
         # ---- Wire up event handlers ----
         connect_btn.on_click(_connect)
+        detect_btn.on_click(_detect_baud)
         disconnect_btn.on_click(_disconnect)
         cancel_btn.on_click(lambda: _cancel_connect())
         refresh_btn.on_click(lambda: _refresh_ports())

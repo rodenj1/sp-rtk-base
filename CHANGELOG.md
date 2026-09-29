@@ -11,6 +11,29 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 Baseline release; not yet published to PyPI.
 
+## v0.6.2 (2026-09-29)
+
+### Survey-in shows observations against a target
+
+The Survey-In progress card now shows observations as a count against a
+target, e.g. "Observations: 312 / 480" (#160). The receiver has no
+observation target of its own: it takes one observation per navigation
+epoch, so the target is the minimum duration divided by the receiver's
+measurement period. The period is read from the receiver when the
+survey starts. If it can't be read, 1 Hz is assumed.
+
+- **The convergence chart plots accuracy only.** The Observations line
+  and its second axis are gone, leaving accuracy on its log scale
+  against the target line.
+
+### Fixed
+
+- **The dashboard no longer shows a Frames Parsed metric that always
+  read 0.** The relay only parses frames when message filtering is on,
+  so with no filter configured the number never moved. Bytes In and
+  Chunks Out still cover throughput. The `sp_rtk_base_frames_parsed`
+  Prometheus gauge is unchanged.
+
 ## v0.6.1 (2026-09-22)
 
 ### Detect finds the receiver's baud rate for you

@@ -14,6 +14,7 @@ position, and save/restore position profiles.
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 from nicegui import ui
@@ -274,7 +275,7 @@ def survey_page() -> None:
                                 "textStyle": {"color": "#ccc"},
                             },
                             "legend": {
-                                "data": ["Accuracy (mm)", "Observations"],
+                                "data": ["Accuracy (mm)"],
                                 "textStyle": {"color": "#888"},
                                 "top": 0,
                             },
@@ -304,14 +305,6 @@ def survey_page() -> None:
                                         }
                                     },
                                     "min": 100,
-                                },
-                                {
-                                    "type": "value",
-                                    "name": "Observations",
-                                    "nameTextStyle": {"color": "#888"},
-                                    "axisLabel": {"color": "#888"},
-                                    "axisLine": {"lineStyle": {"color": "#444"}},
-                                    "splitLine": {"show": False},
                                 },
                             ],
                             "series": [
@@ -357,16 +350,6 @@ def survey_page() -> None:
                                             "formatter": "Target: {c} mm",
                                         },
                                     },
-                                },
-                                {
-                                    "name": "Observations",
-                                    "type": "line",
-                                    "data": [],
-                                    "smooth": True,
-                                    "symbol": "none",
-                                    "lineStyle": {"width": 1, "type": "dotted"},
-                                    "itemStyle": {"color": "#74c0fc"},
-                                    "yAxisIndex": 1,
                                 },
                             ],
                         }
@@ -496,7 +479,10 @@ def survey_page() -> None:
 
         _svin_chart_times: list[str] = []
         _svin_chart_acc: list[float] = []
-        _svin_chart_obs: list[int] = []
+        # Receiver measurement period, read once per survey so the
+        # observation target (min duration / period) can be shown.
+        # ``None`` until read; falls back to 1 Hz if the read fails.
+        _svin_meas_period_ms: int | None = None
         # Rolling samples used for ETA extrapolation.  Each entry is
         # (elapsed_seconds, accuracy_mm).  We use the most recent
         # window (~30 s) to estimate the convergence slope and project
@@ -1172,8 +1158,21 @@ def survey_page() -> None:
                     )
             dlg.open()
 
+        async def _read_meas_period() -> None:
+            nonlocal _svin_meas_period_ms
+            try:
+                _svin_meas_period_ms = await svc.get_measurement_period_ms()
+            except Exception:
+                _svin_meas_period_ms = 1000
+
+        def _obs_target(dur_seconds: int) -> int:
+            # The receiver takes one survey-in observation per nav
+            # epoch, so the minimum duration implies this many.
+            period = _svin_meas_period_ms or 1000
+            return math.ceil(dur_seconds * 1000 / period)
+
         async def _start_survey_in() -> None:
-            nonlocal svin_timer, _svin_dur_offset
+            nonlocal svin_timer, _svin_dur_offset, _svin_meas_period_ms
             from sp_rtk_base.models.device_models import SurveyInConfig
 
             # Force re-snapshot of the receiver's ``dur`` counter on the
@@ -1182,6 +1181,7 @@ def survey_page() -> None:
             # elapsed times until the receiver counter overtakes the
             # stale offset.
             _svin_dur_offset = None
+            _svin_meas_period_ms = None
 
             dur = int(svin_duration.value or 120)
             acc = int(svin_accuracy.value or 50000)
@@ -1215,6 +1215,8 @@ def survey_page() -> None:
                 # foreknowledge of whether a reset is needed.
                 pass
 
+            await _read_meas_period()
+
             if needs_reset:
                 ui.notify(
                     "Stale survey state detected — resetting GPS "
@@ -1228,7 +1230,7 @@ def survey_page() -> None:
             svin_target_label.text = f"Target: {acc:,} mm"
             svin_dur_label.text = "Duration: 0s"
             svin_acc_label.text = "Accuracy: —"
-            svin_obs_label.text = "Observations: 0"
+            svin_obs_label.text = f"Observations: 0 / {_obs_target(dur):,}"
             svin_pct_label.text = "% to target: —"
             svin_eta_label.text = "ETA: —"
             svin_progress_bar.value = 0.0
@@ -1237,13 +1239,11 @@ def survey_page() -> None:
 
             _svin_chart_times.clear()
             _svin_chart_acc.clear()
-            _svin_chart_obs.clear()
             _svin_eta_samples.clear()
 
             opts = svin_chart.options
             opts["xAxis"]["data"] = []
             opts["series"][0]["data"] = []
-            opts["series"][1]["data"] = []
             opts["series"][0]["markLine"]["data"] = [{"yAxis": acc}]
             svin_chart.update()
 
@@ -1411,9 +1411,13 @@ def survey_page() -> None:
 
                 svin_dur_label.text = f"Duration: {elapsed}s"
                 svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
-                svin_obs_label.text = f"Observations: {progress.observations}"
-
                 dur_target = int(svin_duration.value or 120)
+                if _svin_meas_period_ms is None:
+                    await _read_meas_period()
+                svin_obs_label.text = (
+                    f"Observations: {progress.observations:,} / "
+                    f"{_obs_target(dur_target):,}"
+                )
                 acc_target = float(svin_accuracy.value or 50000)
                 cur_acc = float(progress.mean_accuracy_mm)
 
@@ -1454,8 +1458,6 @@ def survey_page() -> None:
                     if start_acc <= acc_target:
                         pct_acc = 100.0
                     else:
-                        import math
-
                         # log(start/cur) / log(start/target)
                         num = math.log(max(start_acc, 1.0) / max(cur_acc, 1.0))
                         den = math.log(max(start_acc, 1.0) / max(acc_target, 1.0))
@@ -1534,12 +1536,10 @@ def survey_page() -> None:
                 acc_val = max(progress.mean_accuracy_mm, 1.0)
                 _svin_chart_times.append(str(progress.duration_seconds))
                 _svin_chart_acc.append(round(acc_val, 1))
-                _svin_chart_obs.append(progress.observations)
 
                 opts = svin_chart.options
                 opts["xAxis"]["data"] = _svin_chart_times
                 opts["series"][0]["data"] = _svin_chart_acc
-                opts["series"][1]["data"] = _svin_chart_obs
 
                 acc_target = float(svin_accuracy.value or 50000)
                 if acc_val <= acc_target:

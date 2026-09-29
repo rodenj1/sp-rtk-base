@@ -413,18 +413,6 @@ def dashboard_page() -> None:
                         "download",
                         subvalue=f"total: {_format_bytes(bytes_thru)}",
                     )
-                    frames = int(status.frames_parsed)
-                    frames_rate = _rate("frames", frames, now)
-                    status_metric(
-                        "Frames Parsed",
-                        (
-                            _format_count_rate(frames_rate)
-                            if frames_rate is not None
-                            else "—"
-                        ),
-                        "analytics",
-                        subvalue=f"total: {frames}",
-                    )
                     chunks = int(status.chunks_distributed)
                     chunks_rate = _rate("chunks", chunks, now)
                     status_metric(

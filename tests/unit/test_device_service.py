@@ -1772,6 +1772,24 @@ class TestSurveyInPolling:
         with pytest.raises(RuntimeError, match="Device not connected"):
             await svc.get_survey_in_status()
 
+    @pytest.mark.asyncio()
+    async def test_get_measurement_period_ms(self) -> None:
+        svc = DeviceService()
+        driver = _make_mock_driver()
+        driver.get_receiver_scalars.return_value = _scalars()
+        svc.set_driver(driver)
+        svc._state = DeviceConnectionState.CONNECTED
+        svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
+
+        assert await svc.get_measurement_period_ms() == 250
+
+    @pytest.mark.asyncio()
+    async def test_get_measurement_period_ms_not_connected_raises(self) -> None:
+        svc = DeviceService()
+        svc.set_driver(_make_mock_driver())
+        with pytest.raises(RuntimeError, match="Device not connected"):
+            await svc.get_measurement_period_ms()
+
 
 # ---------------------------------------------------------------------------
 # Tests: Mutual exclusion

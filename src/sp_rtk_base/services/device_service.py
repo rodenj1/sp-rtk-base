@@ -1428,6 +1428,19 @@ class DeviceService:
         driver = self._require_connected()
         return await asyncio.to_thread(driver.get_survey_in_status)
 
+    async def get_measurement_period_ms(self) -> int:
+        """Read the receiver's navigation measurement period.
+
+        The Survey page uses it to turn the survey-in minimum duration
+        into a target observation count (one observation per epoch).
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        driver = self._require_connected()
+        scalars = await asyncio.to_thread(driver.get_receiver_scalars)
+        return scalars.meas_period_ms
+
     def get_status(self) -> DeviceStatus:
         """Return a full device status snapshot.
 

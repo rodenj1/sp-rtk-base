@@ -1686,9 +1686,15 @@ class UbloxDriver(GpsReceiverDriver):
             nav_sat = self._poll_nav_locked("NAV-SAT")
             nav_sig = self._poll_nav_locked("NAV-SIG")
 
+        # Satellites the receiver is using, and their elevation.  Unused
+        # satellites (svUsed 0) are left out: the receiver leaves them out
+        # of its MSM output too (seen on test-base), and a Snapshot is what
+        # it would put in its corrections.
         elevations: dict[tuple[int, int], int] = {}
         for i in range(1, int(getattr(nav_sat, "numSvs", 0)) + 1):
             n = f"_{i:02d}"
+            if not int(getattr(nav_sat, "svUsed" + n, 0)):
+                continue
             key = (
                 int(getattr(nav_sat, "gnssId" + n)),
                 int(getattr(nav_sat, "svId" + n)),

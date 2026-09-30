@@ -466,7 +466,7 @@ async def test_a_band_missing_from_most_of_the_window_is_missing() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_a_band_present_in_most_of_the_window_is_judged_on_those_snapshots() -> None:
+async def test_a_band_present_in_most_of_the_window_is_judged_on_those() -> None:
     feed = await _feed()
     with_l2, without_l2 = _sky(20, l1=50.0, l2=48.0), _sky(20, l1=50.0, l2=None)
     for i, signals in enumerate([with_l2, without_l2, with_l2, without_l2]):

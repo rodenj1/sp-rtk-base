@@ -36,7 +36,7 @@ STALE_AFTER_SECONDS = 10.0
 # much; entering a level uses the plain threshold.  Stops flicker when a
 # value sits on a line.
 DEADBAND_DBHZ = 1.0
-DEADBAND_SATELLITES = 1.0
+DEADBAND_SATELLITES = 1
 
 # A satellite is usable with at least one signal this strong.
 USABLE_SIGNAL_DBHZ = 35.0
@@ -128,31 +128,31 @@ def _smooth(window: list[_Measures]) -> _Measures:
 
 def judge(snapshot: SignalSnapshot) -> SignalQualityVerdict:
     """Judge one Signal Snapshot on its own: the worst of the three measures wins."""
-    return _verdict(_measure(snapshot), None)
+    return _judge(_measure(snapshot), None)
 
 
-def _verdict(
+def _judge(
     measures: _Measures, previous: SignalQualityVerdict | None
 ) -> SignalQualityVerdict:
     """Judge *measures*, holding each level of the *previous* verdict (deadband)."""
     l1, l2, satellites = measures.l1, measures.l2, measures.satellites
 
     l1_level = _held_level(
-        previous and previous.l1_level,
+        previous.l1_level if previous else None,
         l1,
         L1_GOOD_DBHZ,
         L1_MARGINAL_DBHZ,
         DEADBAND_DBHZ,
     )
     l2_level = _held_level(
-        previous and previous.l2_level,
+        previous.l2_level if previous else None,
         l2,
         L2_GOOD_DBHZ,
         L2_MARGINAL_DBHZ,
         DEADBAND_DBHZ,
     )
     satellites_level = _held_level(
-        previous and previous.satellites_level,
+        previous.satellites_level if previous else None,
         float(satellites),
         SATELLITES_GOOD,
         SATELLITES_MARGINAL,
@@ -194,11 +194,16 @@ class SignalQualityMonitor:
         self._verdict: SignalQualityVerdict | None = None
 
     def observe(self, snapshot: SignalSnapshot, now: float) -> None:
-        """Take in a Snapshot received at monotonic time *now*."""
+        """Take in a Snapshot received at monotonic time *now*.
+
+        Levels are held (deadband) only against a verdict that was still
+        fresh; after a stale gap the new verdict is judged afresh.
+        """
+        held = self.current(now)
         self._window.append((now, _measure(snapshot)))
         while self._window and self._window[0][0] <= now - WINDOW_SECONDS:
             self._window.popleft()
-        self._verdict = _verdict(_smooth([m for _, m in self._window]), self._verdict)
+        self._verdict = _judge(_smooth([m for _, m in self._window]), held)
 
     def reset(self) -> None:
         """Forget everything seen so far (e.g. the receiver went away)."""

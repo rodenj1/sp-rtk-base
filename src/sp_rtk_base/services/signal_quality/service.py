@@ -61,7 +61,9 @@ class SignalQualityService:
         verdict = self._monitor.current(now)
         if verdict is not None:
             return verdict
-        unanswered_since = self._answered_at or self._asking_since
+        unanswered_since = (
+            self._answered_at if self._answered_at is not None else self._asking_since
+        )
         if (
             unanswered_since is not None
             and now - unanswered_since >= NO_ANSWER_AFTER_SECONDS
@@ -80,12 +82,20 @@ class SignalQualityService:
             self._asking_since = self._answered_at = None
             return
         if self._polling:
-            return  # never queue behind a slow poll (e.g. a configuration write)
+            # The background loop awaits each poll, so it never overlaps
+            # itself; this guards any other caller from queuing behind a
+            # slow poll (e.g. one stuck behind a configuration write).
+            return
         if self._asking_since is None:
             self._asking_since = self._clock()
         self._polling = True
         try:
             snapshot = await self._device.get_signal_snapshot()
+        except NotImplementedError:
+            # The driver can't supply Snapshots at all: that is not the
+            # receiver failing to answer, so it never becomes "no answer".
+            self._asking_since = None
+            return
         except Exception:
             logger.debug("Signal Snapshot poll failed", exc_info=True)
             return

@@ -7,7 +7,8 @@ drive it with an injected clock, and assert on ``current()``.
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import threading
 
 import pytest
 
@@ -17,6 +18,7 @@ from sp_rtk_base.models.signal_quality_models import (
     Signal,
     SignalQualityNoData,
     SignalQualityVerdict,
+    SignalSnapshot,
 )
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FakeGpsDriver
@@ -282,43 +284,53 @@ async def test_usable_satellites_is_the_window_median_rounded_down() -> None:
     assert reading.satellites_level == "Good"
 
 
-# Polls 20 s apart put one Snapshot in each window, isolating the deadband.
+# Polls every 2 s, as the poller does; holding a value for five polls fills
+# the 10 s window with it, so each step's final reading is judged on it.
+
+
+async def _hold(
+    feed: Feed, start: int, signals: tuple[Signal, ...]
+) -> SignalQualityVerdict:
+    for i in range(4):
+        await feed.poll_at(start + 2 * i, signals)
+    return await feed.poll_at(start + 8, signals)
 
 
 @pytest.mark.asyncio()
 async def test_a_value_oscillating_at_a_threshold_does_not_flicker() -> None:
     feed = await _feed()
+    await _hold(feed, 0, _sky(20, l1=52.0, l2=50.0))
     levels = [
-        (await feed.poll_at(t * 20, _sky(20, l1=l1, l2=50.0))).l1_level
-        for t, l1 in enumerate([44.1, 43.9, 44.1, 43.9, 44.1, 43.9])
+        (await feed.poll_at(10 + 2 * i, _sky(20, l1=l1, l2=50.0))).l1_level
+        for i, l1 in enumerate([44.1, 43.9] * 6)
     ]
-    assert levels == ["Good"] * 6
+    assert levels == ["Good"] * 12
 
 
 @pytest.mark.asyncio()
 async def test_leaving_a_level_needs_a_one_db_crossing_entering_does_not() -> None:
     feed = await _feed()
-    sequence = [
+    steps = [
         (52.0, "Good"),
         (43.1, "Good"),
         (42.9, "Marginal"),
         (44.5, "Marginal"),
         (45.0, "Good"),
-        (39.5, "Poor"),
+        (38.5, "Poor"),
         (40.0, "Poor"),
         (41.0, "Marginal"),
     ]
     got = [
-        (await feed.poll_at(t * 20, _sky(20, l1=l1, l2=50.0))).l1_level
-        for t, (l1, _) in enumerate(sequence)
+        (await _hold(feed, 10 * n, _sky(20, l1=l1, l2=50.0))).l1_level
+        for n, (l1, _) in enumerate(steps)
     ]
-    assert got == [level for _, level in sequence]
+    assert got == [level for _, level in steps]
 
 
 @pytest.mark.asyncio()
 async def test_usable_satellites_leave_a_level_only_one_satellite_past_it() -> None:
     feed = await _feed()
-    sequence = [
+    steps = [
         (20, "Good"),
         (14, "Good"),
         (13, "Marginal"),
@@ -326,17 +338,14 @@ async def test_usable_satellites_leave_a_level_only_one_satellite_past_it() -> N
         (16, "Good"),
     ]
     got = [
-        (await feed.poll_at(t * 20, _sky(n, l1=50.0, l2=50.0))).satellites_level
-        for t, (n, _) in enumerate(sequence)
+        (await _hold(feed, 10 * n, _sky(count, l1=50.0, l2=50.0))).satellites_level
+        for n, (count, _) in enumerate(steps)
     ]
-    assert got == [level for _, level in sequence]
+    assert got == [level for _, level in steps]
 
 
 def _stop_answering(driver: FakeGpsDriver) -> None:
-    def no_answer() -> None:
-        raise RuntimeError("No NAV-SIG response")
-
-    driver.get_signal_snapshot = no_answer  # type: ignore[method-assign]
+    driver.set_signal_poll_error(RuntimeError("No NAV-SIG response"))
 
 
 NO_ANSWER = SignalQualityNoData(reason="The receiver did not answer the signal poll.")
@@ -381,27 +390,23 @@ async def test_a_receiver_that_never_answers_is_waited_on_for_ten_seconds() -> N
 async def test_a_receiver_that_answers_again_shows_a_verdict_again() -> None:
     feed = await _feed()
     await feed.poll_at(0, _sky(20, l1=52.0, l2=50.0))
-    real = feed.driver.get_signal_snapshot
     _stop_answering(feed.driver)
     feed.clock.now = 1012.0
     await feed.service.poll_once()
     assert feed.service.current() == NO_ANSWER
 
-    feed.driver.get_signal_snapshot = real  # type: ignore[method-assign]
+    feed.driver.set_signal_poll_error(None)
     reading = await feed.poll_at(14, _sky(20, l1=52.0, l2=50.0))
     assert reading.level == "Good"
 
 
 @pytest.mark.asyncio()
 async def test_a_poll_is_skipped_while_the_previous_one_has_not_returned() -> None:
-    import asyncio
-    import threading
-
     feed = await _feed()
     release, calls = threading.Event(), 0
     real = feed.driver.get_signal_snapshot
 
-    def slow() -> Any:  # e.g. stuck behind a long configuration write
+    def slow() -> SignalSnapshot:  # e.g. stuck behind a long configuration write
         nonlocal calls
         calls += 1
         release.wait(timeout=5)
@@ -417,3 +422,31 @@ async def test_a_poll_is_skipped_while_the_previous_one_has_not_returned() -> No
 
     assert calls == 1
     assert isinstance(feed.service.current(), SignalQualityVerdict)
+
+
+@pytest.mark.asyncio()
+async def test_a_stale_verdict_does_not_hold_the_next_one() -> None:
+    feed = await _feed()
+    await feed.poll_at(0, _sky(20, l1=52.0, l2=50.0))  # Good
+
+    reading = await feed.poll_at(
+        100, _sky(20, l1=43.5, l2=50.0)
+    )  # long after it went stale
+
+    assert reading.l1_level == "Marginal"  # judged fresh, not held at Good
+
+
+@pytest.mark.asyncio()
+async def test_a_driver_without_snapshots_keeps_waiting_rather_than_not_answering() -> (
+    None
+):
+    feed = await _feed()
+    feed.driver.set_signal_poll_error(NotImplementedError())
+
+    for t in (0, 6, 12, 30):
+        feed.clock.now = 1000.0 + t
+        await feed.service.poll_once()
+
+    assert feed.service.current() == SignalQualityNoData(
+        reason="Waiting for signal data from the receiver."
+    )

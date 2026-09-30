@@ -112,6 +112,8 @@ async def shutdown_services() -> None:
        will fight it for the engine lock.  Cancel it first so the
        rest of the shutdown can proceed; the underlying daemon
        thread may keep trying for a moment but it can't block us.
+       **Signal Quality poller** — cancelled next, before the device
+       goes away, so it is never mid-poll when the driver disconnects.
     1. **Device first** — release the serial / Bluetooth handle while
        the event loop is still healthy.  If we wait until the relay
        and event bridge are already torn down, the relay engine may

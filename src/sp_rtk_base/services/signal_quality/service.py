@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
 
-NOT_CONNECTED = "Connect the receiver to see Signal Quality."
-WAITING = "Waiting for signal data from the receiver."
+NOT_CONNECTED_REASON = "Connect the receiver to see Signal Quality."
+# Shown until the first Snapshot arrives.  TODO(#168): once staleness
+# lands, failed polls show "The receiver did not answer the signal poll."
+WAITING_REASON = "Waiting for signal data from the receiver."
 
 
 class SignalQualityService:
@@ -45,13 +47,22 @@ class SignalQualityService:
     def current(self) -> SignalQualityReading:
         """The Signal Quality to show right now, or why there is none."""
         if not self._device.is_connected:
-            return SignalQualityNoData(reason=NOT_CONNECTED)
+            return SignalQualityNoData(reason=NOT_CONNECTED_REASON)
         verdict = self._monitor.current(self._clock())
-        return verdict if verdict is not None else SignalQualityNoData(reason=WAITING)
+        return (
+            verdict
+            if verdict is not None
+            else SignalQualityNoData(reason=WAITING_REASON)
+        )
 
     async def poll_once(self) -> None:
-        """Poll one Signal Snapshot, if the receiver is connected."""
+        """Poll one Signal Snapshot, if the receiver is connected.
+
+        While disconnected, forget the last verdict so a reconnected
+        receiver never shows one from before.
+        """
         if not self._device.is_connected:
+            self._monitor.reset()
             return
         try:
             snapshot = await self._device.get_signal_snapshot()

@@ -21,8 +21,8 @@ def test_survey_shows_good_signal_quality_with_the_fake_receiver(
     expect(card).to_contain_text("Signal Quality")
     expect(card).to_contain_text("Good", timeout=10_000)
     expect(card).to_contain_text("L1 Band strength")
-    expect(card).to_contain_text("52 dB-Hz")
-    expect(card).to_contain_text("51 dB-Hz")
+    expect(card).to_contain_text("52.0 dB-Hz")
+    expect(card).to_contain_text("51.0 dB-Hz")
     expect(card).to_contain_text("Usable satellites")
     expect(card).to_contain_text("28")
 

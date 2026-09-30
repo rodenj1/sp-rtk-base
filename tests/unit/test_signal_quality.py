@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from sp_rtk_base.models.device_models import GnssConstellation
 from sp_rtk_base.models.signal_quality_models import (
     Band,
     Signal,
@@ -59,11 +60,21 @@ def _sky(satellites: int, l1: float | None, l2: float | None) -> tuple[Signal, .
     for sv in range(1, satellites + 1):
         if l1 is not None:
             signals.append(
-                Signal(constellation="GPS", satellite=sv, band=Band.L1, cn0_dbhz=l1)
+                Signal(
+                    constellation=GnssConstellation.GPS,
+                    satellite=sv,
+                    band=Band.L1,
+                    cn0_dbhz=l1,
+                )
             )
         if l2 is not None:
             signals.append(
-                Signal(constellation="GPS", satellite=sv, band=Band.L2, cn0_dbhz=l2)
+                Signal(
+                    constellation=GnssConstellation.GPS,
+                    satellite=sv,
+                    band=Band.L2,
+                    cn0_dbhz=l2,
+                )
             )
     return tuple(signals)
 
@@ -139,7 +150,12 @@ async def test_a_missing_l2_band_is_poor() -> None:
 async def test_band_strength_is_the_mean_of_the_four_strongest_signals() -> None:
     l1 = [30.0, 52.0, 25.0, 48.0, 50.0, 46.0, 20.0]  # strongest four: 52, 50, 48, 46
     signals = tuple(
-        Signal(constellation="GALILEO", satellite=sv, band=Band.L1, cn0_dbhz=cn0)
+        Signal(
+            constellation=GnssConstellation.GALILEO,
+            satellite=sv,
+            band=Band.L1,
+            cn0_dbhz=cn0,
+        )
         for sv, cn0 in enumerate(l1, start=1)
     )
     reading = await _reading_for(signals)
@@ -149,11 +165,36 @@ async def test_band_strength_is_the_mean_of_the_four_strongest_signals() -> None
 @pytest.mark.asyncio()
 async def test_a_satellite_is_usable_only_with_a_signal_at_35_dbhz_or_more() -> None:
     signals = (
-        Signal(constellation="GPS", satellite=1, band=Band.L1, cn0_dbhz=35.0),
-        Signal(constellation="GPS", satellite=2, band=Band.L1, cn0_dbhz=34.9),
-        Signal(constellation="GPS", satellite=2, band=Band.L2, cn0_dbhz=36.0),
-        Signal(constellation="GPS", satellite=3, band=Band.L1, cn0_dbhz=30.0),
-        Signal(constellation="GLONASS", satellite=1, band=Band.OTHER, cn0_dbhz=40.0),
+        Signal(
+            constellation=GnssConstellation.GPS,
+            satellite=1,
+            band=Band.L1,
+            cn0_dbhz=35.0,
+        ),
+        Signal(
+            constellation=GnssConstellation.GPS,
+            satellite=2,
+            band=Band.L1,
+            cn0_dbhz=34.9,
+        ),
+        Signal(
+            constellation=GnssConstellation.GPS,
+            satellite=2,
+            band=Band.L2,
+            cn0_dbhz=36.0,
+        ),
+        Signal(
+            constellation=GnssConstellation.GPS,
+            satellite=3,
+            band=Band.L1,
+            cn0_dbhz=30.0,
+        ),
+        Signal(
+            constellation=GnssConstellation.GLONASS,
+            satellite=1,
+            band=Band.OTHER,
+            cn0_dbhz=40.0,
+        ),
     )
     reading = await _reading_for(signals)
     assert reading.usable_satellites == 3  # GPS 1, GPS 2 (via L2), GLONASS 1
@@ -168,3 +209,18 @@ async def test_without_a_connected_receiver_it_asks_for_one() -> None:
     assert service.current() == SignalQualityNoData(
         reason="Connect the receiver to see Signal Quality."
     )
+
+
+@pytest.mark.asyncio()
+async def test_a_verdict_does_not_survive_a_reconnect() -> None:
+    driver = FakeGpsDriver()
+    device = await _connected(driver)
+    service = SignalQualityService(device, clock=Clock())
+    await service.poll_once()
+    assert isinstance(service.current(), SignalQualityVerdict)
+
+    await device.disconnect()
+    await service.poll_once()  # the poller ticks while disconnected
+    await device.connect("FAKE", 115200)
+
+    assert isinstance(service.current(), SignalQualityNoData)

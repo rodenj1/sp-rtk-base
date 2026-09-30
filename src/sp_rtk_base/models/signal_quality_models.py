@@ -15,6 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from sp_rtk_base.models.device_models import GnssConstellation
+
 
 class Band(str, enum.Enum):
     """Band group a signal belongs to.  Only L1 and L2 are judged."""
@@ -29,7 +31,7 @@ class Signal(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    constellation: str
+    constellation: GnssConstellation
     satellite: int
     band: Band
     cn0_dbhz: float

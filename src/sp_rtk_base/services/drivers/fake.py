@@ -95,11 +95,11 @@ _FAKE_ALT_M: float = 27.940
 # satellites across four constellations, each with an L1 and an L2
 # signal.  The four strongest are 52 dB-Hz on L1 and 51 dB-Hz on L2;
 # every satellite has a signal at or above 35 dB-Hz.
-_FAKE_SKY: tuple[tuple[str, int], ...] = (
-    *(("GPS", sv) for sv in (2, 5, 12, 13, 15, 18, 25, 29)),
-    *(("GALILEO", sv) for sv in (1, 4, 9, 10, 19, 21, 27, 33)),
-    *(("GLONASS", sv) for sv in (3, 9, 11, 17, 18, 24)),
-    *(("BEIDOU", sv) for sv in (6, 11, 14, 20, 23, 28)),
+_FAKE_SKY: tuple[tuple[GnssConstellation, int], ...] = (
+    *((GnssConstellation.GPS, sv) for sv in (2, 5, 12, 13, 15, 18, 25, 29)),
+    *((GnssConstellation.GALILEO, sv) for sv in (1, 4, 9, 10, 19, 21, 27, 33)),
+    *((GnssConstellation.GLONASS, sv) for sv in (3, 9, 11, 17, 18, 24)),
+    *((GnssConstellation.BEIDOU, sv) for sv in (6, 11, 14, 20, 23, 28)),
 )
 
 

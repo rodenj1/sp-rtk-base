@@ -99,6 +99,10 @@ class SignalQualityMonitor:
         del now  # used once smoothing and staleness arrive
         self._verdict = judge(snapshot)
 
+    def reset(self) -> None:
+        """Forget everything seen so far (e.g. the receiver went away)."""
+        self._verdict = None
+
     def current(self, now: float) -> SignalQualityVerdict | None:
         """The verdict at monotonic time *now*, or ``None`` with no data."""
         del now

@@ -107,6 +107,7 @@ def _render_body(reading: SignalQualityReading) -> None:
         _SATELLITE_SCALE,
         (float(SATELLITES_MARGINAL), float(SATELLITES_GOOD)),
         "",
+        decimals=0,
     )
 
 
@@ -117,6 +118,7 @@ def _meter(
     scale: tuple[float, float],
     bands: tuple[float, float],
     unit: str,
+    decimals: int = 1,
 ) -> None:
     """One measure: its value, over Poor / Marginal / Good bands with a marker."""
     lo, hi = scale
@@ -125,7 +127,7 @@ def _meter(
         return max(0.0, min(100.0, (x - lo) / (hi - lo) * 100))
 
     marginal, good = pct(bands[0]), pct(bands[1])
-    text = "no signal" if value is None else f"{value:.0f} {unit}".strip()
+    text = "no signal" if value is None else f"{value:.{decimals}f} {unit}".strip()
     with ui.column().classes("col-grow gap-1").style("min-width: 180px"):
         with ui.row().classes("items-baseline justify-between w-full"):
             ui.label(label).classes("text-caption text-grey-5")

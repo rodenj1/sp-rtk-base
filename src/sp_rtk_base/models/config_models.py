@@ -329,12 +329,18 @@ class InputProfile(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+SignalDisplay = Literal["detailed", "compact"]
+"""How a page shows Signal Quality: the detailed card, or a compact chip."""
+
+
 class AppSettings(BaseModel):
     """Application-level settings."""
 
     auto_start: bool = False
     status_poll_interval: float = 2.0
     metrics_enabled: bool = True
+    dashboard_signal_display: SignalDisplay = "detailed"
+    survey_signal_display: SignalDisplay = "detailed"
 
 
 # ---------------------------------------------------------------------------

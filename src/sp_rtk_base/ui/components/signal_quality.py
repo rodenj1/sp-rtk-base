@@ -1,9 +1,15 @@
-"""Signal Quality card: the verdict, its cause and one meter per measure.
+"""Signal Quality on a page: a detailed card, or a compact chip.
 
-Reads ``SignalQualityService.current()`` every
-:data:`REFRESH_SECONDS` and renders either the verdict (with L1 Band
-strength, L2 Band strength and Usable satellites meters over their
-Poor / Marginal / Good bands) or a grey "No data" with the reason.
+Reads ``SignalQualityService.current(view)`` every :data:`REFRESH_SECONDS`.
+
+- **Card** (detailed): the verdict and its cause, and one meter per
+  measure (L1 Band strength, L2 Band strength, Usable satellites) over its
+  Poor / Marginal / Good bands; with no data, a grey "No data" and why.
+- **Chip** (compact): a coloured pill beside the page title, e.g.
+  "Signal Marginal · L2 weak", with the three measures in its tooltip;
+  with no data, a grey "Signal: no data" with the reason in its tooltip.
+
+Each page chooses with its own display setting.
 """
 
 # pyright: reportUnknownMemberType=false
@@ -14,6 +20,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from sp_rtk_base.models.config_models import SignalDisplay
 from sp_rtk_base.models.signal_quality_models import (
     SignalLevel,
     SignalQualityNoData,
@@ -40,6 +47,58 @@ LEVEL_COLOR: dict[SignalLevel, str] = {
 # Meter scales: wide enough to show clear sky and a failing antenna.
 _DBHZ_SCALE = (30.0, 56.0)
 _SATELLITE_SCALE = (0.0, 32.0)
+
+
+def signal_quality_heading(
+    title: str, service: SignalQualityService, view: View, display: SignalDisplay
+) -> None:
+    """The page title, with Signal Quality as a chip beside it or a card below it."""
+    with ui.row().classes("items-center gap-4 q-mb-md"):
+        ui.label(title).classes("text-h4 text-white")
+        if display == "compact":
+            signal_quality_chip(service, view)
+    if display == "detailed":
+        signal_quality_card(service, view)
+
+
+def signal_quality_chip(service: SignalQualityService, view: View) -> None:
+    """Render the compact Signal Quality chip for *view* and keep it current."""
+    holder = ui.element("div").props("data-testid=signal-quality-chip")
+
+    def refresh() -> None:
+        reading = service.current(view)
+        holder.clear()
+        with holder:
+            _render_chip(reading)
+
+    refresh()
+    ui.timer(REFRESH_SECONDS, refresh)
+
+
+def _render_chip(reading: SignalQualityReading) -> None:
+    if isinstance(reading, SignalQualityNoData):
+        color, text, tooltip = "grey-8", "Signal: no data", reading.reason
+    else:
+        color = LEVEL_COLOR[reading.level]
+        text = f"Signal {reading.level}" + (
+            f" · {reading.cause}" if reading.cause else ""
+        )
+        tooltip = " · ".join(
+            (
+                f"L1 {_dbhz(reading.l1_strength_dbhz)}",
+                f"L2 {_dbhz(reading.l2_strength_dbhz)}",
+                f"{reading.usable_satellites} satellites",
+            )
+        )
+    with ui.element("div").classes(f"rounded-borders q-px-md q-py-xs bg-{color}"):
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            ui.icon("satellite_alt").classes("text-white")
+            ui.label(text).classes("text-white text-body2 text-weight-bold")
+        ui.tooltip(tooltip)
+
+
+def _dbhz(value: float | None) -> str:
+    return "no signal" if value is None else f"{value:.1f} dB-Hz"
 
 
 def signal_quality_card(service: SignalQualityService, view: View) -> None:

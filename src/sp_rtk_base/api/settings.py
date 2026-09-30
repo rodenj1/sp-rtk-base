@@ -40,6 +40,8 @@ async def get_settings(
     return AppSettingsResponse(
         auto_start=settings.auto_start,
         status_poll_interval=settings.status_poll_interval,
+        dashboard_signal_display=settings.dashboard_signal_display,
+        survey_signal_display=settings.survey_signal_display,
     )
 
 
@@ -63,6 +65,8 @@ async def update_settings(
     return AppSettingsResponse(
         auto_start=updated.auto_start,
         status_poll_interval=updated.status_poll_interval,
+        dashboard_signal_display=updated.dashboard_signal_display,
+        survey_signal_display=updated.survey_signal_display,
     )
 
 

@@ -57,6 +57,18 @@ def settings_page() -> None:
                 step=0.5,
             ).classes("w-full q-mt-sm")
 
+            display_options = {"detailed": "Detailed card", "compact": "Compact chip"}
+            dashboard_display = ui.select(
+                display_options,
+                label="Dashboard signal display",
+                value=current_settings.dashboard_signal_display,
+            ).classes("w-full q-mt-sm")
+            survey_display = ui.select(
+                display_options,
+                label="Survey-in signal display",
+                value=current_settings.survey_signal_display,
+            ).classes("w-full q-mt-sm")
+
             def _save_settings() -> None:
                 """Save application settings."""
                 try:
@@ -75,6 +87,8 @@ def settings_page() -> None:
                             "auto_start": bool(auto_start.value),
                             "status_poll_interval": interval,
                             "metrics_enabled": bool(metrics_enabled.value),
+                            "dashboard_signal_display": dashboard_display.value,
+                            "survey_signal_display": survey_display.value,
                         }
                     )
                     config_svc.save_settings(settings)

@@ -17,7 +17,7 @@ from sp_rtk_base.models.api_models import (
     InputConfigRequest,
     InputConfigResponse,
 )
-from sp_rtk_base.models.config_models import AppSettings, InputProfile
+from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.services import get_config_service
 from sp_rtk_base.services.config_service import ConfigService
 
@@ -53,18 +53,10 @@ async def update_settings(
     Only the provided fields are updated; unset fields retain
     their current values.
     """
+    # Update only the fields the request sets; every other saved setting
+    # (including ones this API doesn't expose) keeps its value.
     current = config_svc.get_settings()
-
-    updated = AppSettings(
-        auto_start=(
-            request.auto_start if request.auto_start is not None else current.auto_start
-        ),
-        status_poll_interval=(
-            request.status_poll_interval
-            if request.status_poll_interval is not None
-            else current.status_poll_interval
-        ),
-    )
+    updated = current.model_copy(update=request.model_dump(exclude_none=True))
     config_svc.save_settings(updated)
     logger.info("Updated settings: auto_start=%s", updated.auto_start)
 

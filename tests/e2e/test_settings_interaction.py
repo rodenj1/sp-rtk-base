@@ -13,6 +13,7 @@ exactly the kind of regression API-only tests can't catch.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -49,3 +50,36 @@ def test_settings_page_shows_version_card(page: Page, base_url: str) -> None:
     expect(page.locator("text=Version Information").first).to_be_visible(timeout=15_000)
     expect(page.locator("text=SP-Base").first).to_be_visible()
     expect(page.locator("text=Python").first).to_be_visible()
+
+
+@pytest.mark.e2e
+def test_saving_from_the_page_keeps_settings_it_did_not_change(
+    page: Page, base_url: str, api_base_url: str
+) -> None:
+    """Saving the Settings page updates only its fields (#165).
+
+    Today the form shows every API-visible setting, so this pins the
+    behaviour rather than catching a loss; it guards real settings once
+    the page stops covering them all (the Signal Quality display
+    settings in #170 must be added here). The API unit test covers
+    ``metrics_enabled``, which the API doesn't expose.
+    """
+    original = httpx.get(f"{api_base_url}/api/settings", timeout=5.0).json()
+    seeded = httpx.put(
+        f"{api_base_url}/api/settings",
+        json={"auto_start": True, "status_poll_interval": 2.0},
+        timeout=5.0,
+    )
+    assert seeded.status_code == 200
+    try:
+        page.goto(f"{base_url}/settings")
+        interval = page.get_by_label("Status poll interval (seconds)")
+        expect(interval).to_be_visible(timeout=15_000)
+        interval.fill("5")
+        page.get_by_role("button", name="Save Settings").click()
+        expect(page.locator("text=Settings saved").first).to_be_visible(timeout=10_000)
+
+        saved = httpx.get(f"{api_base_url}/api/settings", timeout=5.0).json()
+        assert saved == {"auto_start": True, "status_poll_interval": 5.0}
+    finally:
+        httpx.put(f"{api_base_url}/api/settings", json=original, timeout=5.0)

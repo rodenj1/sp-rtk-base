@@ -18,7 +18,6 @@ import sys
 from nicegui import ui
 
 from sp_rtk_base import __version__ as app_version
-from sp_rtk_base.models.config_models import AppSettings
 from sp_rtk_base.services import get_config_service
 from sp_rtk_base.ui.layout import page_layout
 
@@ -69,10 +68,14 @@ def settings_page() -> None:
                         )
                         return
 
-                    settings = AppSettings(
-                        auto_start=bool(auto_start.value),
-                        status_poll_interval=interval,
-                        metrics_enabled=bool(metrics_enabled.value),
+                    # Update only the fields on this form; any other saved
+                    # setting keeps its value rather than resetting.
+                    settings = config_svc.get_settings().model_copy(
+                        update={
+                            "auto_start": bool(auto_start.value),
+                            "status_poll_interval": interval,
+                            "metrics_enabled": bool(metrics_enabled.value),
+                        }
                     )
                     config_svc.save_settings(settings)
                     ui.notify("Settings saved", type="positive")

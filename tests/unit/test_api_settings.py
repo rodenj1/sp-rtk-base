@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from sp_rtk_base.models.config_models import InputProfile
+from sp_rtk_base.models.config_models import AppSettings, InputProfile
 from sp_rtk_base.services.config_service import ConfigService
 
 
@@ -67,6 +67,24 @@ class TestUpdateSettings:
         settings = mock_config_service.get_settings()
         assert settings.auto_start is True
         assert settings.status_poll_interval == 3.0
+
+    def test_saving_some_settings_never_resets_the_others(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        """A field the request doesn't mention keeps its saved value (#165)."""
+        mock_config_service.save_settings(
+            AppSettings(
+                auto_start=False, status_poll_interval=4.0, metrics_enabled=False
+            )
+        )
+
+        api_client_with_services.put("/api/settings", json={"auto_start": True})
+
+        assert mock_config_service.get_settings() == AppSettings(
+            auto_start=True, status_poll_interval=4.0, metrics_enabled=False
+        )
 
 
 class TestGetInputConfig:

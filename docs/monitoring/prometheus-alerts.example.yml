@@ -38,5 +38,5 @@ groups:
           summary: "No Signal Quality data on {{ $labels.base }}"
           description: >-
             The Relay is running but Signal Quality has had no data for 5
-            minutes. The dashboard's Signal card names the cause (no RTCM
+            minutes. The dashboard's Signal Quality card names the cause (no RTCM
             arriving, or no MSM messages in the stream).

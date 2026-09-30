@@ -146,6 +146,7 @@ class MetricsService:
             "Signal Quality verdict: 0 Good, 1 Marginal, 2 Poor (NaN: no data)",
             registry=self.registry,
         )
+        # dB-Hz is a logarithmic ratio with no base-unit form, hence the suffix.
         self.signal_band_strength_dbhz = Gauge(
             f"{ns}_signal_band_strength_dbhz",
             "Band strength: mean C/N0 of the 4 strongest signals in the band (dB-Hz)",

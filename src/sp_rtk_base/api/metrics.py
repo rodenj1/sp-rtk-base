@@ -25,13 +25,18 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
-from sp_rtk_base.services.signal_quality.service import SignalQualityService
+from sp_rtk_base.services.signal_quality.service import SignalQualityService, View
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["metrics"])
 
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+# The Signal Quality view whose reading is exported: it gives the Relay's
+# verdict while the Relay runs and survey-in's otherwise, so metrics cover
+# both modes without a mode label.
+METRICS_SIGNAL_VIEW: View = "survey"
 
 
 @router.get("/metrics")
@@ -66,9 +71,7 @@ async def prometheus_metrics(
     else:
         metrics.update_idle()
 
-    # The survey view gives the Relay's verdict while it runs and
-    # survey-in's otherwise: Signal Quality in both modes, no mode label.
-    metrics.update_signal_quality(signal_quality.current("survey"))
+    metrics.update_signal_quality(signal_quality.current(METRICS_SIGNAL_VIEW))
 
     output: bytes = generate_latest(metrics.registry)
     return Response(content=output, media_type=PROMETHEUS_CONTENT_TYPE)

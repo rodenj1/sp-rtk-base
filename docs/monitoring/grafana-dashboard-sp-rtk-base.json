@@ -323,7 +323,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "How well the antenna hears the satellites, exactly as the dashboard / survey-in card shows it (smoothed over 10 s, deadbanded). NO DATA while the Relay is stopped and no receiver is connected, or while no MSM / Signal Snapshot is arriving.",
+      "description": "How well the antenna hears the satellites, exactly as the Signal Quality card on the dashboard and survey-in pages shows it (smoothed over 10 s, deadbanded). NO DATA while the Relay is stopped and no receiver is connected, or while no MSM / Signal Snapshot is arriving.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -415,11 +415,10 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Band strength: mean C/N0 of the 4 strongest signals in each band. Reference lines at 41 dB-Hz (L2 Good) and 44 dB-Hz (L1 Good). Gaps mean no data.",
+      "description": "Band strength: mean C/N0 of the 4 strongest signals in each band. Green lines mark the Good thresholds: 41 dB-Hz for L2, 44 dB-Hz for L1. Gaps mean no data.",
       "fieldConfig": {
         "defaults": {
-          "unit": "dB-Hz",
-          "min": 30,
+          "unit": "suffix: dB-Hz",
           "custom": {
             "thresholdsStyle": {
               "mode": "line"
@@ -433,7 +432,7 @@
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "green",
                 "value": 41
               },
               {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
 from sp_rtk_base_relay import FrameSubscription
@@ -25,6 +26,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.drivers.fake import FakeGpsDriver
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
@@ -285,3 +287,18 @@ class TestSignalQualityGauges:
             "sp_rtk_base_signal_usable_satellites",
         ):
             assert math.isnan(samples[name]), name
+
+    @pytest.mark.asyncio()
+    async def test_survey_in_mode_is_exported_too(self) -> None:
+        driver = FakeGpsDriver()  # clear sky: L1 52, L2 51, 28 satellites
+        device = DeviceService()
+        device.set_driver(driver)
+        await device.connect("FAKE", 115200)
+        service = SignalQualityService(device)
+        await service.poll_once()
+
+        samples = _scrape_with(service)
+
+        assert samples["sp_rtk_base_signal_available"] == 1.0
+        assert samples["sp_rtk_base_signal_quality"] == 0.0
+        assert samples["sp_rtk_base_signal_usable_satellites"] == 28.0

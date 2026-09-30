@@ -20,7 +20,12 @@ from typing import Any
 from nicegui import ui
 
 from sp_rtk_base import services as services_mod
-from sp_rtk_base.services import get_config_service, get_relay_service
+from sp_rtk_base.services import (
+    get_config_service,
+    get_relay_service,
+    get_signal_quality_service,
+)
+from sp_rtk_base.ui.components.signal_quality import signal_quality_card
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
 
@@ -175,6 +180,7 @@ def dashboard_page() -> None:
 
     with page_layout("Dashboard"):
         ui.label("Dashboard").classes("text-h4 text-white q-mb-md")
+        signal_quality_card(get_signal_quality_service(), "dashboard")
 
         # --- Relay control bar ---
         #

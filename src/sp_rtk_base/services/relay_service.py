@@ -11,9 +11,15 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
-from sp_rtk_base_relay import EventSubscription, RelayEngine, RelayEvent, RelayStatus
+from sp_rtk_base_relay import (
+    EventSubscription,
+    FrameSubscription,
+    RelayEngine,
+    RelayEvent,
+    RelayStatus,
+)
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ServiceError
 
@@ -84,6 +90,18 @@ def _summarise_input(input_config: InputConfig) -> str:
     return str(src)
 
 
+class FrameSubscriber(Protocol):
+    """A Frame subscriber: reads the Relay's input Frames while it runs.
+
+    Told about every start (with a fresh, unfiltered Frame subscription for
+    that engine run) and every stop.  Signal Quality is the one subscriber.
+    """
+
+    def relay_started(self, subscription: FrameSubscription) -> None: ...
+
+    def relay_stopped(self) -> None: ...
+
+
 class RelayService:
     """Async adapter for sp-rtk-base-relay's threaded RelayEngine.
 
@@ -104,6 +122,35 @@ class RelayService:
         # stop_relay.
         self._start_monotonic: float | None = None
         self._start_trigger: str | None = None
+        self._frame_subscriber: FrameSubscriber | None = None
+
+    def set_frame_subscriber(self, subscriber: FrameSubscriber) -> None:
+        """Register the Frame subscriber told about every relay start and stop.
+
+        Subscribing here, rather than in each caller, means every way of
+        starting the relay (auto-start, API, dashboard, input page,
+        handoff) feeds it.
+        """
+        self._frame_subscriber = subscriber
+
+    def _notify_subscriber_started(self, engine: RelayEngine) -> None:
+        if self._frame_subscriber is None:
+            return
+        subscription = engine.subscribe_frames()
+        try:
+            self._frame_subscriber.relay_started(subscription)
+        except Exception:
+            # Never let a Frame subscriber stop the relay from relaying.
+            subscription.close()
+            logger.exception("Frame subscriber failed to attach")
+
+    def _notify_subscriber_stopped(self) -> None:
+        if self._frame_subscriber is None:
+            return
+        try:
+            self._frame_subscriber.relay_stopped()
+        except Exception:
+            logger.exception("Frame subscriber failed to detach")
 
     # ------------------------------------------------------------------
     # Properties
@@ -178,6 +225,7 @@ class RelayService:
             logger.info("Created new RelayEngine with source=%s", input_config.source)
 
         await asyncio.to_thread(self._engine.start, destinations)
+        self._notify_subscriber_started(self._engine)
 
         # Record start state so stop_relay can compose the uptime/totals
         # log line.  Monotonic clock so a wall-clock jump can't poison it.
@@ -222,6 +270,7 @@ class RelayService:
             # Status query is best-effort — never block the stop on it.
             pass
 
+        self._notify_subscriber_stopped()
         await asyncio.to_thread(self._engine.stop)
 
         # Compute uptime from start_monotonic if we recorded one.

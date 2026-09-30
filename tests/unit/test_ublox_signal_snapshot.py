@@ -35,15 +35,16 @@ def _min_elevation(deg: int) -> Any:
     return _parsed(UBXMessage("CFG", "CFG-VALGET", GET, payload=payload))
 
 
-def _nav_sat(sats: list[tuple[int, int, int, int]]) -> Any:
-    """(gnssId, svId, cno, elev) per satellite."""
+def _nav_sat(sats: list[tuple[int, ...]]) -> Any:
+    """(gnssId, svId, cno, elev[, svUsed=1]) per satellite."""
     fields: dict[str, int] = {"iTOW": 0, "version": 1, "numSvs": len(sats)}
-    for i, (gnss, sv, cno, elev) in enumerate(sats, start=1):
+    for i, (gnss, sv, cno, elev, *used) in enumerate(sats, start=1):
         fields |= {
             f"gnssId_{i:02d}": gnss,
             f"svId_{i:02d}": sv,
             f"cno_{i:02d}": cno,
             f"elev_{i:02d}": elev,
+            f"svUsed_{i:02d}": used[0] if used else 1,
         }
     return _parsed(UBXMessage("NAV", "NAV-SAT", GET, **fields))  # pyright: ignore[reportArgumentType]
 
@@ -78,7 +79,7 @@ def _driver(responses: list[Any]) -> tuple[UbloxDriver, MagicMock]:
     return driver, ser
 
 
-SKY_ELEVATIONS = [
+SKY_ELEVATIONS: list[tuple[int, ...]] = [
     (GPS, 5, 45, 40),
     (GPS, 7, 0, 25),  # tracked but no signal
     (GPS, 12, 39, 17),  # above a 15° mask, below a 20° one
@@ -87,6 +88,7 @@ SKY_ELEVATIONS = [
     (GLO, 9, 46, 9),  # below the 15° mask
     (QZSS, 3, 40, 60),
     (SBAS, 131, 49, 45),  # never in MSM, so never in a Snapshot
+    (BDS, 24, 46, 22, 0),  # tracked, above the mask, but not used: not in MSM either
 ]
 SKY_SIGNALS = [
     (GPS, 5, 0, 45),
@@ -102,6 +104,7 @@ SKY_SIGNALS = [
     (QZSS, 3, 0, 40),
     (QZSS, 3, 5, 38),  # L1C/A, L2CL
     (SBAS, 131, 0, 49),
+    (BDS, 24, 0, 46),
 ]
 
 

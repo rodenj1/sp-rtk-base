@@ -27,7 +27,7 @@ from sp_rtk_base.services.signal_quality.monitor import (
     SATELLITES_GOOD,
     SATELLITES_MARGINAL,
 )
-from sp_rtk_base.services.signal_quality.service import SignalQualityService
+from sp_rtk_base.services.signal_quality.service import SignalQualityService, View
 
 REFRESH_SECONDS = 2.0
 
@@ -42,8 +42,8 @@ _DBHZ_SCALE = (30.0, 56.0)
 _SATELLITE_SCALE = (0.0, 32.0)
 
 
-def signal_quality_card(service: SignalQualityService) -> None:
-    """Render the Signal Quality card and keep it current."""
+def signal_quality_card(service: SignalQualityService, view: View) -> None:
+    """Render the Signal Quality card for *view* and keep it current."""
     with (
         ui.card()
         .classes("w-full q-pa-md q-mb-md")
@@ -56,7 +56,7 @@ def signal_quality_card(service: SignalQualityService) -> None:
         body = ui.row().classes("w-full gap-6 q-mt-sm")
 
     def refresh() -> None:
-        reading = service.current()
+        reading = service.current(view)
         header.clear()
         body.clear()
         with header:

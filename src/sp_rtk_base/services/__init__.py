@@ -113,6 +113,8 @@ device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
+# Signal Quality reads the Relay's MSM while it runs (every start path).
+relay_service.set_frame_subscriber(signal_quality_service)
 bluetooth_verification_service: BluetoothVerificationService = (
     BluetoothVerificationService(
         relay_service=relay_service,

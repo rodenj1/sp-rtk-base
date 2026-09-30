@@ -57,7 +57,7 @@ def survey_page() -> None:
 
     with page_layout("Survey-In"):
         ui.label("Survey-In").classes("text-h4 text-white q-mb-md")
-        signal_quality_card(get_signal_quality_service())
+        signal_quality_card(get_signal_quality_service(), "survey")
 
         # ================================================================
         # Card 1: Connection & Live Position

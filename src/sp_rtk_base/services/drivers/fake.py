@@ -216,6 +216,7 @@ class FakeGpsDriver(GpsReceiverDriver):
 
         # Signals reported by get_signal_snapshot(); tests may replace them.
         self._signals: tuple[Signal, ...] = _clear_sky_signals()
+        self._signal_poll_error: Exception | None = None
 
         # Identity returned by ``connect()`` / ``get_device_info()``.
         # hardware_target/confidence default to a *confirmed* ZED-F9P —
@@ -695,6 +696,8 @@ class FakeGpsDriver(GpsReceiverDriver):
     def get_signal_snapshot(self) -> SignalSnapshot:
         """Return the chosen Signal Snapshot, clear sky by default."""
         self._ensure_connected()
+        if self._signal_poll_error is not None:
+            raise self._signal_poll_error
         return SignalSnapshot(
             captured_at=datetime.now(timezone.utc),
             signals=self._signals,
@@ -703,6 +706,10 @@ class FakeGpsDriver(GpsReceiverDriver):
     def set_signals(self, signals: tuple[Signal, ...]) -> None:
         """Choose the signals later Signal Snapshots report (test hook)."""
         self._signals = signals
+
+    def set_signal_poll_error(self, error: Exception | None) -> None:
+        """Make Signal Snapshot polls raise *error*; ``None`` restores them (test hook)."""
+        self._signal_poll_error = error
 
     def get_survey_in_status(self) -> SurveyInProgress:
         """Synthesise a survey-in progress snapshot.

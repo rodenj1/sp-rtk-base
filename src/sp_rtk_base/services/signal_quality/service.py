@@ -26,9 +26,12 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 2.0
 
 NOT_CONNECTED_REASON = "Connect the receiver to see Signal Quality."
-# Shown until the first Snapshot arrives.  TODO(#168): once staleness
-# lands, failed polls show "The receiver did not answer the signal poll."
+# Connected, no fresh Snapshot, and the receiver was asked less than
+# NO_ANSWER_AFTER_SECONDS ago (e.g. just connected).
 WAITING_REASON = "Waiting for signal data from the receiver."
+NO_ANSWER_REASON = "The receiver did not answer the signal poll."
+# Connected, but no poll has been answered for this long.
+NO_ANSWER_AFTER_SECONDS = 10.0
 
 
 class SignalQualityService:
@@ -43,17 +46,28 @@ class SignalQualityService:
         self._clock = clock
         self._monitor = SignalQualityMonitor()
         self._task: asyncio.Task[None] | None = None
+        # Since the receiver was last connected: when polling began, and
+        # when a poll was last answered (monotonic clock).
+        self._asking_since: float | None = None
+        self._answered_at: float | None = None
+        # True while a poll is in flight; a tick that finds it set is skipped.
+        self._polling = False
 
     def current(self) -> SignalQualityReading:
         """The Signal Quality to show right now, or why there is none."""
         if not self._device.is_connected:
             return SignalQualityNoData(reason=NOT_CONNECTED_REASON)
-        verdict = self._monitor.current(self._clock())
-        return (
-            verdict
-            if verdict is not None
-            else SignalQualityNoData(reason=WAITING_REASON)
-        )
+        now = self._clock()
+        verdict = self._monitor.current(now)
+        if verdict is not None:
+            return verdict
+        unanswered_since = self._answered_at or self._asking_since
+        if (
+            unanswered_since is not None
+            and now - unanswered_since >= NO_ANSWER_AFTER_SECONDS
+        ):
+            return SignalQualityNoData(reason=NO_ANSWER_REASON)
+        return SignalQualityNoData(reason=WAITING_REASON)
 
     async def poll_once(self) -> None:
         """Poll one Signal Snapshot, if the receiver is connected.
@@ -63,15 +77,23 @@ class SignalQualityService:
         """
         if not self._device.is_connected:
             self._monitor.reset()
+            self._asking_since = self._answered_at = None
             return
+        if self._polling:
+            return  # never queue behind a slow poll (e.g. a configuration write)
+        if self._asking_since is None:
+            self._asking_since = self._clock()
+        self._polling = True
         try:
             snapshot = await self._device.get_signal_snapshot()
-        except NotImplementedError:
-            return
         except Exception:
             logger.debug("Signal Snapshot poll failed", exc_info=True)
             return
-        self._monitor.observe(snapshot, self._clock())
+        finally:
+            self._polling = False
+        now = self._clock()
+        self._answered_at = now
+        self._monitor.observe(snapshot, now)
 
     def start(self) -> None:
         """Start the background poller.  Idempotent."""

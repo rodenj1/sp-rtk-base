@@ -21,6 +21,7 @@ from nicegui import ui
 
 from sp_rtk_base import services as services_mod
 from sp_rtk_base.services import get_config_service, get_relay_service
+from sp_rtk_base.ui.components import signal_quality_prototype
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
 
@@ -174,7 +175,11 @@ def dashboard_page() -> None:
     config_svc = get_config_service()
 
     with page_layout("Dashboard"):
-        ui.label("Dashboard").classes("text-h4 text-white q-mb-md")
+        # PROTOTYPE (signal quality UI): title row with a slot beside it, and a slot below.
+        with ui.row().classes("items-center gap-4 q-mb-md") as _sq_title:
+            ui.label("Dashboard").classes("text-h4 text-white")
+        _sq_below = ui.column().classes("w-full gap-0")
+        signal_quality_prototype.mount("dashboard", _sq_title, _sq_below)
 
         # --- Relay control bar ---
         #

@@ -35,7 +35,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
-from sp_rtk_base.ui.components.signal_quality import signal_quality_card
+from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.detection_status import (
     describe_connect_failure,
     describe_detection,
@@ -56,8 +56,12 @@ def survey_page() -> None:
     config_svc = get_config_service()
 
     with page_layout("Survey-In"):
-        ui.label("Survey-In").classes("text-h4 text-white q-mb-md")
-        signal_quality_card(get_signal_quality_service(), "survey")
+        signal_quality_heading(
+            "Survey-In",
+            get_signal_quality_service(),
+            "survey",
+            config_svc.get_settings().survey_signal_display,
+        )
 
         # ================================================================
         # Card 1: Connection & Live Position

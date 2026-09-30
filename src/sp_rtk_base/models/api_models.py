@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.models.config_models import SignalDisplay
 from sp_rtk_base.models.device_models import DEFAULT_BAUD
 from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
 from sp_rtk_base.models.net_provision_models import ActiveLink
@@ -176,6 +177,8 @@ class AppSettingsRequest(BaseModel):
 
     auto_start: bool | None = None
     status_poll_interval: float | None = None
+    dashboard_signal_display: SignalDisplay | None = None
+    survey_signal_display: SignalDisplay | None = None
 
 
 class AppSettingsResponse(BaseModel):
@@ -183,6 +186,8 @@ class AppSettingsResponse(BaseModel):
 
     auto_start: bool
     status_poll_interval: float
+    dashboard_signal_display: SignalDisplay
+    survey_signal_display: SignalDisplay
 
 
 # ---------------------------------------------------------------------------

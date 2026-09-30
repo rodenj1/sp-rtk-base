@@ -25,7 +25,7 @@ from sp_rtk_base.services import (
     get_relay_service,
     get_signal_quality_service,
 )
-from sp_rtk_base.ui.components.signal_quality import signal_quality_card
+from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
 
@@ -179,8 +179,12 @@ def dashboard_page() -> None:
     config_svc = get_config_service()
 
     with page_layout("Dashboard"):
-        ui.label("Dashboard").classes("text-h4 text-white q-mb-md")
-        signal_quality_card(get_signal_quality_service(), "dashboard")
+        signal_quality_heading(
+            "Dashboard",
+            get_signal_quality_service(),
+            "dashboard",
+            config_svc.get_settings().dashboard_signal_display,
+        )
 
         # --- Relay control bar ---
         #

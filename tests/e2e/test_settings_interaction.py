@@ -67,7 +67,11 @@ def test_saving_from_the_page_keeps_settings_it_did_not_change(
     original = httpx.get(f"{api_base_url}/api/settings", timeout=5.0).json()
     seeded = httpx.put(
         f"{api_base_url}/api/settings",
-        json={"auto_start": True, "status_poll_interval": 2.0},
+        json={
+            "auto_start": True,
+            "status_poll_interval": 2.0,
+            "survey_signal_display": "compact",
+        },
         timeout=5.0,
     )
     assert seeded.status_code == 200
@@ -80,6 +84,11 @@ def test_saving_from_the_page_keeps_settings_it_did_not_change(
         expect(page.locator("text=Settings saved").first).to_be_visible(timeout=10_000)
 
         saved = httpx.get(f"{api_base_url}/api/settings", timeout=5.0).json()
-        assert saved == {"auto_start": True, "status_poll_interval": 5.0}
+        assert saved == {
+            "auto_start": True,
+            "status_poll_interval": 5.0,
+            "dashboard_signal_display": "detailed",
+            "survey_signal_display": "compact",
+        }
     finally:
         httpx.put(f"{api_base_url}/api/settings", json=original, timeout=5.0)

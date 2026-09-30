@@ -76,15 +76,55 @@ class TestUpdateSettings:
         """A field the request doesn't mention keeps its saved value (#165)."""
         mock_config_service.save_settings(
             AppSettings(
-                auto_start=False, status_poll_interval=4.0, metrics_enabled=False
+                auto_start=False,
+                status_poll_interval=4.0,
+                metrics_enabled=False,
+                survey_signal_display="compact",
             )
         )
 
         api_client_with_services.put("/api/settings", json={"auto_start": True})
 
         assert mock_config_service.get_settings() == AppSettings(
-            auto_start=True, status_poll_interval=4.0, metrics_enabled=False
+            auto_start=True,
+            status_poll_interval=4.0,
+            metrics_enabled=False,
+            survey_signal_display="compact",
         )
+
+    def test_signal_display_defaults_to_the_detailed_card_on_both_pages(
+        self,
+        api_client_with_services: TestClient,
+    ) -> None:
+        data = api_client_with_services.get("/api/settings").json()
+        assert data["dashboard_signal_display"] == "detailed"
+        assert data["survey_signal_display"] == "detailed"
+
+    def test_each_page_s_signal_display_is_set_on_its_own(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/settings", json={"dashboard_signal_display": "compact"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["dashboard_signal_display"] == "compact"
+        saved = mock_config_service.get_settings()
+        assert (saved.dashboard_signal_display, saved.survey_signal_display) == (
+            "compact",
+            "detailed",
+        )
+
+    def test_an_unknown_signal_display_is_rejected(
+        self,
+        api_client_with_services: TestClient,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/settings", json={"survey_signal_display": "huge"}
+        )
+        assert resp.status_code == 422
 
 
 class TestGetInputConfig:

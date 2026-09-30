@@ -31,6 +31,7 @@ from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.signal_quality.service import SignalQualityService
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ metrics_service: MetricsService = MetricsService()
 device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
+signal_quality_service: SignalQualityService = SignalQualityService(device_service)
 bluetooth_verification_service: BluetoothVerificationService = (
     BluetoothVerificationService(
         relay_service=relay_service,
@@ -167,6 +169,15 @@ def get_device_service() -> DeviceService:
         The application's DeviceService instance.
     """
     return device_service
+
+
+def get_signal_quality_service() -> SignalQualityService:
+    """Get the singleton SignalQualityService instance.
+
+    Returns:
+        The application's SignalQualityService instance.
+    """
+    return signal_quality_service
 
 
 def get_network_service() -> NetworkService:

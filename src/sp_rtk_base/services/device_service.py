@@ -57,6 +57,7 @@ from sp_rtk_base.models.profile_models import (
     merge_profile_into_assertion,
     step_for_diff_path,
 )
+from sp_rtk_base.models.signal_quality_models import SignalSnapshot
 from sp_rtk_base.profiles import BUILTIN_PROFILES
 from sp_rtk_base.services.drivers.base import (
     DETECTION_BUDGET_S,
@@ -1415,6 +1416,19 @@ class DeviceService:
         """
         driver = self._require_connected()
         return await asyncio.to_thread(driver.get_position)
+
+    async def get_signal_snapshot(self) -> SignalSnapshot:
+        """Poll a Signal Snapshot from the receiver.
+
+        Returns:
+            The receiver's current Signal Snapshot.
+
+        Raises:
+            RuntimeError: If not connected.
+            NotImplementedError: If the driver cannot supply one.
+        """
+        driver = self._require_connected()
+        return await asyncio.to_thread(driver.get_signal_snapshot)
 
     async def get_survey_in_status(self) -> SurveyInProgress:
         """Poll the current survey-in progress.

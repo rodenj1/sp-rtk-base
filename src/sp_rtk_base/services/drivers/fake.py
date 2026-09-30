@@ -77,6 +77,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import HARDWARE_UNKNOWN, HardwareConfidence
+from sp_rtk_base.models.signal_quality_models import Band, Signal, SignalSnapshot
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,43 @@ from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 _FAKE_LAT: float = 32.7329015
 _FAKE_LON: float = -117.2362788
 _FAKE_ALT_M: float = 27.940
+
+# Clear-sky Signal Snapshot, shaped like test-base's field capture: 28
+# satellites across four constellations, each with an L1 and an L2
+# signal.  The four strongest are 52 dB-Hz on L1 and 51 dB-Hz on L2;
+# every satellite has a signal at or above 35 dB-Hz.
+_FAKE_SKY: tuple[tuple[GnssConstellation, int], ...] = (
+    *((GnssConstellation.GPS, sv) for sv in (2, 5, 12, 13, 15, 18, 25, 29)),
+    *((GnssConstellation.GALILEO, sv) for sv in (1, 4, 9, 10, 19, 21, 27, 33)),
+    *((GnssConstellation.GLONASS, sv) for sv in (3, 9, 11, 17, 18, 24)),
+    *((GnssConstellation.BEIDOU, sv) for sv in (6, 11, 14, 20, 23, 28)),
+)
+
+
+def _clear_sky_signals() -> tuple[Signal, ...]:
+    signals: list[Signal] = []
+    for rank, (constellation, satellite) in enumerate(_FAKE_SKY):
+        l1 = 52.0 if rank < 4 else 50.0 - rank * 0.5
+        l2 = 51.0 if rank < 4 else 48.0 - rank * 0.5
+        signals.append(
+            Signal(
+                constellation=constellation,
+                satellite=satellite,
+                band=Band.L1,
+                cn0_dbhz=l1,
+            )
+        )
+        signals.append(
+            Signal(
+                constellation=constellation,
+                satellite=satellite,
+                band=Band.L2,
+                cn0_dbhz=l2,
+            )
+        )
+    return tuple(signals)
+
+
 _FAKE_ACC_MM: int = 47308
 
 # Survey-in target accuracy convergence: start at 5000 mm and decay
@@ -175,6 +213,9 @@ class FakeGpsDriver(GpsReceiverDriver):
         # same lifecycle as ``UbloxDriver``'s own warning channel.
         self._warn_on_rtcm_write: bool = False
         self._pending_warnings: list[str] = []
+
+        # Signals reported by get_signal_snapshot(); tests may replace them.
+        self._signals: tuple[Signal, ...] = _clear_sky_signals()
 
         # Identity returned by ``connect()`` / ``get_device_info()``.
         # hardware_target/confidence default to a *confirmed* ZED-F9P —
@@ -650,6 +691,18 @@ class FakeGpsDriver(GpsReceiverDriver):
             pdop=0.8,
             timestamp=datetime.now(timezone.utc),
         )
+
+    def get_signal_snapshot(self) -> SignalSnapshot:
+        """Return the chosen Signal Snapshot, clear sky by default."""
+        self._ensure_connected()
+        return SignalSnapshot(
+            captured_at=datetime.now(timezone.utc),
+            signals=self._signals,
+        )
+
+    def set_signals(self, signals: tuple[Signal, ...]) -> None:
+        """Choose the signals later Signal Snapshots report (test hook)."""
+        self._signals = signals
 
     def get_survey_in_status(self) -> SurveyInProgress:
         """Synthesise a survey-in progress snapshot.

@@ -92,9 +92,13 @@ async def startup_services() -> None:
     is registered as NiceGUI's startup hook.  Kept at module scope so
     tests can call it without spinning up NiceGUI.
     """
-    from sp_rtk_base.services import init_services
+    from sp_rtk_base import services as services_mod
 
-    await init_services()
+    await services_mod.init_services()
+
+    # Signal Quality polls the receiver in the background while it is
+    # connected, so pages (and metrics) see it whether or not one is open.
+    services_mod.signal_quality_service.start()
 
 
 async def shutdown_services() -> None:
@@ -108,6 +112,8 @@ async def shutdown_services() -> None:
        will fight it for the engine lock.  Cancel it first so the
        rest of the shutdown can proceed; the underlying daemon
        thread may keep trying for a moment but it can't block us.
+       **Signal Quality poller** — cancelled next, before the device
+       goes away, so it is never mid-poll when the driver disconnects.
     1. **Device first** — release the serial / Bluetooth handle while
        the event loop is still healthy.  If we wait until the relay
        and event bridge are already torn down, the relay engine may
@@ -148,6 +154,18 @@ async def shutdown_services() -> None:
             pass
         except Exception:
             logger.exception("Error awaiting cancelled auto-start task")
+
+    # 0b. Signal Quality poller — stop it before the device goes away so
+    #     it isn't mid-poll when the driver disconnects.
+    try:
+        await asyncio.wait_for(
+            services_mod.signal_quality_service.stop(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the Signal Quality poller")
+    except Exception:
+        logger.exception("Error stopping the Signal Quality poller")
 
     # 1. Device first — release the GPS handle (Bug B).
     if device_service.is_available and device_service.is_connected:

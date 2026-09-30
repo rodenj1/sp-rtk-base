@@ -450,3 +450,29 @@ async def test_a_driver_without_snapshots_keeps_waiting_rather_than_not_answerin
     assert feed.service.current() == SignalQualityNoData(
         reason="Waiting for signal data from the receiver."
     )
+
+
+@pytest.mark.asyncio()
+async def test_a_band_missing_from_most_of_the_window_is_missing() -> None:
+    feed = await _feed()
+    with_l2, without_l2 = _sky(20, l1=50.0, l2=50.0), _sky(20, l1=50.0, l2=None)
+    for i, signals in enumerate([with_l2, without_l2, without_l2, without_l2]):
+        await feed.poll_at(2 * i, signals)
+
+    reading = await feed.poll_at(8, without_l2)  # L2 in 1 of 5 Snapshots
+
+    assert reading.level == "Poor"
+    assert reading.cause == "no L2 signal"
+
+
+@pytest.mark.asyncio()
+async def test_a_band_present_in_most_of_the_window_is_judged_on_those_snapshots() -> None:
+    feed = await _feed()
+    with_l2, without_l2 = _sky(20, l1=50.0, l2=48.0), _sky(20, l1=50.0, l2=None)
+    for i, signals in enumerate([with_l2, without_l2, with_l2, without_l2]):
+        await feed.poll_at(2 * i, signals)
+
+    reading = await feed.poll_at(8, with_l2)  # L2 in 3 of 5 Snapshots
+
+    assert reading.l2_strength_dbhz == pytest.approx(48.0)
+    assert reading.level == "Good"

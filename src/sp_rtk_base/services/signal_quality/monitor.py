@@ -112,16 +112,23 @@ def _measure(snapshot: SignalSnapshot) -> _Measures:
     )
 
 
-def _mean(values: list[float | None]) -> float | None:
-    """Mean of the values present; ``None`` only if every one is missing."""
+def _band_mean(values: list[float | None]) -> float | None:
+    """A band's strength over a window: the mean of the Snapshots that have it.
+
+    ``None`` (the band is missing, so Poor) when it is absent from more
+    than half of the window's Snapshots: smoothing absorbs a one-off
+    dropout, but not a band that is mostly gone (e.g. a flaky L2 path).
+    """
     present = [v for v in values if v is not None]
-    return sum(present) / len(present) if present else None
+    if len(present) * 2 < len(values):
+        return None
+    return sum(present) / len(present)
 
 
 def _smooth(window: list[_Measures]) -> _Measures:
     return _Measures(
-        _mean([m.l1 for m in window]),
-        _mean([m.l2 for m in window]),
+        _band_mean([m.l1 for m in window]),
+        _band_mean([m.l2 for m in window]),
         math.floor(statistics.median(m.satellites for m in window)),
     )
 

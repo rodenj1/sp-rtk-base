@@ -7,6 +7,7 @@ same port as the UI (8080 by default).  This directory contains:
 |---|---|
 | [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Unified Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  Templated on a `$base` variable so one dashboard works for one base station or many. |
 | [`prometheus-scrape-config.example.yml`](prometheus-scrape-config.example.yml) | Drop-in `scrape_config` snippet — point Prometheus at your sp-rtk-base instance. |
+| [`prometheus-alerts.example.yml`](prometheus-alerts.example.yml) | Example alert rules for Signal Quality: degraded for 10 minutes, or no data for 5 minutes while the Relay runs. See [Alerts](#alerts). |
 
 ## Quick start
 
@@ -51,7 +52,7 @@ per base station (location name, callsign, antenna ID, etc.).
 
 ## What's exposed
 
-The current metric surface (15 series) covers:
+The current metric surface (20 series) covers:
 
 - Service state: `sp_rtk_base_relay_running`, `sp_rtk_base_relay_uptime_seconds`
 - Input source: `sp_rtk_base_input_connected`, `sp_rtk_base_input_bytes_received`,
@@ -66,8 +67,29 @@ The current metric surface (15 series) covers:
   - `sp_rtk_base_dest_errors`
   - `sp_rtk_base_dest_queue_depth`
 - Destination counts: `sp_rtk_base_active_destinations`, `sp_rtk_base_total_destinations`
+- Signal Quality (how well the antenna hears the satellites, exactly as the
+  dashboard and survey-in card show it, in both modes):
+  - `sp_rtk_base_signal_quality`: verdict, 0 Good, 1 Marginal, 2 Poor
+  - `sp_rtk_base_signal_band_strength_dbhz{band="L1"|"L2"}`: Band strength
+    (mean C/N0 of the 4 strongest signals in the band)
+  - `sp_rtk_base_signal_usable_satellites`: satellites with a signal ≥ 35 dB-Hz
+  - `sp_rtk_base_signal_available`: 1 with current data; 0 when stale or no
+    data, when the other three are NaN (the series never disappear)
 
-These are all gauges that update on each `relay.get_status()` poll.
+These are all gauges that update on each scrape of `/metrics`.
+
+## Alerts
+
+[`prometheus-alerts.example.yml`](prometheus-alerts.example.yml) has two
+rules for an unattended base; add it under `rule_files:` in `prometheus.yml`:
+
+| Alert | Fires when |
+|---|---|
+| `SignalQualityDegraded` | `sp_rtk_base_signal_quality >= 1` for 10m: Marginal or Poor long enough to rule out a passing obstruction |
+| `SignalQualityUnavailable` | `sp_rtk_base_signal_available == 0 and sp_rtk_base_relay_running == 1` for 5m: the Relay runs but no RTCM, or no MSM, is arriving |
+
+The dashboard's **▶ Signal Quality** row shows the verdict, Band strength
+(with the 41 / 44 dB-Hz Good lines) and Usable satellites.
 You can still use `rate()` on the byte/message counters — they
 increase monotonically until a relay restart.
 

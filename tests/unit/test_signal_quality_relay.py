@@ -23,7 +23,7 @@ from sp_rtk_base.models.signal_quality_models import (
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FakeGpsDriver
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
-from tests.unit.msm_frames import msm_frame, other_frame
+from tests.unit.msm_frames import epoch_frames, msm_frame, other_frame, sky
 
 
 class Clock:
@@ -32,54 +32,6 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
-
-
-# One MSM4 message per constellation, and the MSM signal IDs used for
-# each band (1C/2L, 1C/7I, 1C/2C, 2I/7I, 1C/2L).
-MSM4 = {
-    GnssConstellation.GPS: (1074, {Band.L1: 2, Band.L2: 16}),
-    GnssConstellation.GLONASS: (1084, {Band.L1: 2, Band.L2: 8}),
-    GnssConstellation.GALILEO: (1094, {Band.L1: 2, Band.L2: 14}),
-    GnssConstellation.QZSS: (1114, {Band.L1: 2, Band.L2: 16}),
-    GnssConstellation.BEIDOU: (1124, {Band.L1: 2, Band.L2: 14}),
-}
-
-
-def epoch_frames(signals: Iterable[Signal], msm7: bool = False) -> list[Frame]:
-    """The MSM Frames a receiver would send for one epoch of *signals*."""
-    by_constellation: dict[GnssConstellation, dict[int, dict[int, float]]] = {}
-    for s in signals:
-        _, sig_ids = MSM4[s.constellation]
-        by_constellation.setdefault(s.constellation, {}).setdefault(s.satellite, {})[
-            sig_ids[s.band]
-        ] = s.cn0_dbhz
-    order = [c for c in MSM4 if c in by_constellation]
-    frames: list[Frame] = []
-    for i, constellation in enumerate(order):
-        number = MSM4[constellation][0] + (3 if msm7 else 0)
-        frames.append(
-            msm_frame(
-                number, by_constellation[constellation], more_follow=i < len(order) - 1
-            )
-        )
-    return frames
-
-
-def sky(satellites: int, l1: float, l2: float | None) -> tuple[Signal, ...]:
-    """A mixed-constellation sky: *satellites* satellites with the given C/N0."""
-    constellations = [
-        GnssConstellation.GPS,
-        GnssConstellation.GALILEO,
-        GnssConstellation.GLONASS,
-        GnssConstellation.BEIDOU,
-    ]
-    out: list[Signal] = []
-    for n in range(satellites):
-        c, sv = constellations[n % 4], 1 + n // 4
-        out.append(Signal(constellation=c, satellite=sv, band=Band.L1, cn0_dbhz=l1))
-        if l2 is not None:
-            out.append(Signal(constellation=c, satellite=sv, band=Band.L2, cn0_dbhz=l2))
-    return tuple(out)
 
 
 class Relay:

@@ -1,0 +1,42 @@
+# Example Prometheus alerting rules for sp-rtk-base Signal Quality.
+#
+# Load from prometheus.yml:
+#
+#   rule_files:
+#     - prometheus-alerts.example.yml
+#
+# Both rules keep the `base` label from your scrape config, so one rule
+# file covers every base station.
+
+groups:
+  - name: sp-rtk-base-signal-quality
+    rules:
+      # The antenna has been Marginal or Poor for 10 minutes: long enough to
+      # ignore a vehicle parked beside it, short enough to catch a failing
+      # cable or a new obstruction the same day.
+      - alert: SignalQualityDegraded
+        expr: sp_rtk_base_signal_quality >= 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Signal Quality degraded on {{ $labels.base }}"
+          description: >-
+            Signal Quality has been Marginal or Poor for 10 minutes
+            (current verdict {{ $value }}: 1 Marginal, 2 Poor). Check the
+            antenna, its cable and anything newly blocking its sky view.
+
+      # The Relay is running but there is no Signal Quality: no RTCM is
+      # arriving, or it carries no MSM (e.g. MSM output disabled on the
+      # receiver port the Relay reads).
+      - alert: SignalQualityUnavailable
+        expr: sp_rtk_base_signal_available == 0 and sp_rtk_base_relay_running == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No Signal Quality data on {{ $labels.base }}"
+          description: >-
+            The Relay is running but Signal Quality has had no data for 5
+            minutes. The dashboard's Signal Quality card names the cause (no RTCM
+            arriving, or no MSM messages in the stream).

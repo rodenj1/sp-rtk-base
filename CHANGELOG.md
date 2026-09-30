@@ -9,6 +9,56 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## v0.7.0 (2026-09-30)
+
+### Signal Quality: see whether the antenna hears the satellites well
+
+The survey-in page and the dashboard now show **Signal Quality**, a
+Good / Marginal / Poor verdict on how well the GPS antenna is hearing the
+satellites (#164). It is judged from three measures, each shown on a meter
+over its Poor / Marginal / Good bands:
+
+- **L1 Band strength** and **L2 Band strength**: the mean C/N0 of the four
+  strongest signals in each band (Good ≥ 44 / ≥ 41 dB-Hz). A dual-band base
+  on an L1-only or failing antenna reads Poor, "no L2 signal".
+- **Usable satellites**: satellites with a signal at 35 dB-Hz or more
+  (Good ≥ 15).
+
+The verdict is the worst of the three, and when it isn't Good it names the
+cause (e.g. "Marginal · L2 weak").
+
+- **It works in both modes and reads the same sky the same way.** During
+  survey-in it polls the receiver (u-blox NAV-SIG + NAV-SAT). While the
+  Relay runs it decodes the MSM4 / MSM7 in the Relay's own stream. Both
+  count only the signals the receiver puts in its corrections: satellites
+  it is using, above its elevation mask. On a ZED-F9P base the two modes
+  read Good, about 51.6 / 50.3 dB-Hz and 29 satellites, back to back.
+- **It is steady.** Measures are smoothed over 10 s. A measure leaves its
+  level only once it is 1 dB-Hz (or 1 satellite) past the line. After 10 s
+  without data it gives way to the reason: "Relay is stopped…",
+  "No RTCM is arriving from the receiver.", "No MSM messages in the RTCM
+  stream…", or "The receiver did not answer the signal poll." An old
+  verdict is never shown.
+- **Card or chip, per page.** Settings gains "Dashboard signal display" and
+  "Survey-in signal display": the detailed card (default), or a compact
+  chip beside the page title with the numbers on hover.
+- **Prometheus.** `/metrics` exports `sp_rtk_base_signal_quality`
+  (0 Good / 1 Marginal / 2 Poor), `sp_rtk_base_signal_band_strength_dbhz`
+  (per band), `sp_rtk_base_signal_usable_satellites` and
+  `sp_rtk_base_signal_available`. The bundled Grafana dashboard has a new
+  Signal Quality row, and `docs/monitoring/prometheus-alerts.example.yml`
+  alerts when the signal is degraded for 10 minutes or missing while
+  relaying.
+
+Requires **sp-rtk-base-relay 3.2.0** (its new Frame subscriber API) and
+adds **pyrtcm** as a direct dependency.
+
+### Fixed
+
+- **Saving settings no longer resets settings the save doesn't set.** The
+  settings API rebuilt the settings from the two fields it knew, so every
+  save through it switched the Prometheus metrics endpoint back on (#165).
+
 ## v0.6.2 (2026-09-29)
 
 ### Survey-in shows observations against a target

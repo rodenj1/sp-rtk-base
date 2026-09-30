@@ -70,11 +70,28 @@ whether RTCM is reaching its destinations is a separate concern.
 _Avoid_: signal health, signal strength, GPS health, antenna health
 
 **Signal Snapshot**:
-The C/N0 of every signal the receiver is tracking at one epoch, each tagged
+The C/N0 of every signal the receiver would put in its corrections at one
+epoch, meaning signals from satellites above its elevation mask, each tagged
 with its constellation, satellite and band. The only thing a Signal Quality
 verdict is judged from, whatever receiver or stream supplied it, so the same
 sky earns the same verdict before and after the Relay takes over the port.
+Low satellites the receiver tracks but leaves out of its corrections are not
+part of it.
 _Avoid_: observation (survey-in's word for a position sample), measurement, sample
+
+**Band strength**:
+The mean C/N0 of the four strongest signals in one band group of a Signal
+Snapshot: L1 (L1, E1, B1) or L2 (L2, E5b, B2). Judged on the strongest
+signals rather than all of them, because weak signals from low or partly
+blocked satellites are normal at any site.
+_Avoid_: average C/N0, signal level, SNR
+
+**Usable satellite**:
+A satellite in a Signal Snapshot with at least one signal at 35 dB-Hz or
+more. Counts sky coverage, where Band strength counts antenna and cable
+health.
+_Avoid_: satellites tracked, satellites used (the receiver's own navigation
+count, which is a different number)
 
 ### Bluetooth pairing
 

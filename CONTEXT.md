@@ -60,6 +60,22 @@ A Verification outcome meaning the connect path failed, always attributed to
 the Stage that failed.
 _Avoid_: failure, error
 
+### Signal
+
+**Signal Quality**:
+How well the receiver's antenna is hearing the satellites, judged from
+what any receiver can report rather than from one vendor's fields. Its
+verdict is **Good**, **Marginal** or **Poor**. It is about reception only:
+whether RTCM is reaching its destinations is a separate concern.
+_Avoid_: signal health, signal strength, GPS health, antenna health
+
+**Signal Snapshot**:
+The C/N0 of every signal the receiver is tracking at one epoch, each tagged
+with its constellation, satellite and band. The only thing a Signal Quality
+verdict is judged from, whatever receiver or stream supplied it, so the same
+sky earns the same verdict before and after the Relay takes over the port.
+_Avoid_: observation (survey-in's word for a position sample), measurement, sample
+
 ### Bluetooth pairing
 
 **Bond**:

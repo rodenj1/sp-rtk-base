@@ -73,6 +73,10 @@ def test_the_dashboard_chip_shows_why_there_is_no_data(
         page.get_by_text("Relay is stopped. Signal Quality shows while it runs.")
     ).to_be_visible()
 
+    page.goto(f"{base_url}/survey")  # the other page keeps its card
+    expect(page.get_by_test_id("signal-quality-card")).to_be_visible()
+    expect(page.get_by_test_id("signal-quality-chip")).to_have_count(0)
+
 
 @pytest.mark.e2e
 def test_the_settings_page_sets_each_page_s_signal_display(

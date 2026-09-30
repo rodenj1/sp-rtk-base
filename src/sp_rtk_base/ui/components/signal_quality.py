@@ -77,7 +77,7 @@ def signal_quality_chip(service: SignalQualityService, view: View) -> None:
 
 def _render_chip(reading: SignalQualityReading) -> None:
     if isinstance(reading, SignalQualityNoData):
-        color, text, tooltip = "grey-8", "Signal: no data", reading.reason
+        color, text, tooltip = "grey-7", "Signal: no data", reading.reason
     else:
         color = LEVEL_COLOR[reading.level]
         text = f"Signal {reading.level}" + (

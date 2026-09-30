@@ -9,8 +9,6 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
-Baseline release; not yet published to PyPI.
-
 ## v0.6.2 (2026-09-29)
 
 ### Survey-in shows observations against a target

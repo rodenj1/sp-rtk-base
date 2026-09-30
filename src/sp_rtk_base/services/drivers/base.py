@@ -38,6 +38,7 @@ from sp_rtk_base.models.device_models import (
     SurveyInProgress,
     UbxProtocol,
 )
+from sp_rtk_base.models.signal_quality_models import SignalSnapshot
 
 # ---------------------------------------------------------------------------
 # Detection constants (issue #142)
@@ -688,6 +689,23 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
         """
+
+    def get_signal_snapshot(self) -> SignalSnapshot:
+        """Poll a Signal Snapshot: the C/N0 of every signal above the mask.
+
+        Vendor-neutral input to Signal Quality.  Implementations poll the
+        receiver (never write configuration) and include only signals from
+        satellites above the receiver's elevation mask, each tagged with
+        its constellation, satellite and band group.
+
+        Returns:
+            The current Signal Snapshot.
+
+        Raises:
+            ConnectionError: If not connected.
+            NotImplementedError: If this driver cannot supply one yet.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no Signal Snapshot")
 
     @abc.abstractmethod
     def get_device_info(self) -> DeviceInfo:

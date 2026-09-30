@@ -91,8 +91,11 @@ class TestStartupServices:
             called.append("init")
 
         monkeypatch.setattr(services_mod, "init_services", _fake_init)
+        monkeypatch.setattr(
+            services_mod.signal_quality_service, "start", lambda: called.append("sq")
+        )
         await startup_services()
-        assert called == ["init"]
+        assert called == ["init", "sq"]
 
 
 # ---------------------------------------------------------------------------

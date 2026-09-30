@@ -55,6 +55,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import resolve_hardware_identity
+from sp_rtk_base.models.signal_quality_models import Band, Signal, SignalSnapshot
 from sp_rtk_base.services.drivers.base import (
     BAUD_MISMATCH_HINT,
     GpsReceiverDriver,
@@ -255,6 +256,10 @@ class UbloxDriver(GpsReceiverDriver):
         # Advisories queued by ``_write_and_verify_locked`` for a flash
         # divergence (issue #103) — drained by ``drain_warnings``.
         self._warnings: list[str] = []
+        # Receiver elevation mask (CFG-NAVSPG-INFIL_MINELEV), read on the
+        # first Signal Snapshot of a connection and forgotten on
+        # disconnect or any configuration write.
+        self._min_elevation_deg: int | None = None
 
     # ------------------------------------------------------------------
     # Identity
@@ -527,6 +532,7 @@ class UbloxDriver(GpsReceiverDriver):
         self._serial = None
         self._reader = None
         self._stream = None
+        self._min_elevation_deg = None
 
     @contextlib.contextmanager
     def _reads_end_at(self, deadline: float) -> Generator[None]:
@@ -1634,6 +1640,111 @@ class UbloxDriver(GpsReceiverDriver):
 
             return GpsPosition()  # Default if no response
 
+    # UBX gnssId → constellation, for the constellations MSM carries.
+    # SBAS (1) is left out: it never appears in the RTCM MSM a Relay
+    # sees, and counting it here would make survey-in disagree with it.
+    _SIGNAL_CONSTELLATIONS: dict[int, GnssConstellation] = {
+        0: GnssConstellation.GPS,
+        2: GnssConstellation.GALILEO,
+        3: GnssConstellation.BEIDOU,
+        5: GnssConstellation.QZSS,
+        6: GnssConstellation.GLONASS,
+    }
+
+    # NAV-SIG sigId → band group, per gnssId (F9 HPG interface description).
+    _SIGNAL_BANDS: dict[int, dict[int, Band]] = {
+        0: {0: Band.L1, 3: Band.L2, 4: Band.L2},  # GPS L1C/A, L2CL, L2CM
+        2: {0: Band.L1, 1: Band.L1, 5: Band.L2, 6: Band.L2},  # Galileo E1, E5b
+        3: {
+            0: Band.L1,
+            1: Band.L1,
+            5: Band.L1,
+            6: Band.L1,  # BeiDou B1I, B1C
+            2: Band.L2,
+            3: Band.L2,
+        },  # B2I
+        5: {0: Band.L1, 1: Band.L1, 4: Band.L2, 5: Band.L2},  # QZSS L1, L2C
+        6: {0: Band.L1, 2: Band.L2},  # GLONASS L1OF, L2OF
+    }
+
+    def get_signal_snapshot(self) -> SignalSnapshot:
+        """Poll NAV-SAT and NAV-SIG and return the above-mask signals.
+
+        NAV-SIG gives each signal's C/N0; NAV-SAT gives each satellite's
+        elevation.  Signals from satellites below the receiver's own
+        elevation mask are left out, matching what the receiver puts in
+        its RTCM MSM output, so the same sky reads the same in survey-in
+        and in Relay mode.  Only polls; never writes configuration.
+        """
+        from datetime import datetime, timezone
+
+        with self._lock:
+            self._require_connection()
+            if self._min_elevation_deg is None:
+                keys = self._read_cfg_keys_locked(["CFG_NAVSPG_INFIL_MINELEV"])
+                self._min_elevation_deg = int(keys.get("CFG_NAVSPG_INFIL_MINELEV", 0))
+            mask = self._min_elevation_deg
+            nav_sat = self._poll_nav_locked("NAV-SAT")
+            nav_sig = self._poll_nav_locked("NAV-SIG")
+
+        elevations: dict[tuple[int, int], int] = {}
+        for i in range(1, int(getattr(nav_sat, "numSvs", 0)) + 1):
+            n = f"_{i:02d}"
+            key = (
+                int(getattr(nav_sat, "gnssId" + n)),
+                int(getattr(nav_sat, "svId" + n)),
+            )
+            elevations[key] = int(getattr(nav_sat, "elev" + n))
+
+        signals: list[Signal] = []
+        for i in range(1, int(getattr(nav_sig, "numSigs", 0)) + 1):
+            n = f"_{i:02d}"
+            gnss = int(getattr(nav_sig, "gnssId" + n))
+            satellite = int(getattr(nav_sig, "svId" + n))
+            cno = float(getattr(nav_sig, "cno" + n))
+            constellation = self._SIGNAL_CONSTELLATIONS.get(gnss)
+            elevation = elevations.get((gnss, satellite))
+            if (
+                constellation is None
+                or cno <= 0
+                or elevation is None
+                or elevation < mask
+            ):
+                continue
+            band = self._SIGNAL_BANDS[gnss].get(
+                int(getattr(nav_sig, "sigId" + n)), Band.OTHER
+            )
+            signals.append(
+                Signal(
+                    constellation=constellation,
+                    satellite=satellite,
+                    band=band,
+                    cn0_dbhz=cno,
+                )
+            )
+
+        return SignalSnapshot(
+            captured_at=datetime.now(timezone.utc), signals=tuple(signals)
+        )
+
+    def _poll_nav_locked(self, identity: str) -> object:
+        """Poll one NAV message and return its reply (must hold ``self._lock``).
+
+        Raises:
+            RuntimeError: If no reply arrives within the read budget.
+        """
+        ser, reader = self._require_connection()
+        ser.reset_input_buffer()
+        ser.write(UBXMessage("NAV", identity, POLL).serialize())
+        for _ in range(_MAX_READ_ATTEMPTS):
+            try:
+                _raw, parsed = reader.read()  # type: ignore[misc]
+            except Exception:
+                continue
+            if parsed is not None and getattr(parsed, "identity", "") == identity:
+                return parsed
+        raise RuntimeError(f"No {identity} response")
+
     def _parse_nav_pvt(self, parsed: object) -> GpsPosition:
         """Parse a NAV-PVT message into a GpsPosition model."""
         from datetime import datetime, timezone
@@ -2356,6 +2467,8 @@ class UbloxDriver(GpsReceiverDriver):
         "Cancel Survey-In doesn't cancel" entry.
         """
         ser, _ = self._require_connection()
+        # A write may change the elevation mask; re-read it next time.
+        self._min_elevation_deg = None
 
         cfg_data_any: list[tuple[str | int, object]] = list(cfg_data)  # type: ignore[arg-type]
         msg = UBXMessage.config_set(layer, 0, cfg_data_any)

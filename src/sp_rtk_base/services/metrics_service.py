@@ -19,6 +19,14 @@ import logging
 from prometheus_client import CollectorRegistry, Gauge
 from sp_rtk_base_relay.core.status import RelayStatus
 
+from sp_rtk_base.models.signal_quality_models import (
+    SignalLevel,
+    SignalQualityReading,
+    SignalQualityVerdict,
+)
+
+_LEVEL_VALUE: dict[SignalLevel, int] = {"Good": 0, "Marginal": 1, "Poor": 2}
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,6 +138,32 @@ class MetricsService:
             registry=self.registry,
         )
 
+        # Signal Quality: exactly what the UI shows (smoothed, deadbanded),
+        # from survey-in or the Relay alike.  No data: available 0, the
+        # rest NaN; the series never go away.
+        self.signal_quality = Gauge(
+            f"{ns}_signal_quality",
+            "Signal Quality verdict: 0 Good, 1 Marginal, 2 Poor (NaN: no data)",
+            registry=self.registry,
+        )
+        self.signal_band_strength_dbhz = Gauge(
+            f"{ns}_signal_band_strength_dbhz",
+            "Band strength: mean C/N0 of the 4 strongest signals in the band (dB-Hz)",
+            ["band"],
+            registry=self.registry,
+        )
+        self.signal_usable_satellites = Gauge(
+            f"{ns}_signal_usable_satellites",
+            "Usable satellites: satellites with a signal at 35 dB-Hz or more",
+            registry=self.registry,
+        )
+        self.signal_available = Gauge(
+            f"{ns}_signal_available",
+            "1 while there is a current Signal Snapshot, 0 when stale or no data",
+            registry=self.registry,
+        )
+        self.update_signal_quality(None)
+
         logger.info("MetricsService initialized (namespace=%s)", ns)
 
     # ──────────────────────────────────────────────────────────────
@@ -164,6 +198,27 @@ class MetricsService:
             )
             self.dest_errors.labels(destination=name).set(dest.errors)
             self.dest_queue_depth.labels(destination=name).set(dest.queue_depth)
+
+    def update_signal_quality(self, reading: SignalQualityReading | None) -> None:
+        """Set the Signal Quality gauges from *reading* (``None``: no data)."""
+        nan = float("nan")
+        if isinstance(reading, SignalQualityVerdict):
+            self.signal_available.set(1)
+            self.signal_quality.set(_LEVEL_VALUE[reading.level])
+            for band, value in (
+                ("L1", reading.l1_strength_dbhz),
+                ("L2", reading.l2_strength_dbhz),
+            ):
+                self.signal_band_strength_dbhz.labels(band=band).set(
+                    nan if value is None else value
+                )
+            self.signal_usable_satellites.set(reading.usable_satellites)
+            return
+        self.signal_available.set(0)
+        self.signal_quality.set(nan)
+        for band in ("L1", "L2"):
+            self.signal_band_strength_dbhz.labels(band=band).set(nan)
+        self.signal_usable_satellites.set(nan)
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

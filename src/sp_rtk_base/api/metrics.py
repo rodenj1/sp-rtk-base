@@ -20,10 +20,12 @@ from sp_rtk_base.services import (
     get_config_service,
     get_metrics_service,
     get_relay_service,
+    get_signal_quality_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.signal_quality.service import SignalQualityService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ async def prometheus_metrics(
     relay: RelayService = Depends(get_relay_service),
     metrics: MetricsService = Depends(get_metrics_service),
     config_svc: ConfigService = Depends(get_config_service),
+    signal_quality: SignalQualityService = Depends(get_signal_quality_service),
 ) -> Response:
     """Serve Prometheus metrics.
 
@@ -62,6 +65,10 @@ async def prometheus_metrics(
             metrics.update_idle()
     else:
         metrics.update_idle()
+
+    # The survey view gives the Relay's verdict while it runs and
+    # survey-in's otherwise: Signal Quality in both modes, no mode label.
+    metrics.update_signal_quality(signal_quality.current("survey"))
 
     output: bytes = generate_latest(metrics.registry)
     return Response(content=output, media_type=PROMETHEUS_CONTENT_TYPE)

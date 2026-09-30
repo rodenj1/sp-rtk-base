@@ -5,7 +5,7 @@ back, so field names and types match the receiver's), interleaved with
 unrelated traffic, through a mocked serial port and reader.
 """
 
-# pyright: reportPrivateUsage=false
+# pyright: reportPrivateUsage=false, reportMissingTypeStubs=false
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _nav_sat(sats: list[tuple[int, int, int, int]]) -> Any:
             f"cno_{i:02d}": cno,
             f"elev_{i:02d}": elev,
         }
-    return _parsed(UBXMessage("NAV", "NAV-SAT", GET, **fields))
+    return _parsed(UBXMessage("NAV", "NAV-SAT", GET, **fields))  # pyright: ignore[reportArgumentType]
 
 
 def _nav_sig(sigs: list[tuple[int, int, int, int]]) -> Any:
@@ -58,7 +58,7 @@ def _nav_sig(sigs: list[tuple[int, int, int, int]]) -> Any:
             f"sigId_{i:02d}": sig,
             f"cno_{i:02d}": cno,
         }
-    return _parsed(UBXMessage("NAV", "NAV-SIG", GET, **fields))
+    return _parsed(UBXMessage("NAV", "NAV-SIG", GET, **fields))  # pyright: ignore[reportArgumentType]
 
 
 class _Unrelated:
@@ -81,6 +81,7 @@ def _driver(responses: list[Any]) -> tuple[UbloxDriver, MagicMock]:
 SKY_ELEVATIONS = [
     (GPS, 5, 45, 40),
     (GPS, 7, 0, 25),  # tracked but no signal
+    (GPS, 12, 39, 17),  # above a 15° mask, below a 20° one
     (GAL, 11, 44, 30),
     (BDS, 20, 43, 50),
     (GLO, 9, 46, 9),  # below the 15° mask
@@ -91,6 +92,7 @@ SKY_SIGNALS = [
     (GPS, 5, 0, 45),
     (GPS, 5, 3, 42),  # L1C/A, L2CL
     (GPS, 7, 0, 0),  # cno 0: not tracked
+    (GPS, 12, 0, 39),
     (GAL, 11, 0, 44),
     (GAL, 11, 5, 40),
     (GAL, 11, 3, 41),  # E1C, E5bI, E5aI
@@ -120,6 +122,7 @@ def test_signals_are_joined_banded_and_filtered_to_above_the_mask() -> None:
     assert got == {
         (GnssConstellation.GPS, 5, Band.L1, 45.0),
         (GnssConstellation.GPS, 5, Band.L2, 42.0),
+        (GnssConstellation.GPS, 12, Band.L1, 39.0),
         (GnssConstellation.GALILEO, 11, Band.L1, 44.0),
         (GnssConstellation.GALILEO, 11, Band.L2, 40.0),
         (GnssConstellation.GALILEO, 11, Band.OTHER, 41.0),
@@ -178,7 +181,10 @@ def test_the_elevation_mask_is_read_once_until_the_configuration_changes() -> No
         "NAV-SAT",
         "NAV-SIG",
     ]
-    # With the mask now 20°, GAL 11 (30°) stays; GPS 5 (40°) stays.
+    # The 20° mask is applied: GPS 12 at 17° is now left out.
+    assert (GnssConstellation.GPS, 12) not in {
+        (s.constellation, s.satellite) for s in third.signals
+    }
     assert {s.satellite for s in third.signals} == {5, 11, 20, 3}
 
 
@@ -189,3 +195,62 @@ def test_no_nav_reply_is_an_error_not_an_empty_snapshot() -> None:
 
     with pytest.raises(RuntimeError, match="No NAV-SAT response"):
         driver.get_signal_snapshot()
+
+
+@pytest.mark.parametrize(
+    ("gnss", "sig", "band"),
+    [
+        (GPS, 0, Band.L1),
+        (GPS, 3, Band.L2),
+        (GPS, 4, Band.L2),
+        (GPS, 6, Band.OTHER),
+        (GLO, 0, Band.L1),
+        (GLO, 2, Band.L2),
+        (GAL, 0, Band.L1),
+        (GAL, 1, Band.L1),
+        (GAL, 5, Band.L2),
+        (GAL, 6, Band.L2),
+        (GAL, 3, Band.OTHER),
+        (GAL, 8, Band.OTHER),
+        (BDS, 0, Band.L1),
+        (BDS, 1, Band.L1),
+        (BDS, 5, Band.L1),
+        (BDS, 6, Band.L1),
+        (BDS, 2, Band.L2),
+        (BDS, 3, Band.L2),
+        (BDS, 7, Band.OTHER),
+        (QZSS, 0, Band.L1),
+        (QZSS, 1, Band.L1),
+        (QZSS, 4, Band.L2),
+        (QZSS, 5, Band.L2),
+        (QZSS, 8, Band.OTHER),
+    ],
+)
+def test_each_signal_maps_to_its_band_group(gnss: int, sig: int, band: Band) -> None:
+    driver, _ = _driver(
+        [
+            _min_elevation(15),
+            _nav_sat([(gnss, 1, 40, 45)]),
+            _nav_sig([(gnss, 1, sig, 40)]),
+        ]
+    )
+
+    [signal] = driver.get_signal_snapshot().signals
+
+    assert signal.band is band
+
+
+def test_a_signal_without_a_known_elevation_is_left_out() -> None:
+    driver, _ = _driver(
+        [
+            _min_elevation(0),
+            _nav_sat(
+                [(GPS, 1, 40, 45), (GPS, 2, 40, -91), (GPS, 3, 40, 91)]
+            ),  # 2, 3: unknown
+            _nav_sig(
+                [(GPS, 1, 0, 40), (GPS, 2, 0, 40), (GPS, 3, 0, 40), (GPS, 4, 0, 40)]
+            ),  # 4: no NAV-SAT entry
+        ]
+    )
+
+    assert [s.satellite for s in driver.get_signal_snapshot().signals] == [1]

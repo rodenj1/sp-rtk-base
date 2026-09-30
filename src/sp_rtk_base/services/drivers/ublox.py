@@ -1652,19 +1652,18 @@ class UbloxDriver(GpsReceiverDriver):
     }
 
     # NAV-SIG sigId → band group, per gnssId (F9 HPG interface description).
+    # Any sigId not listed (L5, E5a, E6, B2a, B3, …) is Band.OTHER.
     _SIGNAL_BANDS: dict[int, dict[int, Band]] = {
-        0: {0: Band.L1, 3: Band.L2, 4: Band.L2},  # GPS L1C/A, L2CL, L2CM
-        2: {0: Band.L1, 1: Band.L1, 5: Band.L2, 6: Band.L2},  # Galileo E1, E5b
-        3: {
-            0: Band.L1,
-            1: Band.L1,
-            5: Band.L1,
-            6: Band.L1,  # BeiDou B1I, B1C
-            2: Band.L2,
-            3: Band.L2,
-        },  # B2I
-        5: {0: Band.L1, 1: Band.L1, 4: Band.L2, 5: Band.L2},  # QZSS L1, L2C
-        6: {0: Band.L1, 2: Band.L2},  # GLONASS L1OF, L2OF
+        # GPS: L1C/A → L1; L2CL, L2CM → L2
+        0: {0: Band.L1, 3: Band.L2, 4: Band.L2},
+        # Galileo: E1C, E1B → L1; E5bI, E5bQ → L2
+        2: {0: Band.L1, 1: Band.L1, 5: Band.L2, 6: Band.L2},
+        # BeiDou: B1I D1/D2, B1Cp, B1Cd → L1; B2I D1/D2 → L2
+        3: {0: Band.L1, 1: Band.L1, 5: Band.L1, 6: Band.L1, 2: Band.L2, 3: Band.L2},
+        # QZSS: L1C/A, L1S → L1; L2CM, L2CL → L2
+        5: {0: Band.L1, 1: Band.L1, 4: Band.L2, 5: Band.L2},
+        # GLONASS: L1OF → L1; L2OF → L2
+        6: {0: Band.L1, 2: Band.L2},
     }
 
     def get_signal_snapshot(self) -> SignalSnapshot:
@@ -1704,10 +1703,12 @@ class UbloxDriver(GpsReceiverDriver):
             cno = float(getattr(nav_sig, "cno" + n))
             constellation = self._SIGNAL_CONSTELLATIONS.get(gnss)
             elevation = elevations.get((gnss, satellite))
+            # NAV-SAT reports an unknown elevation as a value outside ±90°.
             if (
                 constellation is None
                 or cno <= 0
                 or elevation is None
+                or not -90 <= elevation <= 90
                 or elevation < mask
             ):
                 continue
@@ -1885,6 +1886,8 @@ class UbloxDriver(GpsReceiverDriver):
             wire_bytes: bytes = msg.serialize()  # type: ignore[union-attr]
             ser.reset_input_buffer()
             ser.write(wire_bytes)
+            # A reset can reload configuration (and the elevation mask).
+            self._min_elevation_deg = None
             after: SurveyInProgress | None = None
             if read_after_state:
                 time.sleep(wait_seconds)

@@ -28,6 +28,15 @@ class _Bits:
         )
 
 
+def _frame(message_number: int, bits: _Bits) -> Frame:
+    """Wrap an RTCM payload in its 0xD3 header and CRC-24Q trailer."""
+    payload = bits.to_bytes()
+    body = bytes([0xD3, (len(payload) >> 8) & 0x03, len(payload) & 0xFF]) + payload
+    crc = RTCMMessageDecoder.calc_crc24q(body)
+    trailer = bytes([(crc >> 16) & 0xFF, (crc >> 8) & 0xFF, crc & 0xFF])
+    return Frame(message_id=message_number, data=body + trailer)
+
+
 def msm_frame(
     message_number: int,
     cn0: dict[int, dict[int, float]],
@@ -93,11 +102,7 @@ def msm_frame(
         for _ in cells:
             b.put(0, 15)  # DF404 fine phase-range rate
 
-    payload = b.to_bytes()
-    body = bytes([0xD3, (len(payload) >> 8) & 0x03, len(payload) & 0xFF]) + payload
-    crc = RTCMMessageDecoder.calc_crc24q(body)
-    data = body + bytes([(crc >> 16) & 0xFF, (crc >> 8) & 0xFF, crc & 0xFF])
-    return Frame(message_id=message_number, data=data)
+    return _frame(message_number, b)
 
 
 def other_frame(message_number: int = 1005) -> Frame:
@@ -105,10 +110,4 @@ def other_frame(message_number: int = 1005) -> Frame:
     b = _Bits()
     b.put(message_number, 12)
     b.put(0, 140)
-    payload = b.to_bytes()
-    body = bytes([0xD3, (len(payload) >> 8) & 0x03, len(payload) & 0xFF]) + payload
-    crc = RTCMMessageDecoder.calc_crc24q(body)
-    return Frame(
-        message_id=message_number,
-        data=body + bytes([(crc >> 16) & 0xFF, (crc >> 8) & 0xFF, crc & 0xFF]),
-    )
+    return _frame(message_number, b)

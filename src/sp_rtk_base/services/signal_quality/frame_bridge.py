@@ -37,16 +37,20 @@ class FrameBridge:
         self._thread.start()
 
     def stop(self) -> None:
-        """Close the subscription and wait for the thread to exit."""
+        """Close the subscription and let the thread exit.
+
+        Closing wakes the thread at once, so the join is near-instant; it
+        is bounded so it can never hold up the event loop for long.
+        """
         self._subscription.close()
         if self._thread.is_alive():
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=0.5)
 
     def _run(self) -> None:
+        # Frames are only ever delivered on the event loop, never on this
+        # thread; with no running loop there is nobody to deliver to.
         for frame in self._subscription:  # ends when the subscription closes
             loop = self._loop
             if loop is not None and loop.is_running():
                 loop.call_soon_threadsafe(self._deliver, frame)
-            elif loop is None:
-                self._deliver(frame)  # no event loop (e.g. tests)
         logger.debug("FrameBridge thread exiting")

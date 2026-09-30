@@ -113,7 +113,7 @@ class SignalQualityService:
         return SignalQualityNoData(reason=WAITING_REASON)
 
     # ------------------------------------------------------------------
-    # Relay source (the RelayService's Frame consumer)
+    # Relay source (the RelayService's Frame subscriber)
     # ------------------------------------------------------------------
 
     def relay_started(self, subscription: FrameSubscription) -> None:
@@ -190,15 +190,15 @@ class SignalQualityService:
             return
         finally:
             self._polling = False
-        if self._relay_is_source():
+        if self._relay_took_over():
             return  # the Relay took over while this poll was in flight
         self._switch_to("survey")
         now = self._clock()
         self._answered_at = now
         self._monitor.observe(snapshot, now)
 
-    def _relay_is_source(self) -> bool:
-        """Re-read the source (it can change while a poll is awaited)."""
+    def _relay_took_over(self) -> bool:
+        """Whether the Relay is now the source (it can start while a poll is awaited)."""
         return self._source == "relay"
 
     def _switch_to(self, source: Source | None) -> None:

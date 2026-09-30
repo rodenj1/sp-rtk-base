@@ -4,7 +4,7 @@ A receiver sends one MSM message per constellation per epoch.  The
 multiple message bit (DF393) is 1 on every MSM of an epoch but the last,
 so a Snapshot is closed on the MSM whose bit is 0.  If that Frame is
 lost, the Snapshot is closed anyway when the next epoch visibly starts
-(a constellation repeats) or once it is :data:`EPOCH_TIMEOUT_SECONDS`
+(a message type repeats) or once it is :data:`EPOCH_TIMEOUT_SECONDS`
 old.  The receiver has already applied its elevation mask to MSM, so
 every signal here is one it puts in its corrections.
 """
@@ -56,7 +56,7 @@ class MsmSnapshotAssembler:
 
     def __init__(self) -> None:
         self._signals: list[Signal] = []
-        self._constellations: set[GnssConstellation] = set()
+        self._messages: set[int] = set()
         self._started_at: float | None = None
 
     def add(self, frame: Frame, now: float) -> list[SignalSnapshot]:
@@ -66,27 +66,27 @@ class MsmSnapshotAssembler:
         decoded = self._decode(frame)
         if decoded is None:
             return []
-        constellation, signals, last_of_epoch = decoded
+        _constellation, signals, last_of_epoch = decoded
 
         completed: list[SignalSnapshot] = []
         stale = (
             self._started_at is not None
             and now - self._started_at > EPOCH_TIMEOUT_SECONDS
         )
-        if self._constellations and (stale or constellation in self._constellations):
+        if self._messages and (stale or frame.message_id in self._messages):
             completed.append(self._close())  # the epoch's last Frame was lost
 
         if self._started_at is None:
             self._started_at = now
         self._signals.extend(signals)
-        self._constellations.add(constellation)
+        self._messages.add(frame.message_id)
         if last_of_epoch:
             completed.append(self._close())
         return completed
 
     def reset(self) -> None:
         """Drop any partly assembled epoch."""
-        self._signals, self._constellations, self._started_at = [], set(), None
+        self._signals, self._messages, self._started_at = [], set(), None
 
     def _close(self) -> SignalSnapshot:
         snapshot = SignalSnapshot(

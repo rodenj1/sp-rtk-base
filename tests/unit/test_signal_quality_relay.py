@@ -319,3 +319,22 @@ async def test_frames_from_the_relay_subscription_reach_the_verdict() -> None:
     assert isinstance(service.current("dashboard"), SignalQualityVerdict)
     service.relay_stopped()
     assert subscription.closed
+
+
+def test_msm4_and_msm7_for_one_constellation_stay_one_epoch() -> None:
+    relay = _relay_mode()
+    gps = {sv: {2: 50.0, 16: 48.0} for sv in range(1, 9)}
+    galileo = {sv: {2: 50.0, 14: 48.0} for sv in range(1, 9)}
+
+    relay.at(
+        0,
+        [
+            msm_frame(1074, gps, more_follow=True),  # both MSM4 and MSM7 enabled
+            msm_frame(1077, gps, more_follow=True),
+            msm_frame(1097, galileo),
+        ],
+    )
+
+    reading = relay.service.current("dashboard")
+    assert isinstance(reading, SignalQualityVerdict)
+    assert reading.usable_satellites == 16  # GPS and Galileo judged together

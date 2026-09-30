@@ -457,7 +457,7 @@ class TestRelayServiceEvents:
 
 
 # ---------------------------------------------------------------------------
-# Frame consumer (Signal Quality in Relay mode)
+# Frame subscriber (Signal Quality in Relay mode)
 # ---------------------------------------------------------------------------
 
 
@@ -474,16 +474,16 @@ class _RecordingConsumer:
         self.events.append("stopped")
 
 
-class TestRelayServiceFrameConsumer:
-    """Every start hands the consumer a fresh Frame subscription; every stop ends it."""
+class TestRelayServiceFrameSubscriber:
+    """Every start hands the subscriber a fresh Frame subscription; every stop ends it."""
 
     @pytest.mark.asyncio()
-    async def test_every_start_path_feeds_the_consumer_including_a_reused_engine(
+    async def test_every_start_feeds_the_subscriber_including_a_reused_engine(
         self,
     ) -> None:
         svc = RelayService()
         consumer = _RecordingConsumer()
-        svc.set_frame_consumer(consumer)
+        svc.set_frame_subscriber(consumer)
         input_cfg = _make_input_config()
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
@@ -507,7 +507,7 @@ class TestRelayServiceFrameConsumer:
         ]
 
     @pytest.mark.asyncio()
-    async def test_without_a_consumer_nothing_subscribes(self) -> None:
+    async def test_without_a_subscriber_nothing_subscribes(self) -> None:
         svc = RelayService()
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
@@ -517,3 +517,28 @@ class TestRelayServiceFrameConsumer:
             await svc.start_relay(_make_input_config())
 
         engine.subscribe_frames.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_a_subscriber_that_fails_to_attach_does_not_leak_or_stop_relaying(
+        self,
+    ) -> None:
+        svc = RelayService()
+
+        class _Broken:
+            def relay_started(self, subscription: object) -> None:
+                raise RuntimeError("boom")
+
+            def relay_stopped(self) -> None:
+                pass
+
+        svc.set_frame_subscriber(_Broken())
+        subscription = MagicMock()
+        with patch.object(_relay_module, "RelayEngine") as mock_cls:
+            engine = MagicMock()
+            engine.is_running = False
+            engine.subscribe_frames.return_value = subscription
+            mock_cls.return_value = engine
+            await svc.start_relay(_make_input_config())
+
+        engine.start.assert_called_once()
+        subscription.close.assert_called_once()

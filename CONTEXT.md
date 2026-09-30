@@ -71,12 +71,12 @@ _Avoid_: signal health, signal strength, GPS health, antenna health
 
 **Signal Snapshot**:
 The C/N0 of every signal the receiver would put in its corrections at one
-epoch, meaning signals from satellites above its elevation mask, each tagged
-with its constellation, satellite and band. The only thing a Signal Quality
-verdict is judged from, whatever receiver or stream supplied it, so the same
-sky earns the same verdict before and after the Relay takes over the port.
-Low satellites the receiver tracks but leaves out of its corrections are not
-part of it.
+epoch, meaning signals from satellites it is using, above its elevation
+mask, each tagged with its constellation, satellite and band. The only thing
+a Signal Quality verdict is judged from, whatever receiver or stream supplied
+it, so the same sky earns the same verdict before and after the Relay takes
+over the port. Satellites the receiver tracks but leaves out of its
+corrections (low ones, or ones it isn't using) are not part of it.
 _Avoid_: observation (survey-in's word for a position sample), measurement, sample
 
 **Band strength**:

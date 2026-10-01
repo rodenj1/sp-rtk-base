@@ -331,10 +331,10 @@ def source_editor(sim: Sim, existing: Source | None, on_save: object) -> None:
             def _save() -> None:
                 src = Source(
                     name.value or "Unnamed",
-                    caster.value,
+                    caster.value or "",
                     int(port.value or 2101),
-                    mount.value,
-                    user.value,
+                    mount.value or "",
+                    user.value or "",
                     version.value,
                 )
                 if existing:
@@ -362,7 +362,7 @@ def verify_menu(sim: Sim, after: object) -> None:
             ]:
                 ui.menu_item(
                     label,
-                    on_click=lambda k=key: (sim.verify(k), after()),  # type: ignore[operator]
+                    on_click=lambda _e=None, k=key: (sim.verify(k), after()),  # type: ignore[operator]
                 )
 
 
@@ -569,7 +569,7 @@ def variant_b(sim: Sim) -> None:
                             .classes("q-pa-md cursor-pointer w-72")
                             .on(
                                 "click",
-                                lambda k=key: (
+                                lambda _e=None, k=key: (
                                     sim.set_mode(k),
                                     stepper.next()
                                     if k == "corrected"
@@ -587,7 +587,7 @@ def variant_b(sim: Sim) -> None:
                     with ui.list().props("bordered separator").classes("w-full"):
                         for s in sim.sources:
                             with ui.item(
-                                on_click=lambda n=s.name: (
+                                on_click=lambda _e=None, n=s.name: (
                                     setattr(sim, "selected", n),
                                     setattr(sim, "verification", None),
                                     sources.refresh(),
@@ -766,7 +766,7 @@ def variant_c(sim: Sim) -> None:
                         else:
                             ui.label("—").classes("text-grey-6")
 
-                    def _pick_and(n: str = s.name) -> None:
+                    def _pick_and(_e: object = None, n: str = s.name) -> None:
                         sim.selected = n
                         sim.verification = None
                         table.refresh()
@@ -777,7 +777,9 @@ def variant_c(sim: Sim) -> None:
                         ).tooltip("Select to verify")
                     ui.button(
                         icon="edit",
-                        on_click=lambda src=s: source_editor(sim, src, _after_edit),
+                        on_click=lambda _e=None, src=s: source_editor(
+                            sim, src, _after_edit
+                        ),
                     ).props("flat round dense")
             with ui.row().classes("gap-2 q-mt-sm"):
                 verify_menu(sim, lambda: table.refresh())

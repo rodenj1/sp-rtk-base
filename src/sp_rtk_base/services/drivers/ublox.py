@@ -52,6 +52,7 @@ from sp_rtk_base.models.device_models import (
     RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import resolve_hardware_identity
@@ -64,6 +65,7 @@ from sp_rtk_base.services.drivers.ublox_console_port import (
     PortCounters,
     attribute_console_port,
 )
+from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
 
 logger = logging.getLogger(__name__)
 
@@ -830,7 +832,7 @@ class UbloxDriver(GpsReceiverDriver):
         # TMODE_MODE=2 and the RTCM message selection both ACK cleanly.
         # Derive ECEF from the same WGS84 LLH input so both
         # representations agree.
-        ecef_x_m, ecef_y_m, ecef_z_m = self._llh_to_ecef(
+        ecef_x_m, ecef_y_m, ecef_z_m = llh_to_ecef(
             config.latitude, config.longitude, config.altitude_m
         )
         ecef_x_cm, ecef_x_hp = self._m_to_cm_hp(ecef_x_m)
@@ -1640,6 +1642,58 @@ class UbloxDriver(GpsReceiverDriver):
 
             return GpsPosition()  # Default if no response
 
+    # NAV-PVT lastCorrectionAge code → upper bound of its age bucket (s).
+    # 0 means the receiver gives no age.
+    _CORRECTION_AGE_S: dict[int, float] = {
+        1: 1.0,
+        2: 2.0,
+        3: 5.0,
+        4: 10.0,
+        5: 15.0,
+        6: 20.0,
+        7: 30.0,
+        8: 45.0,
+        9: 60.0,
+        10: 90.0,
+        11: 120.0,
+        12: 120.0,
+    }
+
+    def get_survey_position(self) -> SurveyPosition:
+        """Poll NAV-HPPOSECEF and NAV-PVT for one survey-averaging position.
+
+        NAV-HPPOSECEF gives the ECEF position at 0.1 mm (pyubx2 folds the
+        HP part into ``ecefX/Y/Z``, in cm) and ``pAcc`` (mm). NAV-PVT gives
+        the fix, the carrier solution and the correction age.
+        """
+        with self._lock:
+            hp = self._poll_nav_locked("NAV-HPPOSECEF")
+            pvt = self._poll_nav_locked("NAV-PVT")
+
+        fix_type = int(getattr(pvt, "fixType", 0))
+        fix_ok = (
+            fix_type in (3, 4)
+            and bool(getattr(pvt, "gnssFixOk", 0))
+            and not bool(getattr(hp, "invalidEcef", 0))
+        )
+        rtk_status = {0: "none", 1: "float", 2: "fixed"}.get(
+            int(getattr(pvt, "carrSoln", 0)), "none"
+        )
+        correction_age_s: float | None = None
+        if int(getattr(pvt, "diffSoln", 0)):
+            correction_age_s = self._CORRECTION_AGE_S.get(
+                int(getattr(pvt, "lastCorrectionAge", 0))
+            )
+        return SurveyPosition(
+            ecef_x_m=float(getattr(hp, "ecefX", 0.0)) / 100.0,
+            ecef_y_m=float(getattr(hp, "ecefY", 0.0)) / 100.0,
+            ecef_z_m=float(getattr(hp, "ecefZ", 0.0)) / 100.0,
+            accuracy_3d_m=float(getattr(hp, "pAcc", 0.0)) / 1000.0,
+            rtk_status=rtk_status,
+            fix_ok=fix_ok,
+            correction_age_s=correction_age_s,
+        )
+
     # UBX gnssId → constellation, for the constellations MSM carries.
     # SBAS (1) is left out: it never appears in the RTCM MSM a Relay
     # sees, and counting it here would make survey-in disagree with it.
@@ -1960,70 +2014,6 @@ class UbloxDriver(GpsReceiverDriver):
         return SurveyInProgress()  # Default if no response
 
     @staticmethod
-    def _ecef_to_llh(x_m: float, y_m: float, z_m: float) -> tuple[float, float, float]:
-        """Convert ECEF coordinates (metres) to WGS84 lat/lon/alt.
-
-        Uses an iterative method for sub-mm accuracy.
-
-        Returns:
-            Tuple of (latitude_deg, longitude_deg, altitude_m).
-        """
-        import math
-
-        a = 6378137.0  # WGS84 semi-major axis
-        f = 1.0 / 298.257223563  # WGS84 flattening
-        e2 = 2.0 * f - f * f  # eccentricity squared
-
-        lon = math.atan2(y_m, x_m)
-        p = math.sqrt(x_m * x_m + y_m * y_m)
-
-        # Initial latitude estimate
-        lat = math.atan2(z_m, p * (1.0 - e2))
-
-        # Iterate for convergence
-        for _ in range(10):
-            sin_lat = math.sin(lat)
-            n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
-            lat = math.atan2(z_m + e2 * n * sin_lat, p)
-
-        sin_lat = math.sin(lat)
-        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
-        alt = p / math.cos(lat) - n
-
-        return (math.degrees(lat), math.degrees(lon), alt)
-
-    @staticmethod
-    def _llh_to_ecef(
-        lat_deg: float, lon_deg: float, alt_m: float
-    ) -> tuple[float, float, float]:
-        """Convert WGS84 lat/lon/alt to ECEF coordinates (metres).
-
-        Inverse of ``_ecef_to_llh``. Used to populate
-        ``CFG_TMODE_ECEF_X/Y/Z`` alongside the LLH keys when writing a
-        fixed-base position — the ZED-F9P base engine requires a valid
-        ECEF position before it will generate RTCM corrections.
-
-        Returns:
-            Tuple of (x_m, y_m, z_m).
-        """
-        import math
-
-        a = 6378137.0  # WGS84 semi-major axis
-        f = 1.0 / 298.257223563  # WGS84 flattening
-        e2 = 2.0 * f - f * f  # eccentricity squared
-
-        lat = math.radians(lat_deg)
-        lon = math.radians(lon_deg)
-        sin_lat = math.sin(lat)
-        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
-
-        x = (n + alt_m) * math.cos(lat) * math.cos(lon)
-        y = (n + alt_m) * math.cos(lat) * math.sin(lon)
-        z = (n * (1.0 - e2) + alt_m) * sin_lat
-
-        return (x, y, z)
-
-    @staticmethod
     def _m_to_cm_hp(value_m: float) -> tuple[int, int]:
         """Split a metre value into wire-format (cm, HP) for CFG_TMODE_ECEF_*.
 
@@ -2079,7 +2069,7 @@ class UbloxDriver(GpsReceiverDriver):
         y_m = mean_y_cm / 100.0 + mean_y_hp * 0.0001
         z_m = mean_z_cm / 100.0 + mean_z_hp * 0.0001
 
-        return UbloxDriver._ecef_to_llh(x_m, y_m, z_m)
+        return ecef_to_llh(x_m, y_m, z_m)
 
     def get_device_info(self) -> DeviceInfo:
         return self._poll_mon_ver()
@@ -2146,7 +2136,7 @@ class UbloxDriver(GpsReceiverDriver):
             y_m = ecef_y_cm / 100.0 + ecef_y_hp * 0.0001
             z_m = ecef_z_cm / 100.0 + ecef_z_hp * 0.0001
 
-            lat, lon, alt_m = UbloxDriver._ecef_to_llh(x_m, y_m, z_m)
+            lat, lon, alt_m = ecef_to_llh(x_m, y_m, z_m)
             pos_type = "ecef"
         else:
             # LLH mode — direct lat/lon/height

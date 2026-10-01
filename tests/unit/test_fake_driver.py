@@ -30,6 +30,7 @@ What we assert
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import time
 from collections.abc import Iterator
@@ -48,14 +49,17 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
     SurveyInConfig,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.fake import (
     FAKE_FLASH_DIVERGENCE_PORT,
+    FAKE_NO_SURVEY_IN_PORT,
     FAKE_PORT_LABEL,
     FakeGpsDriver,
 )
+from sp_rtk_base.services.geodesy import llh_to_ecef
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -788,3 +792,86 @@ class TestEnvGatedRegistration:
 
         importlib.reload(mod)
         assert "fake" not in mod.list_drivers()
+
+
+# ---------------------------------------------------------------------------
+# Survey position (issue #191)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def connected_fake() -> FakeGpsDriver:
+    driver = FakeGpsDriver()
+    driver.connect("FAKE")
+    return driver
+
+
+class TestFakeSurveyPosition:
+    def test_a_rover_without_corrections_has_a_metre_level_3d_fix(
+        self, connected_fake: FakeGpsDriver
+    ) -> None:
+        position = connected_fake.get_survey_position()
+
+        assert position.fix_ok is True
+        assert position.rtk_status == "none"
+        assert position.correction_age_s is None
+        assert 0.5 <= position.accuracy_3d_m <= 5.0
+
+    def test_positions_scatter_around_the_fakes_location(
+        self, connected_fake: FakeGpsDriver
+    ) -> None:
+        true_x, true_y, true_z = llh_to_ecef(*connected_fake.true_position_llh)
+
+        positions = [connected_fake.get_survey_position() for _ in range(50)]
+
+        offsets = [
+            math.dist((p.ecef_x_m, p.ecef_y_m, p.ecef_z_m), (true_x, true_y, true_z))
+            for p in positions
+        ]
+        assert max(offsets) < 5.0  # metre-level
+        assert len({p.ecef_x_m for p in positions}) > 1  # not a constant
+
+    def test_scripted_positions_come_back_in_order(
+        self, connected_fake: FakeGpsDriver
+    ) -> None:
+        scripted = [
+            SurveyPosition(
+                ecef_x_m=1.0,
+                ecef_y_m=2.0,
+                ecef_z_m=3.0,
+                accuracy_3d_m=0.5,
+                rtk_status="none",
+                fix_ok=True,
+                correction_age_s=None,
+            ),
+            SurveyPosition(
+                ecef_x_m=0.0,
+                ecef_y_m=0.0,
+                ecef_z_m=0.0,
+                accuracy_3d_m=0.0,
+                rtk_status="none",
+                fix_ok=False,
+                correction_age_s=None,
+            ),
+        ]
+        connected_fake.script_survey_positions(scripted)
+
+        assert [
+            connected_fake.get_survey_position(),
+            connected_fake.get_survey_position(),
+        ] == scripted
+        assert connected_fake.get_survey_position().fix_ok is True  # back to simulating
+
+    def test_the_no_survey_in_variant_has_no_receiver_survey_in(self) -> None:
+        driver = FakeGpsDriver()
+        driver.connect(FAKE_NO_SURVEY_IN_PORT)
+
+        capabilities = driver.get_capabilities()
+
+        assert DeviceCapability.SURVEY_IN not in capabilities
+        assert DeviceCapability.FIXED_BASE in capabilities
+
+    def test_the_normal_fake_keeps_its_receiver_survey_in(
+        self, connected_fake: FakeGpsDriver
+    ) -> None:
+        assert DeviceCapability.SURVEY_IN in connected_fake.get_capabilities()

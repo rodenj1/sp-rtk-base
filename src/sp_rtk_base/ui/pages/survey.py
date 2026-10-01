@@ -26,11 +26,13 @@ from sp_rtk_base.models.device_models import (
     BaseMode,
     DeviceCapability,
     DeviceConnectionState,
+    SurveyInProgress,
 )
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
     get_signal_quality_service,
+    get_survey_service,
 )
 from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
@@ -53,6 +55,7 @@ logger = logging.getLogger(__name__)
 def survey_page() -> None:
     """Render the survey-in workflow page."""
     svc = get_device_service()
+    survey_svc = get_survey_service()
     config_svc = get_config_service()
 
     with page_layout("Survey-In"):
@@ -244,6 +247,12 @@ def survey_page() -> None:
                     ui.label("Survey-In Progress").classes("text-subtitle2 text-grey-4")
                     svin_target_label = ui.label("").classes("text-caption text-grey-5")
                 svin_status_label = ui.label("Idle").classes("text-white")
+                # Who averages this survey: the receiver's own survey-in,
+                # or the station (a receiver without one).
+                svin_averaged_by_label = ui.label("").classes(
+                    "text-caption text-grey-5"
+                )
+                svin_averaged_by_label.set_visibility(False)
                 # In-card error banner — replaces toast-only feedback so a
                 # config-write failure stays visible after the toast fades.
                 svin_error_label = ui.label("").classes(
@@ -500,16 +509,6 @@ def survey_page() -> None:
         _svin_eta_samples: list[tuple[int, float]] = []
         _ETA_WINDOW_SECONDS: int = 30
 
-        # Receiver-side ``dur`` value captured on the *first* NAV-SVIN
-        # poll after a fresh "Start Survey-In" press.  All displayed
-        # durations and chart x-axis values are offset by this number
-        # so the UI always counts from zero, even on the off chance
-        # the receiver's NAV-SVIN dur counter still carries a small
-        # residue from the previous session that survived the
-        # configure_survey_in TMODE-reset verification window.
-        # ``None`` means "no survey started yet from this UI session".
-        _svin_dur_offset: int | None = None
-
         # Current fixed base position (from device read-back)
         _fb_lat: float = 0.0
         _fb_lon: float = 0.0
@@ -599,7 +598,11 @@ def survey_page() -> None:
                                 ui.badge(c.value).props("color=primary outline")
 
             position_section.set_visibility(connected)
-            survey_card.set_visibility(connected and DeviceCapability.SURVEY_IN in caps)
+            # A receiver without a Receiver survey-in is surveyed by the
+            # station itself, so only a fixed base is needed (issue #191).
+            survey_card.set_visibility(
+                connected and DeviceCapability.FIXED_BASE in caps
+            )
             fixed_card.set_visibility(connected)
 
             status = svc.get_status()
@@ -956,7 +959,7 @@ def survey_page() -> None:
         # ---- Connection ----
 
         async def _connect() -> None:
-            nonlocal pos_timer, svin_timer, _svin_dur_offset
+            nonlocal pos_timer, svin_timer
             port = port_select.value
             baud = int(baud_select.value or DEFAULT_BAUD)
             vendor = str(driver_select.value or "ublox")
@@ -978,7 +981,6 @@ def survey_page() -> None:
             if svin_timer is not None:
                 svin_timer.active = False
                 svin_timer = None
-            _svin_dur_offset = None
             try:
                 if svc.is_connected:
                     await svc.disconnect()
@@ -1182,15 +1184,9 @@ def survey_page() -> None:
             return math.ceil(dur_seconds * 1000 / period)
 
         async def _start_survey_in() -> None:
-            nonlocal svin_timer, _svin_dur_offset, _svin_meas_period_ms
+            nonlocal svin_timer, _svin_meas_period_ms
             from sp_rtk_base.models.device_models import SurveyInConfig
 
-            # Force re-snapshot of the receiver's ``dur`` counter on the
-            # next poll.  Without this, a second Start press while the
-            # previous offset is still cached would display negative
-            # elapsed times until the receiver counter overtakes the
-            # stale offset.
-            _svin_dur_offset = None
             _svin_meas_period_ms = None
 
             dur = int(svin_duration.value or 120)
@@ -1208,22 +1204,18 @@ def survey_page() -> None:
             svin_error_label.text = ""
             svin_warning_label.set_visibility(False)
             svin_warning_label.text = ""
+            svin_averaged_by_label.set_visibility(False)
 
-            # Peek at the receiver's NAV-SVIN state to detect stale
-            # BBR accumulator from a prior session.  If dur >= 30s
-            # the driver will auto-reset before starting (~5-8s
-            # added to the start latency); surface that as a toast
-            # so the operator knows why the start is slower.
+            # A Receiver survey-in carrying a stale counter from an earlier
+            # session is reset by the driver before it starts (~5-8 s);
+            # say so, so the slower start isn't a mystery.
             needs_reset = False
-            try:
-                pre_status = await svc.get_survey_in_status()
-                if pre_status.duration_seconds >= 30:
-                    needs_reset = True
-            except Exception:
-                # Status query failure isn't fatal — the driver
-                # will still attempt the start; we just won't have
-                # foreknowledge of whether a reset is needed.
-                pass
+            if DeviceCapability.SURVEY_IN in svc.capabilities:
+                try:
+                    pre_status = await svc.get_survey_in_status()
+                    needs_reset = pre_status.duration_seconds >= 30
+                except Exception:
+                    pass  # not fatal: the start itself still runs
 
             await _read_meas_period()
 
@@ -1258,7 +1250,7 @@ def survey_page() -> None:
             svin_chart.update()
 
             try:
-                await svc.configure_survey_in(
+                await survey_svc.start(
                     SurveyInConfig(min_duration_seconds=dur, accuracy_limit_mm=acc)
                 )
             except Exception as exc:
@@ -1291,10 +1283,10 @@ def survey_page() -> None:
                 ui.label("Cancel Survey-In?").classes("text-h6 text-white")
                 ui.separator()
                 ui.label(
-                    "This will abort the survey and clear the receiver's "
-                    "TMODE configuration.  Any progress will be lost.  "
-                    "The current fixed-base position (if saved to flash) "
-                    "is unaffected until power-cycle."
+                    "This will abort the survey and leave the receiver in "
+                    "rover mode.  Any progress will be lost.  The current "
+                    "fixed-base position (if saved to flash) is unaffected "
+                    "until power-cycle."
                 ).classes("text-grey-4 q-mt-sm")
 
                 with ui.row().classes("gap-2 q-mt-md justify-end"):
@@ -1319,12 +1311,12 @@ def survey_page() -> None:
             failure so live state continues to surface while the
             operator decides what to do.
             """
-            nonlocal svin_timer, _svin_dur_offset
+            nonlocal svin_timer
             if svin_timer is not None:
                 svin_timer.active = False
                 svin_timer = None
             try:
-                await svc.cancel_survey_in()
+                await survey_svc.cancel()
             except Exception as exc:
                 err_msg = f"Cancel failed: {exc}"
                 svin_error_label.text = err_msg
@@ -1349,71 +1341,55 @@ def survey_page() -> None:
             svin_progress_bar.value = 0.0
             svin_cancel_btn.set_visibility(False)
             svin_start_btn.set_visibility(True)
-            # Clear the snapshot so a subsequent Start re-captures fresh.
-            _svin_dur_offset = None
             ui.notify("Survey-in cancelled", type="info")
 
-        async def _poll_survey_in() -> None:
-            nonlocal svin_timer, _svin_dur_offset
+        async def _poll_survey_in(announce: bool = True) -> None:
+            nonlocal svin_timer
             try:
-                progress = await svc.get_survey_in_status()
+                progress = await survey_svc.progress()
 
-                # Snapshot the receiver's ``dur`` counter on the first
-                # poll after Start so the UI counts from 0 regardless
-                # of what the receiver's accumulator reports.  We
-                # used to gate this on ``progress.active`` but the
-                # ZED-F9P (HPG 1.12) leaves ``active=False`` even
-                # while genuinely surveying, so the gate never fired
-                # and the UI displayed the raw 60000+ s accumulator.
-                # The driver's ``configure_survey_in`` now guarantees
-                # via CFG-RST that ``dur`` is < 30 s by the time it
-                # returns, so capturing the first observed dur as the
-                # offset is correct regardless of ``active``.
-                is_first_poll_after_start = _svin_dur_offset is None
-                if is_first_poll_after_start:
-                    _svin_dur_offset = int(progress.duration_seconds)
-                    logger.info(
-                        "Survey-in start: captured dur offset = %ds",
-                        _svin_dur_offset,
+                # Elapsed survey time, counted by the server whoever
+                # averages (the receiver's duration counter is offset
+                # there, issue #191).
+                elapsed = int(progress.duration_seconds)
+                by_station = progress.averaged_by == "application"
+                if progress.averaged_by is not None:
+                    svin_averaged_by_label.text = (
+                        "Averaged by the station (this receiver has no "
+                        "survey-in of its own)"
+                        if by_station
+                        else "Averaged by the receiver"
                     )
+                    svin_averaged_by_label.set_visibility(True)
 
-                # Effective elapsed for display = receiver_dur - offset.
-                raw_dur = int(progress.duration_seconds)
-                elapsed = max(0, raw_dur - (_svin_dur_offset or 0))
-
-                if progress.valid:
-                    svin_status_label.text = "✓ Complete — committing..."
-                    svin_status_label.classes(replace="text-positive")
-                    # Clear in-progress labels so the operator doesn't
-                    # see contradictory state.  Without this the
-                    # "% to target: 100% — waiting on min duration"
-                    # and "ETA: ~Xs (waiting on min duration)" lines
-                    # remained on screen alongside "Survey complete",
-                    # which the e2e tester correctly flagged as
-                    # misleading.
+                if progress.outcome == "completed":
                     svin_pct_label.text = "% to target: 100% (target reached)"
                     svin_eta_label.text = "ETA: complete"
                     svin_progress_bar.value = 1.0
                     svin_warning_label.set_visibility(False)
-
+                    svin_dur_label.text = f"Duration: {elapsed}s"
+                    svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
                     if svin_timer is not None:
                         svin_timer.active = False
                         svin_timer = None
-
-                    # Auto-pipeline: promote → flash → refresh
-                    await _auto_commit_survey(progress)
+                    if by_station:
+                        # The server has already committed the fixed base
+                        # and saved it to flash.
+                        await _show_station_survey_committed(announce)
+                    else:
+                        # Receiver survey-in: promote → flash → refresh.
+                        svin_status_label.text = "✓ Complete — committing..."
+                        svin_status_label.classes(replace="text-positive")
+                        await _auto_commit_survey(progress)
                     return
-                elif progress.active or elapsed > 0:
-                    # On ZED-F9P HPG 1.12 ``progress.active`` stays
-                    # False even while the receiver is genuinely
-                    # surveying, so ``elapsed > 0`` (dur has ticked
-                    # past the offset we captured at Start) is the
-                    # authoritative signal that the survey is making
-                    # progress.
+                if progress.outcome in ("aborted", "cancelled"):
+                    if svin_timer is not None:
+                        svin_timer.active = False
+                        svin_timer = None
+                    _show_survey_stopped(progress)
+                    return
+                if progress.outcome == "running":
                     svin_status_label.text = "Active — collecting..."
-                    svin_status_label.classes(replace="text-warning")
-                elif is_first_poll_after_start:
-                    svin_status_label.text = "Waiting for receiver..."
                     svin_status_label.classes(replace="text-warning")
                 else:
                     svin_status_label.text = "Idle"
@@ -1424,9 +1400,11 @@ def survey_page() -> None:
                 dur_target = int(svin_duration.value or 120)
                 if _svin_meas_period_ms is None:
                     await _read_meas_period()
+                # The station takes one observation a second; the receiver
+                # one per navigation epoch.
+                obs_target = dur_target if by_station else _obs_target(dur_target)
                 svin_obs_label.text = (
-                    f"Observations: {progress.observations:,} / "
-                    f"{_obs_target(dur_target):,}"
+                    f"Observations: {progress.observations:,} / {obs_target:,}"
                 )
                 acc_target = float(svin_accuracy.value or 50000)
                 cur_acc = float(progress.mean_accuracy_mm)
@@ -1562,6 +1540,46 @@ def survey_page() -> None:
                 svin_chart.update()
             except Exception:
                 pass
+
+        _ABORT_REASONS: dict[str, str] = {
+            "accuracy_not_reached": "the accuracy limit wasn't reached in time",
+            "device_disconnected": "the receiver stopped answering",
+            "no_corrections": "no corrections arrived",
+            "no_fixed": "the receiver never reached RTK Fixed",
+        }
+
+        async def _show_station_survey_committed(announce: bool = True) -> None:
+            """The station averaged the survey and the server committed it."""
+            await _read_fixed_base()
+            svin_status_label.text = "✓ Survey complete — position committed!"
+            svin_status_label.classes(replace="text-positive")
+            if announce:
+                ui.notify(
+                    "Survey complete — position committed to device ✓",
+                    type="positive",
+                )
+            svin_start_btn.set_visibility(True)
+            svin_cancel_btn.set_visibility(False)
+
+        def _show_survey_stopped(progress: SurveyInProgress) -> None:
+            """An aborted or cancelled survey: say why, keep the last accuracy."""
+            if progress.outcome == "aborted":
+                reason = _ABORT_REASONS.get(
+                    progress.abort_reason or "", "an unexpected error"
+                )
+                svin_status_label.text = (
+                    f"⚠ Survey aborted: {reason} (last accuracy "
+                    f"{progress.mean_accuracy_mm:.0f} mm). Nothing was committed; "
+                    "the receiver is in rover mode."
+                )
+                svin_status_label.classes(replace="text-negative")
+            else:
+                svin_status_label.text = "Cancelled by operator"
+                svin_status_label.classes(replace="text-grey-3")
+            svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
+            svin_warning_label.set_visibility(False)
+            svin_start_btn.set_visibility(True)
+            svin_cancel_btn.set_visibility(False)
 
         async def _auto_commit_survey(progress: object) -> None:
             """Auto-promote survey result to fixed base and save to flash."""
@@ -1791,7 +1809,7 @@ def survey_page() -> None:
 
         # ---- Auto-load if already connected ----
         async def _on_page_load() -> None:
-            nonlocal pos_timer
+            nonlocal pos_timer, svin_timer
             if svc.is_connected:
                 _update_ui_state()
                 if pos_timer is None:
@@ -1800,6 +1818,22 @@ def survey_page() -> None:
                     await _read_fixed_base()
                 except Exception:
                     logger.debug("Auto-load base config failed on page load")
+                # A survey keeps going with the page closed: pick a running
+                # one back up, and show how a station-averaged one ended
+                # (issue #191).
+                try:
+                    progress = await survey_svc.progress()
+                except Exception:
+                    progress = None
+                if progress is not None and progress.outcome == "running":
+                    svin_progress_card.set_visibility(True)
+                    svin_start_btn.set_visibility(False)
+                    svin_cancel_btn.set_visibility(True)
+                    if svin_timer is None:
+                        svin_timer = ui.timer(2.0, _poll_survey_in)
+                elif progress is not None and progress.averaged_by == "application":
+                    svin_progress_card.set_visibility(True)
+                    await _poll_survey_in(announce=False)
 
         # ---- Initial load ----
         _refresh_ports()

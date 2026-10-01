@@ -22,6 +22,7 @@ from sp_rtk_base.models.device_models import (
     RtcmRowId,
     SurveyInConfig,
     SurveyInProgress,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.services.drivers import (
@@ -96,6 +97,11 @@ class StubDriver(GpsReceiverDriver):
 
     def get_survey_in_status(self) -> SurveyInProgress:
         return SurveyInProgress()
+
+    def get_survey_position(self) -> SurveyPosition:
+        return SurveyPosition(
+            ecef_x_m=0.0, ecef_y_m=0.0, ecef_z_m=0.0, accuracy_3d_m=0.0, fix_ok=False
+        )
 
     def get_device_info(self) -> DeviceInfo:
         return DeviceInfo(vendor="StubVendor", model="StubModel")

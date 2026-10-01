@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -585,8 +586,41 @@ class GpsPosition(BaseModel):
     timestamp: datetime | None = Field(default=None, description="UTC time of the fix")
 
 
+class SurveyPosition(BaseModel):
+    """A high-precision position for averaging a Survey-in (0.1 mm ECEF).
+
+    Vendor-neutral: every driver supplies it, whether or not the receiver
+    has a Receiver survey-in.
+    """
+
+    ecef_x_m: float = Field(description="ECEF X (m)")
+    ecef_y_m: float = Field(description="ECEF Y (m)")
+    ecef_z_m: float = Field(description="ECEF Z (m)")
+    accuracy_3d_m: float = Field(
+        ge=0.0, description="The receiver's own 3D accuracy estimate (m)"
+    )
+    rtk_status: str = Field(
+        default="none", description="RTK status: 'none', 'float', or 'fixed'"
+    )
+    fix_ok: bool = Field(description="A valid 3D fix")
+    correction_age_s: float | None = Field(
+        default=None,
+        description="Age of the corrections in use (s); None when none are in use",
+    )
+
+
+SurveyAveragedBy = Literal["receiver", "application"]
+"""Who averages a Survey-in: the receiver's own survey-in, or the station."""
+
+SurveyOutcome = Literal["running", "completed", "cancelled", "aborted"]
+
+SurveyAbortReason = Literal[
+    "no_corrections", "no_fixed", "accuracy_not_reached", "device_disconnected"
+]
+
+
 class SurveyInProgress(BaseModel):
-    """Live survey-in status from the receiver."""
+    """Live Survey-in progress, whoever is averaging."""
 
     active: bool = Field(default=False, description="Survey-in is currently running")
     valid: bool = Field(default=False, description="Survey-in result is valid")
@@ -604,6 +638,16 @@ class SurveyInProgress(BaseModel):
     longitude: float | None = Field(default=None, description="WGS84 longitude (°)")
     altitude_m: float | None = Field(
         default=None, description="Height above ellipsoid (m)"
+    )
+    averaged_by: SurveyAveragedBy | None = Field(
+        default=None,
+        description="Who averages this survey; None when no survey was started here",
+    )
+    outcome: SurveyOutcome | None = Field(
+        default=None, description="The survey's outcome; None when none was started"
+    )
+    abort_reason: SurveyAbortReason | None = Field(
+        default=None, description="Why the survey aborted (outcome 'aborted')"
     )
 
 

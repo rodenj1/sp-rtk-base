@@ -30,6 +30,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
+from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
 
 # ---------------------------------------------------------------------------
 # Auto-mock fcntl.flock — mock serial objects don't have real file descriptors
@@ -1417,7 +1418,7 @@ class TestEcefToLlh:
         """Convert a known ECEF point near Zurich, CH."""
         # Zurich area — approximate ECEF coordinates
         # ECEF (m): x ≈ 4277262, y ≈ 643249, z ≈ 4672551
-        lat, lon, alt = UbloxDriver._ecef_to_llh(4277262.0, 643249.0, 4672551.0)  # pyright: ignore[reportPrivateUsage]
+        lat, lon, alt = ecef_to_llh(4277262.0, 643249.0, 4672551.0)
         # Should be in Switzerland (lat ~47, lon ~8.5)
         assert 47.0 < lat < 48.0
         assert 8.0 < lon < 9.0
@@ -1425,14 +1426,14 @@ class TestEcefToLlh:
 
     def test_zero_point(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """ECEF origin should produce zero lat/lon."""
-        lat, lon, _alt = UbloxDriver._ecef_to_llh(0.0, 0.0, 0.0)  # pyright: ignore[reportPrivateUsage]
+        lat, lon, _alt = ecef_to_llh(0.0, 0.0, 0.0)
         assert lat == 0.0
         assert lon == 0.0
 
     def test_north_pole(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """ECEF at north pole."""
         # North pole: lat ≈ 90°, ECEF z ≈ 6356752.3 (semi-minor axis)
-        lat, _lon, _alt = UbloxDriver._ecef_to_llh(0.0, 0.0, 6356752.3)  # pyright: ignore[reportPrivateUsage]
+        lat, _lon, _alt = ecef_to_llh(0.0, 0.0, 6356752.3)
         assert abs(lat - 90.0) < 0.01
 
 
@@ -1441,14 +1442,14 @@ class TestLlhToEcef:
 
     def test_origin(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """0,0,0 lands on the equator at the WGS84 semi-major axis."""
-        x, y, z = UbloxDriver._llh_to_ecef(0.0, 0.0, 0.0)  # pyright: ignore[reportPrivateUsage]
+        x, y, z = llh_to_ecef(0.0, 0.0, 0.0)
         assert x == pytest.approx(6378137.0, abs=1e-3)
         assert y == pytest.approx(0.0, abs=1e-6)
         assert z == pytest.approx(0.0, abs=1e-6)
 
     def test_north_pole(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """90°N lands on the WGS84 semi-minor axis."""
-        x, y, z = UbloxDriver._llh_to_ecef(90.0, 0.0, 0.0)  # pyright: ignore[reportPrivateUsage]
+        x, y, z = llh_to_ecef(90.0, 0.0, 0.0)
         assert x == pytest.approx(0.0, abs=1e-3)
         assert y == pytest.approx(0.0, abs=1e-3)
         assert z == pytest.approx(6356752.3, abs=1.0)
@@ -1456,11 +1457,11 @@ class TestLlhToEcef:
     def test_round_trip_with_ecef_to_llh(self) -> None:  # pyright: ignore[reportPrivateUsage]
         """LLH -> ECEF -> LLH recovers the original coordinate."""
         lat, lon, alt = 47.3977, 8.5456, 408.0
-        x, y, z = UbloxDriver._llh_to_ecef(lat, lon, alt)  # pyright: ignore[reportPrivateUsage]
+        x, y, z = llh_to_ecef(lat, lon, alt)
         # Never all-zero for a non-origin fix — this is the exact bug:
         # a fixed base silently kept ECEF at 0,0,0 and emitted no RTCM.
         assert (x, y, z) != (0.0, 0.0, 0.0)
-        round_lat, round_lon, round_alt = UbloxDriver._ecef_to_llh(x, y, z)  # pyright: ignore[reportPrivateUsage]
+        round_lat, round_lon, round_alt = ecef_to_llh(x, y, z)
         assert round_lat == pytest.approx(lat, abs=1e-6)
         assert round_lon == pytest.approx(lon, abs=1e-6)
         assert round_alt == pytest.approx(alt, abs=1e-3)

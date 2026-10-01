@@ -36,6 +36,7 @@ from sp_rtk_base.models.device_models import (
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.models.signal_quality_models import SignalSnapshot
@@ -674,6 +675,19 @@ class GpsReceiverDriver(abc.ABC):
 
         Returns:
             Current position solution.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+
+    @abc.abstractmethod
+    def get_survey_position(self) -> SurveyPosition:
+        """Read one high-precision position for averaging a Survey-in.
+
+        Every driver must supply it, at 0.1 mm resolution, with the RTK
+        status, the receiver's 3D accuracy estimate and the age of any
+        corrections in use. The station's own averaging uses it on a
+        receiver without a Receiver survey-in.
 
         Raises:
             ConnectionError: If not connected.

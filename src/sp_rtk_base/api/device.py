@@ -44,6 +44,7 @@ from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
     get_relay_service,
+    get_survey_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import (
@@ -54,6 +55,7 @@ from sp_rtk_base.services.device_service import (
 )
 from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.survey_service import SurveyService
 
 logger = logging.getLogger(__name__)
 
@@ -188,11 +190,16 @@ async def get_device_capabilities(
 @router.post("/configure/survey-in", response_model=DeviceActionResponse)
 async def configure_survey_in(
     config: SurveyInConfig,
-    svc: DeviceService = Depends(get_device_service),
+    survey: SurveyService = Depends(get_survey_service),
 ) -> DeviceActionResponse:
-    """Configure the receiver for survey-in mode."""
+    """Start a plain Survey-in.
+
+    The receiver averages it if it has a Receiver survey-in; otherwise the
+    station does, and commits the fixed base itself when it completes.
+    Returns 409 if not connected, the relay is running, or a survey runs.
+    """
     try:
-        await svc.configure_survey_in(config)
+        await survey.start(config)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -236,7 +243,7 @@ async def reset_receiver(
 
 @router.post("/cancel-survey-in", response_model=DeviceActionResponse)
 async def cancel_survey_in(
-    svc: DeviceService = Depends(get_device_service),
+    survey: SurveyService = Depends(get_survey_service),
 ) -> DeviceActionResponse:
     """Cancel an in-progress survey-in by disabling TMODE.
 
@@ -246,7 +253,7 @@ async def cancel_survey_in(
     Returns 409 if not connected or the relay is running.
     """
     try:
-        await svc.cancel_survey_in()
+        await survey.cancel()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -482,11 +489,11 @@ async def get_position(
 
 @router.get("/survey-in", response_model=SurveyInProgress)
 async def get_survey_in_progress(
-    svc: DeviceService = Depends(get_device_service),
+    survey: SurveyService = Depends(get_survey_service),
 ) -> SurveyInProgress:
-    """Poll the current survey-in progress from the receiver."""
+    """The current Survey-in's progress, whoever averages it."""
     try:
-        return await svc.get_survey_in_status()
+        return await survey.progress()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

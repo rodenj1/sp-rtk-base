@@ -32,6 +32,7 @@ from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
+from sp_rtk_base.services.survey_service import SurveyService
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
+survey_service: SurveyService = SurveyService(device_service)
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
 bluetooth_verification_service: BluetoothVerificationService = (
@@ -171,6 +173,15 @@ def get_device_service() -> DeviceService:
         The application's DeviceService instance.
     """
     return device_service
+
+
+def get_survey_service() -> SurveyService:
+    """Get the singleton SurveyService instance.
+
+    A singleton because a survey outlives the page that started it: the
+    station's own averaging commits the fixed base with no page open.
+    """
+    return survey_service
 
 
 def get_signal_quality_service() -> SignalQualityService:

@@ -64,11 +64,17 @@ def mock_config_service() -> ConfigService:
 
 @pytest.fixture()
 def client(mock_device_service: DeviceService) -> TestClient:
-    """Create a test client with the device service dependency overridden."""
-    from sp_rtk_base.services import get_device_service
+    """Create a test client with the device service dependency overridden.
+
+    The survey routes go through a SurveyService over the same mock.
+    """
+    from sp_rtk_base.services import get_device_service, get_survey_service
+    from sp_rtk_base.services.survey_service import SurveyService
 
     app = create_api_app()
+    survey = SurveyService(mock_device_service)
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
+    app.dependency_overrides[get_survey_service] = lambda: survey
     return TestClient(app)
 
 
@@ -346,6 +352,10 @@ class TestCapabilities:
 class TestConfigureSurveyIn:
     """Tests for POST /api/device/configure/survey-in."""
 
+    @pytest.fixture(autouse=True)
+    def _receiver_has_survey_in(self, mock_device_service: MagicMock) -> None:
+        mock_device_service.capabilities = {DeviceCapability.SURVEY_IN}
+
     def test_survey_in_success(
         self,
         client: TestClient,
@@ -448,6 +458,10 @@ class TestSaveToFlash:
 
 class TestSurveyInPolling:
     """Tests for GET /api/device/survey-in."""
+
+    @pytest.fixture(autouse=True)
+    def _receiver_has_survey_in(self, mock_device_service: MagicMock) -> None:
+        mock_device_service.capabilities = {DeviceCapability.SURVEY_IN}
 
     def test_survey_in_active(
         self,

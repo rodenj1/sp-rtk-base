@@ -167,6 +167,17 @@ async def shutdown_services() -> None:
     except Exception:
         logger.exception("Error stopping the Signal Quality poller")
 
+    # 0c. Survey-in — stop the station's averaging before the device goes.
+    try:
+        await asyncio.wait_for(
+            services_mod.survey_service.shutdown(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the survey-in")
+    except Exception:
+        logger.exception("Error stopping the survey-in")
+
     # 1. Device first — release the GPS handle (Bug B).
     if device_service.is_available and device_service.is_connected:
         try:

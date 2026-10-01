@@ -26,10 +26,11 @@ from sp_rtk_base.models.device_models import (
     DeviceConnectionState,
     SurveyInConfig,
 )
-from sp_rtk_base.services import get_device_service
+from sp_rtk_base.services import get_device_service, get_survey_service
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FakeGpsDriver
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
+from sp_rtk_base.services.survey_service import SurveyService
 
 # ---------------------------------------------------------------------------
 # Auto-mock fcntl.flock — mock serial objects don't have real file descriptors
@@ -841,7 +842,9 @@ class TestCancelSurveyInEndpoint:
 
     def _make_client(self, svc: DeviceService) -> TestClient:
         app = create_api_app()
+        survey = SurveyService(svc)
         app.dependency_overrides[get_device_service] = lambda: svc
+        app.dependency_overrides[get_survey_service] = lambda: survey
         return TestClient(app)
 
     def test_endpoint_returns_409_when_no_driver(self) -> None:
@@ -897,7 +900,9 @@ class TestCfgRstDiagnosticEndpoint:
 
     def _make_client(self, svc: DeviceService) -> TestClient:
         app = create_api_app()
+        survey = SurveyService(svc)
         app.dependency_overrides[get_device_service] = lambda: svc
+        app.dependency_overrides[get_survey_service] = lambda: survey
         return TestClient(app)
 
     def test_endpoint_rejects_disallowed_reset_mode(self) -> None:
@@ -1055,7 +1060,9 @@ class TestResetReceiverEndpoint:
 
     def _make_client(self, svc: DeviceService) -> TestClient:
         app = create_api_app()
+        survey = SurveyService(svc)
         app.dependency_overrides[get_device_service] = lambda: svc
+        app.dependency_overrides[get_survey_service] = lambda: survey
         return TestClient(app)
 
     def test_endpoint_returns_409_when_no_driver(self) -> None:

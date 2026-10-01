@@ -24,7 +24,9 @@ _Avoid_: engine, backend, service
 **Verification**:
 A dress rehearsal of the relay's own connect path, run against the values
 currently in the form rather than against what is saved. Answers one question:
-would Save and Start connect?
+would the connection it rehearses work? For an Input profile, that is whether
+Save and Start would connect. For a Correction source, it is whether a
+Corrected survey-in started now would receive corrections it can use.
 _Avoid_: test, connection test, probe
 
 **Stage**:
@@ -37,12 +39,16 @@ and teaches the operator to stop reading stages.
 _Avoid_: step, phase, check
 
 **Green**:
-A Verification outcome meaning Save and Start will connect **and will
-reconnect after the Bond is lost**. The second half is the load-bearing one: a
-Bond already in place carries the connection whatever the configured PIN says,
-so only a PIN exercised against a fresh Bond promises anything about the next
-reboot or eviction. A Green is a promise with a short life: it expires on its
-own and is void the moment any field is edited. It is never persisted.
+A Verification outcome meaning the connection it rehearses will work. A
+Green is a promise with a short life: it expires on its own and is void the
+moment any field is edited. It is never persisted.
+For a Bluetooth Input profile, Green means Save and Start will connect **and
+will reconnect after the Bond is lost**. The second half is the load-bearing
+one: a Bond already in place carries the connection whatever the configured
+PIN says, so only a PIN exercised against a fresh Bond promises anything
+about the next reboot or eviction.
+For a Correction source, Green means a Corrected survey-in started now would
+receive RTCM 3 Frames from it.
 _Avoid_: success, passed, verified, OK
 
 **Warning**:
@@ -54,6 +60,11 @@ that is not RTCM**, which is benign only while a receiver is still emitting
 NMEA or a boot banner, and otherwise means the wrong device was reached. The
 second is weaker evidence of a working configuration than the first, and says
 so in as many words.
+A Correction source has a different Warning. Its Frames arrive, but none of
+them carries the reference station's position, which may only mean the caster
+sends it rarely. A Correction source that is silent, or that sends bytes that
+never form a Frame, is Red, not a Warning: unlike a receiver, a correction
+stream has no benign reason to be quiet.
 
 **Red**:
 A Verification outcome meaning the connect path failed, always attributed to

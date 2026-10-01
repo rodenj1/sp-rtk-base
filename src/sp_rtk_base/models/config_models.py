@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sp_rtk_base_relay.config import (
     DestinationConfig,
     DestinationFilterConfig,
@@ -21,6 +21,7 @@ from sp_rtk_base_relay.config import (
     SurePathDestinationConfig,
     TcpServerDestinationConfig,
 )
+from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.device_models import DEFAULT_BAUD
@@ -148,6 +149,14 @@ class NtripProfile(BaseModel):
     retry_max_delay: int = 120
     retry_multiplier: float = 2.0
 
+    @property
+    def needs_username(self) -> bool:
+        """NTRIP v2 authenticates a server with Basic auth: no username, no run.
+
+        The Relay refuses a v2 NTRIP destination without one (issue #198).
+        """
+        return self.version == "2.0" and not self.username.strip()
+
     def to_relay_config(self) -> NtripDestinationConfig:
         """Convert to sp-rtk-base-relay NtripDestinationConfig.
 
@@ -202,6 +211,26 @@ class DestinationProfile(BaseModel):
     filter: FilterProfile = Field(default_factory=FilterProfile)
     config: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def cannot_run_reason(self) -> str | None:
+        """Why the Relay can't run this saved output, or ``None`` if it can.
+
+        Worded for the operator. Covers an NTRIP v2 output without a
+        username (see :attr:`NtripProfile.needs_username`); other shape
+        errors are left to :meth:`to_relay_config`'s validation.
+        """
+        if self.type == "ntrip":
+            try:
+                ntrip = NtripProfile(**self.config)
+            except ValidationError:
+                return None
+            if ntrip.needs_username:
+                return (
+                    f"Output '{self.name}' uses NTRIP v2, which needs a username. "
+                    "Add one, or switch it to NTRIP v1."
+                )
+        return None
+
     def to_relay_config(self) -> DestinationConfig:
         """Convert to sp-rtk-base-relay DestinationConfig dataclass.
 
@@ -209,8 +238,12 @@ class DestinationProfile(BaseModel):
             DestinationConfig with the appropriate type-specific config.
 
         Raises:
+            ConfigurationError: If the output can't run (see
+                :attr:`cannot_run_reason`).
             ValueError: If the destination type is not recognized.
         """
+        if (reason := self.cannot_run_reason) is not None:
+            raise ConfigurationError(reason)
         filter_config = self.filter.to_relay_config()
 
         specific_config: (

@@ -359,3 +359,49 @@ class TestAutoStartRetryLoop:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
             services_mod.event_bridge = original_eb
+
+
+class TestAutoStartWithAnOutputThatCannotRun:
+    """A saved v2 NTRIP output without a username (issue #198)."""
+
+    @pytest.mark.asyncio()
+    async def test_auto_start_reports_it_instead_of_failing_startup(
+        self,
+        tmp_path: Path,
+        reset_auto_start_status: None,
+    ) -> None:
+        config_svc = ConfigService(config_path=tmp_path / "config.yaml")
+        config = _make_auto_start_config()
+        config.destinations.append(
+            DestinationProfile(
+                name="rtk2go",
+                type="ntrip",
+                config={
+                    "caster": "rtk2go.com",
+                    "mountpoint": "MP1",
+                    "password": "secret",
+                    "version": "2.0",
+                },
+            )
+        )
+        config_svc.save_config(config)
+        relay_svc = MagicMock(spec=RelayService)
+        relay_svc.start_relay = AsyncMock()
+
+        original_config = services_mod.config_service
+        original_relay = services_mod.relay_service
+        try:
+            services_mod.config_service = config_svc
+            services_mod.relay_service = relay_svc
+            await services_mod.init_services()  # must not raise
+
+            relay_svc.start_relay.assert_not_called()
+            assert services_mod.auto_start_task is None
+            status = services_mod.auto_start_status
+            assert status.state == "failed_config"
+            assert status.last_error is not None
+            assert "rtk2go" in status.last_error
+            assert "username" in status.last_error
+        finally:
+            services_mod.config_service = original_config
+            services_mod.relay_service = original_relay

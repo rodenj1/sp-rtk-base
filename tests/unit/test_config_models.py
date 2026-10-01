@@ -230,6 +230,7 @@ class TestDestinationProfile:
                 "caster": "rtk2go.com",
                 "mountpoint": "MY_MOUNT",
                 "password": "secret",
+                "username": "me@example.com",
             },
         }
 
@@ -672,3 +673,60 @@ class TestInputProfileProvenPin:
         )
         cfg = BluetoothConfig(**ip.to_relay_config().config)
         assert cfg.pin == "1234"
+
+
+# ---------------------------------------------------------------------------
+# NTRIP v2 outputs need a username (issue #198)
+# ---------------------------------------------------------------------------
+
+
+def _ntrip_output(**config: Any) -> DestinationProfile:
+    base: dict[str, Any] = {
+        "caster": "rtk2go.com",
+        "mountpoint": "MP1",
+        "password": "secret",
+    }
+    base.update(config)
+    return DestinationProfile(name="rtk2go", type="ntrip", config=base)
+
+
+class TestNtripV2Username:
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"version": "2.0"},
+            {"version": "2.0", "username": ""},
+            {"version": "2.0", "username": "   "},
+            {},  # no version: v2 is the default
+        ],
+    )
+    def test_a_v2_output_without_a_username_has_a_problem(
+        self, config: dict[str, Any]
+    ) -> None:
+        reason = _ntrip_output(**config).cannot_run_reason
+
+        assert reason is not None
+        assert "rtk2go" in reason
+        assert "username" in reason
+
+    @pytest.mark.parametrize(
+        "config",
+        [{"version": "2.0", "username": "me@example.com"}, {"version": "1.0"}],
+    )
+    def test_v2_with_a_username_and_v1_without_one_are_fine(
+        self, config: dict[str, Any]
+    ) -> None:
+        assert _ntrip_output(**config).cannot_run_reason is None
+
+    def test_other_output_types_have_no_problem(self) -> None:
+        tcp = DestinationProfile(name="lan", type="tcp_server", config={"port": 5016})
+
+        assert tcp.cannot_run_reason is None
+
+    def test_converting_a_v2_output_without_a_username_is_refused_clearly(
+        self,
+    ) -> None:
+        from sp_rtk_base_relay.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="rtk2go.*username"):
+            _ntrip_output(version="2.0").to_relay_config()

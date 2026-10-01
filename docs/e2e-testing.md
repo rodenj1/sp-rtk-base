@@ -117,6 +117,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_outputs_buttons.py`         | Outputs page: Add Destination dialog, validation warning, Delete dialog          |
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
+| `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
 | `test_survey_station_averaged.py` | Survey-in on a receiver without a Receiver survey-in (`FAKE-NO-SVIN`): the station averages, commits the fixed base, cancels to rover mode; "Averaged by the receiver" on the normal fake |
 
 Total: **41 tests, ≈40 s wall-clock** on a Pi-class developer box.

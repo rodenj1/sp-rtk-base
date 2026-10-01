@@ -342,8 +342,16 @@ async def init_services() -> None:
         )
         return
 
-    dest_configs = [d.to_relay_config() for d in config.destinations if d.enabled]
-    input_config = config.input.to_relay_config()
+    # A saved config the Relay can't run (e.g. an NTRIP v2 output without
+    # a username, issue #198) is reported, not raised: startup carries on
+    # and the Dashboard shows why the relay didn't start.
+    try:
+        dest_configs = [d.to_relay_config() for d in config.destinations if d.enabled]
+        input_config = config.input.to_relay_config()
+    except (ConfigurationError, ValidationError, ValueError) as exc:
+        _set_auto_start_status("failed_config", 0, str(exc))
+        logger.error("Auto-start skipped: the saved configuration can't run: %s", exc)
+        return
 
     # Schedule the retry loop as a background task.  Hold the
     # reference at module scope so it isn't GC'd and so tests can

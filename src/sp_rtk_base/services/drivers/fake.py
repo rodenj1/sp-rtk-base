@@ -44,7 +44,10 @@ asserts on the *exact* numbers from the original report:
 
 from __future__ import annotations
 
+import random
 import time
+from collections import deque
+from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from sp_rtk_base.models.device_models import (
@@ -74,11 +77,13 @@ from sp_rtk_base.models.device_models import (
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.models.hardware_identity import HARDWARE_UNKNOWN, HardwareConfidence
 from sp_rtk_base.models.signal_quality_models import Band, Signal, SignalSnapshot
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.geodesy import llh_to_ecef
 
 # ---------------------------------------------------------------------------
 # Hard-coded fixtures (see module docstring for rationale)
@@ -187,6 +192,16 @@ FAKE_RATE_INDIFFERENT_PORT: str = "FAKE-RATE-INDIFFERENT"
 # instead of its normal UART1 — the only way to reach the guard's
 # protect-every-port path without a receiver that won't answer.
 FAKE_CONSOLE_UNKNOWN_PORT: str = "FAKE-CONSOLE-UNKNOWN"
+
+# Sentinel ``port`` value the e2e suite can pass to ``connect()`` to make
+# the fake a receiver **without a Receiver survey-in** (no SURVEY_IN
+# capability), so a plain Survey-in is averaged by the station itself.
+FAKE_NO_SURVEY_IN_PORT: str = "FAKE-NO-SVIN"
+
+# The simulated rover's survey positions (``get_survey_position``): a 3D
+# fix without corrections, scattered around the fake's location.
+_SURVEY_POSITION_NOISE_M: float = 0.5  # standard deviation per ECEF axis
+_SURVEY_POSITION_ACCURACY_M: float = 1.5  # the receiver's 3D estimate
 
 
 class FakeGpsDriver(GpsReceiverDriver):
@@ -349,6 +364,12 @@ class FakeGpsDriver(GpsReceiverDriver):
             PortId.UART2: 115200,
         }
 
+        # Survey averaging (issue #191): whether there's a Receiver
+        # survey-in, and the positions get_survey_position() hands out.
+        self._has_receiver_survey_in: bool = True
+        self._scripted_survey_positions: deque[SurveyPosition] = deque()
+        self._survey_rng = random.Random(191)  # repeatable noise
+
     # ------------------------------------------------------------------
     # Identity
     # ------------------------------------------------------------------
@@ -364,7 +385,7 @@ class FakeGpsDriver(GpsReceiverDriver):
         This keeps every UI path reachable during e2e — none of the
         capability-gated sections will be hidden.
         """
-        return {
+        capabilities = {
             DeviceCapability.SURVEY_IN,
             DeviceCapability.FIXED_BASE,
             DeviceCapability.RTCM_MESSAGE_SELECT,
@@ -373,6 +394,9 @@ class FakeGpsDriver(GpsReceiverDriver):
             DeviceCapability.SATELLITE_INFO,
             DeviceCapability.GNSS_SELECT,
         }
+        if not self._has_receiver_survey_in:
+            capabilities.discard(DeviceCapability.SURVEY_IN)
+        return capabilities
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -404,6 +428,8 @@ class FakeGpsDriver(GpsReceiverDriver):
             self._rtcm_ports = RtcmPortConfig()
         elif port == FAKE_FLASH_DIVERGENCE_PORT:
             self._warn_on_rtcm_write = True
+        elif port == FAKE_NO_SURVEY_IN_PORT:
+            self._has_receiver_survey_in = False
         return self._device_info
 
     def identify_console_port(self) -> ConsolePortReading:
@@ -693,6 +719,36 @@ class FakeGpsDriver(GpsReceiverDriver):
             timestamp=datetime.now(timezone.utc),
         )
 
+    @property
+    def true_position_llh(self) -> tuple[float, float, float]:
+        """Where the fake receiver really is: (latitude, longitude, height)."""
+        return (_FAKE_LAT, _FAKE_LON, _FAKE_ALT_M)
+
+    def script_survey_positions(self, positions: Iterable[SurveyPosition]) -> None:
+        """Queue exact positions for get_survey_position() to return first."""
+        self._scripted_survey_positions.extend(positions)
+
+    def get_survey_position(self) -> SurveyPosition:
+        """A scripted position if one is queued, else a simulated rover's.
+
+        The simulated rover has a 3D fix without corrections, scattered
+        around :attr:`true_position_llh` by about half a metre per axis.
+        """
+        self._ensure_connected()
+        if self._scripted_survey_positions:
+            return self._scripted_survey_positions.popleft()
+        x, y, z = llh_to_ecef(*self.true_position_llh)
+        noise = self._survey_rng.gauss
+        return SurveyPosition(
+            ecef_x_m=x + noise(0.0, _SURVEY_POSITION_NOISE_M),
+            ecef_y_m=y + noise(0.0, _SURVEY_POSITION_NOISE_M),
+            ecef_z_m=z + noise(0.0, _SURVEY_POSITION_NOISE_M),
+            accuracy_3d_m=_SURVEY_POSITION_ACCURACY_M,
+            rtk_status="none",
+            fix_ok=True,
+            correction_age_s=None,
+        )
+
     def get_signal_snapshot(self) -> SignalSnapshot:
         """Return the chosen Signal Snapshot, clear sky by default."""
         self._ensure_connected()
@@ -827,4 +883,4 @@ class FakeGpsDriver(GpsReceiverDriver):
             )
 
 
-__all__ = ["FAKE_PORT_LABEL", "FakeGpsDriver"]
+__all__ = ["FAKE_NO_SURVEY_IN_PORT", "FAKE_PORT_LABEL", "FakeGpsDriver"]

@@ -37,6 +37,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     SurveyInConfig,
     SurveyInProgress,
+    SurveyPosition,
     UbxProtocol,
 )
 from sp_rtk_base.models.device_models import (
@@ -1429,6 +1430,27 @@ class DeviceService:
         """
         driver = self._require_connected()
         return await asyncio.to_thread(driver.get_signal_snapshot)
+
+    async def get_survey_position(self) -> SurveyPosition:
+        """Read one high-precision position for averaging a Survey-in.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        return await asyncio.to_thread(driver.get_survey_position)
+
+    async def disable_base_mode(self) -> None:
+        """Put the receiver in rover mode (no survey-in, no fixed base).
+
+        Unlike :meth:`cancel_survey_in` it doesn't reset the receiver:
+        there's no Receiver survey-in accumulator to clear.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        await asyncio.to_thread(driver.disable_base_mode)
 
     async def get_survey_in_status(self) -> SurveyInProgress:
         """Poll the current survey-in progress.

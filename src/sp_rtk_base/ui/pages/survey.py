@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 @ui.page("/survey")
-def survey_page() -> None:
+def survey_page(variant: str | None = None) -> None:
     """Render the survey-in workflow page."""
     svc = get_device_service()
     config_svc = get_config_service()
@@ -177,8 +177,17 @@ def survey_page() -> None:
         # ================================================================
         # Card 2: Survey-In (standalone)
         # ================================================================
+        # PROTOTYPE (rtk_development#21): Correction source variants.
+        from sp_rtk_base.ui.pages import survey_correction_prototype as _proto
+
+        _proto_on = bool(variant) and _proto.prototype_enabled()
+        if _proto_on:
+            _proto.render(variant or "A")
+
         survey_card = ui.card().classes("w-full q-pa-md q-mt-md")
         survey_card.set_visibility(False)
+        if _proto_on:
+            survey_card.set_visibility = lambda *_a, **_k: None  # type: ignore[method-assign]
 
         with survey_card:
             ui.label("Survey-In").classes("text-h6 text-white")

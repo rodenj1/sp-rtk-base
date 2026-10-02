@@ -66,6 +66,14 @@ class TestVerdict:
 
         assert any("old" in reason for reason in probe.verdict(progress))
 
+    def test_two_nav_polls_a_sample_is_green(self) -> None:
+        # The floor while the survey polls NAV-HPPOSECEF and NAV-PVT, each
+        # answered at the receiver's next epoch (about 1 s).
+        progress = _healthy()
+        progress["diagnostics"]["sample_interval_s"] = _spread(2.02)
+
+        assert probe.verdict(progress) == []
+
     def test_a_slow_survey_sample_is_red(self) -> None:
         progress = _healthy()
         progress["diagnostics"]["sample_interval_s"] = _spread(4.2)

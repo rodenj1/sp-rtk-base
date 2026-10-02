@@ -11,7 +11,7 @@ It's red when any of these holds:
 - Frames were dropped before they were written (the pump fell behind);
 - written Frames' data was older than MAX_FRAME_AGE_S (stale corrections;
   measured by the station's clock, so it needs NTP);
-- the survey sampled less often than every MAX_SAMPLE_INTERVAL_S;
+- the survey sampled less often than every MAX_SAMPLE_INTERVAL_S (2.5 s);
 - the receiver counted fewer RTCM 3 messages than were written;
 - the receiver used fewer than MIN_USED_RATIO of the MSM it reported on.
 
@@ -35,7 +35,10 @@ import urllib.request
 from typing import Any, cast
 
 MAX_FRAME_AGE_S = 5.0
-MAX_SAMPLE_INTERVAL_S = 1.5
+# Each survey sample polls two NAV messages, each answered at the receiver's
+# next epoch (about 1 s), so about 2 s is the floor while the survey polls;
+# tighten to 1.5 if periodic NAV output replaces polling.
+MAX_SAMPLE_INTERVAL_S = 2.5
 MIN_RECEIVED_RATIO = 0.9
 MIN_USED_RATIO = 0.9
 
@@ -202,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     if reasons:
         print("\nRED:\n" + "\n".join(f"- {reason}" for reason in reasons))
         return 1
-    print("\nGREEN: every Frame written fresh, and the survey sampling at 1 Hz")
+    print("\nGREEN: every Frame written fresh, and the survey sampling at its pace")
     return 0
 
 

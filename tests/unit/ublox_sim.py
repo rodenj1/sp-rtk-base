@@ -8,6 +8,7 @@ non-UBX bytes (e.g. RTCM 3 correction Frames) as they were written.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,37 @@ _UBX_SYNC = b"\xb5\x62"
 _VALSET = b"\x06\x8a"
 _VALGET = b"\x06\x8b"
 _MON_COMMS = b"\x0a\x36"
+_NAV_PVT = b"\x01\x07"
+_NAV_HPPOSECEF = b"\x01\x13"
+# A Fixed, corrected NAV-PVT and its high-precision ECEF companion.
+_NAV_REPLIES: dict[bytes, Any] = {
+    _NAV_PVT: SimpleNamespace(
+        identity="NAV-PVT",
+        fixType=3,
+        gnssFixOk=1,
+        carrSoln=2,
+        diffSoln=1,
+        lastCorrectionAge=2,
+        lat=32.7329015,
+        lon=-117.2362788,
+        height=27940,
+        hMSL=-5060,
+        hAcc=14,
+        vAcc=21,
+        numSV=24,
+        gSpeed=0,
+        headMot=0.0,
+        pDOP=0.8,
+    ),
+    _NAV_HPPOSECEF: SimpleNamespace(
+        identity="NAV-HPPOSECEF",
+        ecefX=-246_041_234.5,
+        ecefY=-477_939_123.4,
+        ecefZ=342_890_456.7,
+        pAcc=12.0,
+        invalidEcef=0,
+    ),
+}
 
 
 class SimReceiver:
@@ -37,11 +69,23 @@ class SimReceiver:
         # ahead of the next reply.
         self.unsolicited: list[Any] = []
         self.out_waiting = 0  # bytes the host still has to send
+        self.nav_polls: list[bytes] = []  # NAV poll message ids, in order
+        self.read_delay_s = 0.0  # how long each read waits (a slow link)
+        self.writes: list[bytes] = []  # every write, in order, as written
+        # When set, each write goes out a few bytes at a time (like a busy
+        # UART), so two unguarded writers' bytes could interleave on ``wire``.
+        self.chunked = False
+        self.wire = bytearray()
         self.is_open = True
         self._replies: deque[Any] = deque()
 
     # ---- serial side ----
     def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        if self.chunked:
+            for i in range(0, len(data), 4):
+                self.wire += data[i : i + 4]
+                time.sleep(0.0005)
         if not data.startswith(_UBX_SYNC):
             self.raw_writes.append(bytes(data))
             return len(data)
@@ -65,6 +109,9 @@ class SimReceiver:
                     values[name] = self.ram[name]
                 index += 1
             self._replies.append(SimpleNamespace(identity="CFG-VALGET", **values))
+        elif msg_id in _NAV_REPLIES:
+            self.nav_polls.append(msg_id)
+            self._replies.append(_NAV_REPLIES[msg_id])
         elif msg_id == _MON_COMMS and self.mon_comms is not None:
             self._replies.append(self._mon_comms_reply(self.mon_comms))
         return len(data)
@@ -92,6 +139,8 @@ class SimReceiver:
 
     # ---- reader side ----
     def read(self) -> tuple[bytes | None, Any]:
+        if self.read_delay_s:
+            time.sleep(self.read_delay_s)
         if self.unsolicited:
             return b"", self.unsolicited.pop(0)
         if self._replies:
@@ -102,7 +151,7 @@ class SimReceiver:
 def connected_driver(sim: SimReceiver) -> UbloxDriver:
     """A UbloxDriver whose link is ``sim``."""
     driver = UbloxDriver()
-    driver._serial = sim  # pyright: ignore[reportPrivateUsage]
+    driver._serial = driver._guard_writes(sim)  # pyright: ignore[reportPrivateUsage]
     driver._reader = driver._watch_reader(sim)  # pyright: ignore[reportPrivateUsage]
     return driver
 

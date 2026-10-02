@@ -174,11 +174,13 @@ _Avoid_: connected port, management port, host port
 ### Corrected survey-in
 
 **Stall**:
-A Corrected survey-in whose observation time has stopped growing: no RTK
-Fixed Observation since the start, or since the last one. A short stall
-only pauses the survey; after a minute the page warns, and after ten
-minutes the survey aborts, naming why: **no corrections** (none are
-arriving, with the source's last error) or **no fixed** (corrections are in
-use, but the receiver reaches only Float). An aborted survey commits
-nothing and never falls back to a plain Survey-in.
+A Corrected survey-in whose observation time has stopped growing: no
+Observation since the start, or since the last one. In a Corrected survey-in
+an Observation is an RTK Fixed solution that has held for the settling time
+(30 s) on fresh corrections (at most 10 s old). A short stall only pauses
+the survey; after a minute the page warns, and after ten minutes the survey
+aborts, naming why: **no corrections** (no fresh ones are arriving, with the
+source's last error) or **no fixed** (fresh corrections are in use, but the
+receiver reaches only Float). An aborted survey commits nothing and never
+falls back to a plain Survey-in.
 _Avoid_: timeout, hang

@@ -409,6 +409,13 @@ def run(args: argparse.Namespace) -> Summary:
                 )
                 if progress.get("outcome") not in (None, "running"):
                     break
+                if progress.get("outcome") is None and any(
+                    s.progress.get("outcome") == "running" for s in samples[:-1]
+                ):
+                    # The survey this logger followed is gone (e.g. the
+                    # station restarted): stop, rather than follow the next.
+                    print("The survey disappeared (did the station restart?)")
+                    break
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\nStopped logging (the survey keeps running).")

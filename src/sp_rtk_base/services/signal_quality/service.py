@@ -43,6 +43,9 @@ NOT_CONNECTED_REASON = "Connect the receiver to see Signal Quality."
 # than NO_DATA_AFTER_SECONDS ago.
 WAITING_REASON = "Waiting for signal data from the receiver."
 NO_ANSWER_REASON = "The receiver did not answer the signal poll."
+PAUSED_REASON = (
+    "Paused while a Corrected survey-in runs: the survey needs the receiver link."
+)
 RELAY_STOPPED_REASON = "Relay is stopped. Signal Quality shows while it runs."
 NO_RTCM_REASON = "No RTCM is arriving from the receiver."
 NO_MSM_REASON = (
@@ -72,6 +75,8 @@ class SignalQualityService:
         self._answered_at: float | None = None
         # True while a poll is in flight; a poll that finds it set is skipped.
         self._polling = False
+        # While this says so (a Corrected survey-in runs), don't poll.
+        self._paused: Callable[[], bool] = lambda: False
         # Relay mode: when it started, and when a Frame / an MSM last arrived.
         self._assembler = MsmSnapshotAssembler()
         self._bridge: FrameBridge | None = None
@@ -92,6 +97,8 @@ class SignalQualityService:
             return SignalQualityNoData(reason=RELAY_STOPPED_REASON)
         if not self._device.is_connected:
             return SignalQualityNoData(reason=NOT_CONNECTED_REASON)
+        if self._paused():
+            return SignalQualityNoData(reason=PAUSED_REASON)
         return self._monitor.current(now) or self._survey_no_data(now)
 
     def _survey_no_data(self, now: float) -> SignalQualityNoData:
@@ -156,6 +163,15 @@ class SignalQualityService:
     # Survey-in source
     # ------------------------------------------------------------------
 
+    def set_pause_check(self, check: Callable[[], bool]) -> None:
+        """Don't poll the receiver while ``check()`` is true.
+
+        A Corrected survey-in needs the receiver link: each Signal Snapshot
+        holds it for about 2 s (two NAV polls, each answered at the next
+        epoch), which starved the survey's corrections (#197).
+        """
+        self._paused = check
+
     async def poll_once(self) -> None:
         """Poll one Signal Snapshot, if the receiver is connected.
 
@@ -163,7 +179,7 @@ class SignalQualityService:
         receiver never shows one from before.  Never touches a Relay-fed
         verdict: the receiver is disconnected by design while the Relay runs.
         """
-        if self._source == "relay":
+        if self._source == "relay" or self._paused():
             return
         if not self._device.is_connected:
             if self._source == "survey":

@@ -37,6 +37,7 @@ from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
 from sp_rtk_base.services.survey_service import (
+    FIXED_SETTLE_S,
     STALL_ABORT_S,
     STALL_WARNING_S,
     SurveyService,
@@ -124,8 +125,8 @@ profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
 
 
-def _survey_stall_timing(env: str, default: float) -> float:
-    """A stall timing; only the fake GPS (e2e) may shorten it."""
+def _fake_gps_timing(env: str, default: float) -> float:
+    """A survey timing (stall, settling); only the fake GPS (e2e) may shorten it."""
     value = os.environ.get(env)
     if os.environ.get("SP_RTK_BASE_FAKE_GPS") != "1" or not value:
         return default
@@ -138,10 +139,11 @@ def _survey_stall_timing(env: str, default: float) -> float:
 
 survey_service: SurveyService = SurveyService(
     device_service,
-    stall_warning_s=_survey_stall_timing(
+    stall_warning_s=_fake_gps_timing(
         "SP_RTK_BASE_FAKE_STALL_WARNING_S", STALL_WARNING_S
     ),
-    stall_abort_s=_survey_stall_timing("SP_RTK_BASE_FAKE_STALL_ABORT_S", STALL_ABORT_S),
+    stall_abort_s=_fake_gps_timing("SP_RTK_BASE_FAKE_STALL_ABORT_S", STALL_ABORT_S),
+    fixed_settle_s=_fake_gps_timing("SP_RTK_BASE_FAKE_FIXED_SETTLE_S", FIXED_SETTLE_S),
 )
 correction_verification_service: CorrectionSourceVerificationService = (
     CorrectionSourceVerificationService()
@@ -152,14 +154,23 @@ def wire_corrected_survey(
     survey: SurveyService,
     config: ConfigService,
     verifier: CorrectionSourceVerificationService,
+    signal_quality: SignalQualityService,
 ) -> None:
     """While a Corrected survey-in runs, its Correction source can't be
-    renamed or deleted, and a Verification is refused (issue #196)."""
+    renamed or deleted, a Verification is refused (issue #196), and Signal
+    Quality stops polling the receiver, leaving the link to the survey and
+    its corrections (#197)."""
     config.set_correction_source_in_use_check(survey.correction_source_in_use)
     verifier.set_survey_running_check(survey.corrected_survey_running)
+    signal_quality.set_pause_check(survey.corrected_survey_running)
 
 
-wire_corrected_survey(survey_service, config_service, correction_verification_service)
+wire_corrected_survey(
+    survey_service,
+    config_service,
+    correction_verification_service,
+    signal_quality_service,
+)
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
 bluetooth_verification_service: BluetoothVerificationService = (

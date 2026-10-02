@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager
 from typing import Any, Literal, cast
 
 import serial  # type: ignore[import-untyped]
@@ -78,6 +79,10 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for waiting for UBX responses (seconds)
 _READ_TIMEOUT = 3.0
+# A NAV-PVT this recent (s) is reused instead of polled: the receiver
+# answers a poll at its next 1 Hz epoch, and a survey sample (two NAV
+# polls) refreshes it about every 2 s.
+_PVT_REUSE_S = 2.0
 
 # Max read iterations when waiting for a specific UBX response.
 # Needs to be high enough to skip interleaved RTCM/NAV messages
@@ -240,6 +245,22 @@ class _DeadlineStream:
         return self._stream.read(size)  # type: ignore[attr-defined,no-any-return]
 
 
+class _TxGuardedSerial:
+    """A serial port whose every write holds ``tx_lock`` (see UbloxDriver)."""
+
+    def __init__(self, ser: Any, tx_lock: AbstractContextManager[Any]) -> None:
+        self._ser = ser
+        self._tx_lock = tx_lock
+
+    def write(self, data: bytes) -> int | None:
+        with self._tx_lock:
+            result: int | None = self._ser.write(data)
+            return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ser, name)
+
+
 def _tx_backlog(ser: Any) -> float | None:
     """Bytes the host still has queued to send (pyserial ``out_waiting``).
 
@@ -288,6 +309,14 @@ class UbloxDriver(GpsReceiverDriver):
         self._stream: _DeadlineStream | None = None
         self._device_info: DeviceInfo | None = None
         self._lock = threading.Lock()
+        # Every write to the port takes this, and only this, so a correction
+        # write never waits for a poll's reply (the driver lock is held
+        # through those, about 1 s for a NAV poll), and no two writes
+        # interleave (#197).
+        self._tx_lock = threading.RLock()
+        # The NAV-PVT a survey sample read, and when: a position read in the
+        # same second reuses it rather than waiting for another epoch.
+        self._last_pvt: tuple[float, GpsPosition] | None = None
         # RTCM 3 input settings found by begin_correction_input, to restore.
         self._saved_correction_input: dict[str, int] | None = None
         # Bench diagnosis (#197): what the link is doing. Recorded on the
@@ -406,11 +435,13 @@ class UbloxDriver(GpsReceiverDriver):
                 Not a verdict — the sweep decides what an unopenable
                 port means once it knows whether *any* rate opened it.
         """
-        self._serial = serial.Serial(
-            port=port,
-            baudrate=baud_rate,
-            timeout=min(_READ_TIMEOUT, budget_s),
-            exclusive=True,
+        self._serial = self._guard_writes(
+            serial.Serial(
+                port=port,
+                baudrate=baud_rate,
+                timeout=min(_READ_TIMEOUT, budget_s),
+                exclusive=True,
+            )
         )
         try:
             fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -444,11 +475,13 @@ class UbloxDriver(GpsReceiverDriver):
 
         self._cancel_event.clear()
         try:
-            self._serial = serial.Serial(
-                port=port,
-                baudrate=baud_rate,
-                timeout=_READ_TIMEOUT,
-                exclusive=True,  # TIOCEXCL — kernel prevents other opens
+            self._serial = self._guard_writes(
+                serial.Serial(
+                    port=port,
+                    baudrate=baud_rate,
+                    timeout=_READ_TIMEOUT,
+                    exclusive=True,  # TIOCEXCL — kernel prevents other opens
+                )
             )
             # Advisory lock — gives a clear error if another process sneaks in
             try:
@@ -591,6 +624,7 @@ class UbloxDriver(GpsReceiverDriver):
         self._reader = None
         self._stream = None
         self._min_elevation_deg = None
+        self._last_pvt = None
 
     @contextlib.contextmanager
     def _reads_end_at(self, deadline: float) -> Generator[None]:
@@ -689,8 +723,10 @@ class UbloxDriver(GpsReceiverDriver):
             )
             self.reset_and_reconnect()
 
-        # All CFG-VALSET writers must hold self._lock so they cannot
-        # interleave on the wire with a concurrent NAV/CFG/MON poll
+        # Every write goes through the write lock, so no two writes'
+        # bytes interleave on the wire; CFG-VALSET writers also hold
+        # self._lock so a write-and-read-back can't interleave with a
+        # concurrent NAV/CFG/MON poll
         # from the same driver instance (e.g. the 2 s survey-in UI
         # poll timer firing the moment Start/Cancel is clicked).  An
         # interleaved write produces a corrupted UBX frame that the
@@ -1466,10 +1502,13 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     @contextlib.contextmanager
-    def _timed_lock(self, op: str) -> Generator[None, None, None]:
-        """Hold the driver lock for ``op``, recording the wait and the hold (ms)."""
+    def _timed_lock(
+        self, op: str, lock: AbstractContextManager[Any] | None = None
+    ) -> Generator[None, None, None]:
+        """Hold ``lock`` (the driver lock by default) for ``op``, recording
+        the wait and the hold (ms)."""
         asked = time.monotonic()
-        with self._lock:
+        with lock if lock is not None else self._lock:
             got = time.monotonic()
             try:
                 yield
@@ -1482,6 +1521,14 @@ class UbloxDriver(GpsReceiverDriver):
                     self._lock_hold_ms.setdefault(op, Sampler()).add(
                         (done - got) * 1000
                     )
+
+    def _guard_writes(self, ser: Any) -> serial.Serial:  # type: ignore[no-any-unimported]
+        """``ser``, with every write taken under the write lock.
+
+        Stands in for the serial.Serial it wraps (everything else passes
+        straight through).
+        """
+        return cast(serial.Serial, _TxGuardedSerial(ser, self._tx_lock))
 
     def _watch_reader(self, reader: Any) -> UBXReader:  # type: ignore[no-any-unimported]
         """``reader``, tallying the receiver's UBX-RXM-RTCM reports it passes.
@@ -1560,8 +1607,12 @@ class UbloxDriver(GpsReceiverDriver):
         )
 
     def write_corrections(self, frames: bytes) -> None:
-        """Write whole RTCM 3 Frames, back to back; no reply is awaited."""
-        with self._timed_lock("write_corrections"):
+        """Write whole RTCM 3 Frames, back to back; no reply is awaited.
+
+        Takes only the write lock: corrections go out while a poll waits
+        for its reply, and never inside another write.
+        """
+        with self._timed_lock("write_corrections", self._tx_lock):
             ser, _ = self._require_connection()
             began = time.monotonic()
             ser.write(frames)
@@ -1828,7 +1879,19 @@ class UbloxDriver(GpsReceiverDriver):
     }
 
     def get_position(self) -> GpsPosition:
-        """Poll NAV-PVT and return a vendor-neutral position snapshot."""
+        """Poll NAV-PVT and return a vendor-neutral position snapshot.
+
+        Reuses a survey sample's NAV-PVT from the last second rather than
+        polling again: a poll waits for the next epoch (about 1 s) with the
+        driver lock held, and the answer would be no newer.
+        """
+        last = self._last_pvt
+        if (
+            last is not None
+            and self.is_connected
+            and time.monotonic() - last[0] < _PVT_REUSE_S
+        ):
+            return last[1]
         with self._timed_lock("position"):
             ser, reader = self._require_connection()
 
@@ -1877,6 +1940,10 @@ class UbloxDriver(GpsReceiverDriver):
             hp = self._poll_nav_locked("NAV-HPPOSECEF")
             pvt = self._poll_nav_locked("NAV-PVT")
         self._correction_age_bucket = int(getattr(pvt, "lastCorrectionAge", 0))
+        try:
+            self._last_pvt = (time.monotonic(), self._parse_nav_pvt(pvt))
+        except Exception:
+            self._last_pvt = None  # a position read just polls instead
 
         fix_type = int(getattr(pvt, "fixType", 0))
         fix_ok = (

@@ -216,6 +216,18 @@ _ROVER_FIXED_NOISE_M: float = 0.003
 _ROVER_FIXED_ACCURACY_M: float = 0.012
 
 
+def _count_frames(data: bytes) -> int:
+    """How many RTCM 3 Frames (0xD3, 10-bit length, payload, CRC) ``data`` holds."""
+    count = offset = 0
+    while offset + 3 <= len(data) and data[offset] == 0xD3:
+        length = ((data[offset + 1] & 0x03) << 8) | data[offset + 2]
+        if offset + 3 + length + 3 > len(data):
+            break  # a cut-off Frame doesn't count
+        offset += 3 + length + 3
+        count += 1
+    return count
+
+
 class FakeGpsDriver(GpsReceiverDriver):
     """In-memory GPS receiver driver for E2E + dev-mode testing.
 
@@ -799,13 +811,13 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._ensure_connected()
         self._correction_input = True
 
-    def write_corrections(self, frame: bytes) -> None:
-        """Take one Frame; ignored, as on a receiver, unless input is on."""
+    def write_corrections(self, frames: bytes) -> None:
+        """Take whole Frames; ignored, as on a receiver, unless input is on."""
         self._ensure_connected()
-        self._rx_bytes += len(frame)
+        self._rx_bytes += len(frames)
         if not self._correction_input:
             return
-        self._rtcm3_messages += 1
+        self._rtcm3_messages += _count_frames(frames)
         now = time.monotonic()
         if self._corrections_since is None:
             self._corrections_since = now

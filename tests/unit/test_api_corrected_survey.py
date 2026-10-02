@@ -85,7 +85,7 @@ class RecordingRover(FakeGpsDriver):
         super().__init__()
         self.calls: list[str] = []
         self.console_ports: list[PortId | None] = []
-        self.frames: list[bytes] = []
+        self.written = b""  # every correction byte, in the order written
         self.hub_alive_at_commit: bool | None = None
         # Corrections bring a Fixed at once (the clock here is real time).
         self.float_after_s = 0.0
@@ -96,9 +96,9 @@ class RecordingRover(FakeGpsDriver):
         self.console_ports.append(console_port)
         super().begin_correction_input(console_port)
 
-    def write_corrections(self, frame: bytes) -> None:
-        self.frames.append(frame)
-        super().write_corrections(frame)
+    def write_corrections(self, frames: bytes) -> None:
+        self.written += frames
+        super().write_corrections(frames)
 
     def end_correction_input(self) -> None:
         self.calls.append("end_correction_input")
@@ -272,9 +272,8 @@ class TestCompletion:
         _start(client)
         _wait_for_outcome(client, "completed")
 
-        assert rover.frames
-        assert all(frame in FRAMES for frame in rover.frames)
-        assert rover.frames == (FRAMES * 50)[: len(rover.frames)]
+        assert rover.written
+        assert b"".join(FRAMES * 50).startswith(rover.written)
 
     def test_the_engine_stops_and_input_is_restored_before_the_flash_save(
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
@@ -826,7 +825,7 @@ def _wait_for_request(caster: FakeCaster) -> None:
 class FailingWriteRover(RecordingRover):
     """A rover whose port rejects every correction write."""
 
-    def write_corrections(self, frame: bytes) -> None:
+    def write_corrections(self, frames: bytes) -> None:
         raise OSError("write failed")
 
 
@@ -870,3 +869,51 @@ class TestDeliveryCounters:
 
         assert progress["corrections_written"] == 0
         assert progress["receiver_rtcm3_messages"] == 0
+
+
+# ---- Correction writes keep up on a busy receiver link (#197) ----
+
+
+class BusyLinkRover(RecordingRover):
+    """A rover whose position reads hold the driver lock for a while.
+
+    Like a ZED-F9P on a busy 57 600-baud UART, where each UBX poll waits
+    out the receiver's own RTCM output. Correction writes take the same lock.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock = threading.Lock()
+
+    def get_survey_position(self) -> SurveyPosition:
+        with self.lock:
+            time.sleep(0.4)
+            return super().get_survey_position()
+
+    def write_corrections(self, frames: bytes) -> None:
+        with self.lock:
+            super().write_corrections(frames)
+
+
+class TestBusyLink:
+    def test_every_frame_is_written_while_reads_hold_the_lock(
+        self,
+        caster: FakeCaster,
+        mock_config_service: ConfigService,
+        relay: RelayService,
+    ) -> None:
+        rover = BusyLinkRover()
+        rover.connect(FAKE_NO_SURVEY_IN_PORT)
+        rover.fixed_after_s = 3600.0  # keep it running
+        stream = FRAMES * 100  # 300 Frames over about 6 s
+        caster.scripts.append(Script(reply=ICY, body=stream))
+        with _client_for(rover, caster, mock_config_service, relay) as client:
+            _start(client, min_duration_seconds=86400)
+            progress = _wait_for(
+                client,
+                lambda p: (p.get("corrections_written") or 0) >= len(stream),
+                "every Frame written",
+            )
+
+        assert progress["corrections_dropped"] == 0
+        assert rover.written == b"".join(stream)  # whole, in order, unchanged

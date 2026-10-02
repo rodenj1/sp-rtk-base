@@ -7,10 +7,12 @@ exclusively for the whole survey: the driver opens it with `TIOCEXCL` and
 `flock`, and every read and write goes through one lock. So the port stays
 with the application. The *pull* is a second, survey-scoped `RelayEngine`.
 Its input is the Correction source, it has no destinations, and it has one
-Frame subscriber. The application takes each Frame from that subscriber and
-writes it, whole and unfiltered, to the receiver through the driver, under
-the same lock as the position polls. The Relay pulls; the application
-pushes.
+Frame subscriber. The application takes the Frames from that subscriber and
+writes them, whole, in order and unfiltered, to the receiver through the
+driver, under the same lock as the position polls. Each write carries every
+Frame waiting (up to about 4 kB): on a busy receiver link a poll can hold the
+lock for seconds, and one Frame per write fell far behind the stream
+(sp-rtk-base#197). The Relay pulls; the application pushes.
 
 This instance belongs to the Corrected survey-in, not to `RelayService`. It
 starts when the survey starts and stops on completion, cancel or device

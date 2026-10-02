@@ -712,11 +712,12 @@ class GpsReceiverDriver(abc.ABC):
         """
 
     @abc.abstractmethod
-    def write_corrections(self, frame: bytes) -> None:
-        """Write one whole RTCM 3 Frame to the receiver, unchanged.
+    def write_corrections(self, frames: bytes) -> None:
+        """Write whole RTCM 3 Frames to the receiver, unchanged.
 
-        Waits for no reply, and interleaves with position polls under the
-        driver's lock.
+        ``frames`` is one or more whole Frames, back to back, in the order
+        received. Waits for no reply, and interleaves with position polls
+        under the driver's lock.
 
         Raises:
             ConnectionError: If not connected.

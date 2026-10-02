@@ -1429,11 +1429,11 @@ class UbloxDriver(GpsReceiverDriver):
             )
         logger.info("RTCM 3 input enabled in RAM on %s", [p.value for p in ports])
 
-    def write_corrections(self, frame: bytes) -> None:
-        """Write one whole RTCM 3 Frame; no reply is awaited."""
+    def write_corrections(self, frames: bytes) -> None:
+        """Write whole RTCM 3 Frames, back to back; no reply is awaited."""
         with self._lock:
             ser, _ = self._require_connection()
-            ser.write(frame)
+            ser.write(frames)
 
     def get_correction_input_counters(
         self, console_port: PortId | None

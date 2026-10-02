@@ -168,12 +168,18 @@ class TestNtripProfile:
 
     def test_to_relay_config(self) -> None:
         """to_relay_config produces NtripDestinationConfig."""
-        p = NtripProfile(caster="rtk2go.com", mountpoint="MY_MOUNT", password="secret")
+        p = NtripProfile(
+            caster="rtk2go.com",
+            mountpoint="MY_MOUNT",
+            password="secret",
+            username="me@example.com",  # v2 (the default) needs one
+        )
         cfg = p.to_relay_config()
         assert isinstance(cfg, NtripDestinationConfig)
         assert cfg.caster == "rtk2go.com"
         assert cfg.mountpoint == "MY_MOUNT"
         assert cfg.port == 2101
+        assert cfg.username == "me@example.com"
 
 
 # ---------------------------------------------------------------------------

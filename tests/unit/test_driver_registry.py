@@ -103,6 +103,15 @@ class StubDriver(GpsReceiverDriver):
             ecef_x_m=0.0, ecef_y_m=0.0, ecef_z_m=0.0, accuracy_3d_m=0.0, fix_ok=False
         )
 
+    def begin_correction_input(self, console_port: PortId | None) -> None:
+        pass
+
+    def write_corrections(self, frame: bytes) -> None:
+        pass
+
+    def end_correction_input(self) -> None:
+        pass
+
     def get_device_info(self) -> DeviceInfo:
         return DeviceInfo(vendor="StubVendor", model="StubModel")
 

@@ -875,3 +875,79 @@ class TestFakeSurveyPosition:
         self, connected_fake: FakeGpsDriver
     ) -> None:
         assert DeviceCapability.SURVEY_IN in connected_fake.get_capabilities()
+
+
+class TestRover:
+    """The fake behaves like a rover taking corrections (issue #195)."""
+
+    @staticmethod
+    def _rover(driver: FakeGpsDriver) -> FakeGpsDriver:
+        driver.float_after_s = 0.05
+        driver.fixed_after_s = 0.1
+        driver.correction_timeout_s = 0.1
+        return driver
+
+    def test_without_corrections_it_has_a_metre_level_fix_and_no_rtk(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        position = connected_driver.get_survey_position()
+
+        assert position.rtk_status == "none"
+        assert position.correction_age_s is None
+        assert position.accuracy_3d_m > 1.0
+
+    def test_corrections_bring_float_then_fixed_then_it_drops_back(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        rover = self._rover(connected_driver)
+        rover.begin_correction_input(None)
+
+        statuses: list[str] = []
+        for _ in range(8):  # corrections for about 0.16 s
+            rover.write_corrections(b"\xd3")
+            statuses.append(rover.get_survey_position().rtk_status)
+            time.sleep(0.02)
+        time.sleep(0.15)  # then none, past the timeout
+        dropped = rover.get_survey_position()
+
+        assert statuses[0] == "none"
+        assert "float" in statuses
+        assert statuses[-1] == "fixed"
+        assert dropped.rtk_status == "none"
+        assert dropped.correction_age_s is None
+
+    def test_a_fixed_position_is_millimetre_level(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        rover = self._rover(connected_driver)
+        rover.fixed_after_s = 0.0
+        rover.begin_correction_input(None)
+        rover.write_corrections(b"\xd3")
+
+        position = rover.get_survey_position()
+
+        assert position.rtk_status == "fixed"
+        assert position.accuracy_3d_m < 0.05
+        assert position.correction_age_s is not None
+
+    def test_corrections_are_ignored_until_input_is_enabled(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        rover = self._rover(connected_driver)
+        rover.fixed_after_s = 0.0
+
+        rover.write_corrections(b"\xd3")
+
+        assert rover.get_survey_position().rtk_status == "none"
+
+    def test_ending_input_stops_taking_corrections(
+        self, connected_driver: FakeGpsDriver
+    ) -> None:
+        rover = self._rover(connected_driver)
+        rover.begin_correction_input(PortId.UART1)
+        rover.end_correction_input()
+        rover.fixed_after_s = 0.0
+
+        rover.write_corrections(b"\xd3")
+
+        assert rover.get_survey_position().rtk_status == "none"

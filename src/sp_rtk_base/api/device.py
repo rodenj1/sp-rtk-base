@@ -27,6 +27,7 @@ from sp_rtk_base.models.config_models import (
 from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseInvariantsCheck,
+    CorrectedSurveyInConfig,
     CurrentBaseConfig,
     DetectionResult,
     DeviceStatus,
@@ -207,6 +208,42 @@ async def configure_survey_in(
     return DeviceActionResponse(
         status="ok",
         message=f"Survey-in configured: {config.min_duration_seconds}s, {config.accuracy_limit_mm}mm",
+    )
+
+
+@router.post("/configure/corrected-survey-in", response_model=DeviceActionResponse)
+async def configure_corrected_survey_in(
+    config: CorrectedSurveyInConfig,
+    survey: SurveyService = Depends(get_survey_service),
+    config_svc: ConfigService = Depends(get_config_service),
+) -> DeviceActionResponse:
+    """Start a Corrected survey-in against a saved Correction source.
+
+    The receiver works as a rover, the survey pulls the source's corrections
+    through its own Relay instance, and only RTK Fixed solutions are
+    Observations. The
+    station commits the fixed base itself when it completes. Needs no
+    Verification. Returns 404 for an unknown source, and 409 if the source
+    can't be reached, the device isn't connected, the relay is running or a
+    survey runs.
+    """
+    source = config_svc.get_correction_source(config.correction_source)
+    if source is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Correction source '{config.correction_source}' not found",
+        )
+    try:
+        await survey.start_corrected(config, source)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return DeviceActionResponse(
+        status="ok",
+        message=(
+            f"Corrected survey-in started against {source.name}: "
+            f"{config.min_duration_seconds}s Fixed, {config.accuracy_limit_mm}mm"
+        ),
     )
 
 

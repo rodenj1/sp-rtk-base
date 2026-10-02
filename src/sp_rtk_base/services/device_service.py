@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import NamedTuple, Protocol, cast
 
@@ -224,6 +225,8 @@ class DeviceService:
         self._last_error: str | None = None
         self._connected_at: datetime | None = None
         self._relay_running_check: _RelayRunningCheck | None = None
+        # Awaited before the receiver is disconnected, while it still answers.
+        self._before_disconnect: list[Callable[[], Awaitable[None]]] = []
         # Steps whose drained warnings were non-empty on the previous
         # apply-config call — excluded from the next call's skip so
         # pressing Apply again actually retries them (issue #99).
@@ -298,6 +301,15 @@ class DeviceService:
             check: Callable that returns True if relay is running.
         """
         self._relay_running_check = check
+
+    def add_before_disconnect(self, hook: Callable[[], Awaitable[None]]) -> None:
+        """Await ``hook`` before each disconnect, while the receiver answers.
+
+        A Corrected survey-in uses it to stop its Relay engine and restore
+        the receiver's input settings first. A failing hook never stops the
+        disconnect.
+        """
+        self._before_disconnect.append(hook)
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -507,6 +519,11 @@ class DeviceService:
 
         Safe to call when already disconnected.
         """
+        for hook in self._before_disconnect:
+            try:
+                await hook()
+            except Exception:
+                logger.exception("Before-disconnect hook failed")
         if self._driver is not None and self._driver.is_connected:
             try:
                 await asyncio.to_thread(self._driver.disconnect)
@@ -1439,6 +1456,36 @@ class DeviceService:
         """
         driver = self._require_connected()
         return await asyncio.to_thread(driver.get_survey_position)
+
+    async def begin_correction_input(self) -> None:
+        """Let the receiver take RTCM 3 on its console port (RAM only).
+
+        On every port when the console port is unknown.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        console = self._console_port.port if self._console_port else None
+        await asyncio.to_thread(driver.begin_correction_input, console)
+
+    async def write_corrections(self, frame: bytes) -> None:
+        """Write one whole RTCM 3 Frame to the receiver.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        await asyncio.to_thread(driver.write_corrections, frame)
+
+    async def end_correction_input(self) -> None:
+        """Restore the input settings begin_correction_input found.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        await asyncio.to_thread(driver.end_correction_input)
 
     async def disable_base_mode(self) -> None:
         """Put the receiver in rover mode (no survey-in, no fixed base).

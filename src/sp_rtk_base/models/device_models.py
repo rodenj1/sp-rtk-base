@@ -166,6 +166,31 @@ class SurveyInConfig(BaseModel):
     )
 
 
+class CorrectedSurveyInConfig(BaseModel):
+    """Starting a Corrected survey-in: RTK against a saved Correction source.
+
+    Only RTK Fixed solutions are Observations, so the minimum duration is
+    Fixed time, and
+    the accuracy limit is centimetre-level.
+    """
+
+    correction_source: str = Field(
+        min_length=1, description="The saved Correction source to pull from"
+    )
+    min_duration_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=86400,
+        description="Minimum RTK Fixed time in seconds",
+    )
+    accuracy_limit_mm: int = Field(
+        default=50,
+        ge=10,
+        le=1000,
+        description="Required accuracy in mm (e.g. 50 = 5 cm)",
+    )
+
+
 class FixedBaseConfig(BaseModel):
     """Configuration for fixed-position base station mode."""
 
@@ -615,7 +640,11 @@ SurveyAveragedBy = Literal["receiver", "application"]
 SurveyOutcome = Literal["running", "completed", "cancelled", "aborted"]
 
 SurveyAbortReason = Literal[
-    "no_corrections", "no_fixed", "accuracy_not_reached", "device_disconnected"
+    "no_corrections",
+    "no_fixed",
+    "accuracy_not_reached",
+    "device_disconnected",
+    "input_not_restored",
 ]
 
 
@@ -648,6 +677,29 @@ class SurveyInProgress(BaseModel):
     )
     abort_reason: SurveyAbortReason | None = Field(
         default=None, description="Why the survey aborted (outcome 'aborted')"
+    )
+    # The limits this survey runs against (set when started here).
+    min_duration_seconds: int | None = Field(
+        default=None, description="Minimum observation time (s) to complete"
+    )
+    accuracy_limit_mm: float | None = Field(
+        default=None, description="Accuracy (mm) needed to complete"
+    )
+    # A Corrected survey-in only: the receiver and its Correction source.
+    correction_source: str | None = Field(
+        default=None, description="The Correction source a Corrected survey-in pulls"
+    )
+    rtk_status: str | None = Field(
+        default=None, description="The receiver's RTK status: none / float / fixed"
+    )
+    correction_age_s: float | None = Field(
+        default=None, description="Age of the corrections the receiver uses (s)"
+    )
+    source_connected: bool | None = Field(
+        default=None, description="Whether the Correction source is connected"
+    )
+    source_last_error: str | None = Field(
+        default=None, description="The Correction source's last connection error"
     )
 
 

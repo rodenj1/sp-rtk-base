@@ -1732,6 +1732,8 @@ def survey_page() -> None:
                     svin_warning_label.set_visibility(False)
 
                 # Update chart
+                if not progress.observations:
+                    return  # nothing averaged yet (or a restart after a jump)
                 acc_val = max(progress.mean_accuracy_mm, 1.0)
                 _svin_chart_times.append(str(progress.duration_seconds))
                 _svin_chart_acc.append(round(acc_val, 1))
@@ -1795,6 +1797,10 @@ def survey_page() -> None:
             "device_disconnected": "the receiver stopped answering",
             "no_corrections": "RTK Fixed never returned: no fresh corrections arrived",
             "no_fixed": "RTK Fixed never returned: the receiver reached only Float",
+            "fixed_unsettled": (
+                "RTK Fixed never settled: it kept jumping between solutions or "
+                "breaking off"
+            ),
             "input_not_restored": (
                 "the receiver's input settings couldn't be restored, so "
                 "nothing was saved to flash"
@@ -2116,6 +2122,8 @@ def _stall_warning(progress: SurveyInProgress) -> str | None:
     without = progress.seconds_without_fixed or 0
     if progress.stall_reason == "no_corrections":
         why = "no fresh corrections are arriving" + _last_error_note(progress)
+    elif progress.stall_reason == "fixed_unsettled":
+        why = "RTK Fixed keeps jumping between solutions or breaking off"
     else:
         why = "the receiver reaches only RTK Float"
     left = _mm_ss(progress.stall_abort_in_seconds or 0)

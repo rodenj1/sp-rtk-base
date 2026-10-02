@@ -760,6 +760,7 @@ SurveyAbortReason = Literal[
     "accuracy_not_reached",
     "device_disconnected",
     "input_not_restored",
+    "fixed_unsettled",
 ]
 
 

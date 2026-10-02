@@ -181,7 +181,7 @@ def browser_context_args(
 
 @pytest.fixture()
 def clean_config(api_base_url: str) -> Iterator[None]:
-    """Delete all destinations and saved positions before & after a test.
+    """Delete all destinations and Correction sources before & after a test.
 
     Use this when a test needs to assert on "empty state" or wants to
     avoid cross-test pollution.  Goes through the REST API rather than
@@ -189,11 +189,11 @@ def clean_config(api_base_url: str) -> Iterator[None]:
     cache stays consistent.
     """
 
-    def _extract_names(payload: object) -> list[str]:
-        """Extract destination names from a JSON response defensively."""
+    def _extract_names(payload: object, key: str = "destinations") -> list[str]:
+        """Extract item names from a JSON list response defensively."""
         raw: object = payload
         if isinstance(payload, dict):
-            raw = cast(dict[str, Any], payload).get("destinations", [])
+            raw = cast(dict[str, Any], payload).get(key, [])
         if not isinstance(raw, list):
             return []
         names: list[str] = []
@@ -210,6 +210,12 @@ def clean_config(api_base_url: str) -> Iterator[None]:
             for name in _extract_names(resp.json()):
                 httpx.delete(
                     f"{api_base_url}/api/destinations/{name}",
+                    timeout=5.0,
+                )
+            resp = httpx.get(f"{api_base_url}/api/correction-sources", timeout=5.0)
+            for name in _extract_names(resp.json(), "sources"):
+                httpx.delete(
+                    f"{api_base_url}/api/correction-sources/{name}",
                     timeout=5.0,
                 )
         except Exception:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from typing import NamedTuple
 
 from nicegui import ui
 
@@ -37,6 +38,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.ui.components.correction_source import correction_source_dialog
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.detection_status import (
     describe_connect_failure,
@@ -49,6 +51,17 @@ from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.status_line import StatusLine
 
 logger = logging.getLogger(__name__)
+
+
+class _SurveyLimits(NamedTuple):
+    """A Survey-in mode's limit defaults and accuracy bounds (issue #192)."""
+
+    duration_label: str
+    duration_s: int
+    accuracy_mm: int
+    accuracy_min_mm: int
+    accuracy_max_mm: int
+    accuracy_step_mm: int
 
 
 @ui.page("/survey")
@@ -192,6 +205,33 @@ def survey_page() -> None:
                 "fixed base mode and saved to flash."
             ).classes("text-grey-4 q-mt-xs text-caption")
 
+            # Plain (the receiver's own fixes) or Corrected (RTK against a
+            # Correction source, cm-level) — issue #192.
+            svin_mode = ui.toggle(
+                {"plain": "Plain", "corrected": "Corrected (cm-level)"},
+                value="plain",
+            ).classes("q-mt-sm")
+
+            svin_source_row = ui.column().classes("w-full gap-1 q-mt-sm")
+            with svin_source_row:
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    svin_source_select = (
+                        ui.select([], label="Correction source")
+                        .classes("col-grow")
+                        .props('data-testid="correction-source-select"')
+                    )
+                    svin_source_edit_btn = ui.button(icon="edit").props(
+                        'flat round dense aria-label="Edit Correction source"'
+                    )
+                    svin_source_new_btn = ui.button(icon="add").props(
+                        'flat round dense aria-label="New Correction source"'
+                    )
+                ui.label(
+                    "While corrected, the receiver works as a rover: the base "
+                    "sends no RTCM until the survey is committed."
+                ).classes("text-caption text-warning")
+            svin_source_row.set_visibility(False)
+
             with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
                 svin_duration = ui.number(
                     "Min Duration (seconds)",
@@ -231,6 +271,78 @@ def survey_page() -> None:
                     "color=negative outline"
                 )
                 svin_cancel_btn.set_visibility(False)
+
+            # ---- Plain / Corrected mode (issue #192) ----
+            mode_limits = {
+                "plain": _SurveyLimits(
+                    "Min Duration (seconds)", 120, 50000, 1000, 500000, 1000
+                ),
+                "corrected": _SurveyLimits(
+                    "Min RTK Fixed time (seconds)", 300, 50, 10, 1000, 5
+                ),
+            }
+            # A source the page selects itself isn't the operator's choice.
+            choosing_in_code = False
+
+            def _refresh_sources(select: str | None = None) -> None:
+                nonlocal choosing_in_code
+                names = [s.name for s in config_svc.get_correction_sources()]
+                svin_source_select.set_options(names)
+                choice = select or config_svc.get_last_correction_source()
+                choosing_in_code = True
+                svin_source_select.value = choice if choice in names else None
+                choosing_in_code = False
+                svin_source_edit_btn.set_enabled(svin_source_select.value is not None)
+
+            def _on_mode_change() -> None:
+                limits = mode_limits[str(svin_mode.value)]
+                svin_duration.props(f'label="{limits.duration_label}"')
+                svin_duration.value = limits.duration_s
+                svin_accuracy.min = limits.accuracy_min_mm
+                svin_accuracy.max = limits.accuracy_max_mm
+                svin_accuracy.props(f"step={limits.accuracy_step_mm}")
+                svin_accuracy.value = limits.accuracy_mm
+                _update_acc_hint()
+                corrected = svin_mode.value == "corrected"
+                svin_source_row.set_visibility(corrected)
+                # Corrected Start arrives with the Corrected survey-in itself.
+                svin_start_btn.set_enabled(not corrected)
+                if corrected:
+                    _refresh_sources()
+
+            def _on_source_selected() -> None:
+                svin_source_edit_btn.set_enabled(svin_source_select.value is not None)
+                if svin_source_select.value and not choosing_in_code:
+                    config_svc.set_last_correction_source(str(svin_source_select.value))
+
+            def _source_saved(name: str) -> None:
+                config_svc.set_last_correction_source(name)
+                _refresh_sources(select=name)
+
+            def _edit_source() -> None:
+                if svin_source_select.value:
+                    source = config_svc.get_correction_source(
+                        str(svin_source_select.value)
+                    )
+                    if source is not None:
+                        correction_source_dialog(
+                            config_svc,
+                            source,
+                            _source_saved,
+                            lambda _: _refresh_sources(),
+                        )
+
+            svin_mode.on_value_change(lambda _: _on_mode_change())
+            svin_source_select.on_value_change(lambda _: _on_source_selected())
+            svin_source_new_btn.on_click(
+                lambda: correction_source_dialog(
+                    config_svc, None, _source_saved, lambda _: _refresh_sources()
+                )
+            )
+            svin_source_edit_btn.on_click(_edit_source)
+            # The mode can't change under a running survey: it changes the
+            # limits the progress display measures against.
+            svin_mode.bind_enabled_from(svin_start_btn, "visible")
 
             # Progress section — shown as soon as Start is pressed and kept
             # visible across the whole survey lifecycle (success, failure, or

@@ -72,6 +72,12 @@ RECEIVER_COUNTERS_EVERY_S: float = 30.0
 # grew from 30 to 91 mm on 30-45 s old corrections). The bench confirms both.
 FIXED_SETTLE_S: float = 30.0
 MAX_CORRECTION_AGE_S: float = 10.0
+# An RTK Fixed solution more than this far (3D) from the survey's mean so far
+# (or, before any Observation, from the last Fixed) is a jump to a different
+# Fixed solution: the averaging restarts, so two Fixed solutions never mix.
+# Fixed noise is millimetres; on the bench a false Fixed sat 9-13 cm off the
+# right one for 3 minutes with no break in Fixed (#197, run 1 on P472).
+FIXED_JUMP_M: float = 0.05
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -271,6 +277,7 @@ class SurveyService:
                 accuracy_limit_mm=config.accuracy_limit_mm,
                 correction_source=source.name,
                 source_connected=True,
+                fixed_jumps=0,
                 fixed_settle_seconds=int(self._fixed_settle_s),
             )
             limits = _Limits(
@@ -410,6 +417,7 @@ class SurveyService:
         last_growth_at = started_at  # the start, or the last Observation
         last_sample_wall: float | None = None
         fixed_since: float | None = None  # when the current Fixed began
+        last_fixed: tuple[float, float, float] | None = None
         try:
             while True:
                 # Bench diagnosis (#197), on the real (monotonic) clock, not
@@ -423,6 +431,19 @@ class SurveyService:
                     self._sample_interval_s.add(read_began - last_sample_wall)
                 last_sample_wall = read_began
                 fixed = position.fix_ok and position.rtk_status == "fixed"
+                if fixed and limits.corrected:
+                    here = (position.ecef_x_m, position.ecef_y_m, position.ecef_z_m)
+                    reference = averaging.mean() if averaging.count else last_fixed
+                    if (
+                        reference is not None
+                        and math.dist(here, reference) > FIXED_JUMP_M
+                    ):
+                        # A different Fixed solution: start the average and
+                        # the settling again, so the two never mix.
+                        self._restart_after_jump(math.dist(here, reference))
+                        averaging = _Averaging()
+                        fixed_since = None
+                    last_fixed = here
                 if not fixed:
                     fixed_since = None
                 elif fixed_since is None:
@@ -574,6 +595,29 @@ class SurveyService:
             "receiver_skipped_bytes": counts.skipped_bytes,
             "receiver_overrun_errors": counts.overrun_errors,
         }
+
+    def _restart_after_jump(self, jump_m: float) -> None:
+        """Report a jump while Fixed, and the averaging it discarded."""
+        assert self._progress is not None
+        jumps = (self._progress.fixed_jumps or 0) + 1
+        logger.warning(
+            "Corrected survey-in: RTK Fixed jumped %.0f mm; discarding %d "
+            "Observations and settling again",
+            jump_m * 1000,
+            self._progress.observations,
+        )
+        self._progress = self._progress.model_copy(
+            update={
+                "fixed_jumps": jumps,
+                "last_jump_mm": jump_m * 1000,
+                "duration_seconds": 0,
+                "observations": 0,
+                "mean_accuracy_mm": 0.0,
+                "latitude": None,
+                "longitude": None,
+                "altitude_m": None,
+            }
+        )
 
     def _update_application_progress(self, averaging: _Averaging) -> None:
         assert self._progress is not None

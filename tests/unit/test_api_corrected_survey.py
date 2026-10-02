@@ -995,9 +995,10 @@ class TestSettling:
     ) -> None:
         caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
         x, y, z = TRUE_ECEF
-        # The first 30 s of Fixed are a metre off: they mustn't count.
+        # The first 30 s of Fixed are 3 cm off (under a jump): they mustn't
+        # count.
         rover.script_survey_positions(
-            [_fixed(x + 1.0, y, z)] * 30 + [_fixed(x, y, z)] * 60
+            [_fixed(x + 0.03, y, z)] * 30 + [_fixed(x, y, z)] * 60
         )
 
         _start(client)
@@ -1013,12 +1014,13 @@ class TestSettling:
     ) -> None:
         caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
         x, y, z = TRUE_ECEF
-        # 40 Fixed (10 count), a Float, then 30 Fixed a metre off that are
-        # settling again and mustn't count, then Fixed on the point.
+        # 40 Fixed (10 count), a Float, then 30 Fixed 3 cm off (under a
+        # jump) that are settling again and mustn't count, then Fixed on the
+        # point.
         rover.script_survey_positions(
             [_fixed(x, y, z)] * 40
             + [_fixed(x, y, z, status="float")]
-            + [_fixed(x + 1.0, y, z)] * 30
+            + [_fixed(x + 0.03, y, z)] * 30
             + [_fixed(x, y, z)] * 60
         )
 
@@ -1055,3 +1057,68 @@ class TestSettling:
 
         assert progress["rtk_status"] == "fixed"
         assert progress["fixed_settle_seconds"] == 30
+
+
+# ---- A jump while Fixed restarts the averaging (#197) ----
+
+
+def _up(metres: float) -> tuple[float, float, float]:
+    """The true point moved ``metres`` up (along the ECEF radial)."""
+    x, y, z = TRUE_ECEF
+    norm = (x * x + y * y + z * z) ** 0.5
+    return (x + x / norm * metres, y + y / norm * metres, z + z / norm * metres)
+
+
+class TestFixedJump:
+    def test_a_jump_while_fixed_discards_the_averaging_before_it(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        # 40 Fixed here (10 counted after settling), then Fixed 9 cm higher,
+        # as on the bench (run 1, P472): the two must never mix.
+        rover.script_survey_positions(
+            [_fixed(x, y, z)] * 40 + [_fixed(*_up(0.09))] * 120
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        _, _, alt = ecef_to_llh(*_up(0.09))
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
+        assert progress["observations"] == 60
+        assert progress["fixed_jumps"] == 1
+        assert progress["last_jump_mm"] == pytest.approx(90.0, abs=1.0)
+
+    def test_a_jump_across_a_float_gap_is_still_a_jump(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        rover.script_survey_positions(
+            [_fixed(x, y, z)] * 40
+            + [_fixed(x, y, z, status="float")] * 5
+            + [_fixed(*_up(0.09))] * 120
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        _, _, alt = ecef_to_llh(*_up(0.09))
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
+        assert progress["fixed_jumps"] == 1
+
+    def test_fixed_noise_isnt_a_jump(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        # 2 cm between samples, back and forth: noise, not a jump.
+        rover.script_survey_positions(
+            [_fixed(*_up(0.01 if i % 2 else -0.01)) for i in range(90)]
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        assert progress["observations"] == 60
+        assert progress["fixed_jumps"] == 0

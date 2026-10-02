@@ -1765,6 +1765,11 @@ def survey_page() -> None:
             settle = progress.fixed_settle_seconds or 0
             if progress.rtk_status == "fixed" and held < settle:
                 text += f" (settling, {settle - held}s)"
+            if progress.fixed_jumps and progress.last_jump_mm is not None:
+                text += (
+                    f" — restarted after a {progress.last_jump_mm:.0f} mm jump"
+                    f" ({progress.fixed_jumps} so far)"
+                )
             svin_rtk_label.text = text
             svin_rtk_label.classes(replace=colour)
             age = progress.correction_age_s

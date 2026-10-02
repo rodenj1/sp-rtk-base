@@ -31,6 +31,7 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.services import (
     get_config_service,
+    get_correction_verification_service,
     get_device_service,
     get_signal_quality_service,
     get_survey_service,
@@ -39,6 +40,7 @@ from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.ui.components.correction_source import correction_source_dialog
+from sp_rtk_base.ui.components.correction_verification import VerificationPanel
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.detection_status import (
     describe_connect_failure,
@@ -226,6 +228,10 @@ def survey_page() -> None:
                     svin_source_new_btn = ui.button(icon="add").props(
                         'flat round dense aria-label="New Correction source"'
                     )
+                    svin_source_verify_btn = ui.button(
+                        "Verify", icon="fact_check"
+                    ).props("outline dense")
+                svin_source_panel = VerificationPanel()
                 ui.label(
                     "While corrected, the receiver works as a rover: the base "
                     "sends no RTCM until the survey is committed."
@@ -310,12 +316,26 @@ def survey_page() -> None:
                 if corrected:
                     _refresh_sources()
 
+            async def _verify_selected_source() -> None:
+                if not svin_source_select.value:
+                    ui.notify("Choose a Correction source first", type="warning")
+                    return
+                source = config_svc.get_correction_source(str(svin_source_select.value))
+                if source is None:
+                    return
+                await svin_source_panel.run(
+                    lambda: get_correction_verification_service().verify(source.config),
+                    svin_source_verify_btn,
+                )
+
             def _on_source_selected() -> None:
+                svin_source_panel.reset()  # it showed another source
                 svin_source_edit_btn.set_enabled(svin_source_select.value is not None)
                 if svin_source_select.value and not choosing_in_code:
                     config_svc.set_last_correction_source(str(svin_source_select.value))
 
             def _source_saved(name: str) -> None:
+                svin_source_panel.reset()  # the saved values changed
                 config_svc.set_last_correction_source(name)
                 _refresh_sources(select=name)
 
@@ -340,6 +360,7 @@ def survey_page() -> None:
                 )
             )
             svin_source_edit_btn.on_click(_edit_source)
+            svin_source_verify_btn.on_click(_verify_selected_source)
             # The mode can't change under a running survey: it changes the
             # limits the progress display measures against.
             svin_mode.bind_enabled_from(svin_start_btn, "visible")

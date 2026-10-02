@@ -21,11 +21,13 @@ from sp_rtk_base.models.config_models import (
     CorrectionSourceProfile,
     NtripCorrectionConfig,
 )
+from sp_rtk_base.services import get_correction_verification_service
 from sp_rtk_base.services.config_service import (
     ConfigService,
     CorrectionSourceExistsError,
     CorrectionSourceNotFoundError,
 )
+from sp_rtk_base.ui.components.correction_verification import VerificationPanel
 
 _NAME_RE = re.compile(CORRECTION_SOURCE_NAME_PATTERN)
 _NAME_MSG = "Letters, digits, '-' and '_' only"
@@ -67,6 +69,7 @@ def correction_source_dialog(
     cfg = existing.config if existing else None
     has_password = bool(cfg and cfg.password)
     remove_password = False
+    panel_holder: list[VerificationPanel] = []  # set once the panel exists
 
     with (
         ui.dialog() as dlg,
@@ -115,6 +118,7 @@ def correction_source_dialog(
                 def _remove_password() -> None:
                     nonlocal remove_password
                     remove_password = True
+                    panel_holder[0].void()  # the password Verify uses changed
                     password.value = ""
                     password.props('placeholder=""')
                     removed_label.set_visibility(True)
@@ -145,6 +149,43 @@ def correction_source_dialog(
                 ui.label(f"{label}: {_relay_default(field_name)} {unit}").classes(
                     "text-caption text-grey-4"
                 )
+
+        # ---- Verify (issue #194): advisory, against the form as it is ----
+        panel = VerificationPanel()
+        panel_holder.append(panel)
+
+        def _form_config() -> NtripCorrectionConfig:
+            typed = password.value or ""
+            host = (caster.value or "").strip()
+            port_number = int(port.value or 2101)
+            # Blank while editing means the saved password, for its own caster only.
+            saved = existing.saved_password_for(host, port_number) if existing else ""
+            return NtripCorrectionConfig.model_validate(
+                {
+                    "caster": host,
+                    "port": port_number,
+                    "mountpoint": (mountpoint.value or "").strip(),
+                    "username": (username.value or "").strip(),
+                    # blank while editing means the saved password
+                    "password": typed or ("" if remove_password else saved),
+                    "version": version.value,
+                    "tls": bool(tls.value),
+                }
+            )
+
+        async def _verify() -> None:
+            try:
+                config = _form_config()
+            except ValidationError as exc:
+                ui.notify(_first_error(exc), type="warning")
+                return
+            await panel.run(
+                lambda: get_correction_verification_service().verify(config),
+                verify_btn,
+            )
+
+        for field in (caster, port, mountpoint, username, password, version, tls):
+            field.on_value_change(lambda _: panel.void())
 
         def _save() -> None:
             for field in (name, caster, mountpoint):
@@ -204,6 +245,9 @@ def correction_source_dialog(
                 ui.button("Delete", icon="delete", on_click=_delete).props(
                     "flat color=negative"
                 )
+            verify_btn = ui.button("Verify", icon="fact_check", on_click=_verify).props(
+                "outline"
+            )
             ui.button("Cancel", on_click=dlg.close).props("flat")
             ui.button("Save", on_click=_save).props("color=primary")
     dlg.open()

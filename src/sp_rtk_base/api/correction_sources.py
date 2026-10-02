@@ -22,18 +22,27 @@ from sp_rtk_base.models.api_models import (
     CorrectionSourceListResponse,
     CorrectionSourceResponse,
     CorrectionSourceUpdateRequest,
+    CorrectionSourceVerifyRequest,
     RelayActionResponse,
 )
 from sp_rtk_base.models.config_models import (
     CorrectionSourceProfile,
     NtripCorrectionConfig,
 )
-from sp_rtk_base.services import get_config_service
+from sp_rtk_base.models.verification_models import VerificationResult
+from sp_rtk_base.services import (
+    get_config_service,
+    get_correction_verification_service,
+)
 from sp_rtk_base.services.config_service import (
     ConfigService,
     CorrectionSourceExistsError,
     CorrectionSourceNotFoundError,
 )
+from sp_rtk_base.services.correction_verification import (
+    CorrectionSourceVerificationService,
+)
+from sp_rtk_base.services.verification import VerificationRefusedError
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +117,39 @@ async def list_correction_sources(
         count=len(sources),
         last_used=config_svc.get_last_correction_source(),
     )
+
+
+@router.post("/verify", response_model=VerificationResult)
+async def verify_correction_source(
+    request: CorrectionSourceVerifyRequest,
+    config_svc: ConfigService = Depends(get_config_service),
+    verifier: CorrectionSourceVerificationService = Depends(
+        get_correction_verification_service
+    ),
+) -> VerificationResult | JSONResponse:
+    """Verify the form's values: would a Corrected survey-in get corrections?
+
+    Advisory: saving doesn't need it. A blank password with the ``name`` of
+    a saved source uses that source's saved password. Refused with 409
+    (``verification_in_progress``) while another Verification runs.
+    """
+    fields = request.model_dump(exclude={"name"})
+    if not fields["password"] and request.name:
+        saved = config_svc.get_correction_source(request.name)
+        if saved is not None:
+            fields["password"] = saved.saved_password_for(request.caster, request.port)
+    try:
+        config = NtripCorrectionConfig.model_validate(fields)
+    except ValidationError as exc:
+        return _error(422, _describe(exc.errors()))
+    try:
+        return await verifier.verify(config)
+    except VerificationRefusedError as exc:
+        logger.info("Correction source Verification refused (%s)", exc.code)
+        return JSONResponse(
+            status_code=409,
+            content={"status": "error", "message": exc.message, "code": exc.code},
+        )
 
 
 @router.get("/{name}", response_model=CorrectionSourceResponse)

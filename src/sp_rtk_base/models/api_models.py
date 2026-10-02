@@ -437,3 +437,20 @@ class CorrectionSourceListResponse(BaseModel):
     sources: list[CorrectionSourceResponse]
     count: int
     last_used: str | None = None
+
+
+class CorrectionSourceVerifyRequest(BaseModel):
+    """The form values to verify, as typed (issue #194).
+
+    ``name`` is the saved source being edited, if any: a blank password
+    then means that source's saved password.
+    """
+
+    name: str | None = None
+    caster: str
+    port: int = 2101
+    mountpoint: str
+    username: str = ""
+    password: str = ""
+    version: Literal["1.0", "2.0"] = "2.0"
+    tls: bool = False

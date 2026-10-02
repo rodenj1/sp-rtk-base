@@ -421,6 +421,18 @@ class CorrectionSourceProfile(BaseModel):
     kind: Literal["ntrip"] = "ntrip"
     config: NtripCorrectionConfig
 
+    def saved_password_for(self, caster: str, port: int) -> str:
+        """The saved password, if ``caster:port`` is the caster it was saved for.
+
+        A blank password while editing means the saved one, but only towards
+        the same caster: it is never sent anywhere else (issue #194).
+        """
+        same = (caster.strip().lower(), port) == (
+            self.config.caster.strip().lower(),
+            self.config.port,
+        )
+        return self.config.password if same else ""
+
     def to_relay_config(self) -> InputConfig:
         """The Relay input that reads this source (Relay defaults for the rest)."""
         return InputConfig(source="ntrip", config=self.config.model_dump())

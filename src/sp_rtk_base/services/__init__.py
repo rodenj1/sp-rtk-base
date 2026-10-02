@@ -25,6 +25,9 @@ from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.correction_verification import (
+    CorrectionSourceVerificationService,
+)
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
@@ -115,6 +118,9 @@ network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
 survey_service: SurveyService = SurveyService(device_service)
+correction_verification_service: CorrectionSourceVerificationService = (
+    CorrectionSourceVerificationService()
+)
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
 bluetooth_verification_service: BluetoothVerificationService = (
@@ -173,6 +179,14 @@ def get_device_service() -> DeviceService:
         The application's DeviceService instance.
     """
     return device_service
+
+
+def get_correction_verification_service() -> CorrectionSourceVerificationService:
+    """Get the singleton Correction source Verification service.
+
+    A singleton so that "one Verification at a time" holds process-wide.
+    """
+    return correction_verification_service
 
 
 def get_survey_service() -> SurveyService:

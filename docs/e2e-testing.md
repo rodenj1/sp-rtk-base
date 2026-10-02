@@ -120,6 +120,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
 | `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start needs a chosen Correction source when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
 | `test_survey_corrected.py` | A Corrected survey-in against a scripted fake caster: the live panel shows the source connected, RTK Fixed, the correction age, Fixed time and accuracy against their limits; Cancel |
+| `test_survey_corrected_failures.py` | A Corrected survey-in without corrections warns (no RTK Fixed, time left) then aborts with nothing committed; a refused Start names the failing Stage. The server shortens the stall warning and abort (`SP_RTK_BASE_FAKE_STALL_WARNING_S` / `_ABORT_S`, fake GPS only) |
 | `test_survey_correction_verify.py` | Verify a Correction source against a scripted fake caster: Green with every Stage passed and its countdown, Red at auth with later Stages skipped, editing the dialog voids a Green |
 | `test_survey_station_averaged.py` | Survey-in on a receiver without a Receiver survey-in (`FAKE-NO-SVIN`): the station averages, commits the fixed base, cancels to rover mode; "Averaged by the receiver" on the normal fake |
 
@@ -224,7 +225,11 @@ unset never see it.
    subprocess `env` before spawning the server.
 2. `services/drivers/__init__.py` checks the env var on import and
    conditionally calls `register_driver("fake", FakeGpsDriver)`.
-3. A function-scoped fixture `connected_gps` POSTs
+3. With the fake GPS on, `services/__init__.py` also honours
+   `SP_RTK_BASE_FAKE_STALL_WARNING_S` and `SP_RTK_BASE_FAKE_STALL_ABORT_S`,
+   which `conftest.py` sets to 2 s and 15 s so the browser can see a
+   Corrected survey-in's Stall warning (60 s) and abort (10 min).
+4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and
    tears down with `/api/device/disconnect` after the test.

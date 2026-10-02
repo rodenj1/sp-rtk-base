@@ -15,7 +15,10 @@ from pydantic import ValidationError
 
 from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services import get_config_service
-from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.config_service import (
+    ConfigService,
+    CorrectionSourceInUseError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +110,10 @@ async def import_config(
             status_code=400,
             detail=f"Correction source names must be unique: {', '.join(duplicates)}",
         )
+    try:
+        config_svc.refuse_import_if_in_use(config)
+    except CorrectionSourceInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     config = config_svc.keep_saved_correction_passwords(config)
     config_svc.save_config(config)
     logger.info("Configuration imported successfully")

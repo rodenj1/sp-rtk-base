@@ -701,6 +701,22 @@ class SurveyInProgress(BaseModel):
     source_last_error: str | None = Field(
         default=None, description="The Correction source's last connection error"
     )
+    # A Corrected survey-in aborts after 10 minutes without RTK Fixed.
+    seconds_without_fixed: int | None = Field(
+        default=None,
+        description="Time since the start or the last RTK Fixed Observation (s)",
+    )
+    stall_abort_in_seconds: int | None = Field(
+        default=None, description="Time left before the survey aborts as stalled (s)"
+    )
+    stall_warning: bool | None = Field(
+        default=None,
+        description="RTK Fixed has been missing long enough to warn (over 60 s)",
+    )
+    stall_reason: SurveyAbortReason | None = Field(
+        default=None,
+        description="Why there's no RTK Fixed now: no_corrections or no_fixed",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ from sp_rtk_base.services import get_correction_verification_service
 from sp_rtk_base.services.config_service import (
     ConfigService,
     CorrectionSourceExistsError,
+    CorrectionSourceInUseError,
     CorrectionSourceNotFoundError,
 )
 from sp_rtk_base.ui.components.correction_verification import VerificationPanel
@@ -219,6 +220,9 @@ def correction_source_dialog(
                         password=new_password,
                         remove_password=remove_password,
                     )
+            except CorrectionSourceInUseError as exc:
+                ui.notify(str(exc), type="warning")
+                return
             except CorrectionSourceExistsError as exc:
                 name.error = "Name already used"
                 ui.notify(str(exc), type="warning")
@@ -235,7 +239,11 @@ def correction_source_dialog(
 
         def _delete() -> None:
             assert existing is not None
-            config_svc.remove_correction_source(existing.name)
+            try:
+                config_svc.remove_correction_source(existing.name)
+            except CorrectionSourceInUseError as exc:
+                ui.notify(str(exc), type="warning")
+                return
             ui.notify(f"Deleted '{existing.name}'", type="info")
             dlg.close()
             on_deleted(existing.name)

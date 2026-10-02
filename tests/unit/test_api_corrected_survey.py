@@ -1,4 +1,4 @@
-"""Tests for running a Corrected survey-in end to end (issue #195).
+"""Tests for running a Corrected survey-in end to end (issues #195, #196).
 
 Seam under test: the survey HTTP API
 (``POST /api/device/configure/corrected-survey-in``,
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -35,11 +36,16 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.services import (
     get_config_service,
+    get_correction_verification_service,
     get_device_service,
     get_relay_service,
     get_survey_service,
+    wire_corrected_survey,
 )
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.correction_verification import (
+    CorrectionSourceVerificationService,
+)
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FAKE_NO_SURVEY_IN_PORT, FakeGpsDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
@@ -164,6 +170,9 @@ def _client_for(
     device._console_port = ConsolePortReading.known(PortId.USB)  # pyright: ignore[reportPrivateUsage]
     clock = FakeClock()
     survey = SurveyService(device, clock=clock, sleep=clock.sleep)
+    verifier = CorrectionSourceVerificationService(data_window_seconds=1.0)
+    # The same wiring the app does (services/__init__.py).
+    wire_corrected_survey(survey, mock_config_service, verifier)
     mock_config_service.create_correction_source(
         CorrectionSourceProfile(
             name="local",
@@ -182,6 +191,7 @@ def _client_for(
     app.dependency_overrides[get_survey_service] = lambda: survey
     app.dependency_overrides[get_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_relay_service] = lambda: relay
+    app.dependency_overrides[get_correction_verification_service] = lambda: verifier
     with TestClient(app) as test_client:
         yield test_client
     asyncio.run(survey.shutdown())
@@ -483,3 +493,328 @@ class TestReviewFixes:
         # Signal Quality and metrics attach through the operator's Relay only.
         assert relay.engine is None
         assert relay.is_running is False
+
+
+# ---- Failure rules (issue #196) ----
+
+SOURCES = "/api/correction-sources"
+VERIFY = "/api/correction-sources/verify"
+UNAUTHORIZED = b"HTTP/1.0 401 Unauthorized\r\n\r\n"
+
+
+def _position(status: str, age: float | None = 1.0) -> SurveyPosition:
+    x, y, z = TRUE_ECEF
+    return SurveyPosition(
+        ecef_x_m=x,
+        ecef_y_m=y,
+        ecef_z_m=z,
+        accuracy_3d_m=0.01,
+        rtk_status=status,
+        fix_ok=True,
+        correction_age_s=age,
+    )
+
+
+class TestStartRefusal:
+    @pytest.mark.parametrize(
+        ("script", "stage"),
+        [
+            (Script(reply=b"<html>Banned</html>\r\n", hold=False), "caster"),
+            (Script(reply=UNAUTHORIZED, hold=False), "auth"),
+            (
+                Script(
+                    reply=b"SOURCETABLE 200 OK\r\n\r\nENDSOURCETABLE\r\n", hold=False
+                ),
+                "mountpoint",
+            ),
+        ],
+    )
+    def test_an_unreachable_source_names_the_failing_stage(
+        self,
+        client: TestClient,
+        caster: FakeCaster,
+        rover: RecordingRover,
+        script: Script,
+        stage: str,
+    ) -> None:
+        caster.scripts.append(script)
+
+        response = _start(client)
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["code"] == "source_unreachable"
+        assert body["stage"] == stage
+        assert stage in body["message"]
+        assert rover.calls[-1] == "end_correction_input"
+        assert client.get(SURVEY).json()["outcome"] is None  # nothing started
+
+    def test_a_closed_port_names_connect(
+        self, client: TestClient, caster: FakeCaster
+    ) -> None:
+        # Point the saved source at a port nothing listens on.
+        unused = socket.create_server(("127.0.0.1", 0))
+        port = unused.getsockname()[1]
+        unused.close()
+        client.put(f"{SOURCES}/local", json={"port": port})
+
+        response = _start(client)
+
+        assert response.json()["stage"] == "connect"
+
+
+class GatedRover(RecordingRover):
+    """A rover whose position reads wait, after ``gate_after`` reads, until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+        self.gate_after: int | None = None
+        self.release = threading.Event()
+
+    def get_survey_position(self) -> SurveyPosition:
+        self.reads += 1
+        if self.gate_after is not None and self.reads > self.gate_after:
+            self.release.wait(10)
+        return super().get_survey_position()
+
+
+class TestStall:
+    def test_ten_minutes_with_only_float_aborts_as_no_fixed(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        rover.fixed_after_s = 3600.0  # corrections in use, Float only
+
+        _start(client)
+        progress = _wait_for_outcome(client, "aborted")
+
+        assert progress["abort_reason"] == "no_fixed"
+        assert "configure_fixed_base" not in rover.calls
+        assert rover.get_base_config().mode is BaseMode.DISABLED  # a rover
+        assert "end_correction_input" in rover.calls
+
+    def test_ten_minutes_without_corrections_aborts_as_no_corrections(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY))  # accepted, never sends
+
+        _start(client)
+        progress = _wait_for_outcome(client, "aborted")
+
+        assert progress["abort_reason"] == "no_corrections"
+        assert "configure_fixed_base" not in rover.calls
+
+    def test_no_corrections_carries_the_relays_last_error(
+        self, client: TestClient, caster: FakeCaster
+    ) -> None:
+        # Accepted, then dropped; every reconnect is refused.
+        caster.scripts += [Script(reply=ICY, hold=False)] + [
+            Script(reply=UNAUTHORIZED, hold=False) for _ in range(20)
+        ]
+
+        _start(client)
+        progress = _wait_for_outcome(client, "aborted")
+
+        assert progress["abort_reason"] == "no_corrections"
+        assert progress["source_last_error"]
+
+    def test_a_shorter_outage_only_pauses_the_survey(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        # 30 Fixed, nine and a half minutes without, then 30 Fixed.
+        rover.script_survey_positions(
+            [_position("fixed")] * 30
+            + [_position("none", age=None)] * 570
+            + [_position("fixed")] * 30
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        assert progress["observations"] == 60
+
+    def test_a_failed_survey_never_falls_back_to_a_plain_one(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY))
+
+        _start(client)
+        _wait_for_outcome(client, "aborted")
+
+        assert rover.calls.count("disable_base_mode") == 1  # the start only
+        progress = client.get(SURVEY).json()
+        assert progress["outcome"] == "aborted"  # not running again, any mode
+
+
+class TestWarning:
+    @pytest.fixture
+    def gated_rover(self) -> GatedRover:
+        driver = GatedRover()
+        driver.connect(FAKE_NO_SURVEY_IN_PORT)
+        return driver
+
+    def test_progress_says_how_long_fixed_has_been_missing_and_why(
+        self,
+        caster: FakeCaster,
+        gated_rover: GatedRover,
+        mock_config_service: ConfigService,
+        relay: RelayService,
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        gated_rover.fixed_after_s = 3600.0  # Float only
+        gated_rover.gate_after = 90
+        with _client_for(gated_rover, caster, mock_config_service, relay) as c:
+            _start(c)
+            progress = _wait_for(
+                c,
+                lambda p: (p.get("seconds_without_fixed") or 0) >= 89,
+                "90 s without Fixed",
+            )
+            gated_rover.release.set()
+
+        assert progress["outcome"] == "running"
+        assert progress["stall_warning"] is True  # over 60 s
+        assert progress["stall_reason"] == "no_fixed"
+        assert (
+            progress["stall_abort_in_seconds"]
+            == 600 - progress["seconds_without_fixed"]
+        )
+
+
+class TestWarningBoundary:
+    @pytest.fixture
+    def gated_rover(self) -> GatedRover:
+        driver = GatedRover()
+        driver.connect(FAKE_NO_SURVEY_IN_PORT)
+        return driver
+
+    @pytest.mark.parametrize(("reads", "warned"), [(60, False), (61, True)])
+    def test_the_warning_starts_once_fixed_is_missing_for_over_60_s(
+        self,
+        caster: FakeCaster,
+        gated_rover: GatedRover,
+        mock_config_service: ConfigService,
+        relay: RelayService,
+        reads: int,
+        warned: bool,
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        gated_rover.fixed_after_s = 3600.0  # Float only
+        gated_rover.gate_after = reads + 1
+        with _client_for(gated_rover, caster, mock_config_service, relay) as c:
+            _start(c)
+            progress = _wait_for(
+                c,
+                lambda p: p.get("seconds_without_fixed") == reads,
+                f"{reads} s without Fixed",
+            )
+            gated_rover.release.set()
+
+        assert progress["stall_warning"] is warned
+
+
+class TestStallRestore:
+    def test_a_stall_whose_input_cant_be_restored_says_so(
+        self,
+        caster: FakeCaster,
+        mock_config_service: ConfigService,
+        relay: RelayService,
+    ) -> None:
+        rover = RestoreFailsRover()
+        rover.connect(FAKE_NO_SURVEY_IN_PORT)
+        rover.fixed_after_s = 3600.0
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        with _client_for(rover, caster, mock_config_service, relay) as client:
+            _start(client)
+            progress = _wait_for_outcome(client, "aborted")
+
+        assert progress["abort_reason"] == "input_not_restored"
+
+
+class TestProtection:
+    def _running(self, client: TestClient, caster: FakeCaster, rover: Any) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        # Fixed throughout (no stall), and a minimum it won't reach.
+        _start(client, min_duration_seconds=86400)
+        _wait_for(client, lambda p: p.get("outcome") == "running", "running")
+
+    def test_renaming_the_source_in_use_is_refused(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        self._running(client, caster, rover)
+
+        response = client.put(f"{SOURCES}/local", json={"name": "renamed"})
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "in_use"
+
+    def test_deleting_the_source_in_use_is_refused(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        self._running(client, caster, rover)
+
+        response = client.delete(f"{SOURCES}/local")
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "in_use"
+        assert client.get(f"{SOURCES}/local").status_code == 200
+
+    def test_after_the_survey_the_source_can_be_deleted(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        self._running(client, caster, rover)
+        client.post("/api/device/cancel-survey-in")
+
+        assert client.delete(f"{SOURCES}/local").status_code == 200
+
+    def test_the_source_is_in_use_while_the_survey_connects(
+        self, client: TestClient, caster: FakeCaster
+    ) -> None:
+        caster.scripts.append(Script(delay=1.5, reply=ICY, body=FRAMES * 2000))
+        starting = threading.Thread(target=lambda: _start(client))
+        starting.start()
+        _wait_for_request(caster)
+
+        response = client.delete(f"{SOURCES}/local")
+        starting.join(10)
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "in_use"
+
+    def test_importing_a_config_without_the_source_in_use_is_refused(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        self._running(client, caster, rover)
+        exported = client.get("/api/config/export").text
+        without = exported.split("correction_sources:")[0]
+
+        response = client.post(
+            "/api/config/import",
+            files={"file": ("config.yaml", without, "application/x-yaml")},
+        )
+
+        assert response.status_code == 409
+        assert client.get(f"{SOURCES}/local").status_code == 200
+
+    def test_a_verification_is_refused_while_the_survey_runs(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        self._running(client, caster, rover)
+
+        response = client.post(
+            VERIFY,
+            json={"caster": "127.0.0.1", "port": caster.port, "mountpoint": "MP1"},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "survey_running"
+        assert len(caster.requests) == 1  # the survey's own connection only
+
+
+def _wait_for_request(caster: FakeCaster) -> None:
+    deadline = time.monotonic() + 5.0
+    while not caster.requests:
+        assert time.monotonic() < deadline, "the survey never connected"
+        time.sleep(0.01)

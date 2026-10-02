@@ -36,11 +36,15 @@ from sp_rtk_base.services import (
     get_signal_quality_service,
     get_survey_service,
 )
+from sp_rtk_base.services.correction_feed import CorrectionSourceUnreachableError
 from sp_rtk_base.services.device_service import DetectionRefusedError
 from sp_rtk_base.services.drivers import create_driver, list_drivers
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.ui.components.correction_source import correction_source_dialog
-from sp_rtk_base.ui.components.correction_verification import VerificationPanel
+from sp_rtk_base.ui.components.correction_verification import (
+    CODE_TEXT,
+    VerificationPanel,
+)
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.detection_status import (
     describe_connect_failure,
@@ -1436,7 +1440,11 @@ def survey_page() -> None:
                 # The toast is still emitted for consistency with the
                 # rest of the app, but the in-card banner is the
                 # primary signal — toasts fade in ~6 seconds.
-                err_msg = f"Failed to configure survey-in: {exc}"
+                err_msg = (
+                    _unreachable_message(exc)
+                    if isinstance(exc, CorrectionSourceUnreachableError)
+                    else f"Failed to configure survey-in: {exc}"
+                )
                 svin_error_label.text = err_msg
                 svin_error_label.set_visibility(True)
                 svin_status_label.text = "⚠ Configuration failed"
@@ -1706,7 +1714,11 @@ def survey_page() -> None:
                 # placement (indoor, under foliage, near reflective
                 # surfaces) — surface the diagnostic now rather than
                 # let the operator wait indefinitely.
-                if elapsed > 2 * dur_target and cur_acc > 2 * acc_target:
+                stall = _stall_warning(progress) if corrected else None
+                if stall is not None:
+                    svin_warning_label.text = stall
+                    svin_warning_label.set_visibility(True)
+                elif elapsed > 2 * dur_target and cur_acc > 2 * acc_target:
                     svin_warning_label.text = (
                         f"⚠ Survey may not be converging — running "
                         f"{elapsed}s with accuracy {cur_acc:.0f}mm "
@@ -1772,8 +1784,8 @@ def survey_page() -> None:
         _ABORT_REASONS: dict[str, str] = {
             "accuracy_not_reached": "the accuracy limit wasn't reached in time",
             "device_disconnected": "the receiver stopped answering",
-            "no_corrections": "no corrections arrived",
-            "no_fixed": "the receiver never reached RTK Fixed",
+            "no_corrections": "RTK Fixed never returned: no corrections arrived",
+            "no_fixed": "RTK Fixed never returned: the receiver reached only Float",
             "input_not_restored": (
                 "the receiver's input settings couldn't be restored, so "
                 "nothing was saved to flash"
@@ -1799,6 +1811,13 @@ def survey_page() -> None:
                 reason = _ABORT_REASONS.get(
                     progress.abort_reason or "", "an unexpected error"
                 )
+                if (
+                    progress.abort_reason == "no_corrections"
+                    and progress.source_last_error
+                ):
+                    reason += (
+                        f" (the source's last error: {progress.source_last_error})"
+                    )
                 svin_status_label.text = (
                     f"⚠ Survey aborted: {reason} (last accuracy "
                     f"{progress.mean_accuracy_mm:.0f} mm). Nothing was committed; "
@@ -2073,6 +2092,42 @@ def survey_page() -> None:
         _update_ui_state()
         _refresh_saved_positions()
         ui.timer(interval=0.1, callback=_on_page_load, once=True)
+
+
+def _mm_ss(seconds: int) -> str:
+    """``95`` → ``"1m 35s"``."""
+    minutes, rest = divmod(max(0, seconds), 60)
+    return f"{minutes}m {rest:02d}s" if minutes else f"{rest}s"
+
+
+def _stall_warning(progress: SurveyInProgress) -> str | None:
+    """The warning a Corrected survey-in shows once RTK Fixed is missing."""
+    if not progress.stall_warning or progress.outcome != "running":
+        return None
+    without = progress.seconds_without_fixed or 0
+    if progress.stall_reason == "no_corrections":
+        why = "no corrections are arriving" + _last_error_note(progress)
+    else:
+        why = "the receiver reaches only RTK Float"
+    left = _mm_ss(progress.stall_abort_in_seconds or 0)
+    return (
+        f"⚠ No RTK Fixed for {_mm_ss(without)}: {why}. The survey aborts in "
+        f"{left} unless RTK Fixed returns."
+    )
+
+
+def _last_error_note(progress: SurveyInProgress) -> str:
+    """`` (the source's last error: …)``, when the Relay reported one."""
+    error = progress.source_last_error
+    return f" (the source's last error: {error})" if error else ""
+
+
+def _unreachable_message(exc: CorrectionSourceUnreachableError) -> str:
+    """A refused Corrected start, named by the Verification's Stage."""
+    reason = CODE_TEXT.get(exc.code, exc.detail)
+    return (
+        f"Couldn't start: the Correction source failed at {exc.stage.value} — {reason}."
+    )
 
 
 def _info_item(label: str, value: str) -> None:

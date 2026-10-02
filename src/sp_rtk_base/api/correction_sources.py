@@ -37,6 +37,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.config_service import (
     ConfigService,
     CorrectionSourceExistsError,
+    CorrectionSourceInUseError,
     CorrectionSourceNotFoundError,
 )
 from sp_rtk_base.services.correction_verification import (
@@ -100,10 +101,11 @@ def _to_response(source: CorrectionSourceProfile) -> CorrectionSourceResponse:
     )
 
 
-def _error(status_code: int, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code, content={"status": "error", "message": message}
-    )
+def _error(status_code: int, message: str, code: str | None = None) -> JSONResponse:
+    content = {"status": "error", "message": message}
+    if code is not None:
+        content["code"] = code  # what a client branches on
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @router.get("", response_model=CorrectionSourceListResponse)
@@ -203,6 +205,8 @@ async def update_correction_source(
         )
     except CorrectionSourceNotFoundError as exc:
         return _error(404, str(exc))
+    except CorrectionSourceInUseError as exc:
+        return _error(409, str(exc), code="in_use")
     except CorrectionSourceExistsError as exc:
         return _error(409, str(exc))
     except ValidationError as exc:
@@ -216,8 +220,12 @@ async def delete_correction_source(
     name: str,
     config_svc: ConfigService = Depends(get_config_service),
 ) -> RelayActionResponse | JSONResponse:
-    """Delete a saved Correction source."""
-    if not config_svc.remove_correction_source(name):
+    """Delete a saved Correction source; 409 ``in_use`` while a survey uses it."""
+    try:
+        removed = config_svc.remove_correction_source(name)
+    except CorrectionSourceInUseError as exc:
+        return _error(409, str(exc), code="in_use")
+    if not removed:
         return _error(404, f"Correction source '{name}' not found")
     logger.info("Deleted Correction source: %s", name)
     return RelayActionResponse(

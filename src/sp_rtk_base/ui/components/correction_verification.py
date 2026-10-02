@@ -31,8 +31,9 @@ _CHIP_ICONS = {
     StageStatus.SKIPPED: "remove",
 }
 
-# What each failure code means to the operator.
-_CODE_TEXT = {
+# What each failure code means to the operator (also used when a Corrected
+# survey-in's start is refused).
+CODE_TEXT = {
     "dns": "the caster's name doesn't resolve",
     "refused": "the caster refused the connection",
     "timeout": "the caster didn't answer in time",
@@ -132,7 +133,7 @@ class VerificationPanel:
             return
         if result.verdict == "red":
             failing = next(s for s in result.stages if s.status is StageStatus.FAILED)
-            reason = _CODE_TEXT.get(failing.code or "", failing.message or "failed")
+            reason = CODE_TEXT.get(failing.code or "", failing.message or "failed")
             self._verdict.text = f"Red at {failing.stage.value}: {reason}."
             self._verdict.classes(replace="text-caption text-negative")
             return
@@ -146,7 +147,7 @@ class VerificationPanel:
         note = ""
         if warnings:
             code = warnings[0].code or ""
-            note = f" Warning: {_CODE_TEXT.get(code, warnings[0].message or code)}."
+            note = f" Warning: {CODE_TEXT.get(code, warnings[0].message or code)}."
         self._verdict.text = (
             f"Green for {left}: a Corrected survey-in started now would "
             f"receive corrections.{note}"

@@ -18,7 +18,10 @@ import logging
 
 from sp_rtk_base_relay import FrameSubscription, RelayEngine
 from sp_rtk_base_relay.config import InputConfig
+from sp_rtk_base_relay.exceptions import NtripConnectionError
 
+from sp_rtk_base.models.verification_models import VerificationStage
+from sp_rtk_base.services.correction_verification import failure_stage
 from sp_rtk_base.services.device_service import DeviceService
 
 logger = logging.getLogger(__name__)
@@ -30,7 +33,17 @@ _LOG_EVERY_FAILURES = 100
 
 
 class CorrectionSourceUnreachableError(RuntimeError):
-    """The survey's Relay instance couldn't connect to the Correction source."""
+    """The survey's Relay instance couldn't connect to the Correction source.
+
+    ``stage`` names where it failed, in the Verification's Stage names
+    (connect / caster / auth / mountpoint), and ``code`` the failure.
+    """
+
+    def __init__(self, stage: VerificationStage, code: str, detail: str) -> None:
+        super().__init__(f"The Correction source failed at {stage.value}: {detail}")
+        self.stage = stage
+        self.code = code
+        self.detail = detail
 
 
 class CorrectionFeed:
@@ -50,9 +63,12 @@ class CorrectionFeed:
         """
         try:
             await asyncio.to_thread(self._engine.start, [])
+        except NtripConnectionError as exc:
+            stage, code = failure_stage(exc)
+            raise CorrectionSourceUnreachableError(stage, code, exc.message) from exc
         except Exception as exc:
             raise CorrectionSourceUnreachableError(
-                f"Could not connect to the Correction source: {exc}"
+                VerificationStage.CONNECT, "other", str(exc)
             ) from exc
         self._subscription = self._engine.subscribe_frames()
         self._pump = asyncio.create_task(self._push_frames(self._subscription))

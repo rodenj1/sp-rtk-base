@@ -14,16 +14,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from sp_rtk_base.models.bluetooth_models import GREEN_TTL_SECONDS, normalize_pin
 from sp_rtk_base.models.config_models import (
     AppConfig,
     AppSettings,
     BaseStationPosition,
+    CorrectionSourceProfile,
     DestinationProfile,
     DeviceProfile,
     InputProfile,
+    NtripCorrectionConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,44 @@ def _without_proof(profile: InputProfile) -> InputProfile:
     return profile.model_copy(update={"proven_pin": None, "pin_proven_at": None})
 
 
+def _drop_invalid_entries(
+    data: dict[str, Any], key: str, model: type[BaseModel]
+) -> dict[str, Any]:
+    """Drop entries of the ``key`` list that fail ``model``'s validation.
+
+    Lenient on *load*: an unparseable entry is skipped with a warning
+    instead of making ``AppConfig.model_validate`` raise, which would
+    brick every endpoint. The YAML is left untouched, so the operator
+    keeps the data and can fix it.
+    """
+    raw: Any = data.get(key)
+    if not isinstance(raw, list):
+        return data
+    kept: list[Any] = []
+    for idx, item in enumerate(raw):  # type: ignore[arg-type]
+        try:
+            model.model_validate(item)
+        except ValidationError as exc:
+            name: str = "<malformed>"
+            if isinstance(item, dict):
+                raw_name = item.get("name", "<unknown>")  # type: ignore[arg-type]
+                if isinstance(raw_name, str):
+                    name = raw_name
+            errs = exc.errors()
+            msg = errs[0].get("msg", "validation error") if errs else "validation error"
+            logger.warning(
+                "Dropping %s[%d] name=%r during load — %s. "
+                "Rename or remove it in the YAML (or via the UI) to restore.",
+                key,
+                idx,
+                name,
+                msg,
+            )
+            continue
+        kept.append(item)
+    return {**data, key: kept}
+
+
 def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
     """Drop ``base_positions`` entries that fail individual validation.
 
@@ -65,35 +105,15 @@ def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
     The on-disk YAML is left untouched — the user keeps their data
     and can rename via the UI to restore.
     """
-    raw: Any = data.get("base_positions")
-    if not isinstance(raw, list):
-        return data
-    kept: list[Any] = []
-    for idx, item in enumerate(raw):  # type: ignore[arg-type]
-        try:
-            BaseStationPosition.model_validate(item)
-        except ValidationError as exc:
-            name: str = "<malformed>"
-            if isinstance(item, dict):
-                raw_name = item.get("name", "<unknown>")  # type: ignore[arg-type]
-                if isinstance(raw_name, str):
-                    name = raw_name
-            errs = exc.errors()
-            msg = errs[0].get("msg", "validation error") if errs else "validation error"
-            logger.warning(
-                "Dropping base_positions[%d] name=%r during load — %s. "
-                "Rename or remove it in the YAML (or via the UI) to restore.",
-                idx,
-                name,
-                msg,
-            )
-            continue
-        kept.append(item)
-    if len(kept) == len(raw):  # type: ignore[arg-type]
-        return data
-    cleaned: dict[str, Any] = dict(data)
-    cleaned["base_positions"] = kept
-    return cleaned
+    return _drop_invalid_entries(data, "base_positions", BaseStationPosition)
+
+
+class CorrectionSourceExistsError(ValueError):
+    """Another Correction source already has that name."""
+
+
+class CorrectionSourceNotFoundError(LookupError):
+    """No Correction source has that name."""
 
 
 def _get_config_path() -> Path:
@@ -170,6 +190,9 @@ class ConfigService:
         # the assignment annotation is sound but pyright can't infer it.
         data_dict: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
         data_dict = _filter_invalid_base_positions(data_dict)
+        data_dict = _drop_invalid_entries(
+            data_dict, "correction_sources", CorrectionSourceProfile
+        )
         self._config = AppConfig.model_validate(data_dict)
         logger.info("Loaded config from %s", self._config_path)
         return self._config
@@ -200,6 +223,146 @@ class ConfigService:
         if self._config is None:
             return self.load_config()
         return self._config
+
+    # ------------------------------------------------------------------
+    # Correction sources (issue #192)
+    # ------------------------------------------------------------------
+
+    def get_correction_sources(self) -> list[CorrectionSourceProfile]:
+        """All saved Correction sources, in the order they were added."""
+        return list(self.get_config().correction_sources)
+
+    def get_correction_source(self, name: str) -> CorrectionSourceProfile | None:
+        """The saved Correction source called ``name``, or None."""
+        for source in self.get_config().correction_sources:
+            if source.name == name:
+                return source
+        return None
+
+    def create_correction_source(
+        self, source: CorrectionSourceProfile
+    ) -> CorrectionSourceProfile:
+        """Save a new Correction source.
+
+        Raises:
+            CorrectionSourceExistsError: If the name is taken.
+        """
+        if self.get_correction_source(source.name) is not None:
+            msg = f"A Correction source named '{source.name}' already exists"
+            raise CorrectionSourceExistsError(msg)
+        config = self.get_config()
+        self.save_config(
+            config.model_copy(
+                update={"correction_sources": [*config.correction_sources, source]}
+            )
+        )
+        return source
+
+    def update_correction_source(
+        self,
+        name: str,
+        *,
+        new_name: str | None = None,
+        changes: dict[str, Any] | None = None,
+        password: str | None = None,
+        remove_password: bool = False,
+    ) -> CorrectionSourceProfile:
+        """Change a saved Correction source.
+
+        The password is write-only: a missing or blank ``password`` keeps
+        the saved one; ``remove_password`` clears it (anonymous casters),
+        unless a new password is given too.
+        A rename keeps the source preselected if it was the last one used.
+
+        Raises:
+            CorrectionSourceNotFoundError: If there's no source ``name``.
+            CorrectionSourceExistsError: If ``new_name`` is another's name.
+            ValidationError: If the result isn't a valid source.
+        """
+        existing = self.get_correction_source(name)
+        if existing is None:
+            msg = f"No Correction source named '{name}'"
+            raise CorrectionSourceNotFoundError(msg)
+        target_name = new_name if new_name is not None else name
+        if target_name != name and self.get_correction_source(target_name) is not None:
+            msg = f"A Correction source named '{target_name}' already exists"
+            raise CorrectionSourceExistsError(msg)
+
+        fields = existing.config.model_dump()
+        fields.update({k: v for k, v in (changes or {}).items() if v is not None})
+        if password:  # a newly typed password wins over removing the saved one
+            fields["password"] = password
+        elif remove_password:
+            fields["password"] = ""
+        updated = CorrectionSourceProfile(
+            name=target_name,
+            kind=existing.kind,
+            config=NtripCorrectionConfig.model_validate(fields),
+        )
+
+        config = self.get_config()
+        sources = [updated if s.name == name else s for s in config.correction_sources]
+        settings = config.settings
+        if settings.last_correction_source == name and target_name != name:
+            settings = settings.model_copy(
+                update={"last_correction_source": target_name}
+            )
+        self.save_config(
+            config.model_copy(
+                update={"correction_sources": sources, "settings": settings}
+            )
+        )
+        return updated
+
+    def remove_correction_source(self, name: str) -> bool:
+        """Delete a saved Correction source; False if there was none.
+
+        A deleted source just stops being preselected.
+        """
+        config = self.get_config()
+        sources = [s for s in config.correction_sources if s.name != name]
+        if len(sources) == len(config.correction_sources):
+            return False
+        settings = config.settings
+        if settings.last_correction_source == name:
+            settings = settings.model_copy(update={"last_correction_source": None})
+        self.save_config(
+            config.model_copy(
+                update={"correction_sources": sources, "settings": settings}
+            )
+        )
+        return True
+
+    def keep_saved_correction_passwords(self, imported: AppConfig) -> AppConfig:
+        """``imported``, with each blank Correction source password filled in.
+
+        An exported config carries no passwords; importing it back keeps the
+        password saved for a source of the same name (blank keeps it).
+        """
+        saved = {s.name: s.config.password for s in self.get_correction_sources()}
+        sources = [
+            s
+            if s.config.password
+            else s.model_copy(
+                update={
+                    "config": s.config.model_copy(
+                        update={"password": saved.get(s.name, "")}
+                    )
+                }
+            )
+            for s in imported.correction_sources
+        ]
+        return imported.model_copy(update={"correction_sources": sources})
+
+    def get_last_correction_source(self) -> str | None:
+        """The Correction source the Survey page preselects: the last one used."""
+        return self.get_config().settings.last_correction_source
+
+    def set_last_correction_source(self, name: str | None) -> None:
+        """Remember the Correction source the Survey page should preselect."""
+        config = self.get_config()
+        settings = config.settings.model_copy(update={"last_correction_source": name})
+        self.save_config(config.model_copy(update={"settings": settings}))
 
     # ------------------------------------------------------------------
     # Destination profile operations

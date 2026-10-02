@@ -11,6 +11,7 @@ import logging
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
+from pydantic import ValidationError
 
 from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services import get_config_service
@@ -32,6 +33,12 @@ async def export_config(
     """
     config = config_svc.get_config()
     data = config.model_dump(mode="json", exclude_none=True)
+    # Correction source passwords are write-only (issue #192): the export
+    # says whether one is saved, and importing it back keeps the saved one.
+    for source in data.get("correction_sources", []):
+        source_config = source.get("config", {})
+        source_config["has_password"] = bool(source_config.get("password"))
+        source_config["password"] = ""
     yaml_text = yaml.dump(data, default_flow_style=False, sort_keys=False)
 
     return Response(
@@ -82,11 +89,25 @@ async def import_config(
 
     try:
         config = AppConfig.model_validate(data)
-    except Exception as exc:
+    except ValidationError as exc:
+        # Describe the problems without quoting the file back: a value may
+        # be a password.
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg', 'invalid')}"
+            for e in exc.errors()
+        )
         raise HTTPException(
-            status_code=400, detail=f"Invalid configuration schema: {exc}"
+            status_code=400, detail=f"Invalid configuration schema: {problems}"
         ) from exc
 
+    names = [s.name for s in config.correction_sources]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Correction source names must be unique: {', '.join(duplicates)}",
+        )
+    config = config_svc.keep_saved_correction_passwords(config)
     config_svc.save_config(config)
     logger.info("Configuration imported successfully")
 

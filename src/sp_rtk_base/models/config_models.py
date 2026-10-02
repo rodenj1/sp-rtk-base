@@ -374,6 +374,56 @@ class AppSettings(BaseModel):
     metrics_enabled: bool = True
     dashboard_signal_display: SignalDisplay = "detailed"
     survey_signal_display: SignalDisplay = "detailed"
+    # The Correction source the Survey page preselects: the last one used.
+    last_correction_source: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Correction sources (issue #192)
+# ---------------------------------------------------------------------------
+
+CORRECTION_SOURCE_NAME_PATTERN = r"^[A-Za-z0-9_-]+$"
+
+
+class NtripCorrectionConfig(BaseModel):
+    """The operator's fields for an NTRIP Correction source.
+
+    Only what the operator sees is stored. The connection timeout, data
+    timeout and retry settings come from the Relay's own defaults.
+    """
+
+    caster: str = Field(min_length=1)
+    port: int = Field(default=2101, ge=1, le=65535)
+    mountpoint: str = Field(min_length=1)
+    username: str = ""  # empty: send no credentials (anonymous casters)
+    password: str = Field(default="", repr=False)  # write-only; never logged
+    version: Literal["1.0", "2.0"] = "2.0"
+    tls: bool = False  # NTRIP v2 only
+
+    @model_validator(mode="after")
+    def _tls_needs_v2(self) -> NtripCorrectionConfig:
+        if self.tls and self.version != "2.0":
+            msg = "TLS needs NTRIP v2 (NTRIP v1 has no TLS)"
+            raise ValueError(msg)
+        return self
+
+
+class CorrectionSourceProfile(BaseModel):
+    """A saved Correction source: where a Corrected survey-in gets its RTCM.
+
+    ``kind`` leaves room for other kinds of source without a migration;
+    only NTRIP exists today.
+    """
+
+    name: str = Field(
+        min_length=1, max_length=64, pattern=CORRECTION_SOURCE_NAME_PATTERN
+    )
+    kind: Literal["ntrip"] = "ntrip"
+    config: NtripCorrectionConfig
+
+    def to_relay_config(self) -> InputConfig:
+        """The Relay input that reads this source (Relay defaults for the rest)."""
+        return InputConfig(source="ntrip", config=self.config.model_dump())
 
 
 # ---------------------------------------------------------------------------
@@ -467,4 +517,8 @@ class AppConfig(BaseModel):
     base_positions: list[BaseStationPosition] = Field(
         default_factory=lambda: list[BaseStationPosition](),
         description="Saved base station position profiles",
+    )
+    correction_sources: list[CorrectionSourceProfile] = Field(
+        default_factory=lambda: list[CorrectionSourceProfile](),
+        description="Saved Correction sources for a Corrected survey-in",
     )

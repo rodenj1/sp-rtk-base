@@ -378,3 +378,62 @@ class ProfileRenameRequest(BaseModel):
     """
 
     new_display_name: str = Field(min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# Correction sources (issue #192)
+# ---------------------------------------------------------------------------
+
+
+class CorrectionSourceCreateRequest(BaseModel):
+    """Request body for saving a new NTRIP Correction source."""
+
+    name: str
+    caster: str
+    port: int = 2101
+    mountpoint: str
+    username: str = ""
+    password: str = ""
+    version: Literal["1.0", "2.0"] = "2.0"
+    tls: bool = False
+
+
+class CorrectionSourceUpdateRequest(BaseModel):
+    """Request body for changing a Correction source (all fields optional).
+
+    The password is write-only: leave it out, or blank, to keep the saved
+    one; set ``remove_password`` to clear it (anonymous casters). A new
+    ``name`` renames the source.
+    """
+
+    name: str | None = None
+    caster: str | None = None
+    port: int | None = None
+    mountpoint: str | None = None
+    username: str | None = None
+    password: str | None = None
+    remove_password: bool = False
+    version: Literal["1.0", "2.0"] | None = None
+    tls: bool | None = None
+
+
+class CorrectionSourceResponse(BaseModel):
+    """A saved Correction source. Never carries the password, only whether one is saved."""
+
+    name: str
+    kind: Literal["ntrip"]
+    caster: str
+    port: int
+    mountpoint: str
+    username: str
+    version: Literal["1.0", "2.0"]
+    tls: bool
+    has_password: bool
+
+
+class CorrectionSourceListResponse(BaseModel):
+    """All saved Correction sources, and the one the Survey page preselects."""
+
+    sources: list[CorrectionSourceResponse]
+    count: int
+    last_used: str | None = None

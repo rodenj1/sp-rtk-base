@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from sp_rtk_base import __version__
 from sp_rtk_base.api.bluetooth import router as bluetooth_router
 from sp_rtk_base.api.config import router as config_router
+from sp_rtk_base.api.correction_sources import router as correction_sources_router
 from sp_rtk_base.api.destinations import router as destinations_router
 from sp_rtk_base.api.device import router as device_router
 from sp_rtk_base.api.events import router as events_router
@@ -69,6 +70,7 @@ def create_api_app() -> FastAPI:
     api.include_router(health_router)
     api.include_router(relay_router)
     api.include_router(destinations_router)
+    api.include_router(correction_sources_router)
     api.include_router(settings_router)
     api.include_router(events_router)
     api.include_router(metrics_router)

@@ -53,6 +53,10 @@ class PortCounters:
     rtcm3_msgs: int = 0  # U2, the msgs slot whose protIds entry is RTCM 3
     skipped: int = 0  # U4, "bytes skipped" (not parsed as any protocol)
     overrun_errs: int = 0  # U2, receive buffer overruns
+    tx_pending: int = 0  # U2, bytes waiting to be sent
+    rx_pending: int = 0  # U2, bytes waiting to be processed
+    tx_peak_usage: int = 0  # U1, transmit buffer peak use (%)
+    rx_peak_usage: int = 0  # U1, receive buffer peak use (%)
 
 
 def attribute_console_port(

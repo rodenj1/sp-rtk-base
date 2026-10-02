@@ -28,6 +28,7 @@ from sp_rtk_base.models.device_models import (
     DeviceConnectionState,
     DeviceInfo,
     DeviceStatus,
+    DriverLinkDiagnostics,
     FixedBaseConfig,
     GnssConfig,
     GnssConstellation,
@@ -1488,6 +1489,10 @@ class DeviceService:
         driver = self._require_connected()
         console = self._console_port.port if self._console_port else None
         return await asyncio.to_thread(driver.get_correction_input_counters, console)
+
+    def get_link_diagnostics(self) -> DriverLinkDiagnostics | None:
+        """What the driver has measured on the receiver link (bench diagnosis)."""
+        return self._driver.get_link_diagnostics() if self._driver else None
 
     async def end_correction_input(self) -> None:
         """Restore the input settings begin_correction_input found.

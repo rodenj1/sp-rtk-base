@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from sp_rtk_base.models.config_models import CorrectionSourceProfile
 from sp_rtk_base.models.device_models import (
     CorrectedSurveyInConfig,
+    CorrectionDiagnostics,
     CorrectionInputCounters,
     DeviceCapability,
     FixedBaseConfig,
@@ -41,6 +42,7 @@ from sp_rtk_base.services.correction_feed import CorrectionFeed
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh
+from sp_rtk_base.services.link_diagnostics import Sampler
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +188,11 @@ class SurveyService:
         self._starting_source: str | None = None
         # What the receiver says reached its console port, while corrected.
         self._receiver_counts: _ReceiverCounts | None = None
+        self._receiver_counters_last: CorrectionInputCounters | None = None
+        self._written_at_receiver_read: int | None = None
+        # Bench diagnosis (#197): the survey's own sampling, on the wall clock.
+        self._sample_interval_s = Sampler()
+        self._position_read_s = Sampler()
         self._receiver_counts_at = 0.0
         device.add_before_disconnect(self._before_disconnect)
 
@@ -243,6 +250,8 @@ class SurveyService:
             self._survey_driver = self._device.driver
             self._feed = feed
             self._receiver_counts = _ReceiverCounts()
+            self._sample_interval_s = Sampler()
+            self._position_read_s = Sampler()
             await self._read_receiver_counts(now=True)  # the baseline
             self._progress = SurveyInProgress(
                 active=True,
@@ -388,9 +397,19 @@ class SurveyService:
         averaging = _Averaging()
         next_sample_at = started_at
         last_growth_at = started_at  # the start, or the last Observation
+        last_sample_wall: float | None = None
         try:
             while True:
+                # Bench diagnosis (#197), on the real (monotonic) clock, not
+                # the injectable one: how often the survey really samples,
+                # and how long each read takes.
+                read_began = time.monotonic()
                 position = await self._device.get_survey_position()
+                read_done = time.monotonic()
+                self._position_read_s.add(read_done - read_began)
+                if last_sample_wall is not None:
+                    self._sample_interval_s.add(read_began - last_sample_wall)
+                last_sample_wall = read_began
                 observed = self._is_observation(position, limits)
                 if observed:
                     last_growth_at = self._clock()
@@ -462,6 +481,7 @@ class SurveyService:
                 "corrections_dropped": feed.dropped,
             }
         delivery.update(await self._read_receiver_counts())
+        delivery["diagnostics"] = self._diagnostics()
         without_fixed = int(stalled_s)
         self._progress = self._progress.model_copy(
             update={
@@ -477,6 +497,23 @@ class SurveyService:
                     None if without_fixed == 0 else _stall_reason(position)
                 ),
             }
+        )
+
+    def _diagnostics(self) -> CorrectionDiagnostics:
+        """How corrections are travelling to the receiver, as measured so far."""
+        last = self._receiver_counters_last
+        feed = self._feed
+        return CorrectionDiagnostics(
+            frame_age_s=feed.frame_age_s.spread() if feed else None,
+            batch_frames=feed.batch_frames.spread() if feed else None,
+            sample_interval_s=self._sample_interval_s.spread(),
+            written_at_receiver_read=self._written_at_receiver_read,
+            position_read_s=self._position_read_s.spread(),
+            receiver_tx_pending=last.tx_pending if last else None,
+            receiver_rx_pending=last.rx_pending if last else None,
+            receiver_tx_peak_usage=last.tx_peak_usage if last else None,
+            receiver_rx_peak_usage=last.rx_peak_usage if last else None,
+            driver=self._device.get_link_diagnostics(),
         )
 
     async def _read_receiver_counts(self, *, now: bool = False) -> dict[str, object]:
@@ -499,6 +536,10 @@ class SurveyService:
                 read = None
             if read is not None:
                 counts.add(read)
+                self._receiver_counters_last = read
+                self._written_at_receiver_read = (
+                    self._feed.written if self._feed is not None else None
+                )
         return {
             "receiver_rtcm3_messages": counts.rtcm3_messages,
             "receiver_rx_bytes": counts.rx_bytes,

@@ -24,6 +24,7 @@ from sp_rtk_base.models.device_models import (
     DetectionResult,
     DeviceCapability,
     DeviceInfo,
+    DriverLinkDiagnostics,
     DynModel,
     FixedBaseConfig,
     GnssConfig,
@@ -736,6 +737,13 @@ class GpsReceiverDriver(abc.ABC):
         Raises:
             ConnectionError: If not connected.
         """
+
+    def get_link_diagnostics(self) -> DriverLinkDiagnostics | None:
+        """What the driver has measured on the receiver link (bench diagnosis).
+
+        Optional: ``None`` from a driver that doesn't measure it.
+        """
+        return None
 
     @abc.abstractmethod
     def end_correction_input(self) -> None:

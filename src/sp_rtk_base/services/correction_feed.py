@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from dataclasses import dataclass
 
 from sp_rtk_base_relay import FrameSubscription, RelayEngine
@@ -25,6 +26,7 @@ from sp_rtk_base_relay.exceptions import NtripConnectionError
 from sp_rtk_base.models.verification_models import VerificationStage
 from sp_rtk_base.services.correction_verification import failure_stage
 from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.link_diagnostics import Sampler, msm_epoch_age_s
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,9 @@ class CorrectionFeed:
         self._pump: asyncio.Task[None] | None = None
         self._written = 0
         self._bytes_written = 0
+        # Bench diagnosis (#197): Frames per write, and how old the data is.
+        self.batch_frames = Sampler()
+        self.frame_age_s = Sampler()
         self._write_failures = 0
 
     async def start(self) -> None:
@@ -91,6 +96,11 @@ class CorrectionFeed:
             ) from exc
         self._subscription = self._engine.subscribe_frames()
         self._pump = asyncio.create_task(self._push_frames(self._subscription))
+
+    @property
+    def written(self) -> int:
+        """Frames written to the receiver so far."""
+        return self._written
 
     async def status(self) -> FeedStatus:
         """The source's connection and last error, and the Frame counts."""
@@ -160,3 +170,9 @@ class CorrectionFeed:
             else:
                 self._written += len(frames)
                 self._bytes_written += len(data)
+                self.batch_frames.add(float(len(frames)))
+                now = time.time()
+                for written in frames:
+                    age = msm_epoch_age_s(written.data, now)
+                    if age is not None:
+                        self.frame_age_s.add(age)

@@ -645,6 +645,108 @@ class CorrectionInputCounters(BaseModel):
     rtcm3_messages: int = Field(ge=0, description="RTCM 3 messages it parsed")
     skipped_bytes: int = Field(ge=0, description="Bytes it skipped as unparsable")
     overrun_errors: int = Field(ge=0, description="Receive buffer overruns")
+    tx_pending: int = Field(default=0, ge=0, description="Bytes waiting to send")
+    rx_pending: int = Field(default=0, ge=0, description="Bytes waiting to process")
+    tx_peak_usage: int = Field(default=0, ge=0, description="Transmit buffer peak (%)")
+    rx_peak_usage: int = Field(default=0, ge=0, description="Receive buffer peak (%)")
+
+
+class Spread(BaseModel):
+    """The spread of a measurement's recent values."""
+
+    count: int = Field(ge=0, description="How many values were measured")
+    p50: float = Field(description="Median")
+    p95: float = Field(description="95th percentile")
+    max: float = Field(description="Largest")
+
+
+class LockTiming(BaseModel):
+    """How long one kind of driver operation waited for, and held, the lock (ms)."""
+
+    wait_ms: Spread | None = None
+    hold_ms: Spread | None = None
+
+
+class RtcmUse(BaseModel):
+    """What the receiver did with one RTCM message type (UBX-RXM-RTCM).
+
+    A sample, not a total: reports that arrive while no read is under way
+    are discarded with the input buffer. Compare used with received here,
+    never with the Frames written.
+    """
+
+    received: int = 0
+    used: int = 0
+    not_used: int = 0
+    crc_failed: int = 0
+
+
+class DriverLinkDiagnostics(BaseModel):
+    """What the driver measured on the receiver link."""
+
+    lock: dict[str, LockTiming] = Field(
+        default_factory=dict[str, LockTiming],
+        description="Per operation: lock wait and hold times",
+    )
+    poll_ms: dict[str, Spread] = Field(
+        default_factory=dict[str, Spread],
+        description="Per polled message: time from poll to reply",
+    )
+    write_ms: Spread | None = Field(
+        default=None, description="Time inside each correction write"
+    )
+    tx_backlog_bytes: Spread | None = Field(
+        default=None, description="Bytes still waiting to go out after each write"
+    )
+    poll_tx_backlog_bytes: Spread | None = Field(
+        default=None, description="Bytes queued ahead of each NAV poll"
+    )
+    rtcm: dict[int, RtcmUse] = Field(
+        default_factory=dict[int, RtcmUse],
+        description="Per RTCM message type: the receiver's own verdict",
+    )
+    correction_age_bucket: int | None = Field(
+        default=None, description="NAV-PVT lastCorrectionAge, raw (u-blox bucket)"
+    )
+
+
+class CorrectionDiagnostics(BaseModel):
+    """How corrections are travelling to the receiver (bench diagnosis, #197)."""
+
+    frame_age_s: Spread | None = Field(
+        default=None,
+        description=(
+            "Age of each GPS/Galileo MSM's data when written, by the station's "
+            "clock (assumes it's NTP-synced): caster latency plus time queued"
+        ),
+    )
+    batch_frames: Spread | None = Field(default=None, description="Frames per write")
+    sample_interval_s: Spread | None = Field(
+        default=None, description="Time between the survey's position samples"
+    )
+    position_read_s: Spread | None = Field(
+        default=None, description="Time each survey position read took"
+    )
+    written_at_receiver_read: int | None = Field(
+        default=None,
+        description=(
+            "Frames written when the receiver's counters were last read: "
+            "compare receiver_rtcm3_messages with this, not the live count"
+        ),
+    )
+    receiver_tx_pending: int | None = Field(
+        default=None, description="Bytes waiting in the console port's transmit buffer"
+    )
+    receiver_rx_pending: int | None = Field(
+        default=None, description="Bytes waiting in the console port's receive buffer"
+    )
+    receiver_tx_peak_usage: int | None = Field(
+        default=None, description="Console port transmit buffer peak use (%)"
+    )
+    receiver_rx_peak_usage: int | None = Field(
+        default=None, description="Console port receive buffer peak use (%)"
+    )
+    driver: DriverLinkDiagnostics | None = None
 
 
 SurveyAveragedBy = Literal["receiver", "application"]
@@ -740,6 +842,8 @@ class SurveyInProgress(BaseModel):
     correction_bytes_written: int | None = Field(
         default=None, description="Correction bytes written to the receiver"
     )
+    # Bench diagnosis (#197): how corrections travel to the receiver.
+    diagnostics: CorrectionDiagnostics | None = None
     # A Corrected survey-in aborts after 10 minutes without RTK Fixed.
     seconds_without_fixed: int | None = Field(
         default=None,

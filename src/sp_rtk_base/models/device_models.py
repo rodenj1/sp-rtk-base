@@ -720,7 +720,7 @@ class SurveyInProgress(BaseModel):
         default=None, description="Correction Frames written to the receiver"
     )
     correction_write_failures: int | None = Field(
-        default=None, description="Correction Frame writes that failed"
+        default=None, description="Correction Frames lost to failed writes"
     )
     corrections_dropped: int | None = Field(
         default=None, description="Frames dropped before writing (pump behind)"

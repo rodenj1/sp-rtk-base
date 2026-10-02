@@ -1470,14 +1470,14 @@ class DeviceService:
         console = self._console_port.port if self._console_port else None
         await asyncio.to_thread(driver.begin_correction_input, console)
 
-    async def write_corrections(self, frame: bytes) -> None:
-        """Write one whole RTCM 3 Frame to the receiver.
+    async def write_corrections(self, frames: bytes) -> None:
+        """Write whole RTCM 3 Frames, back to back, to the receiver.
 
         Raises:
             RuntimeError: If not connected or the relay is running.
         """
         driver = self._require_connected()
-        await asyncio.to_thread(driver.write_corrections, frame)
+        await asyncio.to_thread(driver.write_corrections, frames)
 
     async def get_correction_input_counters(self) -> CorrectionInputCounters | None:
         """What the receiver says arrived on its console port (cumulative).

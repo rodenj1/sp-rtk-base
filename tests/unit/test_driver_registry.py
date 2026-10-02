@@ -107,7 +107,7 @@ class StubDriver(GpsReceiverDriver):
     def begin_correction_input(self, console_port: PortId | None) -> None:
         pass
 
-    def write_corrections(self, frame: bytes) -> None:
+    def write_corrections(self, frames: bytes) -> None:
         pass
 
     def get_correction_input_counters(

@@ -1,6 +1,7 @@
 """A Corrected survey-in's own Relay instance, feeding the receiver (ADR 0004).
 
-The Relay pulls; the application pushes. The instance's input is the
+The Relay pulls; the application pushes: each write carries every Frame
+waiting, whole and in order. The instance's input is the
 Correction source, it has no destinations and one Frame subscriber, and
 every Frame it reads is written whole and unfiltered to the receiver
 through the driver, under the same lock as the position polls.
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 # How long the pump waits for a Frame before checking it should go on.
 _FRAME_WAIT_S = 0.5
+# A write stops taking more Frames once it holds this many bytes.
+_MAX_BYTES_PER_WRITE = 4096
 # After the first failed write, log only every this many.
 _LOG_EVERY_FAILURES = 100
 
@@ -123,19 +126,37 @@ class CorrectionFeed:
                 if subscription.closed:
                     return
                 continue
+            # Every Frame waiting goes in one write: each write waits its turn
+            # for the driver lock, which slow receiver reads can hold for
+            # seconds, so one Frame per turn falls far behind (#197).
+            frames = [frame]
+            size = len(frame.data)
+            # Up to about 0.7 s of a 57 600-baud UART, so one write never
+            # holds the lock (and the receiver reads) for long.
+            while size < _MAX_BYTES_PER_WRITE:
+                more = subscription.drain(1)
+                if not more:
+                    break
+                frames += more
+                size += len(more[0].data)
+            data = b"".join(f.data for f in frames)
             try:
-                await self._device.write_corrections(frame.data)
+                await self._device.write_corrections(data)
             except Exception:
-                # Skip this Frame and keep going: a passing serial error
+                # Skip these Frames and keep going: a passing serial error
                 # mustn't end the corrections. A receiver that stopped
                 # answering ends the survey through its position reads.
-                self._write_failures += 1
+                before = self._write_failures
+                self._write_failures += len(frames)
                 failures = self._write_failures
-                if failures == 1 or failures % _LOG_EVERY_FAILURES == 0:
+                # The first failure, then once per _LOG_EVERY_FAILURES Frames.
+                if before == 0 or (
+                    failures // _LOG_EVERY_FAILURES != before // _LOG_EVERY_FAILURES
+                ):
                     logger.exception(
                         "Could not write corrections to the receiver (%d so far)",
                         failures,
                     )
             else:
-                self._written += 1
-                self._bytes_written += len(frame.data)
+                self._written += len(frames)
+                self._bytes_written += len(data)

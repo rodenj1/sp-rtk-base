@@ -60,6 +60,7 @@ from sp_rtk_base.services.drivers.fake import (
     FakeGpsDriver,
 )
 from sp_rtk_base.services.geodesy import llh_to_ecef
+from tests.unit.msm_frames import other_frame
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -877,6 +878,9 @@ class TestFakeSurveyPosition:
         assert DeviceCapability.SURVEY_IN in connected_fake.get_capabilities()
 
 
+_FRAME = other_frame(1077).data  # one whole RTCM 3 Frame
+
+
 class TestRover:
     """The fake behaves like a rover taking corrections (issue #195)."""
 
@@ -904,7 +908,7 @@ class TestRover:
 
         statuses: list[str] = []
         for _ in range(8):  # corrections for about 0.16 s
-            rover.write_corrections(b"\xd3")
+            rover.write_corrections(_FRAME)
             statuses.append(rover.get_survey_position().rtk_status)
             time.sleep(0.02)
         time.sleep(0.15)  # then none, past the timeout
@@ -922,7 +926,7 @@ class TestRover:
         rover = self._rover(connected_driver)
         rover.fixed_after_s = 0.0
         rover.begin_correction_input(None)
-        rover.write_corrections(b"\xd3")
+        rover.write_corrections(_FRAME)
 
         position = rover.get_survey_position()
 
@@ -936,7 +940,7 @@ class TestRover:
         rover = self._rover(connected_driver)
         rover.fixed_after_s = 0.0
 
-        rover.write_corrections(b"\xd3")
+        rover.write_corrections(_FRAME)
 
         assert rover.get_survey_position().rtk_status == "none"
 
@@ -948,6 +952,6 @@ class TestRover:
         rover.end_correction_input()
         rover.fixed_after_s = 0.0
 
-        rover.write_corrections(b"\xd3")
+        rover.write_corrections(_FRAME)
 
         assert rover.get_survey_position().rtk_status == "none"

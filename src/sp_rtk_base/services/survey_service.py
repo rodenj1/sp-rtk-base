@@ -53,6 +53,16 @@ SAMPLE_INTERVAL_S: float = 1.0
 HARD_CAP_MIN_S: float = 3600.0
 HARD_CAP_MULTIPLE: float = 3.0
 
+# A Corrected survey-in whose observation time hasn't grown for this long
+# (since the start, or since the last RTK Fixed Observation) aborts
+# (decision rodenj1/rtk_development#19); it warns once RTK Fixed has been
+# missing for STALL_WARNING_S. Not operator settings.
+STALL_ABORT_S: float = 600.0
+STALL_WARNING_S: float = 60.0
+# Corrections older than this count as stopped when naming a stall: the
+# Relay's own NTRIP data timeout.
+STALE_CORRECTION_AGE_S: float = 30.0
+
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
 
@@ -103,6 +113,14 @@ class _Averaging:
         return max(mean_accuracy, spread)
 
 
+def _stall_reason(position: SurveyPosition) -> SurveyAbortReason:
+    """Why there's no RTK Fixed: corrections stopped, or only Float."""
+    age = position.correction_age_s
+    if age is None or age > STALE_CORRECTION_AGE_S:
+        return "no_corrections"
+    return "no_fixed"
+
+
 class SurveyService:
     """Runs one Survey-in at a time and reports its progress."""
 
@@ -112,8 +130,12 @@ class SurveyService:
         *,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        stall_warning_s: float = STALL_WARNING_S,
+        stall_abort_s: float = STALL_ABORT_S,
     ) -> None:
         self._device = device
+        self._stall_warning_s = stall_warning_s
+        self._stall_abort_s = stall_abort_s
         self._clock = clock
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
@@ -126,6 +148,8 @@ class SurveyService:
         self._receiver_duration_offset = 0
         # A Corrected survey-in's own Relay instance, while it runs.
         self._feed: CorrectionFeed | None = None
+        # The source a Corrected survey-in is connecting to, before it runs.
+        self._starting_source: str | None = None
         device.add_before_disconnect(self._before_disconnect)
 
     # ------------------------------------------------------------------
@@ -168,6 +192,8 @@ class SurveyService:
             if self._is_running():
                 raise SurveyBusyError("A survey is already running")
             await self._device.disable_base_mode()  # a rover, taking corrections
+            # In use from now: no rename, delete or Verify while connecting.
+            self._starting_source = source.name
             try:
                 await self._device.begin_correction_input()
                 feed = CorrectionFeed(self._device, source.to_relay_config())
@@ -175,6 +201,8 @@ class SurveyService:
             except Exception:
                 await self._restore_correction_input()
                 raise
+            finally:
+                self._starting_source = None
             self._survey_driver = self._device.driver
             self._feed = feed
             self._progress = SurveyInProgress(
@@ -191,6 +219,19 @@ class SurveyService:
             )
             self._task = asyncio.create_task(self._run_application_survey(limits))
             logger.info("Corrected survey-in started against %s", source.name)
+
+    def correction_source_in_use(self) -> str | None:
+        """The Correction source a Corrected survey-in pulls (or is
+        connecting to), if any."""
+        if self._starting_source is not None:
+            return self._starting_source
+        if not self._is_running() or self._progress is None:
+            return None
+        return self._progress.correction_source
+
+    def corrected_survey_running(self) -> bool:
+        """Whether a Corrected survey-in is running."""
+        return self.correction_source_in_use() is not None
 
     async def progress(self) -> SurveyInProgress:
         """The current survey's progress.
@@ -307,12 +348,29 @@ class SurveyService:
         limit_m = limits.accuracy_limit_mm / 1000.0
         averaging = _Averaging()
         next_sample_at = started_at
+        last_growth_at = started_at  # the start, or the last Observation
         try:
             while True:
                 position = await self._device.get_survey_position()
+                observed = self._is_observation(position, limits)
+                if observed:
+                    last_growth_at = self._clock()
                 if limits.corrected:
-                    await self._update_correction_progress(position)
-                if self._is_observation(position, limits):
+                    stalled_s = self._clock() - last_growth_at
+                    await self._update_correction_progress(position, stalled_s)
+                    if stalled_s >= self._stall_abort_s:
+                        reason: SurveyAbortReason = _stall_reason(position)
+                        # Restored before the outcome shows; never a fallback.
+                        if not await self._stop_corrections():
+                            reason = "input_not_restored"
+                        self._finish("aborted", reason)
+                        logger.warning(
+                            "Corrected survey-in aborted: no RTK Fixed for %.0f s (%s)",
+                            stalled_s,
+                            reason,
+                        )
+                        return
+                if observed:
                     averaging.add(position)
                     self._update_application_progress(averaging)
                     if (
@@ -322,6 +380,7 @@ class SurveyService:
                         await self._commit(averaging)
                         return
                 if self._clock() - started_at >= hard_cap_s:
+                    await self._stop_corrections()
                     self._finish("aborted", "accuracy_not_reached")
                     logger.warning("Survey-in aborted: accuracy not reached in time")
                     return
@@ -346,18 +405,30 @@ class SurveyService:
             return position.fix_ok and position.rtk_status == "fixed"
         return position.fix_ok
 
-    async def _update_correction_progress(self, position: SurveyPosition) -> None:
-        """The receiver's RTK status and correction age, and the source's state."""
+    async def _update_correction_progress(
+        self, position: SurveyPosition, stalled_s: float
+    ) -> None:
+        """The receiver's RTK status and correction age, the source's state,
+        and how long the survey has gone without an RTK Fixed Observation."""
         assert self._progress is not None
         connected, last_error = (
             await self._feed.status() if self._feed is not None else (False, None)
         )
+        without_fixed = int(stalled_s)
         self._progress = self._progress.model_copy(
             update={
                 "rtk_status": position.rtk_status,
                 "correction_age_s": position.correction_age_s,
                 "source_connected": connected,
                 "source_last_error": last_error,
+                "seconds_without_fixed": without_fixed,
+                "stall_abort_in_seconds": max(
+                    0, int(self._stall_abort_s) - without_fixed
+                ),
+                "stall_warning": stalled_s > self._stall_warning_s,
+                "stall_reason": (
+                    None if without_fixed == 0 else _stall_reason(position)
+                ),
             }
         )
 

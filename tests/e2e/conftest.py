@@ -95,6 +95,10 @@ def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     # ``services/drivers/fake.py`` for the driver and
     # ``docs/e2e-testing.md`` for the e2e usage pattern.
     env["SP_RTK_BASE_FAKE_GPS"] = "1"
+    # A Corrected survey-in's stall warning (60 s) and abort (10 min),
+    # shortened so the browser can see both (fake GPS only).
+    env["SP_RTK_BASE_FAKE_STALL_WARNING_S"] = "2"
+    env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

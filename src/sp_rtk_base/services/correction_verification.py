@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sp_rtk_base_relay.config import NtripInputConfig
@@ -57,6 +58,21 @@ _FAILURE_CODES = {
     NtripFailure.MOUNTPOINT: "not_offered",
     NtripFailure.DATA_TIMEOUT: "silent",
 }
+
+
+def failure_stage(exc: NtripConnectionError) -> tuple[VerificationStage, str]:
+    """The Stage a typed NTRIP failure belongs to, and its code.
+
+    Shared by the Verification and by a Corrected survey-in's refused start,
+    so both name a failure the same way.
+    """
+    stage = _FAILURE_STAGES.get(exc.reason, VerificationStage.CASTER)
+    code = (
+        exc.connect_failure.value
+        if exc.reason is NtripFailure.CONNECT and exc.connect_failure
+        else _FAILURE_CODES.get(exc.reason, "other")
+    )
+    return stage, code
 
 
 @dataclass
@@ -109,6 +125,15 @@ class CorrectionSourceVerificationService:
         self.data_window_seconds = data_window_seconds
         self.total_budget_seconds = max(TOTAL_BUDGET_SECONDS, data_window_seconds)
         self._running = False
+        self._survey_running: Callable[[], bool] = lambda: False
+
+    def set_survey_running_check(self, check: Callable[[], bool]) -> None:
+        """Refuse a Verification while ``check()`` says a Corrected survey runs.
+
+        Its connection could compete with the survey's own for the same
+        caster account (decision rodenj1/rtk_development#20).
+        """
+        self._survey_running = check
 
     async def verify(self, config: NtripCorrectionConfig) -> VerificationResult:
         """Verify ``config``: would a Corrected survey-in receive corrections?
@@ -117,6 +142,11 @@ class CorrectionSourceVerificationService:
             VerificationRefusedError: ``verification_in_progress`` if another
                 Verification is running (nothing is touched).
         """
+        if self._survey_running():
+            raise VerificationRefusedError(
+                "survey_running",
+                "A Corrected survey-in is running; Verify once it has finished.",
+            )
         if self._running:
             raise VerificationRefusedError(
                 "verification_in_progress",
@@ -149,16 +179,11 @@ class CorrectionSourceVerificationService:
         try:
             source.connect()
         except NtripConnectionError as exc:
-            failed = _FAILURE_STAGES.get(exc.reason, VerificationStage.CASTER)
+            failed, code = failure_stage(exc)
             for stage in CORRECTION_SOURCE_STAGES:
                 if stage is failed:
                     break
                 recorded[stage] = StageResult(stage=stage, status=StageStatus.PASSED)
-            code = (
-                exc.connect_failure.value
-                if exc.reason is NtripFailure.CONNECT and exc.connect_failure
-                else _FAILURE_CODES.get(exc.reason, "failed")
-            )
             recorded[failed] = StageResult(
                 stage=failed, status=StageStatus.FAILED, code=code, message=exc.message
             )

@@ -49,6 +49,7 @@ from sp_rtk_base.services import (
     get_survey_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.correction_feed import CorrectionSourceUnreachableError
 from sp_rtk_base.services.device_service import (
     ApplyConfigLinkLostError,
     ApplyConfigRefusedError,
@@ -216,16 +217,17 @@ async def configure_corrected_survey_in(
     config: CorrectedSurveyInConfig,
     survey: SurveyService = Depends(get_survey_service),
     config_svc: ConfigService = Depends(get_config_service),
-) -> DeviceActionResponse:
+) -> DeviceActionResponse | JSONResponse:
     """Start a Corrected survey-in against a saved Correction source.
 
     The receiver works as a rover, the survey pulls the source's corrections
     through its own Relay instance, and only RTK Fixed solutions are
     Observations. The
     station commits the fixed base itself when it completes. Needs no
-    Verification. Returns 404 for an unknown source, and 409 if the source
-    can't be reached, the device isn't connected, the relay is running or a
-    survey runs.
+    Verification. Returns 404 for an unknown source, and 409 if the device
+    isn't connected, the relay is running or a survey runs. A source that
+    can't be reached is a 409 with ``code: source_unreachable`` and the
+    ``stage`` it failed at (connect / caster / auth / mountpoint).
     """
     source = config_svc.get_correction_source(config.correction_source)
     if source is None:
@@ -235,6 +237,17 @@ async def configure_corrected_survey_in(
         )
     try:
         await survey.start_corrected(config, source)
+    except CorrectionSourceUnreachableError as exc:
+        # Named in the Verification's Stage names, so the page can say where.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "error",
+                "message": str(exc),
+                "code": "source_unreachable",
+                "stage": exc.stage.value,
+            },
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

@@ -116,6 +116,11 @@ class CorrectionSourceNotFoundError(LookupError):
     """No Correction source has that name."""
 
 
+class CorrectionSourceInUseError(RuntimeError):
+    """A running Corrected survey-in uses that source: it can't be renamed
+    or deleted until the survey ends."""
+
+
 def _get_config_path() -> Path:
     """Resolve the configuration file path.
 
@@ -147,6 +152,24 @@ class ConfigService:
     def __init__(self, config_path: Path | None = None) -> None:
         self._config_path = config_path or _get_config_path()
         self._config: AppConfig | None = None
+        self._source_in_use: Callable[[], str | None] = lambda: None
+
+    def set_correction_source_in_use_check(
+        self, check: Callable[[], str | None]
+    ) -> None:
+        """Ask ``check()`` which Correction source a running survey uses.
+
+        That source can't be renamed or deleted while the survey runs.
+        """
+        self._source_in_use = check
+
+    def _refuse_if_in_use(self, name: str, action: str) -> None:
+        if self._source_in_use() == name:
+            msg = (
+                f"Can't {action} '{name}': a Corrected survey-in is using it. "
+                "Cancel the survey or let it finish first."
+            )
+            raise CorrectionSourceInUseError(msg)
 
     @property
     def config_path(self) -> Path:
@@ -284,6 +307,8 @@ class ConfigService:
             msg = f"No Correction source named '{name}'"
             raise CorrectionSourceNotFoundError(msg)
         target_name = new_name if new_name is not None else name
+        if target_name != name:
+            self._refuse_if_in_use(name, "rename")
         if target_name != name and self.get_correction_source(target_name) is not None:
             msg = f"A Correction source named '{target_name}' already exists"
             raise CorrectionSourceExistsError(msg)
@@ -318,7 +343,11 @@ class ConfigService:
         """Delete a saved Correction source; False if there was none.
 
         A deleted source just stops being preselected.
+
+        Raises:
+            CorrectionSourceInUseError: If a running survey uses it.
         """
+        self._refuse_if_in_use(name, "delete")
         config = self.get_config()
         sources = [s for s in config.correction_sources if s.name != name]
         if len(sources) == len(config.correction_sources):
@@ -332,6 +361,24 @@ class ConfigService:
             )
         )
         return True
+
+    def refuse_import_if_in_use(self, imported: AppConfig) -> None:
+        """Refuse an import that would drop the source a running survey uses.
+
+        Raises:
+            CorrectionSourceInUseError: If ``imported`` has no source by that
+                name.
+        """
+        in_use = self._source_in_use()
+        if in_use is None:
+            return
+        if all(source.name != in_use for source in imported.correction_sources):
+            msg = (
+                f"Can't import: it has no Correction source '{in_use}', which a "
+                "Corrected survey-in is using. Cancel the survey or let it "
+                "finish first."
+            )
+            raise CorrectionSourceInUseError(msg)
 
     def keep_saved_correction_passwords(self, imported: AppConfig) -> AppConfig:
         """``imported``, with each blank Correction source password filled in.

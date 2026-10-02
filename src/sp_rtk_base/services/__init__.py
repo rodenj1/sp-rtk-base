@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
@@ -35,7 +36,11 @@ from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
-from sp_rtk_base.services.survey_service import SurveyService
+from sp_rtk_base.services.survey_service import (
+    STALL_ABORT_S,
+    STALL_WARNING_S,
+    SurveyService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +122,44 @@ device_service: DeviceService = DeviceService()
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
-survey_service: SurveyService = SurveyService(device_service)
+
+
+def _survey_stall_timing(env: str, default: float) -> float:
+    """A stall timing; only the fake GPS (e2e) may shorten it."""
+    value = os.environ.get(env)
+    if os.environ.get("SP_RTK_BASE_FAKE_GPS") != "1" or not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Ignoring %s=%r: not a number of seconds", env, value)
+        return default
+
+
+survey_service: SurveyService = SurveyService(
+    device_service,
+    stall_warning_s=_survey_stall_timing(
+        "SP_RTK_BASE_FAKE_STALL_WARNING_S", STALL_WARNING_S
+    ),
+    stall_abort_s=_survey_stall_timing("SP_RTK_BASE_FAKE_STALL_ABORT_S", STALL_ABORT_S),
+)
 correction_verification_service: CorrectionSourceVerificationService = (
     CorrectionSourceVerificationService()
 )
+
+
+def wire_corrected_survey(
+    survey: SurveyService,
+    config: ConfigService,
+    verifier: CorrectionSourceVerificationService,
+) -> None:
+    """While a Corrected survey-in runs, its Correction source can't be
+    renamed or deleted, and a Verification is refused (issue #196)."""
+    config.set_correction_source_in_use_check(survey.correction_source_in_use)
+    verifier.set_survey_running_check(survey.corrected_survey_running)
+
+
+wire_corrected_survey(survey_service, config_service, correction_verification_service)
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
 bluetooth_verification_service: BluetoothVerificationService = (

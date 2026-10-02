@@ -170,3 +170,15 @@ us. Learned by asking the receiver once per connection, and kept until
 disconnect; it may be **unknown**, which is a state to handle rather than
 an error.
 _Avoid_: connected port, management port, host port
+
+### Corrected survey-in
+
+**Stall**:
+A Corrected survey-in whose observation time has stopped growing: no RTK
+Fixed Observation since the start, or since the last one. A short stall
+only pauses the survey; after a minute the page warns, and after ten
+minutes the survey aborts, naming why: **no corrections** (none are
+arriving, with the source's last error) or **no fixed** (corrections are in
+use, but the receiver reaches only Float). An aborted survey commits
+nothing and never falls back to a plain Survey-in.
+_Avoid_: timeout, hang

@@ -72,11 +72,13 @@ RECEIVER_COUNTERS_EVERY_S: float = 30.0
 # grew from 30 to 91 mm on 30-45 s old corrections). The bench confirms both.
 FIXED_SETTLE_S: float = 30.0
 MAX_CORRECTION_AGE_S: float = 10.0
-# An RTK Fixed solution more than this far (3D) from the survey's mean so far
-# (or, before any Observation, from the last Fixed) is a jump to a different
-# Fixed solution: the averaging restarts, so two Fixed solutions never mix.
-# Fixed noise is millimetres; on the bench a false Fixed sat 9-13 cm off the
-# right one for 3 minutes with no break in Fixed (#197, run 1 on P472).
+# An RTK Fixed solution more than this far (3D) from the last Fixed solution
+# accepted (across any Float gap) is a step to a different Fixed solution: the
+# averaging restarts, so two Fixed solutions never mix. A step, not distance
+# from the mean: on a long baseline the Fixed position also drifts slowly (6
+# cm over 10 minutes on the bench, P472), which is averaged, never cut. Fixed
+# noise is millimetres; a false Fixed sat 9-13 cm off the right one for 3
+# minutes with no break in Fixed (#197, run 1 on P472).
 FIXED_JUMP_M: float = 0.05
 # A jump must last this many samples in a row: a single excursion is left
 # out of the average but doesn't throw minutes of it away.
@@ -446,7 +448,9 @@ class SurveyService:
                 excursion_sample = False
                 if fixed and limits.corrected and _fresh(position):
                     here = (position.ecef_x_m, position.ecef_y_m, position.ecef_z_m)
-                    reference = averaging.mean() if averaging.count else last_fixed
+                    # The last Fixed accepted, not the mean: a slow drift
+                    # moves it along, a sudden step doesn't.
+                    reference = last_fixed
                     if (
                         reference is not None
                         and math.dist(here, reference) > FIXED_JUMP_M

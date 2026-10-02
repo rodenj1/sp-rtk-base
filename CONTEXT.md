@@ -186,9 +186,10 @@ falls back to a plain Survey-in.
 _Avoid_: timeout, hang
 
 **Fixed jump**:
-In a Corrected survey-in, an RTK Fixed solution more than 5 cm from the
-survey's average so far (or, before any Observation, from the last Fixed):
-the receiver has moved to a different Fixed solution, one of them wrong,
-without reporting a break in Fixed. The survey discards its average and
-settles again, so the two are never mixed into one fixed base.
+In a Corrected survey-in, a sudden step of more than 5 cm from the last
+Fixed solution, lasting 3 samples: the receiver has moved to a different
+Fixed solution, one of them wrong, without reporting a break in Fixed. The
+survey discards its average and settles again, so the two are never mixed
+into one fixed base. A slow drift (a long baseline's) is not a jump: it is
+averaged.
 _Avoid_: false fix (either side may be the right one), outlier

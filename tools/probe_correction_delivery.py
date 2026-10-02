@@ -66,7 +66,7 @@ def verdict(progress: dict[str, Any]) -> list[str]:
     interval = _obj(diagnostics.get("sample_interval_s")).get("p95")
     if interval is not None and interval > MAX_SAMPLE_INTERVAL_S:
         reasons.append(f"the survey sampled every {interval:.1f} s (p95), not 1 s")
-    # The receiver's count is read every 10 s: compare it with what had been
+    # The receiver's count is read every 30 s: compare it with what had been
     # written by then, not with the live count.
     compared = diagnostics.get("written_at_receiver_read") or 0
     if compared and received < MIN_RECEIVED_RATIO * compared:

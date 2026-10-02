@@ -99,6 +99,8 @@ def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     # shortened so the browser can see both (fake GPS only).
     env["SP_RTK_BASE_FAKE_STALL_WARNING_S"] = "2"
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
+    # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
+    env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

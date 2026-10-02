@@ -7,9 +7,13 @@ against a simulated receiver link that answers CFG-VALSET / CFG-VALGET.
 
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from sp_rtk_base.models.device_models import PortId
+from sp_rtk_base.services.drivers import ublox
 from tests.unit.msm_frames import other_frame
 from tests.unit.ublox_sim import SimReceiver, connected_driver, rxm_rtcm
 
@@ -272,3 +276,86 @@ class TestLinkDiagnostics:
             "crc_failed": 0,
         }
         assert diagnostics.rtcm[1005].crc_failed == 1
+
+
+class TestWritesOwnTheTxLine:
+    """Correction writes don't wait for a poll's reply (bench, #197)."""
+
+    def test_a_write_goes_out_while_a_slow_read_holds_the_driver_lock(self) -> None:
+        sim = _sim()
+        sim.read_delay_s = 0.4  # each read waits, like a NAV reply
+        driver = connected_driver(sim)
+        polling = threading.Thread(target=driver.get_survey_position)
+        polling.start()
+        time.sleep(0.1)  # the poll holds the lock, waiting for its reply
+
+        began = time.monotonic()
+        driver.write_corrections(other_frame(1077).data)
+        took = time.monotonic() - began
+        polling.join(5)
+
+        assert took < 0.2
+
+    def test_a_write_never_lands_inside_another(self) -> None:
+        sim = _sim()
+        sim.chunked = True  # bytes go out a few at a time
+        driver = connected_driver(sim)
+        frame = other_frame(1077).data
+        writers = [
+            threading.Thread(target=driver.write_corrections, args=(frame,))
+            for _ in range(20)
+        ]
+        polls = [threading.Thread(target=driver.get_survey_position) for _ in range(5)]
+        for thread in writers + polls:
+            thread.start()
+        for thread in writers + polls:
+            thread.join(5)
+
+        # On the wire, every Frame is still in one piece.
+        assert bytes(sim.wire).count(frame) == 20
+
+
+class TestPositionReuse:
+    def test_a_position_read_reuses_the_surveys_fresh_nav_pvt(self) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+        driver.get_survey_position()
+        polls = len(sim.nav_polls)
+
+        position = driver.get_position()
+
+        assert len(sim.nav_polls) == polls  # no second NAV-PVT poll
+        assert position.rtk_status == "fixed"
+
+    def test_without_a_fresh_one_it_polls(self) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+
+        driver.get_position()
+
+        assert sim.nav_polls == [b"\x01\x07"]
+
+
+class TestPositionReuseLimits:
+    def test_an_old_reading_is_polled_afresh(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(ublox, "_PVT_REUSE_S", 0.05)
+        sim = _sim()
+        driver = connected_driver(sim)
+        driver.get_survey_position()
+        polls = len(sim.nav_polls)
+        time.sleep(0.1)
+
+        driver.get_position()
+
+        assert len(sim.nav_polls) == polls + 1
+
+    def test_a_disconnected_receiver_isnt_answered_from_the_reading(self) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+        driver.get_survey_position()
+        sim.is_open = False
+
+        with pytest.raises(ConnectionError):
+            driver.get_position()

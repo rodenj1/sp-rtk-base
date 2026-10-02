@@ -50,6 +50,7 @@ from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FAKE_NO_SURVEY_IN_PORT, FakeGpsDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
 from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.signal_quality.service import SignalQualityService
 from sp_rtk_base.services.survey_service import SurveyService
 from tests.fixtures.scripted_ntrip_caster import FakeCaster, Script
 from tests.unit.msm_frames import msm_frame, other_frame
@@ -87,6 +88,8 @@ class RecordingRover(FakeGpsDriver):
         self.console_ports: list[PortId | None] = []
         self.written = b""  # every correction byte, in the order written
         self.hub_alive_at_commit: bool | None = None
+        self.signal_snapshots = 0
+        self.signal_quality: Any = None  # set by _client_for
         # Corrections bring a Fixed at once (the clock here is real time).
         self.float_after_s = 0.0
         self.fixed_after_s = 0.0
@@ -103,6 +106,10 @@ class RecordingRover(FakeGpsDriver):
     def end_correction_input(self) -> None:
         self.calls.append("end_correction_input")
         super().end_correction_input()
+
+    def get_signal_snapshot(self) -> Any:
+        self.signal_snapshots += 1
+        return super().get_signal_snapshot()
 
     def configure_fixed_base(self, config: Any) -> None:
         self.calls.append("configure_fixed_base")
@@ -171,8 +178,10 @@ def _client_for(
     clock = FakeClock()
     survey = SurveyService(device, clock=clock, sleep=clock.sleep)
     verifier = CorrectionSourceVerificationService(data_window_seconds=1.0)
+    signal_quality = SignalQualityService(device)
+    rover.signal_quality = signal_quality
     # The same wiring the app does (services/__init__.py).
-    wire_corrected_survey(survey, mock_config_service, verifier)
+    wire_corrected_survey(survey, mock_config_service, verifier, signal_quality)
     mock_config_service.create_correction_source(
         CorrectionSourceProfile(
             name="local",
@@ -295,11 +304,12 @@ class TestCompletion:
     ) -> None:
         caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
         x, y, z = TRUE_ECEF
-        # Float a metre off, then 60 Fixed on the point: only the Fixed count.
+        # Float a metre off, then Fixed on the point: only the Fixed count
+        # (after the first 30 s of Fixed, which settle).
         rover.script_survey_positions(
             [_fixed(x + 1.0, y, z, status="float")] * 20
             + [_fixed(x, y, z, status="none")] * 5
-            + [_fixed(x, y, z)] * 60
+            + [_fixed(x, y, z)] * 90
         )
 
         _start(client)
@@ -622,11 +632,12 @@ class TestStall:
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
     ) -> None:
         caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
-        # 30 Fixed, nine and a half minutes without, then 30 Fixed.
+        # 60 Fixed, about eight minutes without, then 60 Fixed: 30 count
+        # from each run, once it has settled for 30 s.
         rover.script_survey_positions(
-            [_position("fixed")] * 30
-            + [_position("none", age=None)] * 570
-            + [_position("fixed")] * 30
+            [_position("fixed")] * 60
+            + [_position("none", age=None)] * 500
+            + [_position("fixed")] * 60
         )
 
         _start(client)
@@ -951,3 +962,96 @@ class TestLinkDiagnostics:
         assert diagnostics["sample_interval_s"]["count"] >= 1
         assert diagnostics["position_read_s"]["count"] >= 1
         assert diagnostics["driver"] is None  # the fake doesn't measure its link
+
+
+# ---- Other receiver pollers step aside (#197) ----
+
+
+class TestOtherPollersStepAside:
+    def test_signal_quality_doesnt_poll_the_receiver_during_a_corrected_survey(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        rover.fixed_after_s = 3600.0
+        _start(client, min_duration_seconds=86400)
+        _wait_for(client, lambda p: p.get("outcome") == "running", "running")
+
+        asyncio.run(rover.signal_quality.poll_once())
+        during = rover.signal_snapshots
+        reason = rover.signal_quality.current().reason
+        client.post(CANCEL)
+        asyncio.run(rover.signal_quality.poll_once())
+
+        assert (during, rover.signal_snapshots) == (0, 1)
+        assert "Corrected survey-in" in reason
+
+
+# ---- A Fixed settles first, on fresh corrections (#197) ----
+
+
+class TestSettling:
+    def test_a_fixed_counts_only_after_it_has_held_for_30_s(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        # The first 30 s of Fixed are a metre off: they mustn't count.
+        rover.script_survey_positions(
+            [_fixed(x + 1.0, y, z)] * 30 + [_fixed(x, y, z)] * 60
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        assert progress["observations"] == 60
+        lat, _, alt = ecef_to_llh(x, y, z)
+        assert progress["latitude"] == pytest.approx(lat, abs=1e-9)
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
+
+    def test_losing_fixed_starts_the_settling_again(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        # 40 Fixed (10 count), a Float, then 30 Fixed a metre off that are
+        # settling again and mustn't count, then Fixed on the point.
+        rover.script_survey_positions(
+            [_fixed(x, y, z)] * 40
+            + [_fixed(x, y, z, status="float")]
+            + [_fixed(x + 1.0, y, z)] * 30
+            + [_fixed(x, y, z)] * 60
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        lat, _, _ = ecef_to_llh(x, y, z)
+        assert progress["latitude"] == pytest.approx(lat, abs=1e-9)
+
+    def test_a_fixed_on_stale_corrections_doesnt_count(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        stale = _fixed(x + 1.0, y, z).model_copy(update={"correction_age_s": 20.0})
+        rover.script_survey_positions([stale] * 60 + [_fixed(x, y, z)] * 90)
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        lat, _, _ = ecef_to_llh(x, y, z)
+        assert progress["latitude"] == pytest.approx(lat, abs=1e-9)
+
+    def test_progress_says_how_long_fixed_has_held(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        rover.fixed_after_s = 0.0
+
+        _start(client, min_duration_seconds=86400)
+        progress = _wait_for(
+            client, lambda p: (p.get("fixed_held_seconds") or 0) >= 5, "Fixed held"
+        )
+
+        assert progress["rtk_status"] == "fixed"
+        assert progress["fixed_settle_seconds"] == 30

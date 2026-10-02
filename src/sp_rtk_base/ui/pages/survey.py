@@ -1761,6 +1761,10 @@ def survey_page() -> None:
             text, colour = _RTK_TEXT.get(
                 progress.rtk_status or "", ("RTK: none", "text-grey-3")
             )
+            held = progress.fixed_held_seconds or 0
+            settle = progress.fixed_settle_seconds or 0
+            if progress.rtk_status == "fixed" and held < settle:
+                text += f" (settling, {settle - held}s)"
             svin_rtk_label.text = text
             svin_rtk_label.classes(replace=colour)
             age = progress.correction_age_s
@@ -1784,7 +1788,7 @@ def survey_page() -> None:
         _ABORT_REASONS: dict[str, str] = {
             "accuracy_not_reached": "the accuracy limit wasn't reached in time",
             "device_disconnected": "the receiver stopped answering",
-            "no_corrections": "RTK Fixed never returned: no corrections arrived",
+            "no_corrections": "RTK Fixed never returned: no fresh corrections arrived",
             "no_fixed": "RTK Fixed never returned: the receiver reached only Float",
             "input_not_restored": (
                 "the receiver's input settings couldn't be restored, so "
@@ -2106,7 +2110,7 @@ def _stall_warning(progress: SurveyInProgress) -> str | None:
         return None
     without = progress.seconds_without_fixed or 0
     if progress.stall_reason == "no_corrections":
-        why = "no corrections are arriving" + _last_error_note(progress)
+        why = "no fresh corrections are arriving" + _last_error_note(progress)
     else:
         why = "the receiver reaches only RTK Float"
     left = _mm_ss(progress.stall_abort_in_seconds or 0)

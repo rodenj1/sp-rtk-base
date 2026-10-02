@@ -64,14 +64,16 @@ def test_a_survey_without_corrections_warns_then_aborts(
     _start_corrected(page, base_url, api_base_url, caster.port)
 
     expect(
-        page.locator("text=/No RTK Fixed for .*no corrections are arriving/").first
+        page.locator(
+            "text=/No RTK Fixed for .*no fresh corrections are arriving/"
+        ).first
     ).to_be_visible(timeout=10_000)
     expect(
         page.locator("text=/The survey aborts in \\d+s unless RTK Fixed returns/").first
     ).to_be_visible()
     expect(
         page.locator(
-            "text=/Survey aborted: RTK Fixed never returned: no corrections "
+            "text=/Survey aborted: RTK Fixed never returned: no fresh corrections "
             "arrived \\(the source's last error: .+\\)/"
         ).first
     ).to_be_visible(timeout=25_000)

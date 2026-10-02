@@ -62,12 +62,16 @@ HARD_CAP_MULTIPLE: float = 3.0
 # missing for STALL_WARNING_S. Not operator settings.
 STALL_ABORT_S: float = 600.0
 STALL_WARNING_S: float = 60.0
-# Corrections older than this count as stopped when naming a stall: the
-# Relay's own NTRIP data timeout.
-STALE_CORRECTION_AGE_S: float = 30.0
 # How often a Corrected survey-in reads the receiver's own count of what
 # reached its console port (a MON-COMMS poll on u-blox).
-RECEIVER_COUNTERS_EVERY_S: float = 10.0
+RECEIVER_COUNTERS_EVERY_S: float = 30.0
+# A Corrected survey-in counts an RTK Fixed solution as an Observation only
+# once Fixed has held this long without a break, and only while its
+# corrections are no older than MAX_CORRECTION_AGE_S: a Fixed that has just
+# formed, or that rests on stale corrections, drifts (#197, run 5's spread
+# grew from 30 to 91 mm on 30-45 s old corrections). The bench confirms both.
+FIXED_SETTLE_S: float = 30.0
+MAX_CORRECTION_AGE_S: float = 10.0
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -150,9 +154,13 @@ class _ReceiverCounts:
 
 
 def _stall_reason(position: SurveyPosition) -> SurveyAbortReason:
-    """Why there's no RTK Fixed: corrections stopped, or only Float."""
+    """Why there are no Observations: no fresh corrections, or only Float.
+
+    "Fresh" is the same age an Observation needs, so a Fixed on stale
+    corrections is never blamed on Float.
+    """
     age = position.correction_age_s
-    if age is None or age > STALE_CORRECTION_AGE_S:
+    if age is None or age > MAX_CORRECTION_AGE_S:
         return "no_corrections"
     return "no_fixed"
 
@@ -168,10 +176,12 @@ class SurveyService:
         sleep: Sleep = asyncio.sleep,
         stall_warning_s: float = STALL_WARNING_S,
         stall_abort_s: float = STALL_ABORT_S,
+        fixed_settle_s: float = FIXED_SETTLE_S,
     ) -> None:
         self._device = device
         self._stall_warning_s = stall_warning_s
         self._stall_abort_s = stall_abort_s
+        self._fixed_settle_s = fixed_settle_s
         self._clock = clock
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
@@ -261,6 +271,7 @@ class SurveyService:
                 accuracy_limit_mm=config.accuracy_limit_mm,
                 correction_source=source.name,
                 source_connected=True,
+                fixed_settle_seconds=int(self._fixed_settle_s),
             )
             limits = _Limits(
                 config.min_duration_seconds, config.accuracy_limit_mm, corrected=True
@@ -398,6 +409,7 @@ class SurveyService:
         next_sample_at = started_at
         last_growth_at = started_at  # the start, or the last Observation
         last_sample_wall: float | None = None
+        fixed_since: float | None = None  # when the current Fixed began
         try:
             while True:
                 # Bench diagnosis (#197), on the real (monotonic) clock, not
@@ -410,12 +422,18 @@ class SurveyService:
                 if last_sample_wall is not None:
                     self._sample_interval_s.add(read_began - last_sample_wall)
                 last_sample_wall = read_began
-                observed = self._is_observation(position, limits)
+                fixed = position.fix_ok and position.rtk_status == "fixed"
+                if not fixed:
+                    fixed_since = None
+                elif fixed_since is None:
+                    fixed_since = self._clock()
+                held_s = self._clock() - fixed_since if fixed_since is not None else 0.0
+                observed = self._is_observation(position, limits, held_s)
                 if observed:
                     last_growth_at = self._clock()
                 if limits.corrected:
                     stalled_s = self._clock() - last_growth_at
-                    await self._update_correction_progress(position, stalled_s)
+                    await self._update_correction_progress(position, stalled_s, held_s)
                     if stalled_s >= self._stall_abort_s:
                         reason: SurveyAbortReason = _stall_reason(position)
                         # Restored before the outcome shows; never a fallback.
@@ -456,15 +474,24 @@ class SurveyService:
             # Shielded: a second cancel mustn't cut the restore short.
             await asyncio.shield(self._stop_corrections())
 
-    @staticmethod
-    def _is_observation(position: SurveyPosition, limits: _Limits) -> bool:
-        """Corrected: RTK Fixed solutions only. Plain: any valid 3D fix."""
-        if limits.corrected:
-            return position.fix_ok and position.rtk_status == "fixed"
-        return position.fix_ok
+    def _is_observation(
+        self, position: SurveyPosition, limits: _Limits, held_s: float
+    ) -> bool:
+        """Plain: any valid 3D fix. Corrected: an RTK Fixed solution that has
+        held for the settling time, on fresh corrections."""
+        if not limits.corrected:
+            return position.fix_ok
+        age = position.correction_age_s
+        return (
+            position.fix_ok
+            and position.rtk_status == "fixed"
+            and held_s >= self._fixed_settle_s
+            and age is not None
+            and age <= MAX_CORRECTION_AGE_S
+        )
 
     async def _update_correction_progress(
-        self, position: SurveyPosition, stalled_s: float
+        self, position: SurveyPosition, stalled_s: float, held_s: float
     ) -> None:
         """The receiver's RTK status and correction age, the source's state,
         and how long the survey has gone without an RTK Fixed Observation."""
@@ -489,6 +516,7 @@ class SurveyService:
                 "rtk_status": position.rtk_status,
                 "correction_age_s": position.correction_age_s,
                 "seconds_without_fixed": without_fixed,
+                "fixed_held_seconds": int(held_s),
                 "stall_abort_in_seconds": max(
                     0, int(self._stall_abort_s) - without_fixed
                 ),

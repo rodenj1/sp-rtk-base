@@ -844,6 +844,16 @@ class SurveyInProgress(BaseModel):
     )
     # Bench diagnosis (#197): how corrections travel to the receiver.
     diagnostics: CorrectionDiagnostics | None = None
+    fixed_settle_seconds: int | None = Field(
+        default=None, description="How long Fixed must hold before it counts (s)"
+    )
+    fixed_held_seconds: int | None = Field(
+        default=None,
+        description=(
+            "How long RTK Fixed has held without a break (s); it counts only "
+            "once it has held fixed_settle_seconds"
+        ),
+    )
     # A Corrected survey-in aborts after 10 minutes without RTK Fixed.
     seconds_without_fixed: int | None = Field(
         default=None,

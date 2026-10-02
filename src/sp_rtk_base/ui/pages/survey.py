@@ -311,10 +311,16 @@ def survey_page() -> None:
                 _update_acc_hint()
                 corrected = svin_mode.value == "corrected"
                 svin_source_row.set_visibility(corrected)
-                # Corrected Start arrives with the Corrected survey-in itself.
-                svin_start_btn.set_enabled(not corrected)
                 if corrected:
                     _refresh_sources()
+                _update_start_enabled()
+
+            def _update_start_enabled() -> None:
+                # A Corrected survey-in needs a saved Correction source.
+                corrected = svin_mode.value == "corrected"
+                svin_start_btn.set_enabled(
+                    not corrected or svin_source_select.value is not None
+                )
 
             async def _verify_selected_source() -> None:
                 if not svin_source_select.value:
@@ -331,6 +337,7 @@ def survey_page() -> None:
             def _on_source_selected() -> None:
                 svin_source_panel.reset()  # it showed another source
                 svin_source_edit_btn.set_enabled(svin_source_select.value is not None)
+                _update_start_enabled()
                 if svin_source_select.value and not choosing_in_code:
                     config_svc.set_last_correction_source(str(svin_source_select.value))
 
@@ -386,6 +393,23 @@ def survey_page() -> None:
                     "text-caption text-grey-5"
                 )
                 svin_averaged_by_label.set_visibility(False)
+                # A Corrected survey-in: the rover's RTK state and its source.
+                svin_corrected_row = ui.row().classes(
+                    "w-full gap-4 q-mt-xs sp-metric-row"
+                )
+                with svin_corrected_row:
+                    svin_rtk_label = ui.label("RTK: —").props(
+                        'data-testid="survey-rtk-status"'
+                    )
+                    svin_age_label = (
+                        ui.label("Correction age: —")
+                        .classes("text-grey-3")
+                        .props('data-testid="survey-correction-age"')
+                    )
+                    svin_source_state_label = ui.label("Source: —").props(
+                        'data-testid="survey-source-state"'
+                    )
+                svin_corrected_row.set_visibility(False)
                 # In-card error banner — replaces toast-only feedback so a
                 # config-write failure stays visible after the toast fades.
                 svin_error_label = ui.label("").classes(
@@ -1318,9 +1342,13 @@ def survey_page() -> None:
 
         async def _start_survey_in() -> None:
             nonlocal svin_timer, _svin_meas_period_ms
-            from sp_rtk_base.models.device_models import SurveyInConfig
+            from sp_rtk_base.models.device_models import (
+                CorrectedSurveyInConfig,
+                SurveyInConfig,
+            )
 
             _svin_meas_period_ms = None
+            corrected = svin_mode.value == "corrected"
 
             dur = int(svin_duration.value or 120)
             acc = int(svin_accuracy.value or 50000)
@@ -1380,12 +1408,29 @@ def survey_page() -> None:
             opts["xAxis"]["data"] = []
             opts["series"][0]["data"] = []
             opts["series"][0]["markLine"]["data"] = [{"yAxis": acc}]
+            # A Corrected survey-in converges to millimetres.
+            opts["yAxis"][0]["min"] = 1 if corrected else 100
             svin_chart.update()
 
             try:
-                await survey_svc.start(
-                    SurveyInConfig(min_duration_seconds=dur, accuracy_limit_mm=acc)
-                )
+                if corrected:
+                    source = config_svc.get_correction_source(
+                        str(svin_source_select.value or "")
+                    )
+                    if source is None:
+                        raise RuntimeError("Choose a saved Correction source first")
+                    await survey_svc.start_corrected(
+                        CorrectedSurveyInConfig(
+                            correction_source=source.name,
+                            min_duration_seconds=dur,
+                            accuracy_limit_mm=acc,
+                        ),
+                        source,
+                    )
+                else:
+                    await survey_svc.start(
+                        SurveyInConfig(min_duration_seconds=dur, accuracy_limit_mm=acc)
+                    )
             except Exception as exc:
                 # Surface the error *in the card itself* so it persists.
                 # The toast is still emitted for consistency with the
@@ -1486,14 +1531,30 @@ def survey_page() -> None:
                 # there, issue #191).
                 elapsed = int(progress.duration_seconds)
                 by_station = progress.averaged_by == "application"
+                corrected = progress.correction_source is not None
                 if progress.averaged_by is not None:
-                    svin_averaged_by_label.text = (
-                        "Averaged by the station (this receiver has no "
-                        "survey-in of its own)"
-                        if by_station
-                        else "Averaged by the receiver"
-                    )
+                    if corrected:
+                        svin_averaged_by_label.text = (
+                            f"Corrected against {progress.correction_source}: "
+                            "the station averages RTK Fixed solutions only"
+                        )
+                    elif by_station:
+                        svin_averaged_by_label.text = (
+                            "Averaged by the station (this receiver has no "
+                            "survey-in of its own)"
+                        )
+                    else:
+                        svin_averaged_by_label.text = "Averaged by the receiver"
                     svin_averaged_by_label.set_visibility(True)
+                svin_corrected_row.set_visibility(corrected)
+                if corrected:
+                    _show_corrections(progress)
+                dur_target = progress.min_duration_seconds or int(
+                    svin_duration.value or 120
+                )
+                acc_target = float(
+                    progress.accuracy_limit_mm or svin_accuracy.value or 50000
+                )
 
                 if progress.outcome == "completed":
                     svin_pct_label.text = "% to target: 100% (target reached)"
@@ -1528,9 +1589,15 @@ def survey_page() -> None:
                     svin_status_label.text = "Idle"
                     svin_status_label.classes(replace="text-grey-3")
 
-                svin_dur_label.text = f"Duration: {elapsed}s"
-                svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
-                dur_target = int(svin_duration.value or 120)
+                if corrected:
+                    svin_dur_label.text = f"Fixed time: {elapsed}s / {dur_target}s"
+                    svin_acc_label.text = (
+                        f"Accuracy: {progress.mean_accuracy_mm:.0f} mm / "
+                        f"{acc_target:.0f} mm"
+                    )
+                else:
+                    svin_dur_label.text = f"Duration: {elapsed}s"
+                    svin_acc_label.text = f"Accuracy: {progress.mean_accuracy_mm:.0f}mm"
                 if _svin_meas_period_ms is None:
                     await _read_meas_period()
                 # The station takes one observation a second; the receiver
@@ -1539,7 +1606,6 @@ def survey_page() -> None:
                 svin_obs_label.text = (
                     f"Observations: {progress.observations:,} / {obs_target:,}"
                 )
-                acc_target = float(svin_accuracy.value or 50000)
                 cur_acc = float(progress.mean_accuracy_mm)
 
                 # Duration-based progress bar (primary completion gate is
@@ -1662,7 +1728,6 @@ def survey_page() -> None:
                 opts["xAxis"]["data"] = _svin_chart_times
                 opts["series"][0]["data"] = _svin_chart_acc
 
-                acc_target = float(svin_accuracy.value or 50000)
                 if acc_val <= acc_target:
                     line_color = "#51cf66"
                 elif acc_val <= acc_target * 2:
@@ -1674,11 +1739,45 @@ def survey_page() -> None:
             except Exception:
                 pass
 
+        _RTK_TEXT = {
+            "fixed": ("RTK: Fixed", "text-positive"),
+            "float": ("RTK: Float", "text-warning"),
+        }
+
+        def _show_corrections(progress: SurveyInProgress) -> None:
+            """The rover's RTK status, correction age and its source's state."""
+            text, colour = _RTK_TEXT.get(
+                progress.rtk_status or "", ("RTK: none", "text-grey-3")
+            )
+            svin_rtk_label.text = text
+            svin_rtk_label.classes(replace=colour)
+            age = progress.correction_age_s
+            svin_age_label.text = (
+                f"Correction age: {age:.1f} s"
+                if age is not None
+                else "Correction age: —"
+            )
+            if progress.source_connected:
+                svin_source_state_label.text = "Source: connected"
+                svin_source_state_label.classes(replace="text-positive")
+            else:
+                error = progress.source_last_error
+                svin_source_state_label.text = (
+                    f"Source: disconnected ({error})"
+                    if error
+                    else "Source: disconnected"
+                )
+                svin_source_state_label.classes(replace="text-negative")
+
         _ABORT_REASONS: dict[str, str] = {
             "accuracy_not_reached": "the accuracy limit wasn't reached in time",
             "device_disconnected": "the receiver stopped answering",
             "no_corrections": "no corrections arrived",
             "no_fixed": "the receiver never reached RTK Fixed",
+            "input_not_restored": (
+                "the receiver's input settings couldn't be restored, so "
+                "nothing was saved to flash"
+            ),
         }
 
         async def _show_station_survey_committed(announce: bool = True) -> None:

@@ -693,6 +693,47 @@ class GpsReceiverDriver(abc.ABC):
             ConnectionError: If not connected.
         """
 
+    # ------------------------------------------------------------------
+    # Correction input (a Corrected survey-in; ADR 0004)
+    # ------------------------------------------------------------------
+
+    @abc.abstractmethod
+    def begin_correction_input(self, console_port: PortId | None) -> None:
+        """Let the receiver take RTCM 3 corrections on its console port.
+
+        Remembers the current input-protocol settings, then enables RTCM 3
+        input **in RAM only**: on ``console_port``, or on every port when
+        it is unknown. :meth:`end_correction_input` restores them.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the receiver rejects the change.
+        """
+
+    @abc.abstractmethod
+    def write_corrections(self, frame: bytes) -> None:
+        """Write one whole RTCM 3 Frame to the receiver, unchanged.
+
+        Waits for no reply, and interleaves with position polls under the
+        driver's lock.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+
+    @abc.abstractmethod
+    def end_correction_input(self) -> None:
+        """Restore the input settings :meth:`begin_correction_input` found.
+
+        A no-op without a matching begin. Called on every exit from a
+        Corrected survey-in, and before any save to flash, so nothing
+        temporary is ever saved.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If the receiver rejects the change.
+        """
+
     @abc.abstractmethod
     def get_survey_in_status(self) -> SurveyInProgress:
         """Poll the current survey-in progress.

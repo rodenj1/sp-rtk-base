@@ -249,6 +249,8 @@ class UbloxDriver(GpsReceiverDriver):
         self._stream: _DeadlineStream | None = None
         self._device_info: DeviceInfo | None = None
         self._lock = threading.Lock()
+        # RTCM 3 input settings found by begin_correction_input, to restore.
+        self._saved_correction_input: dict[str, int] | None = None
         self._cancel_event = threading.Event()
         # Last-known port/baud — captured on connect so
         # ``reset_and_reconnect()`` can reopen the same port after
@@ -585,6 +587,8 @@ class UbloxDriver(GpsReceiverDriver):
     # ``_read_cfg_keys_locked`` (issue #94): every existing caller
     # wants RAM, matching this method's pre-#94 hardcoded behaviour.
     _CFG_LAYER_RAM: int = 0
+    # CFG-VALSET layer bitmask for RAM only (temporary, never saved).
+    _CFG_VALSET_RAM_ONLY: int = 1
     _CFG_LAYER_FLASH: int = 2
 
     # The CFG-VALSET bitmask's Flash bit (see the layer comment above:
@@ -1402,6 +1406,46 @@ class UbloxDriver(GpsReceiverDriver):
             self._write_and_verify_locked(
                 cfg_data, layer=5, label="Port protocol config"
             )
+
+    # ------------------------------------------------------------------
+    # Correction input (a Corrected survey-in; ADR 0004)
+    # ------------------------------------------------------------------
+
+    def begin_correction_input(self, console_port: PortId | None) -> None:
+        """Enable RTCM 3 input in RAM, remembering what was there."""
+        ports = [console_port] if console_port is not None else list(PortId)
+        keys = [_protocol_key(port, "IN", UbxProtocol.RTCM3X) for port in ports]
+        with self._lock:
+            found = self._read_cfg_keys_with_retry_locked(keys)
+            # Remembered first, so even a write that half-landed is restored.
+            self._saved_correction_input = found
+            self._write_and_verify_locked(
+                [(key, 1) for key in keys],
+                layer=self._CFG_VALSET_RAM_ONLY,
+                label="Correction input",
+            )
+        logger.info("RTCM 3 input enabled in RAM on %s", [p.value for p in ports])
+
+    def write_corrections(self, frame: bytes) -> None:
+        """Write one whole RTCM 3 Frame; no reply is awaited."""
+        with self._lock:
+            ser, _ = self._require_connection()
+            ser.write(frame)
+
+    def end_correction_input(self) -> None:
+        """Restore the RTCM 3 input settings begin_correction_input found."""
+        with self._lock:
+            saved = self._saved_correction_input
+            if saved is None:
+                return
+            if saved:
+                self._write_and_verify_locked(
+                    list(saved.items()),
+                    layer=self._CFG_VALSET_RAM_ONLY,
+                    label="Correction input restore",
+                )
+            self._saved_correction_input = None
+        logger.info("RTCM 3 input settings restored")
 
     def configure_measurement_rate(self, period_ms: int) -> None:
         """Write ``CFG_RATE_MEAS=period_ms`` and pin ``CFG_RATE_NAV=1``.

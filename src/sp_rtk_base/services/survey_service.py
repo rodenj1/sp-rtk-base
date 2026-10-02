@@ -5,6 +5,12 @@ its own position. On one without, the station averages instead: it reads a
 high-precision position once a second, keeps the valid 3D fixes, and commits
 their mean as the fixed base itself, whether or not a page is open.
 
+A **Corrected survey-in** is always averaged by the station: the receiver
+works as a rover, the survey's own Relay instance feeds it a Correction
+source's RTCM 3 (ADR 0004), and only RTK Fixed solutions are Observations. Its engine is
+stopped and the receiver's input settings restored on every exit, and
+before the fixed base is committed and saved to flash.
+
 Both report the same :class:`SurveyInProgress`, with ``averaged_by``,
 ``outcome`` and ``abort_reason``. A survey lives in memory only and is lost
 on restart; the receiver then stays in rover mode.
@@ -19,7 +25,9 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from sp_rtk_base.models.config_models import CorrectionSourceProfile
 from sp_rtk_base.models.device_models import (
+    CorrectedSurveyInConfig,
     DeviceCapability,
     FixedBaseConfig,
     SurveyAbortReason,
@@ -28,6 +36,7 @@ from sp_rtk_base.models.device_models import (
     SurveyOutcome,
     SurveyPosition,
 )
+from sp_rtk_base.services.correction_feed import CorrectionFeed
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh
@@ -50,6 +59,15 @@ Sleep = Callable[[float], Awaitable[None]]
 
 class SurveyBusyError(RuntimeError):
     """A survey is already running."""
+
+
+@dataclass(frozen=True)
+class _Limits:
+    """What an application-averaged survey needs to complete."""
+
+    min_duration_s: int
+    accuracy_limit_mm: float
+    corrected: bool  # only RTK Fixed epochs count
 
 
 @dataclass
@@ -106,6 +124,9 @@ class SurveyService:
         self._survey_driver: GpsReceiverDriver | None = None
         # Receiver survey-in: its duration counter when this survey started.
         self._receiver_duration_offset = 0
+        # A Corrected survey-in's own Relay instance, while it runs.
+        self._feed: CorrectionFeed | None = None
+        device.add_before_disconnect(self._before_disconnect)
 
     # ------------------------------------------------------------------
     # Public API
@@ -127,6 +148,49 @@ class SurveyService:
                 await self._start_receiver_survey(config)
             else:
                 await self._start_application_survey(config)
+
+    async def start_corrected(
+        self, config: CorrectedSurveyInConfig, source: CorrectionSourceProfile
+    ) -> None:
+        """Start a Corrected survey-in against ``source``.
+
+        Needs no Verification and no first Frame: starting the survey's
+        Relay instance is itself one fail-fast connect attempt.
+
+        Raises:
+            SurveyBusyError: If a survey is already running.
+            CorrectionSourceUnreachableError: If it can't connect;
+                the receiver's input settings are restored.
+            RuntimeError: If the device isn't connected or the relay runs.
+        """
+        async with self._lock:
+            await self._forget_if_receiver_changed()
+            if self._is_running():
+                raise SurveyBusyError("A survey is already running")
+            await self._device.disable_base_mode()  # a rover, taking corrections
+            try:
+                await self._device.begin_correction_input()
+                feed = CorrectionFeed(self._device, source.to_relay_config())
+                await feed.start()
+            except Exception:
+                await self._restore_correction_input()
+                raise
+            self._survey_driver = self._device.driver
+            self._feed = feed
+            self._progress = SurveyInProgress(
+                active=True,
+                averaged_by="application",
+                outcome="running",
+                min_duration_seconds=config.min_duration_seconds,
+                accuracy_limit_mm=config.accuracy_limit_mm,
+                correction_source=source.name,
+                source_connected=True,
+            )
+            limits = _Limits(
+                config.min_duration_seconds, config.accuracy_limit_mm, corrected=True
+            )
+            self._task = asyncio.create_task(self._run_application_survey(limits))
+            logger.info("Corrected survey-in started against %s", source.name)
 
     async def progress(self) -> SurveyInProgress:
         """The current survey's progress.
@@ -157,6 +221,7 @@ class SurveyService:
                 and self._progress.averaged_by == "application"
             ):
                 await self._stop_task()
+                await self._stop_corrections()
                 if self._progress.outcome != "running":
                     return  # finished: never undo a committed fixed base
                 self._finish("cancelled")
@@ -169,6 +234,18 @@ class SurveyService:
     async def shutdown(self) -> None:
         """Stop sampling (on app shutdown)."""
         await self._stop_task()
+        await self._stop_corrections()
+
+    async def _before_disconnect(self) -> None:
+        """Stop a running survey while the receiver still answers."""
+        async with self._lock:
+            if not self._is_running():
+                return
+            await self._stop_task()
+            await self._stop_corrections()
+            if self._progress is not None and self._progress.outcome == "running":
+                self._finish("aborted", "device_disconnected")
+                logger.warning("Survey-in aborted: the receiver was disconnected")
 
     # ------------------------------------------------------------------
     # Receiver survey-in
@@ -213,26 +290,33 @@ class SurveyService:
     async def _start_application_survey(self, config: SurveyInConfig) -> None:
         await self._device.disable_base_mode()  # rover, while the station averages
         self._progress = SurveyInProgress(
-            active=True, averaged_by="application", outcome="running"
+            active=True,
+            averaged_by="application",
+            outcome="running",
+            min_duration_seconds=config.min_duration_seconds,
+            accuracy_limit_mm=config.accuracy_limit_mm,
         )
-        self._task = asyncio.create_task(self._run_application_survey(config))
+        limits = _Limits(
+            config.min_duration_seconds, config.accuracy_limit_mm, corrected=False
+        )
+        self._task = asyncio.create_task(self._run_application_survey(limits))
 
-    async def _run_application_survey(self, config: SurveyInConfig) -> None:
+    async def _run_application_survey(self, limits: _Limits) -> None:
         started_at = self._clock()
-        hard_cap_s = max(
-            HARD_CAP_MIN_S, HARD_CAP_MULTIPLE * config.min_duration_seconds
-        )
-        limit_m = config.accuracy_limit_mm / 1000.0
+        hard_cap_s = max(HARD_CAP_MIN_S, HARD_CAP_MULTIPLE * limits.min_duration_s)
+        limit_m = limits.accuracy_limit_mm / 1000.0
         averaging = _Averaging()
         next_sample_at = started_at
         try:
             while True:
                 position = await self._device.get_survey_position()
-                if position.fix_ok:
+                if limits.corrected:
+                    await self._update_correction_progress(position)
+                if self._is_observation(position, limits):
                     averaging.add(position)
                     self._update_application_progress(averaging)
                     if (
-                        averaging.count >= config.min_duration_seconds
+                        averaging.count >= limits.min_duration_s
                         and averaging.accuracy_m() <= limit_m
                     ):
                         await self._commit(averaging)
@@ -249,6 +333,33 @@ class SurveyService:
         except Exception:
             logger.exception("Survey-in aborted: the receiver stopped answering")
             self._finish("aborted", "device_disconnected")
+        finally:
+            # Every exit stops a Corrected survey-in's Relay instance and
+            # restores the receiver's input (already done before a commit).
+            # Shielded: a second cancel mustn't cut the restore short.
+            await asyncio.shield(self._stop_corrections())
+
+    @staticmethod
+    def _is_observation(position: SurveyPosition, limits: _Limits) -> bool:
+        """Corrected: RTK Fixed solutions only. Plain: any valid 3D fix."""
+        if limits.corrected:
+            return position.fix_ok and position.rtk_status == "fixed"
+        return position.fix_ok
+
+    async def _update_correction_progress(self, position: SurveyPosition) -> None:
+        """The receiver's RTK status and correction age, and the source's state."""
+        assert self._progress is not None
+        connected, last_error = (
+            await self._feed.status() if self._feed is not None else (False, None)
+        )
+        self._progress = self._progress.model_copy(
+            update={
+                "rtk_status": position.rtk_status,
+                "correction_age_s": position.correction_age_s,
+                "source_connected": connected,
+                "source_last_error": last_error,
+            }
+        )
 
     def _update_application_progress(self, averaging: _Averaging) -> None:
         assert self._progress is not None
@@ -265,7 +376,19 @@ class SurveyService:
         )
 
     async def _commit(self, averaging: _Averaging) -> None:
-        """Make the mean the fixed base and save it, then report completion."""
+        """Make the mean the fixed base and save it, then report completion.
+
+        A Corrected survey-in first stops its Relay instance and restores the
+        receiver's input settings. If they can't be restored it commits
+        nothing: saving to flash would make the temporary input permanent.
+        """
+        if not await self._stop_corrections():
+            self._finish("aborted", "input_not_restored")
+            logger.error(
+                "Survey-in aborted: the receiver's input settings couldn't be "
+                "restored, so nothing was committed or saved to flash"
+            )
+            return
         lat, lon, alt = ecef_to_llh(*averaging.mean())
         await self._device.configure_fixed_base(
             FixedBaseConfig(
@@ -303,6 +426,37 @@ class SurveyService:
         await self._stop_task()
         self._progress = None
         self._survey_driver = None
+
+    async def _stop_corrections(self) -> bool:
+        """Stop a Corrected survey-in's Relay instance and restore the input.
+
+        Safe to call more than once, and on a plain survey.
+
+        Returns:
+            Whether the receiver's input settings are as they were (True
+            when there was nothing to restore).
+        """
+        feed, self._feed = self._feed, None
+        if feed is None:
+            return True
+        try:
+            await feed.stop()
+        except Exception:
+            logger.exception("Could not stop the survey's Relay instance")
+        restored = await self._restore_correction_input()
+        if self._progress is not None:
+            self._progress = self._progress.model_copy(
+                update={"source_connected": False}
+            )
+        return restored
+
+    async def _restore_correction_input(self) -> bool:
+        try:
+            await self._device.end_correction_input()
+        except Exception:
+            logger.exception("Could not restore the receiver's input settings")
+            return False
+        return True
 
     def _is_running(self) -> bool:
         """Whether the station is averaging.

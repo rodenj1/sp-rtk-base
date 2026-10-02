@@ -118,7 +118,8 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
 | `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
-| `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start unavailable when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
+| `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start needs a chosen Correction source when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
+| `test_survey_corrected.py` | A Corrected survey-in against a scripted fake caster: the live panel shows the source connected, RTK Fixed, the correction age, Fixed time and accuracy against their limits; Cancel |
 | `test_survey_correction_verify.py` | Verify a Correction source against a scripted fake caster: Green with every Stage passed and its countdown, Red at auth with later Stages skipped, editing the dialog voids a Green |
 | `test_survey_station_averaged.py` | Survey-in on a receiver without a Receiver survey-in (`FAKE-NO-SVIN`): the station averages, commits the fixed base, cancels to rover mode; "Averaged by the receiver" on the normal fake |
 

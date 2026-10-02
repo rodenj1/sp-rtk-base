@@ -203,6 +203,17 @@ FAKE_NO_SURVEY_IN_PORT: str = "FAKE-NO-SVIN"
 _SURVEY_POSITION_NOISE_M: float = 0.5  # standard deviation per ECEF axis
 _SURVEY_POSITION_ACCURACY_M: float = 1.5  # the receiver's 3D estimate
 
+# The simulated rover with corrections (a Corrected survey-in, issue #195):
+# Float this long after corrections start, Fixed after this long, and back
+# to no RTK once the newest correction is older than the timeout.
+_ROVER_FLOAT_AFTER_S: float = 2.0
+_ROVER_FIXED_AFTER_S: float = 4.0
+_ROVER_CORRECTION_TIMEOUT_S: float = 5.0
+_ROVER_FLOAT_NOISE_M: float = 0.15
+_ROVER_FLOAT_ACCURACY_M: float = 0.3
+_ROVER_FIXED_NOISE_M: float = 0.003
+_ROVER_FIXED_ACCURACY_M: float = 0.012
+
 
 class FakeGpsDriver(GpsReceiverDriver):
     """In-memory GPS receiver driver for E2E + dev-mode testing.
@@ -369,6 +380,13 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._has_receiver_survey_in: bool = True
         self._scripted_survey_positions: deque[SurveyPosition] = deque()
         self._survey_rng = random.Random(191)  # repeatable noise
+        # The simulated rover: how it converges once corrections arrive.
+        self.float_after_s = _ROVER_FLOAT_AFTER_S
+        self.fixed_after_s = _ROVER_FIXED_AFTER_S
+        self.correction_timeout_s = _ROVER_CORRECTION_TIMEOUT_S
+        self._correction_input = False
+        self._corrections_since: float | None = None
+        self._last_correction_at: float | None = None
 
     # ------------------------------------------------------------------
     # Identity
@@ -737,17 +755,60 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._ensure_connected()
         if self._scripted_survey_positions:
             return self._scripted_survey_positions.popleft()
+        rtk_status, age = self._rover_rtk_status()
+        noise_m, accuracy_m = {
+            "fixed": (_ROVER_FIXED_NOISE_M, _ROVER_FIXED_ACCURACY_M),
+            "float": (_ROVER_FLOAT_NOISE_M, _ROVER_FLOAT_ACCURACY_M),
+        }.get(rtk_status, (_SURVEY_POSITION_NOISE_M, _SURVEY_POSITION_ACCURACY_M))
         x, y, z = llh_to_ecef(*self.true_position_llh)
         noise = self._survey_rng.gauss
         return SurveyPosition(
-            ecef_x_m=x + noise(0.0, _SURVEY_POSITION_NOISE_M),
-            ecef_y_m=y + noise(0.0, _SURVEY_POSITION_NOISE_M),
-            ecef_z_m=z + noise(0.0, _SURVEY_POSITION_NOISE_M),
-            accuracy_3d_m=_SURVEY_POSITION_ACCURACY_M,
-            rtk_status="none",
+            ecef_x_m=x + noise(0.0, noise_m),
+            ecef_y_m=y + noise(0.0, noise_m),
+            ecef_z_m=z + noise(0.0, noise_m),
+            accuracy_3d_m=accuracy_m,
+            rtk_status=rtk_status,
             fix_ok=True,
-            correction_age_s=None,
+            correction_age_s=age,
         )
+
+    def _rover_rtk_status(self) -> tuple[str, float | None]:
+        """The simulated rover's RTK status and correction age right now."""
+        now = time.monotonic()
+        last = self._last_correction_at
+        if last is None or now - last > self.correction_timeout_s:
+            self._corrections_since = None  # converge again from scratch
+            return "none", None
+        since = self._corrections_since or now
+        if now - since >= self.fixed_after_s:
+            return "fixed", now - last
+        if now - since >= self.float_after_s:
+            return "float", now - last
+        return "none", now - last
+
+    # ------------------------------------------------------------------
+    # Correction input (a Corrected survey-in)
+    # ------------------------------------------------------------------
+
+    def begin_correction_input(self, console_port: PortId | None) -> None:
+        """Start taking corrections (RAM only on a real receiver)."""
+        self._ensure_connected()
+        self._correction_input = True
+
+    def write_corrections(self, frame: bytes) -> None:
+        """Take one Frame; ignored, as on a receiver, unless input is on."""
+        self._ensure_connected()
+        if not self._correction_input:
+            return
+        now = time.monotonic()
+        if self._corrections_since is None:
+            self._corrections_since = now
+        self._last_correction_at = now
+
+    def end_correction_input(self) -> None:
+        """Stop taking corrections."""
+        self._ensure_connected()
+        self._correction_input = False
 
     def get_signal_snapshot(self) -> SignalSnapshot:
         """Return the chosen Signal Snapshot, clear sky by default."""

@@ -42,6 +42,7 @@ def _make_dest_config() -> DestinationConfig:
             caster="rtk2go.com",
             mountpoint="MOUNT",
             password="pw",
+            username="me@example.com",  # v2 (the default) needs one
         ),
     )
 

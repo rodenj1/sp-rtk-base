@@ -1108,6 +1108,58 @@ class TestFixedJump:
         assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
         assert progress["fixed_jumps"] == 1
 
+    def test_a_jump_while_settling_restarts_the_settling(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        # 20 Fixed (settling, none counted), then Fixed 9 cm higher: the
+        # higher one must settle from its own start.
+        rover.script_survey_positions(
+            [_fixed(x, y, z)] * 20 + [_fixed(*_up(0.09))] * 100
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        _, _, alt = ecef_to_llh(*_up(0.09))
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
+        assert progress["fixed_jumps"] == 1
+
+    def test_a_single_excursion_is_left_out_but_not_a_jump(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        rover.script_survey_positions(
+            [_fixed(x, y, z)] * 60
+            + [_fixed(*_up(0.09))] * 2  # two samples away, then back
+            + [_fixed(x, y, z)] * 60
+        )
+
+        _start(client)
+        progress = _wait_for_outcome(client, "completed")
+
+        lat, _, alt = ecef_to_llh(x, y, z)
+        assert progress["fixed_jumps"] == 0
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-4)
+        assert progress["observations"] == 60
+
+    def test_a_fixed_that_never_settles_stalls_as_unsettled(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        x, y, z = TRUE_ECEF
+        # Fixed, jumping between two solutions every 10 s, for over 10 min.
+        flip = [_fixed(x, y, z)] * 10 + [_fixed(*_up(0.09))] * 10
+        rover.script_survey_positions(flip * 40)
+
+        _start(client)
+        progress = _wait_for_outcome(client, "aborted")
+
+        assert progress["abort_reason"] == "fixed_unsettled"
+        assert progress["fixed_jumps"] > 10
+
     def test_fixed_noise_isnt_a_jump(
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
     ) -> None:

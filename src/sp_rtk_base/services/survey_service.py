@@ -78,6 +78,9 @@ MAX_CORRECTION_AGE_S: float = 10.0
 # Fixed noise is millimetres; on the bench a false Fixed sat 9-13 cm off the
 # right one for 3 minutes with no break in Fixed (#197, run 1 on P472).
 FIXED_JUMP_M: float = 0.05
+# A jump must last this many samples in a row: a single excursion is left
+# out of the average but doesn't throw minutes of it away.
+FIXED_JUMP_SAMPLES: int = 3
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -159,15 +162,23 @@ class _ReceiverCounts:
         self.overrun_errors += (now.overrun_errors - last.overrun_errors) % 2**16
 
 
+def _fresh(position: SurveyPosition) -> bool:
+    """Whether the corrections behind ``position`` are fresh enough to count."""
+    age = position.correction_age_s
+    return age is not None and age <= MAX_CORRECTION_AGE_S
+
+
 def _stall_reason(position: SurveyPosition) -> SurveyAbortReason:
-    """Why there are no Observations: no fresh corrections, or only Float.
+    """Why there are no Observations: no fresh corrections, only Float, or a
+    Fixed that never settles (it keeps jumping, or keeps breaking off).
 
     "Fresh" is the same age an Observation needs, so a Fixed on stale
     corrections is never blamed on Float.
     """
-    age = position.correction_age_s
-    if age is None or age > MAX_CORRECTION_AGE_S:
+    if not _fresh(position):
         return "no_corrections"
+    if position.fix_ok and position.rtk_status == "fixed":
+        return "fixed_unsettled"
     return "no_fixed"
 
 
@@ -418,6 +429,7 @@ class SurveyService:
         last_sample_wall: float | None = None
         fixed_since: float | None = None  # when the current Fixed began
         last_fixed: tuple[float, float, float] | None = None
+        excursion = 0  # Fixed samples in a row beyond a jump from the reference
         try:
             while True:
                 # Bench diagnosis (#197), on the real (monotonic) clock, not
@@ -431,25 +443,36 @@ class SurveyService:
                     self._sample_interval_s.add(read_began - last_sample_wall)
                 last_sample_wall = read_began
                 fixed = position.fix_ok and position.rtk_status == "fixed"
-                if fixed and limits.corrected:
+                excursion_sample = False
+                if fixed and limits.corrected and _fresh(position):
                     here = (position.ecef_x_m, position.ecef_y_m, position.ecef_z_m)
                     reference = averaging.mean() if averaging.count else last_fixed
                     if (
                         reference is not None
                         and math.dist(here, reference) > FIXED_JUMP_M
                     ):
-                        # A different Fixed solution: start the average and
-                        # the settling again, so the two never mix.
-                        self._restart_after_jump(math.dist(here, reference))
-                        averaging = _Averaging()
-                        fixed_since = None
-                    last_fixed = here
+                        excursion += 1
+                        excursion_sample = True  # never averaged
+                        if excursion >= FIXED_JUMP_SAMPLES:
+                            # A different Fixed solution: start the average
+                            # and the settling again, so the two never mix.
+                            self._restart_after_jump(math.dist(here, reference))
+                            averaging = _Averaging()
+                            fixed_since = None
+                            excursion = 0
+                            last_fixed = here
+                    else:
+                        excursion = 0
+                        last_fixed = here
                 if not fixed:
                     fixed_since = None
                 elif fixed_since is None:
                     fixed_since = self._clock()
                 held_s = self._clock() - fixed_since if fixed_since is not None else 0.0
-                observed = self._is_observation(position, limits, held_s)
+                observed = (
+                    self._is_observation(position, limits, held_s)
+                    and not excursion_sample
+                )
                 if observed:
                     last_growth_at = self._clock()
                 if limits.corrected:
@@ -502,13 +525,11 @@ class SurveyService:
         held for the settling time, on fresh corrections."""
         if not limits.corrected:
             return position.fix_ok
-        age = position.correction_age_s
         return (
             position.fix_ok
             and position.rtk_status == "fixed"
             and held_s >= self._fixed_settle_s
-            and age is not None
-            and age <= MAX_CORRECTION_AGE_S
+            and _fresh(position)
         )
 
     async def _update_correction_progress(

@@ -702,9 +702,11 @@ class GpsReceiverDriver(abc.ABC):
     def begin_correction_input(self, console_port: PortId | None) -> None:
         """Let the receiver take RTCM 3 corrections on its console port.
 
-        Remembers the current input-protocol settings, then enables RTCM 3
-        input **in RAM only**: on ``console_port``, or on every port when
-        it is unknown. :meth:`end_correction_input` restores them.
+        Remembers the current protocol settings, then **in RAM only**, on
+        ``console_port`` (or on every port when it is unknown), enables
+        RTCM 3 input and turns off the receiver's own RTCM 3 output, which
+        would otherwise crowd the link the corrections and every poll share.
+        :meth:`end_correction_input` restores them.
 
         Raises:
             ConnectionError: If not connected.
@@ -737,7 +739,7 @@ class GpsReceiverDriver(abc.ABC):
 
     @abc.abstractmethod
     def end_correction_input(self) -> None:
-        """Restore the input settings :meth:`begin_correction_input` found.
+        """Restore the settings :meth:`begin_correction_input` found.
 
         A no-op without a matching begin. Called on every exit from a
         Corrected survey-in, and before any save to flash, so nothing

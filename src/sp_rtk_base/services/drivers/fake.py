@@ -807,7 +807,8 @@ class FakeGpsDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     def begin_correction_input(self, console_port: PortId | None) -> None:
-        """Start taking corrections (RAM only on a real receiver)."""
+        """Start taking corrections (RAM only on a real receiver, which also
+        quiets its own RTCM 3 output on that port)."""
         self._ensure_connected()
         self._correction_input = True
 

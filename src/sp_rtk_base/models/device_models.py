@@ -848,8 +848,8 @@ class SurveyInProgress(BaseModel):
     fixed_jumps: int | None = Field(
         default=None,
         description=(
-            "Times RTK Fixed jumped to a different solution (over 5 cm), each "
-            "restarting the averaging"
+            "Times RTK Fixed stepped to a different solution (over 5 cm from "
+            "the last Fixed), each restarting the averaging"
         ),
     )
     last_jump_mm: float | None = Field(

@@ -1160,6 +1160,25 @@ class TestFixedJump:
         assert progress["abort_reason"] == "fixed_unsettled"
         assert progress["fixed_jumps"] > 10
 
+    def test_a_slow_drift_is_averaged_not_cut(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
+        # Settle, then the height wanders 12 cm over 300 samples (0.4 mm a
+        # step), as on a long baseline (bench, P472): not a jump, though it
+        # ends 6 cm from the mean.
+        drift = [_fixed(*_up(0.0004 * i)) for i in range(300)]
+        rover.script_survey_positions([_fixed(*_up(0.0))] * 30 + drift)
+
+        _start(client, min_duration_seconds=300, accuracy_limit_mm=1000)
+        progress = _wait_for_outcome(client, "completed")
+
+        assert progress["fixed_jumps"] == 0
+        assert progress["observations"] == 300
+        # Every sample counted: the mean is the drift's own mean, 6 cm up.
+        _, _, alt = ecef_to_llh(*_up(0.0598))
+        assert progress["altitude_m"] == pytest.approx(alt, abs=1e-3)
+
     def test_fixed_noise_isnt_a_jump(
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
     ) -> None:

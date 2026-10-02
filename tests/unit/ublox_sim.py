@@ -33,6 +33,10 @@ class SimReceiver:
         self.raw_writes: list[bytes] = []  # non-UBX bytes, as written
         # What MON-COMMS reports: {"protIds": [4 ids], "ports": {portId: {...}}}
         self.mon_comms: dict[str, Any] | None = None
+        # Messages the receiver sends on its own (e.g. RXM-RTCM), read out
+        # ahead of the next reply.
+        self.unsolicited: list[Any] = []
+        self.out_waiting = 0  # bytes the host still has to send
         self.is_open = True
         self._replies: deque[Any] = deque()
 
@@ -88,6 +92,8 @@ class SimReceiver:
 
     # ---- reader side ----
     def read(self) -> tuple[bytes | None, Any]:
+        if self.unsolicited:
+            return b"", self.unsolicited.pop(0)
         if self._replies:
             return b"", self._replies.popleft()
         return None, None
@@ -97,5 +103,12 @@ def connected_driver(sim: SimReceiver) -> UbloxDriver:
     """A UbloxDriver whose link is ``sim``."""
     driver = UbloxDriver()
     driver._serial = sim  # pyright: ignore[reportPrivateUsage]
-    driver._reader = sim  # pyright: ignore[reportPrivateUsage]
+    driver._reader = driver._watch_reader(sim)  # pyright: ignore[reportPrivateUsage]
     return driver
+
+
+def rxm_rtcm(msg_type: int, used: int = 2, crc_failed: int = 0) -> SimpleNamespace:
+    """A UBX-RXM-RTCM report (msgUsed: 1 = not used, 2 = used)."""
+    return SimpleNamespace(
+        identity="RXM-RTCM", msgType=msg_type, msgUsed=used, crcFailed=crc_failed
+    )

@@ -11,12 +11,13 @@ import pytest
 
 from sp_rtk_base.models.device_models import PortId
 from tests.unit.msm_frames import other_frame
-from tests.unit.ublox_sim import SimReceiver, connected_driver
+from tests.unit.ublox_sim import SimReceiver, connected_driver, rxm_rtcm
 
 UART1 = "CFG_UART1INPROT_RTCM3X"
 UART2 = "CFG_UART2INPROT_RTCM3X"
 USB = "CFG_USBINPROT_RTCM3X"
 UART1_OUT = "CFG_UART1OUTPROT_RTCM3X"
+RXM_RTCM_UART1 = "CFG_MSGOUT_UBX_RXM_RTCM_UART1"
 UART2_OUT = "CFG_UART2OUTPROT_RTCM3X"
 USB_OUT = "CFG_USBOUTPROT_RTCM3X"
 
@@ -195,3 +196,79 @@ class TestCorrectionInputCounters:
         driver = connected_driver(_sim())
 
         assert driver.get_correction_input_counters(None) is None
+
+
+class TestLinkDiagnostics:
+    """What the driver measures on the link (bench diagnosis, #197)."""
+
+    def test_begin_asks_for_rxm_rtcm_on_the_console_port_and_end_restores_it(
+        self,
+    ) -> None:
+        sim = _sim()
+        sim.ram[RXM_RTCM_UART1] = 0
+        driver = connected_driver(sim)
+
+        driver.begin_correction_input(PortId.UART1)
+        during = sim.ram[RXM_RTCM_UART1]
+        driver.end_correction_input()
+
+        assert (during, sim.ram[RXM_RTCM_UART1]) == (1, 0)
+
+    def test_records_lock_timing_per_operation(self) -> None:
+        sim = _sim()
+        sim.mon_comms = {
+            "protIds": [0, 1, 0xFF, 5],
+            "ports": {
+                0x0100: {
+                    "rxBytes": 1,
+                    "msgs": [0, 0, 0, 0],
+                    "skipped": 0,
+                    "overrunErrs": 0,
+                }
+            },
+        }
+        driver = connected_driver(sim)
+
+        driver.write_corrections(other_frame(1077).data)
+        driver.get_correction_input_counters(PortId.UART1)
+        diagnostics = driver.get_link_diagnostics()
+
+        assert diagnostics is not None
+        for op in ("write_corrections", "mon_comms"):
+            timing = diagnostics.lock[op]
+            assert timing.wait_ms is not None and timing.wait_ms.count == 1
+            assert timing.hold_ms is not None and timing.hold_ms.count == 1
+
+    def test_records_each_write_and_the_backlog_after_it(self) -> None:
+        sim = _sim()
+        sim.out_waiting = 1234
+        driver = connected_driver(sim)
+
+        driver.write_corrections(other_frame(1077).data)
+        diagnostics = driver.get_link_diagnostics()
+
+        assert diagnostics is not None
+        assert diagnostics.write_ms is not None and diagnostics.write_ms.count == 1
+        assert diagnostics.tx_backlog_bytes is not None
+        assert diagnostics.tx_backlog_bytes.max == 1234
+
+    def test_tallies_the_receivers_rtcm_verdicts_from_any_read(self) -> None:
+        sim = _sim()
+        sim.unsolicited = [
+            rxm_rtcm(1077, used=2),
+            rxm_rtcm(1077, used=1),
+            rxm_rtcm(1005, used=0, crc_failed=1),
+        ]
+        driver = connected_driver(sim)
+
+        driver.begin_correction_input(PortId.UART1)  # its reads pass them by
+        diagnostics = driver.get_link_diagnostics()
+
+        assert diagnostics is not None
+        assert diagnostics.rtcm[1077].model_dump() == {
+            "received": 2,
+            "used": 1,
+            "not_used": 1,
+            "crc_failed": 0,
+        }
+        assert diagnostics.rtcm[1005].crc_failed == 1

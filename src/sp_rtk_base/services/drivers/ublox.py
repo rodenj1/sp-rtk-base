@@ -14,8 +14,8 @@ import fcntl
 import logging
 import threading
 import time
-from collections.abc import Generator
-from typing import Literal
+from collections.abc import Callable, Generator
+from typing import Any, Literal, cast
 
 import serial  # type: ignore[import-untyped]
 from pyubx2 import (  # type: ignore[import-untyped]
@@ -38,6 +38,7 @@ from sp_rtk_base.models.device_models import (
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
+    DriverLinkDiagnostics,
     DynModel,
     FixedBaseConfig,
     GnssConfig,
@@ -45,12 +46,14 @@ from sp_rtk_base.models.device_models import (
     GnssSystemConfig,
     GpsFixType,
     GpsPosition,
+    LockTiming,
     PortId,
     PortProtocolConfig,
     ReceiverScalarConfig,
     RtcmOutputPort,
     RtcmPortConfig,
     RtcmRowId,
+    RtcmUse,
     SurveyInConfig,
     SurveyInProgress,
     SurveyPosition,
@@ -69,6 +72,7 @@ from sp_rtk_base.services.drivers.ublox_console_port import (
     port_id_of,
 )
 from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
+from sp_rtk_base.services.link_diagnostics import Sampler
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +240,38 @@ class _DeadlineStream:
         return self._stream.read(size)  # type: ignore[attr-defined,no-any-return]
 
 
+def _tx_backlog(ser: Any) -> float | None:
+    """Bytes the host still has queued to send (pyserial ``out_waiting``).
+
+    The tty's own buffer only: meaningful on a native UART, close to zero on
+    a USB serial adapter, which takes bytes at once. None if unreadable.
+    """
+    try:
+        return float(ser.out_waiting or 0)
+    except Exception:
+        return None
+
+
+class _WatchedReader:
+    """A UBXReader that hands each UBX-RXM-RTCM report it reads to ``tally``.
+
+    The receiver sends those reports unasked while a Corrected survey-in
+    runs; any read loop may pass one by, so they're caught here, once.
+    Bench instrumentation for #197: remove with the RXM-RTCM output once the
+    correction path is settled.
+    """
+
+    def __init__(self, reader: Any, tally: Callable[[object], None]) -> None:
+        self._reader = reader
+        self._tally = tally
+
+    def read(self) -> tuple[Any, Any]:
+        raw, parsed = self._reader.read()
+        if parsed is not None and getattr(parsed, "identity", "") == "RXM-RTCM":
+            self._tally(parsed)
+        return raw, parsed
+
+
 class UbloxDriver(GpsReceiverDriver):
     """u-blox GPS receiver driver using UBX protocol via PyUBX2.
 
@@ -254,6 +290,17 @@ class UbloxDriver(GpsReceiverDriver):
         self._lock = threading.Lock()
         # RTCM 3 input settings found by begin_correction_input, to restore.
         self._saved_correction_input: dict[str, int] | None = None
+        # Bench diagnosis (#197): what the link is doing. Recorded on the
+        # driver's threads and read on the event loop's, under their own lock.
+        self._stats_lock = threading.Lock()
+        self._poll_tx_backlog = Sampler()
+        self._lock_wait_ms: dict[str, Sampler] = {}
+        self._lock_hold_ms: dict[str, Sampler] = {}
+        self._poll_ms: dict[str, Sampler] = {}
+        self._write_ms = Sampler()
+        self._tx_backlog = Sampler()
+        self._rtcm_use: dict[int, RtcmUse] = {}
+        self._correction_age_bucket: int | None = None
         self._cancel_event = threading.Event()
         # Last-known port/baud — captured on connect so
         # ``reset_and_reconnect()`` can reopen the same port after
@@ -368,10 +415,12 @@ class UbloxDriver(GpsReceiverDriver):
         try:
             fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._stream = _DeadlineStream(self._serial)
-            self._reader = UBXReader(
-                self._stream,
-                protfilter=7,  # NMEA + UBX + RTCM3
-                quitonerror=0,
+            self._reader = self._watch_reader(
+                UBXReader(
+                    self._stream,
+                    protfilter=7,  # NMEA + UBX + RTCM3
+                    quitonerror=0,
+                )
             )
             info, saw_frame, _ = self._read_for_mon_ver(budget_s)
         except Exception:
@@ -411,10 +460,12 @@ class UbloxDriver(GpsReceiverDriver):
                 ) from lock_err
 
             self._stream = _DeadlineStream(self._serial)
-            self._reader = UBXReader(
-                self._stream,
-                protfilter=7,  # NMEA + UBX + RTCM3
-                quitonerror=0,  # ERR_IGNORE — suppress console noise from corrupt frames
+            self._reader = self._watch_reader(
+                UBXReader(
+                    self._stream,
+                    protfilter=7,  # NMEA + UBX + RTCM3
+                    quitonerror=0,  # ERR_IGNORE — suppress console noise from corrupt frames
+                )
             )
 
             # Read device identity via MON-VER
@@ -1414,23 +1465,93 @@ class UbloxDriver(GpsReceiverDriver):
     # Correction input (a Corrected survey-in; ADR 0004)
     # ------------------------------------------------------------------
 
+    @contextlib.contextmanager
+    def _timed_lock(self, op: str) -> Generator[None, None, None]:
+        """Hold the driver lock for ``op``, recording the wait and the hold (ms)."""
+        asked = time.monotonic()
+        with self._lock:
+            got = time.monotonic()
+            try:
+                yield
+            finally:
+                done = time.monotonic()
+                with self._stats_lock:
+                    self._lock_wait_ms.setdefault(op, Sampler()).add(
+                        (got - asked) * 1000
+                    )
+                    self._lock_hold_ms.setdefault(op, Sampler()).add(
+                        (done - got) * 1000
+                    )
+
+    def _watch_reader(self, reader: Any) -> UBXReader:  # type: ignore[no-any-unimported]
+        """``reader``, tallying the receiver's UBX-RXM-RTCM reports it passes.
+
+        Stands in for the UBXReader it wraps: the driver only calls read().
+        """
+        return cast(UBXReader, _WatchedReader(reader, self._tally_rxm_rtcm))
+
+    def _tally_rxm_rtcm(self, report: object) -> None:
+        with self._stats_lock:
+            kind = int(getattr(report, "msgType", 0))
+            use = self._rtcm_use.setdefault(kind, RtcmUse())
+            use.received += 1
+            if int(getattr(report, "crcFailed", 0)):
+                use.crc_failed += 1
+            verdict = int(getattr(report, "msgUsed", 0))  # 0 unknown, 1 no, 2 used
+            if verdict == 2:
+                use.used += 1
+            elif verdict == 1:
+                use.not_used += 1
+
+    def get_link_diagnostics(self) -> DriverLinkDiagnostics:
+        """What this driver has measured on the receiver link so far."""
+        with self._stats_lock:
+            return self._link_diagnostics_locked()
+
+    def _link_diagnostics_locked(self) -> DriverLinkDiagnostics:
+        lock = {
+            op: LockTiming(
+                wait_ms=self._lock_wait_ms[op].spread(),
+                hold_ms=self._lock_hold_ms[op].spread(),
+            )
+            for op in self._lock_wait_ms
+        }
+        return DriverLinkDiagnostics(
+            lock=lock,
+            poll_ms={
+                name: spread
+                for name, sampler in self._poll_ms.items()
+                if (spread := sampler.spread()) is not None
+            },
+            write_ms=self._write_ms.spread(),
+            tx_backlog_bytes=self._tx_backlog.spread(),
+            poll_tx_backlog_bytes=self._poll_tx_backlog.spread(),
+            rtcm={k: v.model_copy() for k, v in self._rtcm_use.items()},
+            correction_age_bucket=self._correction_age_bucket,
+        )
+
     def begin_correction_input(self, console_port: PortId | None) -> None:
-        """Enable RTCM 3 input, and quiet RTCM 3 output, in RAM.
+        """Enable RTCM 3 input, quiet RTCM 3 output, and ask for UBX-RXM-RTCM, in RAM.
 
         The receiver's own RTCM 3 output (a base's MSM, sent even as a
-        rover) shares the console link with every poll reply; on a 57 600
-        baud UART it slowed each read to seconds and starved the
-        correction writes (#197). Both are remembered and restored.
+        rover) shares the console link with every poll reply, so it's
+        turned off. UBX-RXM-RTCM (about 16 B per correction message, to the
+        host) reports whether the receiver used each one (bench diagnosis,
+        #197). All are remembered and restored.
         """
         ports = [console_port] if console_port is not None else list(PortId)
         inputs = [_protocol_key(port, "IN", UbxProtocol.RTCM3X) for port in ports]
         outputs = [_protocol_key(port, "OUT", UbxProtocol.RTCM3X) for port in ports]
+        # The receiver's per-message verdict on each correction (diagnosis).
+        reports = [f"CFG_MSGOUT_UBX_RXM_RTCM_{port.value}" for port in ports]
         with self._lock:
-            found = self._read_cfg_keys_with_retry_locked(inputs + outputs)
+            found = self._read_cfg_keys_with_retry_locked(inputs + outputs + reports)
             # Remembered first, so even a write that half-landed is restored.
             self._saved_correction_input = found
             self._write_and_verify_locked(
-                [(key, 1) for key in inputs] + [(key, 0) for key in outputs],
+                [(key, 1) for key in inputs]
+                + [(key, 0) for key in outputs]
+                + [(key, 1) for key in reports],
                 layer=self._CFG_VALSET_RAM_ONLY,
                 label="Correction input",
             )
@@ -1440,9 +1561,16 @@ class UbloxDriver(GpsReceiverDriver):
 
     def write_corrections(self, frames: bytes) -> None:
         """Write whole RTCM 3 Frames, back to back; no reply is awaited."""
-        with self._lock:
+        with self._timed_lock("write_corrections"):
             ser, _ = self._require_connection()
+            began = time.monotonic()
             ser.write(frames)
+            elapsed_ms = (time.monotonic() - began) * 1000
+            backlog = _tx_backlog(ser)
+            with self._stats_lock:
+                self._write_ms.add(elapsed_ms)
+                if backlog is not None:
+                    self._tx_backlog.add(backlog)
 
     def get_correction_input_counters(
         self, console_port: PortId | None
@@ -1450,7 +1578,7 @@ class UbloxDriver(GpsReceiverDriver):
         """The console port's MON-COMMS counters: bytes, RTCM 3, skipped."""
         if console_port is None:
             return None
-        with self._lock:
+        with self._timed_lock("mon_comms"):
             counters = self._poll_mon_comms_locked()
         port_id = port_id_of(console_port)
         port = counters.get(port_id) if port_id is not None else None
@@ -1461,6 +1589,10 @@ class UbloxDriver(GpsReceiverDriver):
             rtcm3_messages=port.rtcm3_msgs,
             skipped_bytes=port.skipped,
             overrun_errors=port.overrun_errs,
+            tx_pending=port.tx_pending,
+            rx_pending=port.rx_pending,
+            tx_peak_usage=port.tx_peak_usage,
+            rx_peak_usage=port.rx_peak_usage,
         )
 
     def end_correction_input(self) -> None:
@@ -1697,7 +1829,7 @@ class UbloxDriver(GpsReceiverDriver):
 
     def get_position(self) -> GpsPosition:
         """Poll NAV-PVT and return a vendor-neutral position snapshot."""
-        with self._lock:
+        with self._timed_lock("position"):
             ser, reader = self._require_connection()
 
             # Poll NAV-PVT
@@ -1741,9 +1873,10 @@ class UbloxDriver(GpsReceiverDriver):
         HP part into ``ecefX/Y/Z``, in cm) and ``pAcc`` (mm). NAV-PVT gives
         the fix, the carrier solution and the correction age.
         """
-        with self._lock:
+        with self._timed_lock("survey_position"):
             hp = self._poll_nav_locked("NAV-HPPOSECEF")
             pvt = self._poll_nav_locked("NAV-PVT")
+        self._correction_age_bucket = int(getattr(pvt, "lastCorrectionAge", 0))
 
         fix_type = int(getattr(pvt, "fixType", 0))
         fix_ok = (
@@ -1871,6 +2004,13 @@ class UbloxDriver(GpsReceiverDriver):
         """
         ser, reader = self._require_connection()
         ser.reset_input_buffer()
+        # Bytes still queued ahead of this poll (e.g. corrections): a slow
+        # reply behind a backlog isn't a slow receiver.
+        backlog = _tx_backlog(ser)
+        if backlog is not None:
+            with self._stats_lock:
+                self._poll_tx_backlog.add(backlog)
+        asked = time.monotonic()
         ser.write(UBXMessage("NAV", identity, POLL).serialize())
         for _ in range(_MAX_READ_ATTEMPTS):
             try:
@@ -1878,6 +2018,9 @@ class UbloxDriver(GpsReceiverDriver):
             except Exception:
                 continue
             if parsed is not None and getattr(parsed, "identity", "") == identity:
+                elapsed_ms = (time.monotonic() - asked) * 1000
+                with self._stats_lock:
+                    self._poll_ms.setdefault(identity, Sampler()).add(elapsed_ms)
                 return parsed
         raise RuntimeError(f"No {identity} response")
 
@@ -2155,7 +2298,7 @@ class UbloxDriver(GpsReceiverDriver):
         Reads CFG_TMODE_MODE, CFG_TMODE_LAT, CFG_TMODE_LON,
         CFG_TMODE_HEIGHT, CFG_TMODE_FIXED_POS_ACC from the receiver.
         """
-        with self._lock:
+        with self._timed_lock("base_config"):
             return self._get_base_config_locked()
 
     def _get_base_config_locked(self) -> CurrentBaseConfig:
@@ -2333,6 +2476,10 @@ class UbloxDriver(GpsReceiverDriver):
                     ),
                     skipped=int(getattr(parsed, f"skipped_{n}", 0)),
                     overrun_errs=int(getattr(parsed, f"overrunErrs_{n}", 0)),
+                    tx_pending=int(getattr(parsed, f"txPending_{n}", 0)),
+                    rx_pending=int(getattr(parsed, f"rxPending_{n}", 0)),
+                    tx_peak_usage=int(getattr(parsed, f"txPeakUsage_{n}", 0)),
+                    rx_peak_usage=int(getattr(parsed, f"rxPeakUsage_{n}", 0)),
                 )
             return counters
         raise TimeoutError("No MON-COMMS response from device")

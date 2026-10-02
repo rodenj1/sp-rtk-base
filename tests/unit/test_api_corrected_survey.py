@@ -52,7 +52,7 @@ from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.survey_service import SurveyService
 from tests.fixtures.scripted_ntrip_caster import FakeCaster, Script
-from tests.unit.msm_frames import other_frame
+from tests.unit.msm_frames import msm_frame, other_frame
 
 START = "/api/device/configure/corrected-survey-in"
 SURVEY = "/api/device/survey-in"
@@ -917,3 +917,37 @@ class TestBusyLink:
 
         assert progress["corrections_dropped"] == 0
         assert rover.written == b"".join(stream)  # whole, in order, unchanged
+
+
+# ---- Link diagnostics (bench diagnosis, #197) ----
+
+
+def _gps_msm_now() -> bytes:
+    """A GPS MSM7 Frame whose epoch is now."""
+    gps_ms = round((time.time() - 315_964_800 + 18) * 1000) % 604_800_000
+    return msm_frame(1077, {1: {2: 45.0}}, epoch_ms=gps_ms).data
+
+
+class TestLinkDiagnostics:
+    def test_progress_carries_how_corrections_travel(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=[_gps_msm_now()] * 200))
+        rover.fixed_after_s = 3600.0  # keep it running
+
+        _start(client, min_duration_seconds=86400)
+        progress = _wait_for(
+            client,
+            lambda p: (
+                ((p.get("diagnostics") or {}).get("frame_age_s") or {}).get("count", 0)
+                >= 20
+            ),
+            "Frame ages",
+        )
+
+        diagnostics = progress["diagnostics"]
+        assert diagnostics["frame_age_s"]["p95"] < 10.0  # fresh: just stamped
+        assert diagnostics["batch_frames"]["count"] >= 1
+        assert diagnostics["sample_interval_s"]["count"] >= 1
+        assert diagnostics["position_read_s"]["count"] >= 1
+        assert diagnostics["driver"] is None  # the fake doesn't measure its link

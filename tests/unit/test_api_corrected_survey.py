@@ -818,3 +818,55 @@ def _wait_for_request(caster: FakeCaster) -> None:
     while not caster.requests:
         assert time.monotonic() < deadline, "the survey never connected"
         time.sleep(0.01)
+
+
+# ---- Correction delivery counters (bench diagnosis, #197) ----
+
+
+class FailingWriteRover(RecordingRover):
+    """A rover whose port rejects every correction write."""
+
+    def write_corrections(self, frame: bytes) -> None:
+        raise OSError("write failed")
+
+
+class TestDeliveryCounters:
+    def test_progress_counts_the_frames_written_and_the_receivers_rtcm(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        rover.fixed_after_s = 3600.0  # keep it running
+
+        _start(client, min_duration_seconds=86400)
+        progress = _wait_for(
+            client,
+            lambda p: (p.get("receiver_rtcm3_messages") or 0) >= 10,
+            "the receiver to count RTCM",
+        )
+
+        assert progress["corrections_written"] >= 10
+        assert progress["correction_write_failures"] == 0
+        assert progress["corrections_dropped"] == 0
+        assert progress["receiver_rx_bytes"] > 0
+        assert progress["correction_bytes_written"] > 0
+        assert progress["receiver_overrun_errors"] == 0
+
+    def test_failed_writes_are_counted(
+        self,
+        caster: FakeCaster,
+        mock_config_service: ConfigService,
+        relay: RelayService,
+    ) -> None:
+        rover = FailingWriteRover()
+        rover.connect(FAKE_NO_SURVEY_IN_PORT)
+        caster.scripts.append(Script(reply=ICY, body=FRAMES * 2000))
+        with _client_for(rover, caster, mock_config_service, relay) as client:
+            _start(client, min_duration_seconds=86400)
+            progress = _wait_for(
+                client,
+                lambda p: (p.get("correction_write_failures") or 0) >= 5,
+                "failed writes",
+            )
+
+        assert progress["corrections_written"] == 0
+        assert progress["receiver_rtcm3_messages"] == 0

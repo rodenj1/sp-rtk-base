@@ -34,6 +34,7 @@ from sp_rtk_base.models.device_models import (
     CandidateVerdict,
     ConsolePortReading,
     ConsolePortUnknownReason,
+    CorrectionInputCounters,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -62,8 +63,10 @@ from sp_rtk_base.services.drivers.base import (
     GpsReceiverDriver,
 )
 from sp_rtk_base.services.drivers.ublox_console_port import (
+    RTCM3_PROTOCOL_ID,
     PortCounters,
     attribute_console_port,
+    port_id_of,
 )
 from sp_rtk_base.services.geodesy import ecef_to_llh, llh_to_ecef
 
@@ -1432,6 +1435,25 @@ class UbloxDriver(GpsReceiverDriver):
             ser, _ = self._require_connection()
             ser.write(frame)
 
+    def get_correction_input_counters(
+        self, console_port: PortId | None
+    ) -> CorrectionInputCounters | None:
+        """The console port's MON-COMMS counters: bytes, RTCM 3, skipped."""
+        if console_port is None:
+            return None
+        with self._lock:
+            counters = self._poll_mon_comms_locked()
+        port_id = port_id_of(console_port)
+        port = counters.get(port_id) if port_id is not None else None
+        if port is None:
+            return None
+        return CorrectionInputCounters(
+            rx_bytes=port.rx_bytes,
+            rtcm3_messages=port.rtcm3_msgs,
+            skipped_bytes=port.skipped,
+            overrun_errors=port.overrun_errs,
+        )
+
     def end_correction_input(self) -> None:
         """Restore the RTCM 3 input settings begin_correction_input found."""
         with self._lock:
@@ -2280,12 +2302,28 @@ class UbloxDriver(GpsReceiverDriver):
                 continue
             if parsed is None or getattr(parsed, "identity", "") != "MON-COMMS":
                 continue
+            # Which msgs slot counts RTCM 3 (protIds lists each slot's protocol).
+            rtcm3_slot = next(
+                (
+                    slot
+                    for slot in range(1, 5)
+                    if getattr(parsed, f"protIds_{slot:02d}", None) == RTCM3_PROTOCOL_ID
+                ),
+                None,
+            )
             counters: dict[int, PortCounters] = {}
             for i in range(1, int(getattr(parsed, "nPorts", 0)) + 1):
                 n = f"{i:02d}"
                 counters[int(getattr(parsed, f"portId_{n}"))] = PortCounters(
                     rx_bytes=int(getattr(parsed, f"rxBytes_{n}")),
                     ubx_msgs=int(getattr(parsed, f"msgs_{n}_01", 0)),
+                    rtcm3_msgs=(
+                        int(getattr(parsed, f"msgs_{n}_{rtcm3_slot:02d}", 0))
+                        if rtcm3_slot is not None
+                        else 0
+                    ),
+                    skipped=int(getattr(parsed, f"skipped_{n}", 0)),
+                    overrun_errs=int(getattr(parsed, f"overrunErrs_{n}", 0)),
                 )
             return counters
         raise TimeoutError("No MON-COMMS response from device")

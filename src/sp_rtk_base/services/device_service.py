@@ -21,6 +21,7 @@ from sp_rtk_base.models.device_models import (
     BaseInvariantsCheck,
     ConsolePortReading,
     ConsolePortUnknownReason,
+    CorrectionInputCounters,
     CurrentBaseConfig,
     DetectionResult,
     DeviceCapability,
@@ -1477,6 +1478,16 @@ class DeviceService:
         """
         driver = self._require_connected()
         await asyncio.to_thread(driver.write_corrections, frame)
+
+    async def get_correction_input_counters(self) -> CorrectionInputCounters | None:
+        """What the receiver says arrived on its console port (cumulative).
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        console = self._console_port.port if self._console_port else None
+        return await asyncio.to_thread(driver.get_correction_input_counters, console)
 
     async def end_correction_input(self) -> None:
         """Restore the input settings begin_correction_input found.

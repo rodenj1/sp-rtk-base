@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from sp_rtk_base.models.config_models import CorrectionSourceProfile
 from sp_rtk_base.models.device_models import (
     CorrectedSurveyInConfig,
+    CorrectionInputCounters,
     DeviceCapability,
     FixedBaseConfig,
     SurveyAbortReason,
@@ -62,6 +63,9 @@ STALL_WARNING_S: float = 60.0
 # Corrections older than this count as stopped when naming a stall: the
 # Relay's own NTRIP data timeout.
 STALE_CORRECTION_AGE_S: float = 30.0
+# How often a Corrected survey-in reads the receiver's own count of what
+# reached its console port (a MON-COMMS poll on u-blox).
+RECEIVER_COUNTERS_EVERY_S: float = 10.0
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -113,6 +117,36 @@ class _Averaging:
         return max(mean_accuracy, spread)
 
 
+class _ReceiverCounts:
+    """The receiver's console-port counters, accumulated since the start.
+
+    The receiver's counters are cumulative: message counts wrap at 16 bits,
+    so each read adds its wrapped difference. Byte counts are 32-bit and
+    don't wrap in a survey, so one that goes backwards means the receiver
+    reset its counters, and counts again from zero.
+    """
+
+    def __init__(self) -> None:
+        self._last: CorrectionInputCounters | None = None
+        self.rtcm3_messages = 0
+        self.rx_bytes = 0
+        self.skipped_bytes = 0
+        self.overrun_errors = 0
+
+    def add(self, now: CorrectionInputCounters) -> None:
+        last, self._last = self._last, now
+        if last is None:
+            return  # the first read is the baseline
+        if now.rx_bytes < last.rx_bytes:  # the receiver reset its counters
+            last = CorrectionInputCounters(
+                rx_bytes=0, rtcm3_messages=0, skipped_bytes=0, overrun_errors=0
+            )
+        self.rtcm3_messages += (now.rtcm3_messages - last.rtcm3_messages) % 2**16
+        self.rx_bytes += now.rx_bytes - last.rx_bytes
+        self.skipped_bytes += max(0, now.skipped_bytes - last.skipped_bytes)
+        self.overrun_errors += (now.overrun_errors - last.overrun_errors) % 2**16
+
+
 def _stall_reason(position: SurveyPosition) -> SurveyAbortReason:
     """Why there's no RTK Fixed: corrections stopped, or only Float."""
     age = position.correction_age_s
@@ -150,6 +184,9 @@ class SurveyService:
         self._feed: CorrectionFeed | None = None
         # The source a Corrected survey-in is connecting to, before it runs.
         self._starting_source: str | None = None
+        # What the receiver says reached its console port, while corrected.
+        self._receiver_counts: _ReceiverCounts | None = None
+        self._receiver_counts_at = 0.0
         device.add_before_disconnect(self._before_disconnect)
 
     # ------------------------------------------------------------------
@@ -205,6 +242,8 @@ class SurveyService:
                 self._starting_source = None
             self._survey_driver = self._device.driver
             self._feed = feed
+            self._receiver_counts = _ReceiverCounts()
+            await self._read_receiver_counts(now=True)  # the baseline
             self._progress = SurveyInProgress(
                 active=True,
                 averaged_by="application",
@@ -411,16 +450,24 @@ class SurveyService:
         """The receiver's RTK status and correction age, the source's state,
         and how long the survey has gone without an RTK Fixed Observation."""
         assert self._progress is not None
-        connected, last_error = (
-            await self._feed.status() if self._feed is not None else (False, None)
-        )
+        delivery: dict[str, object] = {}
+        if self._feed is not None:
+            feed = await self._feed.status()
+            delivery = {
+                "source_connected": feed.connected,
+                "source_last_error": feed.last_error,
+                "corrections_written": feed.written,
+                "correction_bytes_written": feed.bytes_written,
+                "correction_write_failures": feed.write_failures,
+                "corrections_dropped": feed.dropped,
+            }
+        delivery.update(await self._read_receiver_counts())
         without_fixed = int(stalled_s)
         self._progress = self._progress.model_copy(
             update={
+                **delivery,
                 "rtk_status": position.rtk_status,
                 "correction_age_s": position.correction_age_s,
-                "source_connected": connected,
-                "source_last_error": last_error,
                 "seconds_without_fixed": without_fixed,
                 "stall_abort_in_seconds": max(
                     0, int(self._stall_abort_s) - without_fixed
@@ -431,6 +478,33 @@ class SurveyService:
                 ),
             }
         )
+
+    async def _read_receiver_counts(self, *, now: bool = False) -> dict[str, object]:
+        """What the receiver says reached its console port since the start.
+
+        Read every RECEIVER_COUNTERS_EVERY_S (best effort; a missed read is
+        retried at the next); between reads, the last counts.
+        """
+        counts = self._receiver_counts
+        if counts is None:
+            return {}
+        if now or self._clock() - self._receiver_counts_at >= RECEIVER_COUNTERS_EVERY_S:
+            self._receiver_counts_at = self._clock()
+            try:
+                read = await self._device.get_correction_input_counters()
+            except Exception:
+                logger.warning(
+                    "Could not read the receiver's input counters", exc_info=True
+                )
+                read = None
+            if read is not None:
+                counts.add(read)
+        return {
+            "receiver_rtcm3_messages": counts.rtcm3_messages,
+            "receiver_rx_bytes": counts.rx_bytes,
+            "receiver_skipped_bytes": counts.skipped_bytes,
+            "receiver_overrun_errors": counts.overrun_errors,
+        }
 
     def _update_application_progress(self, averaging: _Averaging) -> None:
         assert self._progress is not None

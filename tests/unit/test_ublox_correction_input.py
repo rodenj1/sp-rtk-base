@@ -98,3 +98,39 @@ class TestWriteCorrections:
 
         with pytest.raises(ConnectionError):
             driver.write_corrections(other_frame(1005).data)
+
+
+class TestCorrectionInputCounters:
+    def test_reads_the_console_ports_rtcm3_count_from_mon_comms(self) -> None:
+        sim = _sim()
+        # Protocol slots: UBX, NMEA, RTCM2 unused, RTCM3 (protId 5) last.
+        sim.mon_comms = {
+            "protIds": [0, 1, 0xFF, 5],
+            "ports": {
+                0x0100: {
+                    "rxBytes": 9000,
+                    "msgs": [12, 3, 0, 140],
+                    "skipped": 7,
+                    "overrunErrs": 0,
+                },
+                0x0300: {
+                    "rxBytes": 50,
+                    "msgs": [2, 0, 0, 0],
+                    "skipped": 0,
+                    "overrunErrs": 0,
+                },
+            },
+        }
+        driver = connected_driver(sim)
+
+        counters = driver.get_correction_input_counters(PortId.UART1)
+
+        assert counters is not None
+        assert counters.rtcm3_messages == 140
+        assert counters.rx_bytes == 9000
+        assert counters.skipped_bytes == 7
+
+    def test_is_none_when_the_console_port_is_unknown(self) -> None:
+        driver = connected_driver(_sim())
+
+        assert driver.get_correction_input_counters(None) is None

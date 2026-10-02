@@ -7,6 +7,7 @@ import pytest
 from sp_rtk_base.models.device_models import (
     BaseMode,
     CandidateVerdict,
+    CorrectionInputCounters,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -108,6 +109,11 @@ class StubDriver(GpsReceiverDriver):
 
     def write_corrections(self, frame: bytes) -> None:
         pass
+
+    def get_correction_input_counters(
+        self, console_port: PortId | None
+    ) -> CorrectionInputCounters | None:
+        return None
 
     def end_correction_input(self) -> None:
         pass

@@ -634,6 +634,19 @@ class SurveyPosition(BaseModel):
     )
 
 
+class CorrectionInputCounters(BaseModel):
+    """What the receiver says arrived on its console port (cumulative).
+
+    Shows whether correction Frames written to the receiver actually reach
+    it and parse as RTCM 3.
+    """
+
+    rx_bytes: int = Field(ge=0, description="Bytes the port has received")
+    rtcm3_messages: int = Field(ge=0, description="RTCM 3 messages it parsed")
+    skipped_bytes: int = Field(ge=0, description="Bytes it skipped as unparsable")
+    overrun_errors: int = Field(ge=0, description="Receive buffer overruns")
+
+
 SurveyAveragedBy = Literal["receiver", "application"]
 """Who averages a Survey-in: the receiver's own survey-in, or the station."""
 
@@ -700,6 +713,32 @@ class SurveyInProgress(BaseModel):
     )
     source_last_error: str | None = Field(
         default=None, description="The Correction source's last connection error"
+    )
+    # Correction delivery, since the survey started: what the station wrote,
+    # and what the receiver says reached its console port.
+    corrections_written: int | None = Field(
+        default=None, description="Correction Frames written to the receiver"
+    )
+    correction_write_failures: int | None = Field(
+        default=None, description="Correction Frame writes that failed"
+    )
+    corrections_dropped: int | None = Field(
+        default=None, description="Frames dropped before writing (pump behind)"
+    )
+    receiver_rtcm3_messages: int | None = Field(
+        default=None, description="RTCM 3 messages the receiver parsed (console port)"
+    )
+    receiver_rx_bytes: int | None = Field(
+        default=None, description="Bytes the receiver's console port received"
+    )
+    receiver_skipped_bytes: int | None = Field(
+        default=None, description="Bytes the receiver skipped as unparsable"
+    )
+    receiver_overrun_errors: int | None = Field(
+        default=None, description="Receive buffer overruns on the console port"
+    )
+    correction_bytes_written: int | None = Field(
+        default=None, description="Correction bytes written to the receiver"
     )
     # A Corrected survey-in aborts after 10 minutes without RTK Fixed.
     seconds_without_fixed: int | None = Field(

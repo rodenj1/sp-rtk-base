@@ -21,6 +21,7 @@ _KEY_NAMES = {keyid: name for name, (keyid, _) in UBX_CONFIG_DATABASE.items()}
 _UBX_SYNC = b"\xb5\x62"
 _VALSET = b"\x06\x8a"
 _VALGET = b"\x06\x8b"
+_MON_COMMS = b"\x0a\x36"
 
 
 class SimReceiver:
@@ -30,6 +31,8 @@ class SimReceiver:
         self.ram: dict[str, int] = dict(ram or {})
         self.valsets: list[Any] = []  # parsed CFG-VALSET messages, in order
         self.raw_writes: list[bytes] = []  # non-UBX bytes, as written
+        # What MON-COMMS reports: {"protIds": [4 ids], "ports": {portId: {...}}}
+        self.mon_comms: dict[str, Any] | None = None
         self.is_open = True
         self._replies: deque[Any] = deque()
 
@@ -58,7 +61,24 @@ class SimReceiver:
                     values[name] = self.ram[name]
                 index += 1
             self._replies.append(SimpleNamespace(identity="CFG-VALGET", **values))
+        elif msg_id == _MON_COMMS and self.mon_comms is not None:
+            self._replies.append(self._mon_comms_reply(self.mon_comms))
         return len(data)
+
+    @staticmethod
+    def _mon_comms_reply(spec: dict[str, Any]) -> SimpleNamespace:
+        fields: dict[str, Any] = {"identity": "MON-COMMS", "nPorts": len(spec["ports"])}
+        for slot, prot in enumerate(spec["protIds"], start=1):
+            fields[f"protIds_{slot:02d}"] = prot
+        for i, (port_id, port) in enumerate(spec["ports"].items(), start=1):
+            n = f"{i:02d}"
+            fields[f"portId_{n}"] = port_id
+            fields[f"rxBytes_{n}"] = port["rxBytes"]
+            fields[f"skipped_{n}"] = port["skipped"]
+            fields[f"overrunErrs_{n}"] = port["overrunErrs"]
+            for slot, count in enumerate(port["msgs"], start=1):
+                fields[f"msgs_{n}_{slot:02d}"] = count
+        return SimpleNamespace(**fields)
 
     def flush(self) -> None:
         pass

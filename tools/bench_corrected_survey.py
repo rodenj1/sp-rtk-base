@@ -237,7 +237,11 @@ def _fmt(value: float | None, unit: str = "", digits: int = 1) -> str:
     return "—" if value is None else f"{value:.{digits}f}{unit}"
 
 
-def print_summary(summary: Summary, base_mode: str | None = None) -> None:
+def print_summary(
+    summary: Summary,
+    base_mode: str | None = None,
+    last_progress: dict[str, Any] | None = None,
+) -> None:
     """The run's figures, as a Markdown row-ready block for #197."""
     print()
     print("## Run summary")
@@ -265,6 +269,17 @@ def print_summary(summary: Summary, base_mode: str | None = None) -> None:
         f"latency p50 {_fmt(summary.ack_p50_ms, ' ms', 0)}, "
         f"p95 {_fmt(summary.ack_p95_ms, ' ms', 0)}, max {_fmt(summary.ack_max_ms, ' ms', 0)}"
     )
+    if last_progress:
+        print(
+            f"- Corrections written: {last_progress.get('corrections_written')}, "
+            f"failed {last_progress.get('correction_write_failures')}, "
+            f"dropped {last_progress.get('corrections_dropped')}; the receiver "
+            f"parsed {last_progress.get('receiver_rtcm3_messages')} RTCM 3 messages "
+            f"({last_progress.get('receiver_rx_bytes')} bytes in of "
+            f"{last_progress.get('correction_bytes_written')} written, "
+            f"{last_progress.get('receiver_skipped_bytes')} skipped, "
+            f"{last_progress.get('receiver_overrun_errors')} overruns)"
+        )
     if base_mode is not None:
         print(
             f"- Receiver mode afterwards: {base_mode} (fixed = back on air as a base)"
@@ -284,6 +299,14 @@ _PROGRESS_FIELDS = [
     "observations",
     "mean_accuracy_mm",
     "seconds_without_fixed",
+    "corrections_written",
+    "correction_write_failures",
+    "corrections_dropped",
+    "receiver_rtcm3_messages",
+    "receiver_rx_bytes",
+    "receiver_skipped_bytes",
+    "receiver_overrun_errors",
+    "correction_bytes_written",
 ]
 _CSV_FIELDS = [
     "t",
@@ -377,7 +400,12 @@ def run(args: argparse.Namespace) -> Summary:
                     f"age {_fmt(progress.get('correction_age_s'), ' s')}  "
                     f"source {'up' if progress.get('source_connected') else 'down'}  "
                     f"Fixed {progress.get('duration_seconds')} s  "
-                    f"acc {_fmt(progress.get('mean_accuracy_mm'), ' mm')}"
+                    f"acc {_fmt(progress.get('mean_accuracy_mm'), ' mm')}  "
+                    f"wrote {progress.get('corrections_written')} "
+                    f"(failed {progress.get('correction_write_failures')}, "
+                    f"dropped {progress.get('corrections_dropped')})  "
+                    f"receiver RTCM {progress.get('receiver_rtcm3_messages')} "
+                    f"(skipped {progress.get('receiver_skipped_bytes')} B)"
                 )
                 if progress.get("outcome") not in (None, "running"):
                     break
@@ -387,7 +415,11 @@ def run(args: argparse.Namespace) -> Summary:
         finally:
             handle.flush()
     summary = summarise(samples, acks)
-    print_summary(summary, _base_mode(base) if summary.outcome else None)
+    print_summary(
+        summary,
+        _base_mode(base) if summary.outcome else None,
+        samples[-1].progress if samples else None,
+    )
     return summary
 
 

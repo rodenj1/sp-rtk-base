@@ -59,6 +59,7 @@ from sp_rtk_base.models.device_models import (
     CandidateVerdict,
     ConsolePortReading,
     ConsolePortUnknownReason,
+    CorrectionInputCounters,
     CurrentBaseConfig,
     DeviceCapability,
     DeviceInfo,
@@ -387,6 +388,9 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._correction_input = False
         self._corrections_since: float | None = None
         self._last_correction_at: float | None = None
+        # What the simulated console port has received.
+        self._rx_bytes = 0
+        self._rtcm3_messages = 0
 
     # ------------------------------------------------------------------
     # Identity
@@ -798,12 +802,26 @@ class FakeGpsDriver(GpsReceiverDriver):
     def write_corrections(self, frame: bytes) -> None:
         """Take one Frame; ignored, as on a receiver, unless input is on."""
         self._ensure_connected()
+        self._rx_bytes += len(frame)
         if not self._correction_input:
             return
+        self._rtcm3_messages += 1
         now = time.monotonic()
         if self._corrections_since is None:
             self._corrections_since = now
         self._last_correction_at = now
+
+    def get_correction_input_counters(
+        self, console_port: PortId | None
+    ) -> CorrectionInputCounters | None:
+        """What the simulated console port has received."""
+        self._ensure_connected()
+        return CorrectionInputCounters(
+            rx_bytes=self._rx_bytes,
+            rtcm3_messages=self._rtcm3_messages,
+            skipped_bytes=0,
+            overrun_errors=0,
+        )
 
     def end_correction_input(self) -> None:
         """Stop taking corrections."""

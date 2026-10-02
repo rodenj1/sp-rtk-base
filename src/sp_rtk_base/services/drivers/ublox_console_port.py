@@ -40,12 +40,19 @@ _CONSOLE_CAPABLE: dict[int, PortId] = {
 }
 
 
+#: The ``protIds`` value MON-COMMS uses for RTCM 3 in its message slots.
+RTCM3_PROTOCOL_ID = 5
+
+
 @dataclass(frozen=True)
 class PortCounters:
     """One port's cumulative counters from a single MON-COMMS snapshot."""
 
     rx_bytes: int  # U4, "bytes ever received"
     ubx_msgs: int  # U2, msgs[0] — the UBX protocol slot
+    rtcm3_msgs: int = 0  # U2, the msgs slot whose protIds entry is RTCM 3
+    skipped: int = 0  # U4, "bytes skipped" (not parsed as any protocol)
+    overrun_errs: int = 0  # U2, receive buffer overruns
 
 
 def attribute_console_port(
@@ -100,3 +107,8 @@ def attribute_console_port(
         # our side, which must not read like the receiver saying no.
         return ConsolePortReading.unknown(ConsolePortUnknownReason.UNRECOGNISED)
     return ConsolePortReading.unknown(ConsolePortUnknownReason.NO_ANSWER)
+
+
+def port_id_of(port: PortId) -> int | None:
+    """The MON-COMMS ``portId`` of a console-capable port, if it has one."""
+    return next((pid for pid, p in _CONSOLE_CAPABLE.items() if p is port), None)

@@ -18,6 +18,7 @@ from sp_rtk_base.models.device_models import (
     CandidateVerdict,
     ConsolePortReading,
     ConsolePortUnknownReason,
+    CorrectionInputCounters,
     CurrentBaseConfig,
     DetectionOutcome,
     DetectionResult,
@@ -716,6 +717,18 @@ class GpsReceiverDriver(abc.ABC):
 
         Waits for no reply, and interleaves with position polls under the
         driver's lock.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+
+    @abc.abstractmethod
+    def get_correction_input_counters(
+        self, console_port: PortId | None
+    ) -> CorrectionInputCounters | None:
+        """What the receiver says arrived on ``console_port`` (cumulative).
+
+        ``None`` when the port is unknown or the receiver can't say.
 
         Raises:
             ConnectionError: If not connected.

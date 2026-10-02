@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 
 from sp_rtk_base_relay import FrameSubscription, RelayEngine
 from sp_rtk_base_relay.config import InputConfig
@@ -30,6 +31,18 @@ logger = logging.getLogger(__name__)
 _FRAME_WAIT_S = 0.5
 # After the first failed write, log only every this many.
 _LOG_EVERY_FAILURES = 100
+
+
+@dataclass(frozen=True)
+class FeedStatus:
+    """The source's connection, and how many Frames reached the port."""
+
+    connected: bool
+    last_error: str | None
+    written: int  # Frames written to the receiver
+    bytes_written: int
+    write_failures: int  # Frame writes that failed
+    dropped: int  # Frames the pump fell too far behind to take
 
 
 class CorrectionSourceUnreachableError(RuntimeError):
@@ -54,6 +67,9 @@ class CorrectionFeed:
         self._engine = RelayEngine(input_config)
         self._subscription: FrameSubscription | None = None
         self._pump: asyncio.Task[None] | None = None
+        self._written = 0
+        self._bytes_written = 0
+        self._write_failures = 0
 
     async def start(self) -> None:
         """Connect once (fail fast), then start pushing Frames.
@@ -73,12 +89,21 @@ class CorrectionFeed:
         self._subscription = self._engine.subscribe_frames()
         self._pump = asyncio.create_task(self._push_frames(self._subscription))
 
-    async def status(self) -> tuple[bool, str | None]:
-        """Whether the source is connected, and its last connection error."""
-        if not self._engine.is_running:
-            return False, None
-        status = await asyncio.to_thread(self._engine.get_status)
-        return status.input.connected, status.input.last_error
+    async def status(self) -> FeedStatus:
+        """The source's connection and last error, and the Frame counts."""
+        connected, last_error, dropped = False, None, 0
+        if self._engine.is_running:
+            status = await asyncio.to_thread(self._engine.get_status)
+            connected, last_error = status.input.connected, status.input.last_error
+            dropped = status.frame_subscriber_drops
+        return FeedStatus(
+            connected=connected,
+            last_error=last_error,
+            written=self._written,
+            bytes_written=self._bytes_written,
+            write_failures=self._write_failures,
+            dropped=dropped,
+        )
 
     async def stop(self) -> None:
         """Stop pushing and stop the Relay instance. Safe to call more than once."""
@@ -92,7 +117,6 @@ class CorrectionFeed:
         await asyncio.to_thread(self._engine.stop)
 
     async def _push_frames(self, subscription: FrameSubscription) -> None:
-        failures = 0
         while True:
             frame = await asyncio.to_thread(subscription.get_frame, _FRAME_WAIT_S)
             if frame is None:
@@ -105,9 +129,13 @@ class CorrectionFeed:
                 # Skip this Frame and keep going: a passing serial error
                 # mustn't end the corrections. A receiver that stopped
                 # answering ends the survey through its position reads.
-                failures += 1
+                self._write_failures += 1
+                failures = self._write_failures
                 if failures == 1 or failures % _LOG_EVERY_FAILURES == 0:
                     logger.exception(
                         "Could not write corrections to the receiver (%d so far)",
                         failures,
                     )
+            else:
+                self._written += 1
+                self._bytes_written += len(frame.data)

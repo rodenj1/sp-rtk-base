@@ -844,6 +844,16 @@ class SurveyInProgress(BaseModel):
     )
     # Bench diagnosis (#197): how corrections travel to the receiver.
     diagnostics: CorrectionDiagnostics | None = None
+    fixed_jumps: int | None = Field(
+        default=None,
+        description=(
+            "Times RTK Fixed jumped to a different solution (over 5 cm), each "
+            "restarting the averaging"
+        ),
+    )
+    last_jump_mm: float | None = Field(
+        default=None, description="Size of the last jump while Fixed (mm)"
+    )
     fixed_settle_seconds: int | None = Field(
         default=None, description="How long Fixed must hold before it counts (s)"
     )

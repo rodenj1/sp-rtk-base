@@ -346,3 +346,39 @@ class TestStartRelayErrorBranches:
         resp = api_client_with_services.post("/api/relay/start")
         assert resp.status_code == 500
         assert "kaboom" in resp.json()["message"]
+
+
+class TestStartWithAnOutputThatCannotRun:
+    """A saved v2 NTRIP output without a username (issue #198)."""
+
+    def test_start_is_refused_with_a_clear_message(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+        mock_config_service: ConfigService,
+    ) -> None:
+        mock_relay_service.is_running = False
+        mock_relay_service.start_relay = AsyncMock()
+        mock_config_service.save_input_config(
+            InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
+        )
+        mock_config_service.save_destination(
+            DestinationProfile(
+                name="rtk2go",
+                type="ntrip",
+                config={
+                    "caster": "rtk2go.com",
+                    "mountpoint": "MP1",
+                    "password": "secret",
+                    "version": "2.0",
+                },
+            )
+        )
+
+        resp = api_client_with_services.post("/api/relay/start")
+
+        assert resp.status_code == 422
+        message = resp.json()["message"]
+        assert "rtk2go" in message
+        assert "username" in message
+        mock_relay_service.start_relay.assert_not_called()

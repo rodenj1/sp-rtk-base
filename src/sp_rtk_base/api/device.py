@@ -11,7 +11,8 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.models.api_models import (
     DetectBaudRequest,
@@ -682,6 +683,14 @@ async def handoff_to_relay(
     if relay.is_running:
         raise HTTPException(status_code=409, detail="Relay is already running")
 
+    # Check the saved outputs can run before letting go of the receiver: a
+    # handoff that fails after disconnecting leaves the station with neither
+    # (e.g. an NTRIP v2 output without a username, issue #198).
+    try:
+        relay_dests = [d.to_relay_config() for d in cfg.get_destinations() if d.enabled]
+    except (ConfigurationError, ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     status = svc.get_status()
     port = status.port or ""
     baud = status.baud_rate or DEFAULT_BAUD
@@ -705,9 +714,8 @@ async def handoff_to_relay(
     )
     cfg.save_input_config(input_profile)
 
-    # 4. Build relay configs and start
+    # 4. Build the relay input and start
     relay_input = input_profile.to_relay_config()
-    relay_dests = [d.to_relay_config() for d in cfg.get_destinations() if d.enabled]
 
     try:
         await relay.start_relay(relay_input, relay_dests, trigger="handoff")

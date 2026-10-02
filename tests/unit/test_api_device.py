@@ -898,6 +898,46 @@ class TestHandoff:
         assert resp.status_code == 500
         assert "Relay start failed" in resp.json()["detail"]
 
+    def test_handoff_refuses_an_output_that_cannot_run_before_disconnecting(
+        self,
+        handoff_client: TestClient,
+        mock_device_service: MagicMock,
+        mock_relay_service: MagicMock,
+        mock_config_service: MagicMock,
+    ) -> None:
+        """A saved v2 NTRIP output without a username (issue #198)."""
+        from sp_rtk_base.models.config_models import DestinationProfile
+
+        mock_device_service.is_connected = True
+        mock_device_service.get_status.return_value = DeviceStatus(
+            state=DeviceConnectionState.CONNECTED,
+            port="/dev/ttyUSB0",
+            baud_rate=115200,
+        )
+        mock_device_service.driver = MagicMock()
+        mock_device_service.driver.vendor_name = "u-blox"
+        mock_device_service.disconnect = AsyncMock()
+        mock_config_service.get_destinations.return_value = [
+            DestinationProfile(
+                name="rtk2go",
+                type="ntrip",
+                config={
+                    "caster": "rtk2go.com",
+                    "mountpoint": "MP1",
+                    "password": "secret",
+                    "version": "2.0",
+                },
+            ),
+        ]
+
+        resp = handoff_client.post("/api/device/handoff")
+
+        assert resp.status_code == 422
+        assert "rtk2go" in resp.json()["detail"]
+        mock_device_service.disconnect.assert_not_called()
+        mock_config_service.save_input_config.assert_not_called()
+        mock_relay_service.start_relay.assert_not_called()
+
     def test_handoff_with_destinations(
         self,
         handoff_client: TestClient,

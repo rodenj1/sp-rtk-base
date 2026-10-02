@@ -15,7 +15,11 @@ import re
 
 from nicegui import ui
 
-from sp_rtk_base.models.config_models import DestinationProfile, FilterProfile
+from sp_rtk_base.models.config_models import (
+    DestinationProfile,
+    FilterProfile,
+    NtripProfile,
+)
 from sp_rtk_base.services import get_config_service, get_relay_service
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import (
@@ -161,6 +165,24 @@ def outputs_page() -> None:
                 for dest in destinations:
                     _render_dest_card(dest)
 
+        def _refuse_unrunnable(
+            profile: DestinationProfile,
+            config_inputs: dict[str, ui.input | ui.select],
+        ) -> bool:
+            """Refuse to save an output the Relay can't run (issue #198)."""
+            reason = profile.cannot_run_reason
+            if reason is None:
+                return False
+            username = config_inputs.get("username")
+            if (
+                profile.type == "ntrip"
+                and NtripProfile(**profile.config).needs_username
+                and isinstance(username, ui.input)
+            ):
+                username.error = "Required for NTRIP v2"
+            ui.notify(reason, type="warning")
+            return True
+
         def _render_dest_card(dest: DestinationProfile) -> None:
             """Render a single destination card."""
             with ui.card().classes("w-full q-pa-md"):
@@ -182,6 +204,11 @@ def outputs_page() -> None:
                             ui.label(dest.type.replace("_", " ").title()).classes(
                                 "text-caption text-grey-5"
                             )
+                            # A saved output the Relay can't run (#198).
+                            if (reason := dest.cannot_run_reason) is not None:
+                                ui.label(f"⚠ {reason}").classes(
+                                    "text-caption text-warning"
+                                )
 
                     with ui.row().classes("items-center gap-2"):
                         # Enable/disable toggle.  ``aria-label`` makes
@@ -415,6 +442,8 @@ def outputs_page() -> None:
                     config=config,
                     filter=FilterProfile(),
                 )
+                if _refuse_unrunnable(profile, config_inputs):
+                    return
                 config_svc.save_destination(profile)
                 ui.notify(f"Added '{name}'", type="positive")
                 dialog.close()
@@ -457,7 +486,9 @@ def outputs_page() -> None:
                     config_inputs[fname] = inp
                 # NTRIP: version selector + conditional username (edit mode)
                 if dest.type == "ntrip":
-                    current_ver = str(dest.config.get("version", "1.0"))
+                    # An output saved without a version is v2, as the
+                    # model and the Relay read it.
+                    current_ver = str(dest.config.get("version", "2.0"))
                     ver = ui.select(
                         NTRIP_VERSIONS,
                         label="NTRIP Version",
@@ -526,6 +557,8 @@ def outputs_page() -> None:
             config = {k: v.value for k, v in config_inputs.items() if v.value}
             try:
                 updated = dest.model_copy(update={"name": new_name, "config": config})
+                if _refuse_unrunnable(updated, config_inputs):
+                    return
                 # If the name changed, remove the old entry first so
                 # save_destination doesn't end up with both names.
                 if new_name != dest.name:

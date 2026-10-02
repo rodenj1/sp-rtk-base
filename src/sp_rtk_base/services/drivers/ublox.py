@@ -1415,19 +1415,28 @@ class UbloxDriver(GpsReceiverDriver):
     # ------------------------------------------------------------------
 
     def begin_correction_input(self, console_port: PortId | None) -> None:
-        """Enable RTCM 3 input in RAM, remembering what was there."""
+        """Enable RTCM 3 input, and quiet RTCM 3 output, in RAM.
+
+        The receiver's own RTCM 3 output (a base's MSM, sent even as a
+        rover) shares the console link with every poll reply; on a 57 600
+        baud UART it slowed each read to seconds and starved the
+        correction writes (#197). Both are remembered and restored.
+        """
         ports = [console_port] if console_port is not None else list(PortId)
-        keys = [_protocol_key(port, "IN", UbxProtocol.RTCM3X) for port in ports]
+        inputs = [_protocol_key(port, "IN", UbxProtocol.RTCM3X) for port in ports]
+        outputs = [_protocol_key(port, "OUT", UbxProtocol.RTCM3X) for port in ports]
         with self._lock:
-            found = self._read_cfg_keys_with_retry_locked(keys)
+            found = self._read_cfg_keys_with_retry_locked(inputs + outputs)
             # Remembered first, so even a write that half-landed is restored.
             self._saved_correction_input = found
             self._write_and_verify_locked(
-                [(key, 1) for key in keys],
+                [(key, 1) for key in inputs] + [(key, 0) for key in outputs],
                 layer=self._CFG_VALSET_RAM_ONLY,
                 label="Correction input",
             )
-        logger.info("RTCM 3 input enabled in RAM on %s", [p.value for p in ports])
+        logger.info(
+            "RTCM 3 input on and output off, in RAM, on %s", [p.value for p in ports]
+        )
 
     def write_corrections(self, frames: bytes) -> None:
         """Write whole RTCM 3 Frames, back to back; no reply is awaited."""
@@ -1467,7 +1476,7 @@ class UbloxDriver(GpsReceiverDriver):
                     label="Correction input restore",
                 )
             self._saved_correction_input = None
-        logger.info("RTCM 3 input settings restored")
+        logger.info("RTCM 3 input and output settings restored")
 
     def configure_measurement_rate(self, period_ms: int) -> None:
         """Write ``CFG_RATE_MEAS=period_ms`` and pin ``CFG_RATE_NAV=1``.

@@ -16,10 +16,31 @@ from tests.unit.ublox_sim import SimReceiver, connected_driver
 UART1 = "CFG_UART1INPROT_RTCM3X"
 UART2 = "CFG_UART2INPROT_RTCM3X"
 USB = "CFG_USBINPROT_RTCM3X"
+UART1_OUT = "CFG_UART1OUTPROT_RTCM3X"
+UART2_OUT = "CFG_UART2OUTPROT_RTCM3X"
+USB_OUT = "CFG_USBOUTPROT_RTCM3X"
 
 
-def _sim(uart1: int = 0, uart2: int = 0, usb: int = 0) -> SimReceiver:
-    return SimReceiver({UART1: uart1, UART2: uart2, USB: usb})
+def _sim(uart1: int = 0, uart2: int = 0, usb: int = 0, out: int = 1) -> SimReceiver:
+    # A base: RTCM 3 output on every port (``out``), input as given.
+    return SimReceiver(
+        {
+            UART1: uart1,
+            UART2: uart2,
+            USB: usb,
+            UART1_OUT: out,
+            UART2_OUT: out,
+            USB_OUT: out,
+        }
+    )
+
+
+def _inputs(sim: SimReceiver) -> dict[str, int]:
+    return {k: sim.ram[k] for k in (UART1, UART2, USB)}
+
+
+def _outputs(sim: SimReceiver) -> dict[str, int]:
+    return {k: sim.ram[k] for k in (UART1_OUT, UART2_OUT, USB_OUT)}
 
 
 class TestBegin:
@@ -29,7 +50,7 @@ class TestBegin:
 
         driver.begin_correction_input(PortId.UART2)
 
-        assert sim.ram == {UART1: 0, UART2: 1, USB: 0}
+        assert _inputs(sim) == {UART1: 0, UART2: 1, USB: 0}
 
     def test_enables_every_port_when_the_console_port_is_unknown(self) -> None:
         sim = _sim()
@@ -37,7 +58,7 @@ class TestBegin:
 
         driver.begin_correction_input(None)
 
-        assert sim.ram == {UART1: 1, UART2: 1, USB: 1}
+        assert _inputs(sim) == {UART1: 1, UART2: 1, USB: 1}
 
     def test_writes_ram_only_never_bbr_or_flash(self) -> None:
         sim = _sim()
@@ -50,6 +71,46 @@ class TestBegin:
         assert all(m.ram == 1 and not m.bbr and not m.flash for m in sim.valsets)
 
 
+class TestQuietOutput:
+    """Its own RTCM 3 output would crowd the console link (#197)."""
+
+    def test_begin_turns_rtcm3_output_off_on_the_console_port_only(self) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+
+        driver.begin_correction_input(PortId.UART1)
+
+        assert _outputs(sim) == {UART1_OUT: 0, UART2_OUT: 1, USB_OUT: 1}
+
+    def test_begin_turns_it_off_on_every_port_when_the_console_is_unknown(
+        self,
+    ) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+
+        driver.begin_correction_input(None)
+
+        assert _outputs(sim) == {UART1_OUT: 0, UART2_OUT: 0, USB_OUT: 0}
+
+    def test_end_turns_the_output_back_on(self) -> None:
+        sim = _sim()
+        driver = connected_driver(sim)
+        driver.begin_correction_input(PortId.UART1)
+
+        driver.end_correction_input()
+
+        assert _outputs(sim) == {UART1_OUT: 1, UART2_OUT: 1, USB_OUT: 1}
+
+    def test_end_leaves_off_an_output_that_was_already_off(self) -> None:
+        sim = _sim(out=0)
+        driver = connected_driver(sim)
+        driver.begin_correction_input(PortId.UART1)
+
+        driver.end_correction_input()
+
+        assert _outputs(sim) == {UART1_OUT: 0, UART2_OUT: 0, USB_OUT: 0}
+
+
 class TestEnd:
     def test_restores_the_settings_begin_found(self) -> None:
         sim = _sim(uart1=1, uart2=0, usb=0)
@@ -58,7 +119,7 @@ class TestEnd:
 
         driver.end_correction_input()
 
-        assert sim.ram == {UART1: 1, UART2: 0, USB: 0}
+        assert _inputs(sim) == {UART1: 1, UART2: 0, USB: 0}
 
     def test_without_a_begin_touches_nothing(self) -> None:
         sim = _sim()

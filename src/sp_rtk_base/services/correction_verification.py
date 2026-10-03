@@ -35,12 +35,17 @@ from sp_rtk_base.services.verification import VerificationRefusedError
 
 logger = logging.getLogger(__name__)
 
-#: How long to wait for a reference-station position (1005/1006).
+#: How long to wait for any data at all: a caster silent this long fails.
 DATA_WINDOW_SECONDS = 15.0
+#: Once Frames are arriving, how long to keep listening for the reference
+#: station position (1005/1006). Casters send it rarely: EarthScope every
+#: 30 s, so a 15 s window missed it about half the time and showed a Warning
+#: on a healthy source (#197). Passes the moment one arrives.
+REFERENCE_WINDOW_SECONDS = 60.0
 #: How long the connect and the caster's reply may take.
 CONNECT_TIMEOUT_SECONDS = 5.0
 #: The whole Verification's budget: a slow connect shortens the data window.
-TOTAL_BUDGET_SECONDS = 20.0
+TOTAL_BUDGET_SECONDS = 70.0
 
 _REFERENCE_POSITION_IDS = frozenset({1005, 1006})
 
@@ -120,10 +125,14 @@ class CorrectionSourceVerificationService:
         *,
         connect_timeout_seconds: float = CONNECT_TIMEOUT_SECONDS,
         data_window_seconds: float = DATA_WINDOW_SECONDS,
+        reference_window_seconds: float = REFERENCE_WINDOW_SECONDS,
     ) -> None:
         self.connect_timeout_seconds = connect_timeout_seconds
         self.data_window_seconds = data_window_seconds
-        self.total_budget_seconds = max(TOTAL_BUDGET_SECONDS, data_window_seconds)
+        self.reference_window_seconds = reference_window_seconds
+        self.total_budget_seconds = max(
+            TOTAL_BUDGET_SECONDS, data_window_seconds, reference_window_seconds
+        )
         self._running = False
         self._survey_running: Callable[[], bool] = lambda: False
 
@@ -200,20 +209,29 @@ class CorrectionSourceVerificationService:
 
         for stage in CORRECTION_SOURCE_STAGES[:-1]:
             recorded[stage] = StageResult(stage=stage, status=StageStatus.PASSED)
-        window = min(
-            self.data_window_seconds,
-            self.total_budget_seconds - (time.monotonic() - started),
-        )
+        budget = self.total_budget_seconds - (time.monotonic() - started)
         try:
-            recorded[VerificationStage.DATA] = self._read_window(source, window)
+            recorded[VerificationStage.DATA] = self._read_window(
+                source,
+                silence_s=min(self.data_window_seconds, budget),
+                reference_s=min(
+                    max(self.reference_window_seconds, self.data_window_seconds),
+                    budget,
+                ),
+            )
         finally:
             source.disconnect()
         return build_result(recorded, order=CORRECTION_SOURCE_STAGES)
 
-    def _read_window(self, source: NtripInputSource, window_s: float) -> StageResult:
+    def _read_window(
+        self, source: NtripInputSource, *, silence_s: float, reference_s: float
+    ) -> StageResult:
+        """Read until a 1005/1006 arrives: ``silence_s`` for any Frame at all,
+        then, once Frames are flowing, up to ``reference_s`` in all."""
         seen = _Frames()
         buffer = bytearray()
-        deadline = time.monotonic() + max(window_s, 0.0)
+        began = time.monotonic()
+        deadline = began + max(silence_s, 0.0)
         while (left := deadline - time.monotonic()) > 0:
             try:
                 data = source.read_data(timeout=min(left, 0.5))
@@ -225,6 +243,10 @@ class CorrectionSourceVerificationService:
                 _scan(buffer, seen)
                 if seen.reference_position:
                     break
+                if seen.frames:
+                    # Corrections are flowing: wait for the (rarely sent)
+                    # reference position for the longer window.
+                    deadline = began + max(reference_s, 0.0)
             elif not source.is_connected:
                 break  # the caster closed the stream
         data_stage = VerificationStage.DATA
@@ -237,7 +259,7 @@ class CorrectionSourceVerificationService:
                 code="no_reference_position",
                 message=(
                     "RTCM 3 Frames arrived, but no reference station position "
-                    "(1005/1006) within the window; the caster may send it rarely."
+                    "(1005/1006) within a minute; the caster may send it rarely."
                 ),
             )
         if seen.bytes_read:

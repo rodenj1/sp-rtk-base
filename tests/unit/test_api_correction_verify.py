@@ -498,3 +498,35 @@ class TestSavedPasswordStaysWithItsCaster:
 
     def test_the_default_data_window_is_15_seconds(self) -> None:
         assert CorrectionSourceVerificationService().data_window_seconds == 15.0
+
+
+class TestReferencePositionArrivesLate:
+    """EarthScope sends its 1005 only every 30 s (bench, #197): Verify must
+    keep listening for it once Frames are flowing, not stop at the silence
+    window."""
+
+    def test_a_1005_after_the_silence_window_still_passes(
+        self, client: TestClient, caster: FakeCaster, verifier: Any
+    ) -> None:
+        verifier.data_window_seconds = 1.0  # silence: give up after 1 s
+        verifier.reference_window_seconds = 4.0  # Frames flowing: wait for 1005
+        # Frames every 20 ms, and the 1005 only after about 1.6 s.
+        caster.scripts.append(Script(reply=ICY, body=[NOT_REF] * 80 + [REF_1005]))
+
+        result = client.post(VERIFY, json=_form(caster)).json()
+
+        assert result["verdict"] == "green"
+        assert _stages(result)["data"] == ("passed", None)
+
+    def test_frames_without_a_1005_still_warn_after_the_longer_wait(
+        self, client: TestClient, caster: FakeCaster, verifier: Any
+    ) -> None:
+        verifier.data_window_seconds = 1.0
+        verifier.reference_window_seconds = 2.0
+        caster.scripts.append(Script(reply=ICY, body=[NOT_REF] * 200))
+
+        start = time.monotonic()
+        result = client.post(VERIFY, json=_form(caster)).json()
+
+        assert _stages(result)["data"] == ("warning", "no_reference_position")
+        assert time.monotonic() - start < 4.0  # it doesn't wait past the window

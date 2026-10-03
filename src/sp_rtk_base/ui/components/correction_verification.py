@@ -46,7 +46,8 @@ CODE_TEXT = {
     "silent": "the caster sent no data",
     "not_rtcm3": "the data isn't RTCM 3",
     "no_reference_position": (
-        "no reference station position (1005/1006) yet; the caster may send it rarely"
+        "no reference station position (1005/1006) within a minute; the caster "
+        "may send it rarely"
     ),
 }
 
@@ -89,7 +90,7 @@ class VerificationPanel:
         self._result = None
         self._root.set_visibility(True)
         self._chips.clear()
-        self._verdict.text = "Verifying… (up to about 20 s)"
+        self._verdict.text = "Verifying… (usually under 30 s, up to about a minute)"
         self._verdict.classes(replace="text-caption text-grey-4")
 
     def show(self, result: VerificationResult) -> None:

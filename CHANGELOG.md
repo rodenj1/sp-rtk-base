@@ -9,6 +9,84 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## v0.8.0 (2026-10-05)
+
+### Corrected survey-in: a centimetre-level base from an NTRIP Correction source
+
+The Survey page can now survey in against an NTRIP **Correction source**
+(spec #190): the receiver works as a rover, the station feeds it the
+source's RTCM 3 corrections, averages only its RTK Fixed solutions, and
+commits a centimetre-level fixed base to flash. On a ZED-F9P against
+EarthScope it settles at about 17 mm, with five surveys agreeing within
+15 mm horizontally (#197).
+
+- **Correction sources** (#192): save several NTRIP sources (caster, port,
+  mountpoint, username, write-only password, NTRIP v1/v2, TLS) from the
+  Survey page. The password is never returned by the API or the config
+  export; importing a config keeps the saved ones.
+- **Verify** (#194, #216): check a source before surveying. Each Stage
+  (connect, caster, auth, mountpoint, data) is shown as a chip; Green
+  stands for 30 s. Verify listens for up to a minute for the source's
+  reference station position (1005/1006), which many casters send only
+  every 30-60 s.
+- **The survey** (#195): the receiver takes RTCM 3 in RAM only, and its
+  own RTCM output on the console port is off while surveying (#209). The
+  survey pulls the source through its own Relay instance (invisible to
+  the operator's Relay, metrics and Signal Quality) and writes every
+  Frame whole to the receiver. On completion it stops the instance and
+  restores the receiver's settings *before* committing and saving to
+  flash; if they can't be restored, nothing is saved.
+- **What counts** (#211, #213-#215): an RTK Fixed solution counts only
+  once Fixed has held for 30 s, on corrections at most 10 s old. A
+  sudden step of more than 5 cm while Fixed (a jump to a different Fixed
+  solution, seen on the bench) restarts the averaging, so two Fixed
+  solutions are never mixed; a slow drift is averaged.
+- **When it can't work** (#196): Start is refused naming the failing
+  Stage; after 10 minutes without an Observation the survey aborts,
+  saying whether corrections stopped, only Float was reached, or Fixed
+  never settled, with a warning after a minute. A source in use can't be
+  renamed, deleted or dropped by an import, and Verify waits. A failed
+  Corrected survey-in never falls back to a plain one.
+- **Progress** shows RTK status, correction age, the source's state and
+  last error, Fixed time and accuracy against their limits, and
+  delivery counters (#207): Frames written and dropped, and what the
+  receiver says reached it.
+
+### Survey-in on any receiver
+
+A receiver without a survey-in of its own is now surveyed by the station
+(#191): it averages the receiver's high-precision position once a second
+and commits the fixed base itself, whether or not a page is open.
+
+### Getting corrections through on a busy receiver link
+
+Measured on a ZED-F9P at 57 600 baud (#210): every polled NAV message is
+answered at the receiver's next epoch (~1 s) with the driver lock held,
+which starved correction writes. Correction writes now take their own
+write lock and go out in batches (#208, #211); Signal Quality pauses and
+position reads reuse the survey's NAV-PVT during a Corrected survey-in.
+Delivery went from 48-75% with Frames 20-40 s old to 100% within a
+second.
+
+### Bench tools
+
+- `tools/bench_corrected_survey.py` (#206) logs a Corrected survey-in
+  (time to first Fixed, accuracy, spread over 5 and 30 minutes, the
+  committed position, receiver reads) to CSV and a summary.
+- `tools/probe_correction_delivery.py` (#210, #212) runs a 90 s survey and
+  reports, red or green, how corrections reach the receiver, from the
+  survey's new `diagnostics`.
+
+### Fixed
+
+- **NTRIP v2 outputs require a username** (#198), matching the Relay's
+  rule; the Outputs page says so before saving.
+
+### Dependencies
+
+Requires **sp-rtk-base-relay >= 4.0.0, < 5** (its NTRIP client input,
+#193).
+
 ## v0.7.0 (2026-09-30)
 
 ### Signal Quality: see whether the antenna hears the satellites well

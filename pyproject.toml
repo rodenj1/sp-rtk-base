@@ -1,6 +1,6 @@
 [project]
 name = "sp-rtk-base"
-version = "0.7.0"
+version = "0.8.0"
 description = "Web UI and API for controlling and monitoring a u-blox GPS RTK base station relay"
 readme = "README.md"
 authors = [
@@ -30,7 +30,7 @@ dependencies = [
     "pyserial>=3.5",
     "pyubx2>=1.2.43",
     "pyyaml>=6.0.3",
-    "sp_rtk_base_relay>=4.0.0",
+    "sp_rtk_base_relay>=4.0.0,<5",
     "uvicorn>=0.42.0",
 ]
 

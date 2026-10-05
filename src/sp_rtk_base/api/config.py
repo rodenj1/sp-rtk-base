@@ -36,12 +36,14 @@ async def export_config(
     """
     config = config_svc.get_config()
     data = config.model_dump(mode="json", exclude_none=True)
-    # Correction source passwords are write-only (issue #192): the export
-    # says whether one is saved, and importing it back keeps the saved one.
-    for source in data.get("correction_sources", []):
-        source_config = source.get("config", {})
-        source_config["has_password"] = bool(source_config.get("password"))
-        source_config["password"] = ""
+    # Passwords are write-only (Correction sources #192, destinations #181):
+    # the export says whether one is saved, and importing it back keeps the
+    # saved one.
+    for entry in [*data.get("correction_sources", []), *data.get("destinations", [])]:
+        entry_config = entry.get("config", {})
+        if "password" in entry_config:
+            entry_config["has_password"] = bool(entry_config.get("password"))
+            entry_config["password"] = ""
     yaml_text = yaml.dump(data, default_flow_style=False, sort_keys=False)
 
     return Response(
@@ -114,7 +116,7 @@ async def import_config(
         config_svc.refuse_import_if_in_use(config)
     except CorrectionSourceInUseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    config = config_svc.keep_saved_correction_passwords(config)
+    config = config_svc.keep_saved_passwords(config)
     config_svc.save_config(config)
     logger.info("Configuration imported successfully")
 

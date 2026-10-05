@@ -123,21 +123,27 @@ class DestinationCreateRequest(BaseModel):
 
 
 class DestinationUpdateRequest(BaseModel):
-    """Request body for updating a destination."""
+    """Request body for updating a destination.
+
+    The password is write-only: leave it out of ``config``, or blank, to
+    keep the saved one; ``remove_password`` clears it (#181).
+    """
 
     enabled: bool | None = None
     config: dict[str, Any] | None = None
     filter: dict[str, Any] | None = None
+    remove_password: bool = False
 
 
 class DestinationResponse(BaseModel):
-    """Response body for a destination."""
+    """A destination. Never carries the password, only whether one is saved."""
 
     name: str
     type: str
     enabled: bool
     config: dict[str, Any]
     filter: dict[str, Any]
+    has_password: bool = False
 
 
 class DestinationListResponse(BaseModel):

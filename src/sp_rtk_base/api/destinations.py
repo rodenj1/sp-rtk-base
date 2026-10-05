@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from sp_rtk_base.api.no_echo import NoEchoRoute, describe, error_response
 from sp_rtk_base.models.api_models import (
     DestinationCreateRequest,
     DestinationListResponse,
@@ -24,17 +25,21 @@ from sp_rtk_base.services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/destinations", tags=["destinations"])
+# Passwords are write-only (#181): a refused request is never quoted back.
+router = APIRouter(
+    prefix="/api/destinations", tags=["destinations"], route_class=NoEchoRoute
+)
 
 
 def _profile_to_response(profile: DestinationProfile) -> DestinationResponse:
-    """Convert a DestinationProfile to an API response model."""
+    """Convert a DestinationProfile to an API response model (no password)."""
     return DestinationResponse(
         name=profile.name,
         type=profile.type,
         enabled=profile.enabled,
-        config=profile.config,
+        config=profile.public_config,
         filter=profile.filter.model_dump(),
+        has_password=profile.has_password,
     )
 
 
@@ -56,10 +61,7 @@ async def get_destination(
     """Get a single destination by name."""
     dest = config_svc.get_destination(name)
     if dest is None:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": f"Destination '{name}' not found"},
-        )
+        return error_response(404, f"Destination '{name}' not found")
     return _profile_to_response(dest)
 
 
@@ -77,13 +79,7 @@ async def create_destination(
     # Check for duplicate name
     existing = config_svc.get_destination(request.name)
     if existing is not None:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "status": "error",
-                "message": f"Destination '{request.name}' already exists",
-            },
-        )
+        return error_response(409, f"Destination '{request.name}' already exists")
 
     try:
         profile = DestinationProfile(
@@ -101,15 +97,9 @@ async def create_destination(
         # message_ids, RTCM IDs outside 1000-1230) are client config
         # errors — 422 Unprocessable Entity per RFC 4918, matching
         # FastAPI's own body-validation behaviour.
-        return JSONResponse(
-            status_code=422,
-            content={"status": "error", "message": str(exc)},
-        )
+        return error_response(422, describe(exc.errors(), "Invalid destination"))
     except Exception as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": str(exc)},
-        )
+        return error_response(400, str(exc))
 
 
 @router.put("/{name}", response_model=DestinationResponse)
@@ -125,17 +115,17 @@ async def update_destination(
     """
     existing = config_svc.get_destination(name)
     if existing is None:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": f"Destination '{name}' not found"},
-        )
+        return error_response(404, f"Destination '{name}' not found")
 
     try:
-        updated_data = existing.model_dump()
+        # No new config: keep the saved one (its password stays unless removed).
+        new_config = (
+            request.config if request.config is not None else existing.public_config
+        )
+        base = existing.with_config(new_config, remove_password=request.remove_password)
+        updated_data = base.model_dump()
         if request.enabled is not None:
             updated_data["enabled"] = request.enabled
-        if request.config is not None:
-            updated_data["config"] = request.config
         if request.filter is not None:
             updated_data["filter"] = request.filter
 
@@ -144,15 +134,9 @@ async def update_destination(
         logger.info("Updated destination: %s", name)
         return _profile_to_response(updated)
     except ValidationError as exc:
-        return JSONResponse(
-            status_code=422,
-            content={"status": "error", "message": str(exc)},
-        )
+        return error_response(422, describe(exc.errors(), "Invalid destination"))
     except Exception as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": str(exc)},
-        )
+        return error_response(400, str(exc))
 
 
 @router.delete("/{name}", response_model=RelayActionResponse)
@@ -167,10 +151,7 @@ async def delete_destination(
     """
     removed = config_svc.remove_destination(name)
     if not removed:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": f"Destination '{name}' not found"},
-        )
+        return error_response(404, f"Destination '{name}' not found")
 
     logger.info("Deleted destination: %s", name)
     return RelayActionResponse(status="ok", message=f"Destination '{name}' deleted")

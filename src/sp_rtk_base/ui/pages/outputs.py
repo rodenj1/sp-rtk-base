@@ -168,10 +168,17 @@ def outputs_page() -> None:
         def _refuse_unrunnable(
             profile: DestinationProfile,
             config_inputs: dict[str, ui.input | ui.select],
+            password_removed: bool = False,
         ) -> bool:
-            """Refuse to save an output the Relay can't run (issue #198)."""
+            """Refuse to save an output the Relay can't run (issue #198).
+
+            A password the operator explicitly removed is saved anyway (#181):
+            the card then says the output needs one before it can run.
+            """
             reason = profile.cannot_run_reason
             if reason is None:
+                return False
+            if password_removed and not profile.has_password:
                 return False
             username = config_inputs.get("username")
             if (
@@ -241,9 +248,9 @@ def outputs_page() -> None:
                             f'aria-label="Delete {dest.name}"'
                         )
 
-                # Show key config values
+                # Show key config values (never the password, #181)
                 with ui.row().classes("q-mt-sm gap-4"):
-                    for key, val in list(dest.config.items())[:3]:
+                    for key, val in list(dest.public_config.items())[:3]:
                         ui.label(f"{key}: {val}").classes("text-caption text-grey-5")
 
         async def _toggle_enabled(name: str, enabled: object) -> None:
@@ -474,9 +481,39 @@ def outputs_page() -> None:
                 ).classes("w-full")
 
                 config_inputs: dict[str, ui.input | ui.select] = {}
+                remove_password = {"on": False}
                 for fname, flabel, _fdefault, fvalidation in TYPE_FIELDS.get(
                     dest.type, []
                 ):
+                    if fname == "password":
+                        # Write-only (#181): never shown; blank keeps it.
+                        inp = ui.input(
+                            flabel,
+                            value="",
+                            password=True,
+                            password_toggle_button=True,
+                            placeholder=("•••••• (saved)" if dest.has_password else ""),
+                            validation=None if dest.has_password else fvalidation,
+                        ).classes("w-full")
+                        config_inputs[fname] = inp
+                        if dest.has_password:
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label(
+                                    "Leave blank to keep the saved password."
+                                ).classes("text-caption text-grey-5")
+
+                                def _remove(field: ui.input = inp) -> None:
+                                    remove_password["on"] = True
+                                    field.props('placeholder=""')
+                                    ui.notify(
+                                        "The saved password will be removed on Save",
+                                        type="info",
+                                    )
+
+                                ui.button(
+                                    "Remove saved password", on_click=_remove
+                                ).props("flat dense color=negative size=sm")
+                        continue
                     current = str(dest.config.get(fname, ""))
                     inp = ui.input(
                         flabel,
@@ -515,7 +552,11 @@ def outputs_page() -> None:
                     ui.button(
                         "Save",
                         on_click=lambda: _save_edit(
-                            dest, name_input, config_inputs, dialog
+                            dest,
+                            name_input,
+                            config_inputs,
+                            dialog,
+                            remove_password["on"],
                         ),
                     ).props("color=primary")
             dialog.open()
@@ -525,8 +566,9 @@ def outputs_page() -> None:
             name_input: ui.input,
             config_inputs: dict[str, ui.input | ui.select],
             dialog: ui.dialog,
+            remove_password: bool = False,
         ) -> None:
-            """Save edited destination."""
+            """Save edited destination (a blank password keeps the saved one)."""
             # Force-run validators on every input (same reasoning as
             # _save_new — NiceGUI only fires validators on user-input
             # events, so an untouched required field has no error
@@ -556,8 +598,10 @@ def outputs_page() -> None:
 
             config = {k: v.value for k, v in config_inputs.items() if v.value}
             try:
-                updated = dest.model_copy(update={"name": new_name, "config": config})
-                if _refuse_unrunnable(updated, config_inputs):
+                updated = dest.with_config(
+                    config, remove_password=remove_password
+                ).model_copy(update={"name": new_name})
+                if _refuse_unrunnable(updated, config_inputs, remove_password):
                     return
                 # If the name changed, remove the old entry first so
                 # save_destination doesn't end up with both names.

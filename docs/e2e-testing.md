@@ -118,6 +118,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
 | `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
+| `test_outputs_password_write_only.py` | A destination's password is write-only: the edit dialog shows a "(saved)" placeholder, never the password; a blank save keeps it; Remove saved password clears it |
 | `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start needs a chosen Correction source when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
 | `test_survey_corrected.py` | A Corrected survey-in against a scripted fake caster: the live panel shows the source connected, RTK Fixed, the correction age, Fixed time and accuracy against their limits; Cancel |
 | `test_survey_corrected_failures.py` | A Corrected survey-in without corrections warns (no RTK Fixed, time left) then aborts with nothing committed; a refused Start names the failing Stage. The server shortens the stall warning and abort (`SP_RTK_BASE_FAKE_STALL_WARNING_S` / `_ABORT_S`, fake GPS only) |

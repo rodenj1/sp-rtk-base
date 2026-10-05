@@ -215,10 +215,13 @@ class DestinationProfile(BaseModel):
     def cannot_run_reason(self) -> str | None:
         """Why the Relay can't run this saved output, or ``None`` if it can.
 
-        Worded for the operator. Covers an NTRIP v2 output without a
+        Worded for the operator. Covers an NTRIP or Sure-Path output whose
+        password was removed (#181), and an NTRIP v2 output without a
         username (see :attr:`NtripProfile.needs_username`); other shape
         errors are left to :meth:`to_relay_config`'s validation.
         """
+        if self.type in ("ntrip", "surepath") and not self.has_password:
+            return f"Output '{self.name}' has no password. Add one before it can run."
         if self.type == "ntrip":
             try:
                 ntrip = NtripProfile(**self.config)
@@ -230,6 +233,35 @@ class DestinationProfile(BaseModel):
                     "Add one, or switch it to NTRIP v1."
                 )
         return None
+
+    @property
+    def has_password(self) -> bool:
+        """Whether a password is saved (it is write-only, #181)."""
+        return bool(self.config.get("password"))
+
+    def with_config(
+        self, config: dict[str, Any], *, remove_password: bool = False
+    ) -> DestinationProfile:
+        """This destination with ``config``; the password stays write-only.
+
+        A missing or blank password keeps the saved one; ``remove_password``
+        clears it, unless a new one is given too (issue #181, as for
+        Correction sources in #192).
+        """
+        merged = {k: v for k, v in config.items() if k != "has_password"}
+        typed = merged.get("password")
+        if remove_password and not typed:
+            merged["password"] = ""
+        elif not typed and "password" in self.config:
+            # Blank or missing keeps the saved one (an empty one included,
+            # so the field never disappears).
+            merged["password"] = self.config["password"]
+        return self.model_copy(update={"config": merged})
+
+    @property
+    def public_config(self) -> dict[str, Any]:
+        """The config without its password (it is write-only, #181)."""
+        return {k: v for k, v in self.config.items() if k != "password"}
 
     def to_relay_config(self) -> DestinationConfig:
         """Convert to sp-rtk-base-relay DestinationConfig dataclass.

@@ -16,9 +16,10 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 The Survey page can now survey in against an NTRIP **Correction source**
 (spec #190): the receiver works as a rover, the station feeds it the
 source's RTCM 3 corrections, averages only its RTK Fixed solutions, and
-commits a centimetre-level fixed base to flash. On a ZED-F9P against
-EarthScope it settles at about 17 mm, with five surveys agreeing within
-15 mm horizontally (#197).
+commits a centimetre-level fixed base to flash. On the bench (#197, a
+ZED-F9P against EarthScope) surveys reported about 17 mm on one station
+and 24 mm on a farther one; five surveys on the nearer agreed within
+15 mm horizontally and 3.7 cm in height.
 
 - **Correction sources** (#192): save several NTRIP sources (caster, port,
   mountpoint, username, write-only password, NTRIP v1/v2, TLS) from the
@@ -26,9 +27,10 @@ EarthScope it settles at about 17 mm, with five surveys agreeing within
   export; importing a config keeps the saved ones.
 - **Verify** (#194, #216): check a source before surveying. Each Stage
   (connect, caster, auth, mountpoint, data) is shown as a chip; Green
-  stands for 30 s. Verify listens for up to a minute for the source's
-  reference station position (1005/1006), which many casters send only
-  every 30-60 s.
+  stands for 30 s. Once data is flowing, Verify listens for up to a
+  minute for the source's reference station position (1005/1006), which
+  a caster may send only every 30 s or so (EarthScope does). A silent
+  caster still fails after 15 s.
 - **The survey** (#195): the receiver takes RTCM 3 in RAM only, and its
   own RTCM output on the console port is off while surveying (#209). The
   survey pulls the source through its own Relay instance (invisible to
@@ -38,15 +40,17 @@ EarthScope it settles at about 17 mm, with five surveys agreeing within
   flash; if they can't be restored, nothing is saved.
 - **What counts** (#211, #213-#215): an RTK Fixed solution counts only
   once Fixed has held for 30 s, on corrections at most 10 s old. A
-  sudden step of more than 5 cm while Fixed (a jump to a different Fixed
-  solution, seen on the bench) restarts the averaging, so two Fixed
-  solutions are never mixed; a slow drift is averaged.
-- **When it can't work** (#196): Start is refused naming the failing
-  Stage; after 10 minutes without an Observation the survey aborts,
-  saying whether corrections stopped, only Float was reached, or Fixed
-  never settled, with a warning after a minute. A source in use can't be
-  renamed, deleted or dropped by an import, and Verify waits. A failed
-  Corrected survey-in never falls back to a plain one.
+  sudden step of more than 5 cm while Fixed, lasting 3 samples (a jump to
+  a different Fixed solution, seen on the bench), restarts the averaging,
+  so two Fixed solutions are never mixed; a single excursion is just left
+  out, and a slow drift is averaged.
+- **When it can't work** (#196, #214): Start is refused naming the
+  failing Stage; after 10 minutes without an Observation the survey
+  aborts, saying whether fresh corrections stopped, only Float was
+  reached, or Fixed never settled, with a warning after a minute. While
+  it runs, its source can't be renamed, deleted or dropped by an import,
+  and Verify is refused (409 `survey_running`). A failed Corrected
+  survey-in never falls back to a plain one.
 - **Progress** shows RTK status, correction age, the source's state and
   last error, Fixed time and accuracy against their limits, and
   delivery counters (#207): Frames written and dropped, and what the
@@ -54,9 +58,12 @@ EarthScope it settles at about 17 mm, with five surveys agreeing within
 
 ### Survey-in on any receiver
 
-A receiver without a survey-in of its own is now surveyed by the station
-(#191): it averages the receiver's high-precision position once a second
-and commits the fixed base itself, whether or not a page is open.
+A receiver that can take a fixed base but has no survey-in of its own is
+now surveyed by the station (#191): it averages the receiver's
+high-precision position once a second and commits the fixed base itself,
+whether or not a page is open. For every survey, the server now counts
+the elapsed time, so the page no longer works around the receiver's
+carried-over survey counter.
 
 ### Getting corrections through on a busy receiver link
 
@@ -77,10 +84,36 @@ second.
   reports, red or green, how corrections reach the receiver, from the
   survey's new `diagnostics`.
 
+### API
+
+- **New:** `GET/POST /api/correction-sources`,
+  `GET/PUT/DELETE /api/correction-sources/{name}`,
+  `POST /api/correction-sources/verify`, and
+  `POST /api/device/configure/corrected-survey-in`.
+- **`GET /api/device/survey-in`** gains `averaged_by`, `outcome` and
+  `abort_reason`, the corrected-survey fields (`correction_source`,
+  `rtk_status`, `correction_age_s`, `source_connected`,
+  `source_last_error`, the stall and settling fields, `fixed_jumps`,
+  `last_jump_mm`), the delivery counters and `diagnostics`.
+- **Config:** `correction_sources` and `settings.last_correction_source`.
+  The config export blanks Correction source passwords (saying whether
+  one is saved); importing keeps the saved ones.
+
+### Breaking
+
+- **Driver interface.** `GpsReceiverDriver` gains five abstract methods:
+  `get_survey_position` (#191), `begin_correction_input`,
+  `write_corrections`, `end_correction_input` (#195) and
+  `get_correction_input_counters`, plus an optional
+  `get_link_diagnostics`. A third-party driver must implement them to load.
+- **Relay 4.0.0** (#193) counts `reconnect_attempts` only for real
+  reconnects, so `/api/relay/status` reports one fewer than before.
+
 ### Fixed
 
 - **NTRIP v2 outputs require a username** (#198), matching the Relay's
-  rule; the Outputs page says so before saving.
+  rule: the Outputs page says so before saving, and `/api/relay/start`
+  and the device handoff answer 422, the handoff before it disconnects.
 
 ### Dependencies
 

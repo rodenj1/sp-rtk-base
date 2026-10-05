@@ -12,7 +12,7 @@
 
 Web UI and REST API for configuring and monitoring a u-blox GPS RTK base station and its RTCM correction data relay.
 
-SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
+SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay/) engine with a browser-based operator console, adds full u-blox device configuration (survey-in, fixed base, GNSS constellations, RTCM message selection), a centimetre-level **Corrected survey-in** from an NTRIP Correction source, and exposes everything through a REST API — all from a phone, tablet, or desktop browser.
 
 ## Features
 
@@ -24,7 +24,10 @@ SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay
 
 ### GPS Device Management (u-blox)
 - **Connect / Disconnect** — serial port auto-detect (u-blox / FTDI / Prolific / Silicon Labs flagged with ⭐), driver selector, MON-VER device info
-- **Survey-In** — configure duration + accuracy target, live convergence chart (ECharts), auto-promote to fixed base on completion + save-to-flash
+- **Survey-In** — configure duration + accuracy target, live convergence chart (ECharts), auto-promote to fixed base on completion + save-to-flash; on a receiver without a survey-in of its own, the station averages the position itself
+- **Corrected Survey-In** — survey in as an RTK rover against a saved NTRIP **Correction source**: the station pulls the source's RTCM 3 through its own Relay instance, feeds it to the receiver, averages only settled RTK Fixed solutions on fresh corrections, and commits a centimetre-level fixed base. Live RTK status, correction age, source state and Fixed time; clear failure rules (stall abort, Fixed-jump restart) and no silent fallback
+- **Correction Sources & Verify** — save NTRIP sources (v1/v2, TLS, write-only password) and Verify one Stage by Stage (connect → caster → auth → mountpoint → data) before surveying
+- **Signal Quality** — Good / Marginal / Poor from L1/L2 band strength and usable satellites, from the receiver during survey-in or from the Relay's MSM while it runs
 - **Fixed Base** — read-back current config, edit/commit coordinates, save-to-flash
 - **Named Position Profiles** — save surveyed or manual base positions to YAML, restore them directly to device RAM + flash
 - **Live Position** — NAV-PVT display (fix type, RTK status, lat/lon/alt, accuracy, satellites, speed, heading, PDOP) auto-polled every 2 s
@@ -213,6 +216,16 @@ In addition to the main `sp-rtk-base` server, the package installs:
 | `GET` | `/api/events` | Poll recent events |
 | `WS` | `/api/events/ws` | WebSocket event stream |
 
+### Correction Sources
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/correction-sources` | List saved NTRIP Correction sources (passwords never returned) |
+| `POST` | `/api/correction-sources` | Save a Correction source |
+| `GET` | `/api/correction-sources/{name}` | Get one source |
+| `PUT` | `/api/correction-sources/{name}` | Change a source (blank password keeps the saved one) |
+| `DELETE` | `/api/correction-sources/{name}` | Delete a source (refused while a survey uses it) |
+| `POST` | `/api/correction-sources/verify` | Verify a source, Stage by Stage |
+
 ### Metrics & Config
 | Method | Path | Description |
 |--------|------|-------------|
@@ -229,8 +242,10 @@ In addition to the main `sp-rtk-base` server, the package installs:
 | `GET` | `/api/device/status` | Device connection state + MON-VER info |
 | `GET` | `/api/device/capabilities` | List driver capabilities |
 | `GET` | `/api/device/position` | Live NAV-PVT position snapshot |
-| `GET` | `/api/device/survey-in` | Survey-in progress (NAV-SVIN) |
-| `POST` | `/api/device/configure/survey-in` | Start survey-in mode |
+| `GET` | `/api/device/survey-in` | Survey-in progress, whoever averages (receiver or station), incl. Corrected survey-in state |
+| `POST` | `/api/device/configure/survey-in` | Start a survey-in |
+| `POST` | `/api/device/configure/corrected-survey-in` | Start a Corrected survey-in against a saved Correction source |
+| `POST` | `/api/device/cancel-survey-in` | Cancel a survey-in (the receiver stays a rover) |
 | `POST` | `/api/device/configure/fixed-base` | Configure fixed-base coordinates |
 | `POST` | `/api/device/configure/rtcm` | Configure RTCM output messages |
 | `GET` | `/api/device/base-config` | Read current base mode (survey/fixed/disabled) |

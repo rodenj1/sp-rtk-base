@@ -8,15 +8,14 @@ no response carries it, only ``has_password``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Sequence
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
-from fastapi.exceptions import RequestValidationError
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
+from sp_rtk_base.api.no_echo import NoEchoRoute, describe, error_response
 from sp_rtk_base.models.api_models import (
     CorrectionSourceCreateRequest,
     CorrectionSourceListResponse,
@@ -49,40 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 def _describe(errors: Sequence[Any]) -> str:
-    """Validation errors as text, without the values sent.
-
-    pydantic and FastAPI quote the input in their messages, and the input
-    here can be the password, so only each field and its problem are told.
-    """
-    parts: list[str] = []
-    for error in errors:
-        loc = [str(p) for p in error.get("loc", ()) if p not in ("body",)]
-        msg = str(error.get("msg", "invalid"))
-        parts.append(f"{'.'.join(loc)}: {msg}" if loc else msg)
-    return "; ".join(parts) or "Invalid Correction source"
-
-
-class _NoEchoRoute(APIRoute):
-    """Answers a malformed request body without quoting it back."""
-
-    def get_route_handler(
-        self,
-    ) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        handler = super().get_route_handler()
-
-        async def _handle(request: Request) -> Response:
-            try:
-                return await handler(request)
-            except RequestValidationError as exc:
-                return _error(422, _describe(exc.errors()))
-
-        return _handle
+    return describe(errors, "Invalid Correction source")
 
 
 router = APIRouter(
     prefix="/api/correction-sources",
     tags=["correction-sources"],
-    route_class=_NoEchoRoute,
+    route_class=NoEchoRoute,
 )
 
 
@@ -99,13 +71,6 @@ def _to_response(source: CorrectionSourceProfile) -> CorrectionSourceResponse:
         tls=cfg.tls,
         has_password=bool(cfg.password),
     )
-
-
-def _error(status_code: int, message: str, code: str | None = None) -> JSONResponse:
-    content = {"status": "error", "message": message}
-    if code is not None:
-        content["code"] = code  # what a client branches on
-    return JSONResponse(status_code=status_code, content=content)
 
 
 @router.get("", response_model=CorrectionSourceListResponse)
@@ -143,7 +108,7 @@ async def verify_correction_source(
     try:
         config = NtripCorrectionConfig.model_validate(fields)
     except ValidationError as exc:
-        return _error(422, _describe(exc.errors()))
+        return error_response(422, _describe(exc.errors()))
     try:
         return await verifier.verify(config)
     except VerificationRefusedError as exc:
@@ -162,7 +127,7 @@ async def get_correction_source(
     """One saved Correction source."""
     source = config_svc.get_correction_source(name)
     if source is None:
-        return _error(404, f"Correction source '{name}' not found")
+        return error_response(404, f"Correction source '{name}' not found")
     return _to_response(source)
 
 
@@ -181,9 +146,9 @@ async def create_correction_source(
         )
         config_svc.create_correction_source(source)
     except CorrectionSourceExistsError as exc:
-        return _error(409, str(exc))
+        return error_response(409, str(exc))
     except ValidationError as exc:
-        return _error(422, _describe(exc.errors()))
+        return error_response(422, _describe(exc.errors()))
     logger.info("Created Correction source: %s", source.name)
     return _to_response(source)
 
@@ -204,13 +169,13 @@ async def update_correction_source(
             remove_password=request.remove_password,
         )
     except CorrectionSourceNotFoundError as exc:
-        return _error(404, str(exc))
+        return error_response(404, str(exc))
     except CorrectionSourceInUseError as exc:
-        return _error(409, str(exc), code="in_use")
+        return error_response(409, str(exc), code="in_use")
     except CorrectionSourceExistsError as exc:
-        return _error(409, str(exc))
+        return error_response(409, str(exc))
     except ValidationError as exc:
-        return _error(422, _describe(exc.errors()))
+        return error_response(422, _describe(exc.errors()))
     logger.info("Updated Correction source: %s", source.name)
     return _to_response(source)
 
@@ -224,9 +189,9 @@ async def delete_correction_source(
     try:
         removed = config_svc.remove_correction_source(name)
     except CorrectionSourceInUseError as exc:
-        return _error(409, str(exc), code="in_use")
+        return error_response(409, str(exc), code="in_use")
     if not removed:
-        return _error(404, f"Correction source '{name}' not found")
+        return error_response(404, f"Correction source '{name}' not found")
     logger.info("Deleted Correction source: %s", name)
     return RelayActionResponse(
         status="ok", message=f"Correction source '{name}' deleted"

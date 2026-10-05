@@ -108,6 +108,28 @@ def _filter_invalid_base_positions(data: dict[str, Any]) -> dict[str, Any]:
     return _drop_invalid_entries(data, "base_positions", BaseStationPosition)
 
 
+def _write_private(path: Path, text: str) -> None:
+    """Write ``path`` readable by its owner only (0600), atomically.
+
+    The config holds passwords (#181). The text goes to a 0600 temp file
+    beside it, which then replaces it, so the file is never readable by
+    others even for a moment, and an existing wider file ends up 0600.
+    """
+    target = Path(os.path.realpath(path))  # a symlinked config stays a symlink
+    tmp = target.with_name(f".{target.name}.tmp")
+    tmp.unlink(missing_ok=True)  # a leftover from a crash
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())  # on disk before it replaces the old one
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, target)
+
+
 class CorrectionSourceExistsError(ValueError):
     """Another Correction source already has that name."""
 
@@ -233,7 +255,7 @@ class ConfigService:
         data = config.model_dump(mode="json", exclude_none=True)
         yaml_text = yaml.dump(data, default_flow_style=False, sort_keys=False)
 
-        self._config_path.write_text(yaml_text, encoding="utf-8")
+        _write_private(self._config_path, yaml_text)
         self._config = config
         logger.info("Saved config to %s", self._config_path)
 
@@ -380,12 +402,26 @@ class ConfigService:
             )
             raise CorrectionSourceInUseError(msg)
 
-    def keep_saved_correction_passwords(self, imported: AppConfig) -> AppConfig:
-        """``imported``, with each blank Correction source password filled in.
+    def keep_saved_passwords(self, imported: AppConfig) -> AppConfig:
+        """``imported``, with each blank password filled in from the saved one.
 
-        An exported config carries no passwords; importing it back keeps the
-        password saved for a source of the same name (blank keeps it).
+        An exported config carries no passwords (Correction sources #192,
+        destinations #181); importing it back keeps the password saved for a
+        source or destination of the same name (blank keeps it).
         """
+        destinations: list[DestinationProfile] = []
+        for dest in imported.destinations:
+            # The import wins; a blank password takes the saved one only for
+            # the same destination (same name and type).
+            current = self.get_destination(dest.name)
+            fill = {}
+            if current is not None and current.type == dest.type:
+                fill = {"password": current.config.get("password", "")}
+            base = dest.model_copy(update={"config": fill})
+            if "password" not in fill:
+                base = dest.model_copy(update={"config": {}})
+            destinations.append(base.with_config(dest.config))
+        imported = imported.model_copy(update={"destinations": destinations})
         saved = {s.name: s.config.password for s in self.get_correction_sources()}
         sources = [
             s

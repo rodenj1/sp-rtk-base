@@ -9,6 +9,35 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## v0.8.1 (2026-10-05)
+
+### Security: destination passwords are write-only
+
+Destination passwords (NTRIP and Sure-Path) no longer leak through the API,
+the Outputs page, the config export or the config file's permissions,
+matching Correction sources in 0.8.0 (#181, #218).
+
+- **API.** `GET /api/destinations` and every other destination response
+  carry `has_password`, never the password. On `PUT`, a missing or blank
+  password keeps the saved one, and `remove_password: true` clears it.
+  A refused request (422) never quotes the body back.
+- **Outputs page.** The edit dialog never shows the saved password: it
+  shows a "(saved)" placeholder, a blank save keeps it, and **Remove
+  saved password** clears it. An NTRIP or Sure-Path output without a
+  password can't run, and its card says so.
+- **Config export / import.** The export blanks destination passwords
+  and says whether one is saved; importing it back keeps the saved
+  password for the same destination (same name and type).
+- **`config.yaml` is written owner-only (0600)**, atomically (a synced
+  temp file renamed over it). A wider existing file is tightened on the
+  next save, and a symlinked config stays a symlink.
+
+### Changed
+
+- API clients that read destination passwords from `GET /api/destinations`
+  or the config export no longer get them: send a password only when
+  setting or changing one.
+
 ## v0.8.0 (2026-10-05)
 
 ### Corrected survey-in: a centimetre-level base from an NTRIP Correction source

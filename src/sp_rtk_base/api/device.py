@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
+from sp_rtk_base_relay.config import DestinationConfig
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.models.api_models import (
@@ -28,6 +29,7 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseInvariantsCheck,
     BaseMode,
+    BluetoothLink,
     ConsoleLink,
     CorrectedSurveyInConfig,
     CurrentBaseConfig,
@@ -742,7 +744,9 @@ async def handoff_to_relay(
     relay: RelayService = Depends(get_relay_service),
     cfg: ConfigService = Depends(get_config_service),
 ) -> DeviceActionResponse:
-    """Disconnect device and start relay using same serial port.
+    """Disconnect the console and start the relay on the link it held.
+
+    Over a serial Console link:
 
     1. Remembers port/baud from the active device connection.
     2. Disconnects the GPS receiver driver.
@@ -750,7 +754,13 @@ async def handoff_to_relay(
     4. Persists the device profile and input config.
     5. Starts the relay engine.
 
-    Returns 409 if the device is not connected or the relay is already running.
+    Over a Bluetooth Console link the console is disconnected (ADR 0002
+    teardown) and the relay starts on the saved Bluetooth Input profile,
+    unchanged: the console took its module from that profile.
+
+    Returns 409 if the device is not connected or the relay is already
+    running, and 422, before disconnecting, if the saved destinations
+    can't run.
     """
     if not svc.is_connected:
         raise HTTPException(status_code=409, detail="Device not connected")
@@ -767,13 +777,19 @@ async def handoff_to_relay(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     status = svc.get_status()
+    vendor = svc.driver.vendor_name if svc.driver else "ublox"
+    if isinstance(status.link, BluetoothLink):
+        return await _handoff_bluetooth(
+            svc, relay, cfg, status.link, vendor, relay_dests
+        )
+
     port = status.port or ""
     baud = status.baud_rate or DEFAULT_BAUD
 
     # 1. Persist device profile
     cfg.save_device_profile(
         DeviceProfile(
-            vendor=svc.driver.vendor_name if svc.driver else "ublox",
+            vendor=vendor,
             port=port,
             baud_rate=baud,
         )
@@ -802,6 +818,54 @@ async def handoff_to_relay(
     return DeviceActionResponse(
         status="ok",
         message=f"Handed off {port} to relay engine",
+    )
+
+
+async def _handoff_bluetooth(
+    svc: DeviceService,
+    relay: RelayService,
+    cfg: ConfigService,
+    link: BluetoothLink,
+    vendor: str,
+    relay_dests: list[DestinationConfig],
+) -> DeviceActionResponse:
+    """Hand a Bluetooth Console link's module back to the relay.
+
+    The Input profile is the console's source of truth for the module, so
+    it is started as saved and never rewritten.
+    """
+    input_profile = cfg.get_input_config()
+    if input_profile is None or input_profile.source != "bluetooth":
+        raise HTTPException(
+            status_code=409,
+            detail="The Input profile is no longer Bluetooth; set it up on the "
+            "Input page before handing off.",
+        )
+    try:
+        relay_input = input_profile.to_relay_config()
+    except (ConfigurationError, ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Remember the kind for the Connect panel, keeping the serial side's
+    # last port and baud for a later cabled connect.
+    remembered = cfg.get_device_profile() or DeviceProfile()
+    cfg.save_device_profile(
+        remembered.model_copy(update={"vendor": vendor, "kind": "bluetooth"})
+    )
+
+    await svc.disconnect()
+
+    try:
+        await relay.start_relay(relay_input, relay_dests, trigger="handoff")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Relay start failed: {exc}"
+        ) from exc
+
+    name = link.device_name or link.mac or "the Bluetooth module"
+    return DeviceActionResponse(
+        status="ok",
+        message=f"Handed off {name} to relay engine",
     )
 
 

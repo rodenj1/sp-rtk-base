@@ -8,6 +8,8 @@ same functions, which is what makes them behave the same.
 
 from __future__ import annotations
 
+import pytest
+
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BluetoothLink,
@@ -117,23 +119,37 @@ class TestBluetoothModuleLine:
         assert line is not None
         assert line.endswith("pairing not checked yet")
 
-    def test_paired_once_a_connect_found_or_made_the_bond(self) -> None:
+    def test_paired_at_the_last_connect_once_one_found_or_made_the_bond(
+        self,
+    ) -> None:
         skipped = _stages((ConnectStageStatus.SKIPPED, "bonded"))
         paired = _stages((ConnectStageStatus.PASSED, None))
 
         assert str(bluetooth_module_line(_bluetooth_profile(), skipped)).endswith(
-            "· Paired"
+            "· paired at the last connect"
         )
         assert str(bluetooth_module_line(_bluetooth_profile(), paired)).endswith(
-            "· Paired"
+            "· paired at the last connect"
         )
 
-    def test_a_refused_pin_is_not_paired(self) -> None:
+    def test_a_refused_pin_is_not_paired_at_the_last_connect(self) -> None:
+        # The PIN is only tried when there is no Bond.
         refused = _stages((ConnectStageStatus.FAILED, "pin_rejected"))
 
         assert str(bluetooth_module_line(_bluetooth_profile(), refused)).endswith(
-            "· not paired"
+            "· not paired at the last connect"
         )
+
+    @pytest.mark.parametrize("code", ["device_not_found", "bluetooth_unavailable"])
+    def test_a_pair_failure_that_says_nothing_of_the_bond_is_unknown(
+        self, code: str
+    ) -> None:
+        failed = _stages((ConnectStageStatus.FAILED, code))
+
+        line = str(bluetooth_module_line(_bluetooth_profile(), failed))
+
+        assert line.endswith("· pairing unknown")
+        assert "not paired" not in line
 
     def test_no_line_without_a_bluetooth_input_profile(self) -> None:
         tcp = InputProfile(source="tcp", config={"host": "h", "port": 1})

@@ -92,7 +92,9 @@ def test_bluetooth_side_of_the_connect_panel(
         "Connected: Bluetooth · RTK_BASE_TST · console port UART2", timeout=15_000
     )
     expect(page.get_by_test_id("console-link-stages")).to_contain_text("Already paired")
-    expect(page.get_by_test_id("console-link-module")).to_contain_text("Paired")
+    expect(page.get_by_test_id("console-link-module")).to_contain_text(
+        "paired at the last connect"
+    )
     # Locked while connected.
     expect(serial_btn).to_be_disabled()
     expect(bluetooth_btn).to_be_disabled()

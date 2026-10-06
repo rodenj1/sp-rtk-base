@@ -70,9 +70,9 @@ def bluetooth_module_line(
 
     ``None`` when the Input profile isn't Bluetooth: the side shows
     :data:`SET_UP_BLUETOOTH_PROMPT` instead. Whether the module is paired
-    can't be read from BlueZ (ADR 0001), so it is what the last connect
-    found: its Pair Stage passed or was skipped (already paired), or
-    failed.
+    can't be read from BlueZ cheaply (ADR 0001: no public ``Paired``
+    accessor), so the line says what the last connect found, and says so:
+    a Bond can be lost since (a Force-repair, an eviction).
     """
     if profile is None or profile.source != "bluetooth":
         return None
@@ -82,12 +82,23 @@ def bluetooth_module_line(
 
 
 def _pairing(stages: list[ConnectStageResult] | None) -> str:
-    pair = next((s.status for s in stages or [] if s.stage is ConnectStage.PAIR), None)
-    if pair in (ConnectStageStatus.PASSED, ConnectStageStatus.SKIPPED):
-        return "Paired"
-    if pair is ConnectStageStatus.FAILED:
-        return "not paired"
-    return "pairing not checked yet"
+    """What the last connect's Pair Stage says about the Bond.
+
+    Passed or skipped: there was one. A refused PIN: there wasn't, since
+    the PIN is only tried without a Bond. Any other failure (the module
+    wasn't found, the adapter couldn't be used) says nothing about it.
+    """
+    pair = next((s for s in stages or [] if s.stage is ConnectStage.PAIR), None)
+    if pair is None or pair.status in (
+        ConnectStageStatus.PENDING,
+        ConnectStageStatus.RUNNING,
+    ):
+        return "pairing not checked yet"
+    if pair.status in (ConnectStageStatus.PASSED, ConnectStageStatus.SKIPPED):
+        return "paired at the last connect"
+    if pair.code == "pin_rejected":
+        return "not paired at the last connect"
+    return "pairing unknown"
 
 
 def stage_rows(stages: list[ConnectStageResult] | None) -> list[StageRow]:

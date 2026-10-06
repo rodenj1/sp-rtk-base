@@ -1331,6 +1331,9 @@ class DeviceService:
         if console is None or console.port is None:
             self._refuse_dropping_ubx_in_anywhere(assertion, pre_assertion)
 
+        if self._link_kind == "bluetooth":
+            self._refuse_console_baud_over_bluetooth(assertion, pre_assertion)
+
         if assertion.tmode_mode != pre_assertion.tmode_mode:
             survey = await asyncio.to_thread(driver.get_survey_in_status)
             if survey.active:
@@ -1519,6 +1522,51 @@ class DeviceService:
             f"port is unknown ({why}) — this would turn it off on "
             f"{', '.join(dropped)}, which could be the link this application "
             "manages the receiver over",
+        )
+
+    def _refuse_console_baud_over_bluetooth(
+        self, assertion: ReceiverAssertion, pre_assertion: ReceiverAssertion
+    ) -> None:
+        """The baud guard over a Bluetooth Console link (rtk_development#47).
+
+        The module can't follow a baud change on the UART it is wired to:
+        the link would stay up carrying garbage, and the Relay's Bluetooth
+        input would stop too. So a change to the Console port's rate is
+        refused. While the Console port is unknown, any UART could be the
+        module's, so every UART is covered.
+        """
+        live = {
+            PortId.UART1: pre_assertion.baud.uart1,
+            PortId.UART2: pre_assertion.baud.uart2,
+        }
+        wanted = {
+            PortId.UART1: assertion.baud.uart1,
+            PortId.UART2: assertion.baud.uart2,
+        }
+        console = self._console_port
+        if console is not None and console.port is not None:
+            guarded = [console.port] if console.port in live else []
+            why = f"{console.port.value} is the Console port, the module's UART"
+        else:
+            guarded = list(live)
+            reason = (
+                console.unknown_reason.value
+                if console is not None and console.unknown_reason is not None
+                else "not identified"
+            )
+            why = (
+                f"the Console port is unknown ({reason}), so any UART could "
+                "be the module's"
+            )
+        changed = [port for port in guarded if wanted[port] != live[port]]
+        if not changed:
+            return
+        rates = ", ".join(f"{port.value} at {live[port]}" for port in changed)
+        raise ApplyConfigRefusedError(
+            "console_baud_over_bluetooth",
+            f"can't change the baud of {rates} over a Bluetooth Console link — "
+            f"{why}, and the module can't follow a new rate. Connect over a "
+            "serial cable to change it",
         )
 
     async def _keep_console_link_after_baud_write(

@@ -74,6 +74,7 @@ from sp_rtk_base.models.device_models import (
     RTCM_MESSAGE_GROUPS,
     CurrentBaseConfig,
     DeviceConnectionState,
+    DeviceStatus,
     DynModel,
     GnssConstellation,
     PortId,
@@ -628,6 +629,54 @@ def bds_b2_control_disabled(constellations: list[GnssConstellation]) -> bool:
     the two are already inconsistent.
     """
     return GnssConstellation.BEIDOU not in constellations
+
+
+@dataclass(frozen=True)
+class ConsoleBaudLock:
+    """The baud fields locked over a Bluetooth Console link, and why."""
+
+    uarts: tuple[Literal["uart1", "uart2"], ...]
+    note: str
+
+
+def console_baud_lock(
+    status: DeviceStatus, live: BaudAssertion
+) -> ConsoleBaudLock | None:
+    """Which UART baud fields to disable, mirroring the Apply guard.
+
+    Over a Bluetooth Console link the module can't follow a baud change
+    on its UART, so Apply refuses one (``console_baud_over_bluetooth``,
+    rtk_development#47). The field of the Console port is locked; while
+    the Console port is unknown, both are. ``None`` over serial or when
+    nothing is locked. The note names the rate the module runs at.
+    """
+    if status.link is None or status.link.kind != "bluetooth":
+        return None
+    rates = {"uart1": live.uart1, "uart2": live.uart2}
+    by_port: dict[PortId, Literal["uart1", "uart2"]] = {
+        PortId.UART1: "uart1",
+        PortId.UART2: "uart2",
+    }
+    if status.console_port is not None:
+        uart = by_port.get(status.console_port)
+        if uart is None:
+            return None
+        return ConsoleBaudLock(
+            uarts=(uart,),
+            note=(
+                f"{uart.upper()} baud is locked at {rates[uart]}: the Bluetooth "
+                "module is on it and can't follow a change. Connect over a "
+                "serial cable to change it."
+            ),
+        )
+    return ConsoleBaudLock(
+        uarts=("uart1", "uart2"),
+        note=(
+            f"Baud is locked (UART1 at {live.uart1}, UART2 at {live.uart2}): "
+            "the Console port is unknown, so either UART could be the "
+            "Bluetooth module's. Connect over a serial cable to change it."
+        ),
+    )
 
 
 def placeholder_assertion() -> ReceiverAssertion:
@@ -2113,6 +2162,8 @@ def gps_config_page() -> None:
                     hz = 1000 / form.meas_period_ms
                     ui.label(f"= {hz:g} Hz").classes("text-caption text-grey-5")
 
+                baud_lock = console_baud_lock(svc.get_status(), live.baud)
+                locked = baud_lock.uarts if baud_lock else ()
                 with ui.column().classes("hw-field-baud gap-0"):
                     ui.label("Baud").classes("text-caption text-grey-5")
                     with ui.row().classes("gap-2"):
@@ -2126,6 +2177,8 @@ def gps_config_page() -> None:
                             .classes("hw-field-baud-uart1")
                             .style("width: 110px")
                         )
+                        if "uart1" in locked:
+                            uart1_select.disable()
                         _mark_mismatch(uart1_select, "baud.uart1", failed_by_path)
                         uart2_select = (
                             ui.select(
@@ -2137,7 +2190,13 @@ def gps_config_page() -> None:
                             .classes("hw-field-baud-uart2")
                             .style("width: 110px")
                         )
+                        if "uart2" in locked:
+                            uart2_select.disable()
                         _mark_mismatch(uart2_select, "baud.uart2", failed_by_path)
+                    if baud_lock is not None:
+                        ui.label(baud_lock.note).classes(
+                            "hw-field-baud-lock-note text-caption text-warning"
+                        ).style("max-width: 240px")
 
                 with ui.column().classes("hw-field-dyn-model gap-0"):
                     ui.label("Dynamics Model").classes("text-caption text-grey-5")

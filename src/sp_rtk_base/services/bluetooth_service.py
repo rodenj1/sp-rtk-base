@@ -21,8 +21,8 @@ mechanics and teardown ordering.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
-import socket as socket_module
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -97,23 +97,22 @@ def _default_manager_factory(adapter: str) -> Any:
 
 
 def _default_socket_factory() -> Any:
-    """Create an ``AF_BLUETOOTH`` RFCOMM socket.
+    """Create an ``AF_BLUETOOTH`` RFCOMM socket with the relay's own helper.
 
-    The address family and protocol constants are imported from the
-    relay's ``bluetooth_input`` rather than re-derived here, so the
-    ``getattr(socket, "AF_BLUETOOTH", 31)`` fallback has exactly one
-    definition and cannot drift away from the relay's.
+    The address family and protocol constants live once, in the relay's
+    ``rfcomm_link``, so they cannot drift away from the relay's.
     """
-    from sp_rtk_base_relay.core.input_sources.bluetooth_input import (
-        AF_BLUETOOTH,
-        BTPROTO_RFCOMM,
-    )
+    return _rfcomm_link().rfcomm_socket()
 
-    return socket_module.socket(
-        AF_BLUETOOTH,  # type: ignore[arg-type]
-        socket_module.SOCK_STREAM,
-        BTPROTO_RFCOMM,  # type: ignore[arg-type]
-    )
+
+def _rfcomm_link() -> Any:
+    """The relay's shared RFCOMM link helper module, imported lazily.
+
+    Lazily, like the other relay imports here, so environments without
+    dbus-fast can still import this module.  Typed ``Any`` because the
+    relay ships no stubs the type checkers resolve.
+    """
+    return importlib.import_module("sp_rtk_base_relay.core.rfcomm_link")
 
 
 class BluetoothVerificationService:
@@ -305,6 +304,7 @@ class BluetoothVerificationService:
 
         self._running = True
         manager: Any = None
+        handed_over = False
         try:
             # The manager is built out here, not inside the Stage walk,
             # so the stale-handle release can reuse it.  Both calls are
@@ -318,6 +318,9 @@ class BluetoothVerificationService:
             # collision this service is otherwise careful to avoid.
             await release_stale_bluetooth_handle(mac_address, manager)
 
+            # From here the Stage walk owns the manager and closes it
+            # last, on every path, as ADR 0002's teardown requires.
+            handed_over = True
             return await asyncio.to_thread(
                 self._run_verification,
                 manager,
@@ -327,16 +330,13 @@ class BluetoothVerificationService:
                 repair_needed,
             )
         finally:
-            # The close lives here rather than alongside the rest of the
-            # teardown so that *no* path can leak the manager — not a
-            # factory that succeeded into a release that threw, not a
-            # cancellation, not an unforeseen error mid-walk.  While our
-            # manager lives it is BlueZ's default agent, and the relay's
-            # next ``RequestPinCode`` would be dispatched to it and
-            # rejected.  Ordering is preserved: the Stage walk's own
-            # teardown has already done Disconnect and the socket by the
-            # time this runs.
-            if manager is not None:
+            # No path may leak the manager.  While it lives it is BlueZ's
+            # default agent, and the relay's next ``RequestPinCode``
+            # would be dispatched to it and rejected.  Once handed to
+            # the Stage walk, the walk closes it (a cancelled
+            # ``to_thread`` still runs the walk's ``finally``); before
+            # that — a release that threw — it is closed here.
+            if manager is not None and not handed_over:
                 try:
                     await asyncio.to_thread(manager.close)
                 except Exception as exc:
@@ -355,7 +355,13 @@ class BluetoothVerificationService:
         adapter: str,
         repair_needed: bool,
     ) -> VerificationResult:
-        """Walk the five Stages, then tear down exactly as the relay does."""
+        """Walk the five Stages, then tear down exactly as the relay does.
+
+        Owns *manager* and closes it last on every path.  The RFCOMM
+        link is opened and torn down by the relay's shared helper, the
+        same one the relay's Bluetooth input uses, so the
+        order-sensitive teardown (ADR 0002) lives in one place.
+        """
         from sp_rtk_base_relay.core.input_sources.bluetooth_input import BluetoothConfig
 
         from sp_rtk_base.models.config_models import DEFAULT_BT_SCAN_TIMEOUT_SECONDS
@@ -373,34 +379,31 @@ class BluetoothVerificationService:
         )
 
         recorded: dict[VerificationStage, StageResult] = {}
-        sock: Any = None
-        channel: int | None = None
+        link: Any = None
 
         try:
-            if repair_needed:
-                reached_connect = self._walk_repair_path(
-                    manager, mac_address, pin, cfg, recorded
-                )
-            else:
-                reached_connect = self._walk_bundled_path(
-                    manager, mac_address, pin, cfg, recorded
-                )
-
-            if reached_connect:
-                channel = int(manager.discover_rfcomm_channel(mac_address))
-                sock = self._open_socket(mac_address, channel, cfg, recorded)
-                if sock is not None:
-                    self._read_first_frame(sock, cfg, recorded)
+            prepared = not repair_needed or self._walk_repair_path(
+                manager, mac_address, pin, cfg, recorded
+            )
+            if prepared:
+                link = self._open_link(manager, mac_address, cfg, recorded)
+                if link is not None:
+                    self._read_first_frame(link.socket, cfg, recorded)
         finally:
-            # Teardown mirrors the relay's own ``disconnect()``:
-            # BlueZ Disconnect, then our socket, then — in ``verify`` —
-            # the manager.  There is deliberately no warm-ACL handoff to
-            # a following Start: leaving BlueZ in a state a clean
-            # shutdown would never produce would forfeit the claim that
-            # Start begins from rehearsed conditions.
-            self._teardown(manager, sock, mac_address)
+            # There is deliberately no warm-ACL handoff to a following
+            # Start: leaving BlueZ in a state a clean shutdown would
+            # never produce would forfeit the claim that Start begins
+            # from rehearsed conditions.
+            if link is not None:
+                # Device1.Disconnect, the socket, then the manager.
+                link.close()
+            else:
+                # No link, so no socket: Disconnect, then the manager.
+                _close_without_link(manager, mac_address)
 
-        return build_result(recorded, rfcomm_channel=channel)
+        return build_result(
+            recorded, rfcomm_channel=link.channel if link is not None else None
+        )
 
     def _walk_repair_path(
         self,
@@ -486,37 +489,54 @@ class BluetoothVerificationService:
             message=text,
         )
 
-    def _walk_bundled_path(
+    def _open_link(
         self,
         manager: Any,
         mac_address: str,
-        pin: str,
         cfg: BluetoothConfig,
         recorded: dict[VerificationStage, StageResult],
-    ) -> bool:
-        """Take the relay's own ``ensure_device_ready``, and infer on failure.
+    ) -> Any:
+        """Open the RFCOMM link through the relay's shared helper.
 
-        ``ensure_device_ready`` is one opaque call spanning discover,
-        pair and trust behind a single ``BluetoothError``, and the relay
-        exposes no seam to drive them separately.  Success therefore
-        needs no attribution at all; failure gets one cheap probe.
+        The helper runs the relay's own ``ensure_device_ready`` and then
+        the ``connect`` Stage.  ``ensure_device_ready`` is one opaque
+        call spanning discover, pair and trust behind a single
+        ``BluetoothError``, and the relay exposes no seam to drive them
+        separately, so success needs no attribution and failure gets one
+        cheap probe.  After a force-repair it fast-paths on the Bond the
+        repair just built.
+
+        The socket *is* the connection, not a prediction of one: the
+        relay never D-Bus-``Connect()``s, because SPP devices reject it.
+
+        Returns:
+            The open ``RfcommLink``, or ``None`` when a Stage failed.
         """
         from sp_rtk_base_relay.core.bluetooth_manager import BluetoothError
 
+        helper = _rfcomm_link()
         try:
-            manager.ensure_device_ready(
-                pin=pin,
-                device_name=None,
-                mac_address=mac_address,
-                scan_timeout=cfg.scan_timeout,
+            link: Any = helper.open_rfcomm_link(
+                manager, cfg, socket_factory=self._socket_factory
             )
         except BluetoothError as exc:
             self._attribute_bundled_failure(manager, mac_address, exc, recorded)
-            return False
+            return None
+        except helper.RfcommConnectError as exc:
+            # The helper has already disconnected and closed the
+            # socket; the manager is still ours to close.
+            _mark_passed(recorded, _PRE_CONNECT_STAGES)
+            recorded[VerificationStage.CONNECT] = StageResult(
+                stage=VerificationStage.CONNECT,
+                status=StageStatus.FAILED,
+                code="socket_refused",
+                message=str(exc.__cause__ or exc),
+            )
+            return None
 
-        # This path pairs and trusts, so a Bond demonstrably exists now
-        # — even if the device had been Stranded before.  Forgetting to
-        # say so would leave the memo believing there is nothing left to
+        # Preparation passed, so a Bond demonstrably exists now — even
+        # if the device had been Stranded before.  Forgetting to say so
+        # would leave the memo believing there is nothing left to
         # destroy, and the *next* unproven PIN would force-repair this
         # live Bond with no dialog: the silent demolition the consent
         # handshake exists to prevent.  It mints no *proof*, though:
@@ -524,7 +544,19 @@ class BluetoothVerificationService:
         # still says nothing about the PIN.
         self._stranded.discard(mac_address)
         _mark_passed(recorded, _PRE_CONNECT_STAGES)
-        return True
+
+        # The channel is reported as a *detail on this Stage* rather
+        # than as its own Stage or a form field: issue #129 dropped the
+        # `channel` Stage because `discover_rfcomm_channel` is a stub
+        # `return 1` that cannot fail, and #131 removed the form field
+        # for the same reason. It is still worth saying which channel
+        # the socket actually used.
+        recorded[VerificationStage.CONNECT] = StageResult(
+            stage=VerificationStage.CONNECT,
+            status=StageStatus.PASSED,
+            message=f"RFCOMM channel {link.channel}",
+        )
+        return link
 
     def _attribute_bundled_failure(
         self,
@@ -571,50 +603,6 @@ class BluetoothVerificationService:
             code="pin_rejected",
             message=text,
         )
-
-    def _open_socket(
-        self,
-        mac_address: str,
-        channel: int,
-        cfg: BluetoothConfig,
-        recorded: dict[VerificationStage, StageResult],
-    ) -> Any:
-        """Open the RFCOMM socket — the ``connect`` Stage.
-
-        The socket *is* the connection, not a prediction of one: the
-        relay never D-Bus-``Connect()``s, because SPP devices reject it,
-        so this is the same act the run performs rather than a cheaper
-        stand-in for it.
-        """
-        sock = self._socket_factory()
-        try:
-            sock.settimeout(cfg.connect_timeout)
-            sock.connect((mac_address, channel))
-        except OSError as exc:
-            recorded[VerificationStage.CONNECT] = StageResult(
-                stage=VerificationStage.CONNECT,
-                status=StageStatus.FAILED,
-                code="socket_refused",
-                message=str(exc),
-            )
-            try:
-                sock.close()
-            except Exception:
-                logger.debug("Ignoring error closing a socket that never opened")
-            return None
-
-        # The channel is reported as a *detail on this Stage* rather
-        # than as its own Stage or a form field: issue #129 dropped the
-        # `channel` Stage because `discover_rfcomm_channel` is a stub
-        # `return 1` that cannot fail, and #131 removed the form field
-        # for the same reason. It is still worth saying which channel
-        # the socket actually used.
-        recorded[VerificationStage.CONNECT] = StageResult(
-            stage=VerificationStage.CONNECT,
-            status=StageStatus.PASSED,
-            message=f"RFCOMM channel {channel}",
-        )
-        return sock
 
     def _read_first_frame(
         self,
@@ -692,33 +680,21 @@ class BluetoothVerificationService:
             ),
         )
 
-    def _teardown(self, manager: Any, sock: Any, mac_address: str) -> None:
-        """BlueZ Disconnect, then the socket.
 
-        The ordering mirrors the relay's ``disconnect()`` so BlueZ owns
-        the teardown of the channel state before we drop our local
-        handle.  The socket-first order is the one abandoned in relay
-        v2.1.2 that produced ``Address already in use`` on the next
-        connect.  Each step is independently wrapped so no single
-        failure short-circuits the rest.
+def _close_without_link(manager: Any, mac_address: str) -> None:
+    """Tear down when no RFCOMM link was opened: Disconnect, then the manager.
 
-        The manager's own ``close()`` is the third step and belongs to
-        :meth:`verify`, which runs it on every path including the ones
-        that never reach here.
-        """
-        if manager is not None:
-            try:
-                manager.disconnect_device(mac_address)
-            except Exception as exc:
-                logger.warning(
-                    "Error disconnecting %s over D-Bus: %s", mac_address, exc
-                )
-
-        if sock is not None:
-            try:
-                sock.close()
-            except Exception as exc:
-                logger.warning("Error closing the RFCOMM socket: %s", exc)
+    The same order as ``RfcommLink.close()`` minus the socket there is
+    none of.  Each step is wrapped so no failure skips the rest.
+    """
+    try:
+        manager.disconnect_device(mac_address)
+    except Exception as exc:
+        logger.warning("Error disconnecting %s over D-Bus: %s", mac_address, exc)
+    try:
+        manager.close()
+    except Exception as exc:
+        logger.warning("Error closing the BluetoothManager: %s", exc)
 
 
 def _contains_rtcm_frame(buffer: bytes, decoder: Any) -> bool:

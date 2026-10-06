@@ -29,7 +29,7 @@ from tests.fixtures.fake_rfcomm import (
     DEVICE_NAME,
     MAC,
     PIN,
-    FakeBluetoothManager,
+    FakeBlueZ,
     FakeRfcommModule,
 )
 from tests.fixtures.simulated_ublox import (
@@ -76,10 +76,10 @@ def module(receiver: SimulatedUblox) -> Iterator[FakeRfcommModule]:
 def service(
     receiver: SimulatedUblox, module: FakeRfcommModule
 ) -> Iterator[DeviceService]:
-    manager = FakeBluetoothManager()
+    bluez = FakeBlueZ()
     opener = partial(
         BluetoothLinkOpener,
-        manager_factory=lambda adapter: manager,
+        manager_factory=bluez.manager,
         socket_factory=module.new_socket,
         read_limit=1.0,
     )

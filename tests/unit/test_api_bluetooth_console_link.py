@@ -42,7 +42,7 @@ from tests.fixtures.fake_rfcomm import (
     DEVICE_NAME,
     MAC,
     PIN,
-    FakeBluetoothManager,
+    FakeBlueZ,
     FakeRfcommModule,
 )
 from tests.fixtures.simulated_ublox import (
@@ -73,8 +73,8 @@ def module(receiver: SimulatedUblox) -> Iterator[FakeRfcommModule]:
 
 
 @pytest.fixture()
-def manager() -> FakeBluetoothManager:
-    return FakeBluetoothManager()
+def bluez() -> FakeBlueZ:
+    return FakeBlueZ()
 
 
 @pytest.fixture()
@@ -91,12 +91,12 @@ def input_profile() -> list[InputProfile | None]:
 @pytest.fixture()
 def service(
     module: FakeRfcommModule,
-    manager: FakeBluetoothManager,
+    bluez: FakeBlueZ,
     input_profile: list[InputProfile | None],
 ) -> Iterator[DeviceService]:
     opener = partial(
         BluetoothLinkOpener,
-        manager_factory=lambda adapter: manager,
+        manager_factory=bluez.manager,
         socket_factory=module.new_socket,
         read_limit=READ_LIMIT_S,
     )
@@ -148,26 +148,26 @@ class TestConnectOverBluetooth:
         assert stages["identify"]["status"] == "passed"
 
     def test_pairs_on_demand_when_there_is_no_bond(
-        self, client: TestClient, manager: FakeBluetoothManager
+        self, client: TestClient, bluez: FakeBlueZ
     ) -> None:
-        manager.bonded.clear()
+        bluez.bonded.clear()
 
         resp = client.post("/api/device/connect", json=BLUETOOTH)
 
         assert resp.status_code == 200, resp.text
         stages = _stages(client.get("/api/device/status").json())
         assert stages["pair"]["status"] == "passed"
-        assert MAC in manager.bonded
+        assert MAC in bluez.bonded
 
 
 class TestAFailedConnectIsRedOnItsStage:
     def test_a_refused_pin_is_red_at_pair(
         self,
         client: TestClient,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
         input_profile: list[InputProfile | None],
     ) -> None:
-        manager.bonded.clear()
+        bluez.bonded.clear()
         input_profile[0] = InputProfile(
             source="bluetooth", config={"mac_address": MAC, "pin": "9999"}
         )
@@ -183,13 +183,13 @@ class TestAFailedConnectIsRedOnItsStage:
         assert "PIN" in stages["pair"]["advice"]
         assert stages["connect"]["status"] == "pending"
         assert stages["identify"]["status"] == "pending"
-        assert manager.closed == 1, "the session's manager was not closed"
+        assert bluez.closed == 1, "the manager was not closed"
 
     def test_a_module_that_does_not_answer_is_red_at_connect(
         self,
         client: TestClient,
         module: FakeRfcommModule,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         module.answers = False
 
@@ -202,13 +202,13 @@ class TestAFailedConnectIsRedOnItsStage:
         assert stages["connect"]["code"] == "socket_refused"
         assert "powered on" in stages["connect"]["advice"]
         assert stages["identify"]["status"] == "pending"
-        assert manager.closed == 1
+        assert bluez.closed == 1
 
     def test_garbage_bytes_are_red_at_identify_and_end_on_the_read_limit(
         self,
         client: TestClient,
         module: FakeRfcommModule,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         module.garbage = True
 
@@ -225,8 +225,7 @@ class TestAFailedConnectIsRedOnItsStage:
         assert stages["identify"]["status"] == "failed"
         assert stages["identify"]["code"] == "no_ubx_answer"
         assert "baud rate" in stages["identify"]["advice"]
-        assert manager.disconnects == [MAC]
-        assert manager.closed == 1
+        assert bluez.log == [("disconnect", MAC), ("close", 0)]
 
     def test_connect_without_a_bluetooth_input_profile_is_refused(
         self, client: TestClient, input_profile: list[InputProfile | None]
@@ -247,7 +246,7 @@ class TestRefusedWhileTheRelayRuns:
         client: TestClient,
         service: DeviceService,
         module: FakeRfcommModule,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         service.set_relay_check(lambda: True)
 
@@ -256,8 +255,8 @@ class TestRefusedWhileTheRelayRuns:
         assert resp.status_code == 409
         assert "relay" in resp.json()["detail"].lower()
         assert module.connects == 0
-        assert manager.disconnects == []
-        assert manager.closed == 0
+        assert bluez.disconnects == []
+        assert bluez.closed == 0
 
 
 class TestALinkClosedMidSessionIsALostDevice:
@@ -265,7 +264,7 @@ class TestALinkClosedMidSessionIsALostDevice:
         self,
         client: TestClient,
         module: FakeRfcommModule,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         client.post("/api/device/connect", json=BLUETOOTH)
 
@@ -276,8 +275,7 @@ class TestALinkClosedMidSessionIsALostDevice:
         assert status["link"] is None
         assert "lost" in status["last_error"].lower()
         # Torn down in ADR 0002's order, once.
-        assert manager.disconnects == [MAC]
-        assert manager.closed == 1
+        assert bluez.log == [("disconnect", MAC), ("close", 0)]
 
     def test_a_poll_after_the_drop_is_refused_as_not_connected(
         self, client: TestClient, module: FakeRfcommModule
@@ -318,7 +316,7 @@ class TestTheConsoleWorksOverTheLink:
         client: TestClient,
         receiver: SimulatedUblox,
         module: FakeRfcommModule,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         client.post("/api/device/connect", json=BLUETOOTH)
         # Only a fresh probe after the reset can see this: the port the
@@ -330,11 +328,31 @@ class TestTheConsoleWorksOverTheLink:
         assert resp.status_code == 200, resp.text
         assert 0x00 in receiver.resets
         assert module.connects == 2, "the link was not closed and reopened"
-        assert manager.closed == 0, "the session's manager closed on a reopen"
+        # The first link was torn down in ADR 0002's order before the
+        # reopen, and the reopen holds the only live manager.
+        assert bluez.log == [("disconnect", MAC), ("close", 0)]
+        assert bluez.live == 1
         status = client.get("/api/device/status").json()
         assert status["state"] == "connected"
         assert status["link"]["kind"] == "bluetooth"
         assert status["console_port"] == "UART1"
+
+    def test_disconnect_after_a_reset_tears_down_the_reopened_link(
+        self, client: TestClient, bluez: FakeBlueZ
+    ) -> None:
+        client.post("/api/device/connect", json=BLUETOOTH)
+        client.post("/api/device/reset")
+
+        resp = client.post("/api/device/disconnect")
+
+        assert resp.status_code == 200, resp.text
+        assert bluez.log == [
+            ("disconnect", MAC),
+            ("close", 0),
+            ("disconnect", MAC),
+            ("close", 1),
+        ]
+        assert bluez.live == 0
 
 
 class TestHandOffOverBluetooth:
@@ -372,7 +390,7 @@ class TestHandOffOverBluetooth:
         handoff_client: TestClient,
         config: ConfigService,
         relay: MagicMock,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         before = config.get_input_config()
         assert before is not None
@@ -385,8 +403,7 @@ class TestHandOffOverBluetooth:
         status = handoff_client.get("/api/device/status").json()
         assert status["state"] == "disconnected"
         # ADR 0002's teardown, once.
-        assert manager.disconnects == [MAC]
-        assert manager.closed == 1
+        assert bluez.log == [("disconnect", MAC), ("close", 0)]
         relay.start_relay.assert_awaited_once()
         relay_input = relay.start_relay.call_args.args[0]
         assert relay_input == before.to_relay_config()
@@ -403,7 +420,7 @@ class TestHandOffOverBluetooth:
         handoff_client: TestClient,
         config: ConfigService,
         relay: MagicMock,
-        manager: FakeBluetoothManager,
+        bluez: FakeBlueZ,
     ) -> None:
         before = config.get_input_config()
         config.save_destination(
@@ -427,6 +444,6 @@ class TestHandOffOverBluetooth:
         status = handoff_client.get("/api/device/status").json()
         assert status["state"] == "connected"
         assert status["link"]["kind"] == "bluetooth"
-        assert manager.closed == 0
+        assert bluez.closed == 0
         relay.start_relay.assert_not_called()
         assert config.get_input_config() == before

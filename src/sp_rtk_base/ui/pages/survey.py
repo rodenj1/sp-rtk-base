@@ -85,6 +85,12 @@ def survey_page() -> None:
             config_svc.get_settings().survey_signal_display,
         )
 
+        # PROTOTYPE (rtk_development#35), throw away: see prototype_console_link.
+        from sp_rtk_base.ui import prototype_console_link as _proto
+
+        if _proto.enabled():
+            _proto.render(ui.context.client.request.query_params.get("variant", "A"))
+
         # ================================================================
         # Card 1: Connection & Live Position
         # ================================================================

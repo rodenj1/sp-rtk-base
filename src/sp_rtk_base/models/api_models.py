@@ -9,10 +9,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from sp_rtk_base.models.config_models import SignalDisplay
-from sp_rtk_base.models.device_models import DEFAULT_BAUD
+from sp_rtk_base.models.device_models import DEFAULT_BAUD, ConsoleLink, SerialLink
 from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
 from sp_rtk_base.models.net_provision_models import ActiveLink
 from sp_rtk_base.models.profile_models import Profile
@@ -223,13 +223,42 @@ class EventListResponse(BaseModel):
 
 
 class DeviceConnectRequest(BaseModel):
-    """Request body for connecting to a GPS device."""
+    """Request body for connecting to a GPS device.
+
+    Names the Console link as a ``link`` object, or, as before
+    rtk_development#40, as the flat ``port``/``baud_rate`` of a serial
+    link. One or the other: a request giving both is refused rather than
+    guessed at.
+    """
 
     vendor: str = Field(default="ublox", description="Driver vendor key")
-    port: str = Field(description="Serial port path (e.g. /dev/ttyUSB0)")
+    link: ConsoleLink | None = Field(
+        default=None, description="The Console link to connect over"
+    )
+    port: str | None = Field(
+        default=None,
+        description="Serial port path (e.g. /dev/ttyUSB0); the serial "
+        "shorthand for a link object",
+    )
     baud_rate: int = Field(
         default=DEFAULT_BAUD, ge=4800, le=921600, description="Serial baud rate"
     )
+
+    @model_validator(mode="after")
+    def _link_or_port(self) -> DeviceConnectRequest:
+        if self.link is None and self.port is None:
+            raise ValueError("Give the Console link as 'link', or a serial 'port'")
+        if self.link is not None and self.port is not None:
+            raise ValueError("Give either 'link' or the flat 'port', not both")
+        return self
+
+    @property
+    def console_link(self) -> ConsoleLink:
+        """The Console link asked for, the flat fields read as a serial link."""
+        if self.link is not None:
+            return self.link
+        assert self.port is not None  # the validator guarantees one of them
+        return SerialLink(port=self.port, baud_rate=self.baud_rate)
 
 
 class DetectBaudRequest(BaseModel):

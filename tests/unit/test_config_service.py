@@ -575,3 +575,36 @@ class TestProvenPinInvalidationOnSave:
             )
         )
         assert svc.get_input_config().proven_pin == "0000"  # type: ignore[union-attr]
+
+
+class TestDeviceProfileKind:
+    """The saved device profile remembers the Console link's kind (#40)."""
+
+    def test_the_kind_round_trips(self, config_path: Path) -> None:
+        from sp_rtk_base.models.config_models import DeviceProfile
+
+        ConfigService(config_path=config_path).save_device_profile(
+            DeviceProfile(kind="serial", port="/dev/ttyUSB1", baud_rate=115200)
+        )
+
+        saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert saved["device"]["kind"] == "serial"
+        profile = ConfigService(config_path=config_path).get_device_profile()
+        assert profile is not None
+        assert profile.kind == "serial"
+        assert (profile.port, profile.baud_rate) == ("/dev/ttyUSB1", 115200)
+
+    def test_a_profile_saved_before_kinds_loads_as_serial(
+        self, config_path: Path
+    ) -> None:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            "device:\n  vendor: ublox\n  port: /dev/ttyUSB1\n  baud_rate: 57600\n",
+            encoding="utf-8",
+        )
+
+        profile = ConfigService(config_path=config_path).get_device_profile()
+
+        assert profile is not None
+        assert profile.kind == "serial"
+        assert profile.port == "/dev/ttyUSB1"

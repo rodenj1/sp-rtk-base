@@ -19,6 +19,8 @@ from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     DEFAULT_BAUD,
     BaseInvariantsCheck,
+    ConsoleLink,
+    ConsoleLinkKind,
     ConsolePortReading,
     ConsolePortUnknownReason,
     CorrectionInputCounters,
@@ -38,6 +40,7 @@ from sp_rtk_base.models.device_models import (
     ReceiverScalarConfig,
     RtcmOutputPort,
     RtcmPortConfig,
+    SerialLink,
     SurveyInConfig,
     SurveyInProgress,
     SurveyPosition,
@@ -218,6 +221,9 @@ class DeviceService:
     def __init__(self) -> None:
         self._driver: GpsReceiverDriver | None = None
         self._state = DeviceConnectionState.DISCONNECTED
+        # The Console link in use: its kind, and for a serial link the host
+        # port and the rate it is open at (which a baud reopen changes).
+        self._link_kind: ConsoleLinkKind | None = None
         self._port: str | None = None
         # The console port (ADR 0003): identified once per connect, kept
         # through baud reopens and hardware resets, cleared on disconnect.
@@ -317,12 +323,15 @@ class DeviceService:
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
-        """Connect to a GPS receiver on the given serial port.
+    async def connect(
+        self, link: ConsoleLink | str, baud_rate: int = DEFAULT_BAUD
+    ) -> DeviceInfo:
+        """Connect to a GPS receiver over a Console link.
 
         Args:
-            port: Serial port path (e.g. ``/dev/ttyACM0``).
-            baud_rate: Serial baud rate.
+            link: The Console link, or a bare serial port path (e.g.
+                ``/dev/ttyACM0``) as shorthand for a serial link.
+            baud_rate: Serial baud rate, with the bare-port shorthand only.
 
         Returns:
             Device identity information.
@@ -357,14 +366,21 @@ class DeviceService:
             )
             raise RuntimeError(self._last_error)
 
+        if isinstance(link, str):
+            link = SerialLink(port=link, baud_rate=baud_rate)
+        port = link.port
+
         self._state = DeviceConnectionState.CONNECTING
         self._last_error = None
 
         try:
-            info = await asyncio.to_thread(self._driver.connect, port, baud_rate)
+            info = await asyncio.to_thread(
+                self._driver.connect, link.port, link.baud_rate
+            )
             self._state = DeviceConnectionState.CONNECTED
-            self._port = port
-            self._baud_rate = baud_rate
+            self._link_kind = link.kind
+            self._port = link.port
+            self._baud_rate = link.baud_rate
             self._info = info
             self._connected_at = datetime.now(tz=timezone.utc)
             self._steps_warned_last_apply = set()
@@ -545,6 +561,7 @@ class DeviceService:
                 logger.exception("Error during disconnect")
 
         self._state = DeviceConnectionState.DISCONNECTED
+        self._link_kind = None
         self._port = None
         self._baud_rate = None
         self._info = None
@@ -1564,6 +1581,16 @@ class DeviceService:
         scalars = await asyncio.to_thread(driver.get_receiver_scalars)
         return scalars.meas_period_ms
 
+    def _current_link(self) -> ConsoleLink | None:
+        """The Console link in use, as the status reports it."""
+        if (
+            self._link_kind == "serial"
+            and self._port is not None
+            and self._baud_rate is not None
+        ):
+            return SerialLink(port=self._port, baud_rate=self._baud_rate)
+        return None
+
     def get_status(self) -> DeviceStatus:
         """Return a full device status snapshot.
 
@@ -1574,6 +1601,7 @@ class DeviceService:
             state=self._state,
             port=self._port,
             baud_rate=self._baud_rate,
+            link=self._current_link(),
             info=self._info,
             capabilities=sorted(self.capabilities),
             survey_in=None,

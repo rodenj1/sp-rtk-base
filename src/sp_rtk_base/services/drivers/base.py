@@ -42,6 +42,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.signal_quality_models import SignalSnapshot
+from sp_rtk_base.services.drivers.console_link import LinkOpener
 
 # ---------------------------------------------------------------------------
 # Detection constants (issue #142)
@@ -156,6 +157,23 @@ class GpsReceiverDriver(abc.ABC):
             ConnectionError: If the connection fails.
             TimeoutError: If the device does not respond.
         """
+
+    def connect_via(self, opener: LinkOpener) -> DeviceInfo:
+        """Open the Console link *opener* opens, and identify the device.
+
+        The general form of :meth:`connect`, for any kind of Console link
+        (rtk_development#40). A driver that reopens its link (after a baud
+        change or a hardware reset) keeps *opener* and reopens through it.
+        This default serves a driver that only knows serial links, by
+        handing the link's port and rate to :meth:`connect`; a second kind
+        of link (rtk_development#42) must refuse here rather than reach it.
+
+        Raises:
+            ConnectionError: If the connection fails.
+            TimeoutError: If the device does not respond.
+        """
+        link = opener.link
+        return self.connect(link.port, link.baud_rate)
 
     @abc.abstractmethod
     def disconnect(self) -> None:

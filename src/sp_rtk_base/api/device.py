@@ -91,10 +91,12 @@ async def connect_device(
 ) -> DeviceActionResponse:
     """Connect to a GPS receiver.
 
-    Loads the driver for the specified vendor, then connects on the
-    given serial port.  Returns 409 if already connected or relay
+    Loads the driver for the specified vendor, then connects over the
+    given Console link (a ``link`` object, or the flat serial
+    ``port``/``baud_rate``).  Returns 409 if already connected or relay
     is running.
     """
+    link = request.console_link
     try:
         driver = create_driver(request.vendor)
     except ValueError as exc:
@@ -106,7 +108,7 @@ async def connect_device(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     try:
-        info = await svc.connect(request.port, request.baud_rate)
+        info = await svc.connect(link)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ConnectionError, TimeoutError) as exc:
@@ -114,7 +116,7 @@ async def connect_device(
 
     return DeviceActionResponse(
         status="ok",
-        message=f"Connected to {info.vendor} {info.model} on {request.port}",
+        message=f"Connected to {info.vendor} {info.model} on {link.port}",
     )
 
 

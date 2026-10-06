@@ -70,6 +70,33 @@ DEFAULT_BAUD: int = 57600
 
 
 # ---------------------------------------------------------------------------
+# Console link (rtk_development#40)
+# ---------------------------------------------------------------------------
+
+#: The kinds of Console link (see ``CONTEXT.md``). Serial only for now;
+#: Bluetooth joins it as a second member (rtk_development#42).
+ConsoleLinkKind = Literal["serial"]
+
+
+class SerialLink(BaseModel):
+    """A Serial Console link: a host serial device at one baud rate.
+
+    Covers a receiver's own USB port seen as a serial device too.
+    """
+
+    kind: Literal["serial"] = "serial"
+    port: str = Field(description="Host serial device path (e.g. /dev/ttyUSB0)")
+    baud_rate: int = Field(
+        default=DEFAULT_BAUD, ge=4800, le=921600, description="Serial baud rate"
+    )
+
+
+#: A Console link of any kind, told apart by ``kind``. Becomes a
+#: discriminated union when the Bluetooth kind joins (rtk_development#42).
+ConsoleLink = SerialLink
+
+
+# ---------------------------------------------------------------------------
 # Serial port discovery
 # ---------------------------------------------------------------------------
 
@@ -894,6 +921,11 @@ class DeviceStatus(BaseModel):
     state: DeviceConnectionState = DeviceConnectionState.DISCONNECTED
     port: str | None = Field(default=None, description="Connected serial port path")
     baud_rate: int | None = Field(default=None, description="Serial baud rate")
+    link: ConsoleLink | None = Field(
+        default=None,
+        description="The Console link in use (when connected); the flat "
+        "port/baud_rate stay filled for a serial link",
+    )
     info: DeviceInfo | None = Field(
         default=None, description="Device identity (when connected)"
     )

@@ -264,8 +264,10 @@ class TestForceRepairTriggerPredicate:
         await service.verify(
             mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
         )
+        # The repair builds a fresh Bond with this PIN before anything
+        # can fast-path on the old one.
         assert "force_repair" in mgr.calls
-        assert "ensure_device_ready" not in mgr.calls
+        assert "ensure_device_ready" not in mgr.calls[: mgr.calls.index("force_repair")]
 
     @pytest.mark.asyncio
     async def test_a_successful_repair_mints_proof(self) -> None:
@@ -640,6 +642,35 @@ class TestConnectStage:
         assert skt.timeouts[0] == defaults.connect_timeout
         assert skt.timeouts[1] == defaults.read_timeout
 
+    @pytest.mark.asyncio
+    async def test_a_busy_channel_straight_after_a_close_is_retried(self) -> None:
+        """A reopen right after a close can return EBUSY on the bench.
+
+        The shared RFCOMM helper retries it briefly, so a Verification
+        run moments after a previous one still reaches Green.
+        """
+        import errno
+
+        class BusySocket(FakeSocket):
+            def connect(self, address: tuple[str, int]) -> None:
+                raise OSError(errno.EBUSY, "Device or resource busy")
+
+        sockets: list[FakeSocket] = [BusySocket(), FakeSocket([_rtcm_frame()])]
+        mgr = FakeManager()
+        service = BluetoothVerificationService(
+            relay_service=FakeRelayService(),  # type: ignore[arg-type]
+            config_service=FakeConfigService(),  # type: ignore[arg-type]
+            manager_factory=lambda adapter: mgr,
+            socket_factory=lambda: sockets.pop(0),
+            data_window_seconds=0.01,
+        )
+
+        result = await service.verify(
+            mac_address="AA:BB:CC:DD:EE:FF", pin="1234", confirm_repair=True
+        )
+
+        assert result.verdict == "green"
+
 
 class TestTeardown:
     """Teardown mirrors the relay's own `disconnect()` exactly."""
@@ -686,7 +717,9 @@ class TestTeardown:
         """An unexpected exception must not leak BlueZ's default agent."""
 
         class ExplodingManager(FakeManager):
-            def discover_rfcomm_channel(self, mac_address: str) -> int:
+            def ensure_device_ready(
+                self, pin: str, device_name: str | None = None, **kwargs: Any
+            ) -> tuple[str, int]:
                 raise RuntimeError("something entirely unforeseen")
 
         mgr = ExplodingManager()
@@ -836,7 +869,9 @@ class TestVerificationsAreSerialized:
         """A wedged Verification must not block the machine forever."""
 
         class ExplodingManager(FakeManager):
-            def discover_rfcomm_channel(self, mac_address: str) -> int:
+            def ensure_device_ready(
+                self, pin: str, device_name: str | None = None, **kwargs: Any
+            ) -> tuple[str, int]:
                 raise RuntimeError("boom")
 
         service, _, _ = build_service(manager=ExplodingManager())

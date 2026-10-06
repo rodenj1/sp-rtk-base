@@ -33,6 +33,7 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
+    ConsoleLink,
     ConsolePortReading,
     ConsolePortUnknownReason,
     CorrectionInputCounters,
@@ -55,6 +56,7 @@ from sp_rtk_base.models.device_models import (
     RtcmPortConfig,
     RtcmRowId,
     RtcmUse,
+    SerialLink,
     SurveyInConfig,
     SurveyInProgress,
     SurveyPosition,
@@ -66,6 +68,7 @@ from sp_rtk_base.services.drivers.base import (
     BAUD_MISMATCH_HINT,
     GpsReceiverDriver,
 )
+from sp_rtk_base.services.drivers.console_link import LinkOpener, SerialLinkOpener
 from sp_rtk_base.services.drivers.ublox_console_port import (
     RTCM3_PROTOCOL_ID,
     PortCounters,
@@ -284,6 +287,11 @@ class _TxGuardedSerial:
         return getattr(self._ser, name)
 
 
+def _describe(link: ConsoleLink) -> str:
+    """A Console link as the logs name it."""
+    return f"{link.port} @ {link.baud_rate}"
+
+
 def _tx_backlog(ser: Any) -> float | None:
     """Bytes the host still has queued to send (pyserial ``out_waiting``).
 
@@ -354,11 +362,10 @@ class UbloxDriver(GpsReceiverDriver):
         self._rtcm_use: dict[int, RtcmUse] = {}
         self._correction_age_bucket: int | None = None
         self._cancel_event = threading.Event()
-        # Last-known port/baud — captured on connect so
-        # ``reset_and_reconnect()`` can reopen the same port after
-        # the hardware reset re-enumerates the USB.
-        self._port: str | None = None
-        self._baud_rate: int | None = None
+        # The Console link's opener, kept from connect to disconnect so
+        # ``reset_and_reconnect()`` and ``reconnect_at_baud()`` reopen
+        # through it (rtk_development#40).
+        self._opener: LinkOpener | None = None
         # Advisories queued by ``_write_and_verify_locked`` for a flash
         # divergence (issue #103) — drained by ``drain_warnings``.
         self._warnings: list[str] = []
@@ -493,28 +500,26 @@ class UbloxDriver(GpsReceiverDriver):
         return CandidateVerdict.SILENT, None
 
     def connect(self, port: str, baud_rate: int = DEFAULT_BAUD) -> DeviceInfo:
+        return self.connect_via(
+            SerialLinkOpener(SerialLink(port=port, baud_rate=baud_rate))
+        )
+
+    def connect_via(self, opener: LinkOpener) -> DeviceInfo:
         if self._serial is not None and self._serial.is_open:
             raise ConnectionError("Already connected — disconnect first")
 
         self._cancel_event.clear()
+        link = opener.link
         try:
-            self._serial = self._guard_writes(
-                serial.Serial(
-                    port=port,
-                    baudrate=baud_rate,
-                    timeout=_READ_TIMEOUT,
-                    exclusive=True,  # TIOCEXCL — kernel prevents other opens
-                )
-            )
-            # Advisory lock — gives a clear error if another process sneaks in
-            try:
-                fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (BlockingIOError, OSError) as lock_err:
-                self._cleanup()
-                raise ConnectionError(
-                    f"Serial port {port} is locked by another process"
-                ) from lock_err
+            self._serial = self._guard_writes(opener.open(timeout=_READ_TIMEOUT))
+        except ConnectionError:
+            self._cleanup()
+            raise
+        except Exception as exc:
+            self._cleanup()
+            raise ConnectionError(f"Connection failed: {exc}") from exc
 
+        try:
             self._stream = _DeadlineStream(self._serial)
             self._reader = self._watch_reader(
                 UBXReader(
@@ -527,21 +532,16 @@ class UbloxDriver(GpsReceiverDriver):
             # Read device identity via MON-VER
             info = self._poll_mon_ver()
             self._device_info = info
-            # Remember for reset_and_reconnect().
-            self._port = port
-            self._baud_rate = baud_rate
+            # Reopened through by reset_and_reconnect() and reconnect_at_baud().
+            self._opener = opener
             logger.info(
-                "Connected to u-blox %s (FW %s) on %s @ %d",
+                "Connected to u-blox %s (FW %s) over %s",
                 info.model,
                 info.firmware_version,
-                port,
-                baud_rate,
+                _describe(link),
             )
             return info
 
-        except serial.SerialException as exc:
-            self._cleanup()
-            raise ConnectionError(f"Failed to open {port}: {exc}") from exc
         except Exception as exc:
             self._cleanup()
             raise ConnectionError(f"Connection failed: {exc}") from exc
@@ -549,6 +549,9 @@ class UbloxDriver(GpsReceiverDriver):
     def disconnect(self) -> None:
         self._cleanup()
         self._device_info = None
+        opener, self._opener = self._opener, None
+        if opener is not None:
+            opener.close()
         logger.info("u-blox disconnected")
 
     def reset_and_reconnect(self) -> DeviceInfo:
@@ -574,7 +577,7 @@ class UbloxDriver(GpsReceiverDriver):
           3. Close the now-stale serial handle.
           4. Sleep ``_HARDWARE_RESET_SETTLE_S`` for the chip and
              host's USB stack to settle.
-          5. Reopen the serial port on the same path/baud and
+          5. Reopen the same Console link through its opener and
              redo the MON-VER handshake.
 
         Returns:
@@ -582,17 +585,15 @@ class UbloxDriver(GpsReceiverDriver):
 
         Raises:
             RuntimeError: If the driver was never connected (no
-                saved port/baud).
+                link to reopen).
             ConnectionError: If the receiver fails to come back
                 within ``CONNECT_TIMEOUT`` after the reset.
         """
-        if self._port is None or self._baud_rate is None:
+        if self._opener is None:
             raise RuntimeError(
-                "Cannot reset — driver was never connected "
-                "(no saved port/baud to reopen)."
+                "Cannot reset — driver was never connected (no link to reopen)."
             )
-        port = self._port
-        baud_rate = self._baud_rate
+        opener = self._opener
 
         with self._lock:
             # 1. Nothing is written before the reset (issue #221): the
@@ -620,12 +621,10 @@ class UbloxDriver(GpsReceiverDriver):
         # instead of blocking for the full settle window.
         time.sleep(self._HARDWARE_RESET_SETTLE_S)
 
-        # 5. Reopen on the same port/baud and redo MON-VER.
-        info = self.connect(port, baud_rate)
+        # 5. Reopen the same link and redo MON-VER.
+        info = self.connect_via(opener)
         logger.info(
-            "Hardware reset + reconnect complete on %s @ %d",
-            port,
-            baud_rate,
+            "Hardware reset + reconnect complete over %s", _describe(opener.link)
         )
         return info
 
@@ -1862,7 +1861,7 @@ class UbloxDriver(GpsReceiverDriver):
         )
 
     def reconnect_at_baud(self, baud_rate: int) -> DeviceInfo:
-        """Reopen the serial port at ``baud_rate`` without resetting the receiver.
+        """Reopen the Console link at ``baud_rate`` without resetting the receiver.
 
         Unlike ``reset_and_reconnect``, this doesn't touch the chip.
         A baud write's ACK goes out over the wire at the *old* baud,
@@ -1876,15 +1875,15 @@ class UbloxDriver(GpsReceiverDriver):
             RuntimeError: If the driver was never connected (no saved
                 port to reopen).
         """
-        if self._port is None:
+        if self._opener is None:
             raise RuntimeError(
                 "Cannot reopen at a new baud — driver was never connected "
-                "(no saved port to reopen)."
+                "(no link to reopen)."
             )
-        port = self._port
+        opener = self._opener.at_baud(baud_rate)
         with self._lock:
             self._cleanup()
-        return self.connect(port, baud_rate)
+        return self.connect_via(opener)
 
     def save_to_flash(self) -> None:
         """Save the whole RAM config to Flash, and only Flash (issue #221).

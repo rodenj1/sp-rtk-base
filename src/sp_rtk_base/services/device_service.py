@@ -158,6 +158,13 @@ class ApplyConfigLinkLostError(Exception):
 _BASE_INVARIANTS_PROFILE_NAME = "ublox-f9p-base-standard"
 
 
+def _why_unknown(reading: ConsolePortReading | None) -> str:
+    """Why the console port is unknown, as messages put it in brackets."""
+    if reading is not None and reading.unknown_reason is not None:
+        return reading.unknown_reason.value
+    return "not identified"
+
+
 def build_receiver_assertion(
     rtcm: RtcmPortConfig,
     ports: PortProtocolConfig,
@@ -581,12 +588,7 @@ class DeviceService:
         if reading is not None and reading.port is not None:
             console = f"console port {reading.port.value}"
         else:
-            reason = (
-                reading.unknown_reason.value
-                if reading and reading.unknown_reason
-                else "unknown"
-            )
-            console = f"console port unknown ({reason})"
+            console = f"console port unknown ({_why_unknown(reading)})"
         return f"{info.vendor} {info.model}; {console}"
 
     async def detect_baud(
@@ -1565,12 +1567,7 @@ class DeviceService:
         )
         if not dropped:
             return
-        why = (
-            self._console_port.unknown_reason.value
-            if self._console_port is not None
-            and self._console_port.unknown_reason is not None
-            else "not identified"
-        )
+        why = _why_unknown(self._console_port)
         raise ApplyConfigRefusedError(
             "ubx_in_liveness",
             f"UBX input must stay enabled on every port while the console "
@@ -1604,11 +1601,7 @@ class DeviceService:
             why = f"{console.port.value} is the Console port, the module's UART"
         else:
             guarded = list(live)
-            reason = (
-                console.unknown_reason.value
-                if console is not None and console.unknown_reason is not None
-                else "not identified"
-            )
+            reason = _why_unknown(console)
             why = (
                 f"the Console port is unknown ({reason}), so any UART could "
                 "be the module's"

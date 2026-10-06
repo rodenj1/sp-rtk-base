@@ -20,6 +20,7 @@ the panel can enable them. What the panel says is decided in
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable
 from typing import TypeVar
 
@@ -49,6 +50,8 @@ from sp_rtk_base.ui.console_link_status import (
     kind_locked,
     stage_rows,
 )
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -202,7 +205,8 @@ class ConsoleLinkPanel:
                 )
             )
         except Exception:
-            pass  # Non-critical
+            # Non-critical: the panel just won't reopen on these next time.
+            logger.warning("Couldn't save the Connect panel's choices", exc_info=True)
 
     # ------------------------------------------------------------------
     # Rendering

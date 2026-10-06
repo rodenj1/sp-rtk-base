@@ -124,6 +124,14 @@ metrics_service: MetricsService = MetricsService()
 device_service: DeviceService = DeviceService(
     input_profile=lambda: config_service.get_input_config()
 )
+if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
+    # The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
+    from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
+
+    device_service = DeviceService(
+        input_profile=lambda: config_service.get_input_config(),
+        bluetooth_opener=FakeBluetoothLinkOpener,
+    )
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)

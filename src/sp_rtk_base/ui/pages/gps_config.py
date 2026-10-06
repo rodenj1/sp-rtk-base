@@ -67,7 +67,6 @@ from typing import Literal
 from nicegui import ui
 from pydantic import ValidationError
 
-from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     BAUD_RATES,
@@ -122,13 +121,14 @@ from sp_rtk_base.services.device_service import (
     ApplyConfigRefusedError,
     DetectionRefusedError,
 )
-from sp_rtk_base.services.drivers import create_driver, list_drivers
+from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.profile_store import (
     ProfileConflictError,
     ProfileStore,
     ProfileStoreError,
 )
+from sp_rtk_base.ui.components.console_link_panel import ConsoleLinkPanel
 from sp_rtk_base.ui.detection_status import (
     describe_connect_failure,
     describe_detection,
@@ -887,40 +887,14 @@ def gps_config_page() -> None:
             ui.label("Connection").classes("text-h6 text-white")
             ui.separator()
 
-            # State elements
-            status_row = ui.row().classes("items-center gap-2 q-mt-sm")
+            # Status line, Serial cable / Bluetooth toggle, link fields
+            link_panel = ConsoleLinkPanel(svc, config_svc)
             error_label = ui.label("").classes("text-negative q-mt-xs")
             error_label.set_visibility(False)
-
-            # Port and baud selectors
-            with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
-                port_select = ui.select(
-                    options=[],
-                    label="Serial Port",
-                    with_input=True,
-                ).classes("col-grow")
-
-                baud_select = ui.select(
-                    options={r: str(r) for r in BAUD_RATES},
-                    label="Baud Rate",
-                    value=DEFAULT_BAUD,
-                ).classes("w-40")
-
-                detect_btn = (
-                    ui.button("Detect", icon="search")
-                    .props("outline color=info")
-                    .classes("self-center sp-detect-baud")
-                    .tooltip(
-                        "Try each baud rate on the selected port until the "
-                        "receiver answers"
-                    )
-                )
-
-                driver_select = ui.select(
-                    options=list_drivers(),
-                    label="Driver",
-                    value="ublox",
-                ).classes("w-40")
+            port_select = link_panel.port_select
+            baud_select = link_panel.baud_select
+            detect_btn = link_panel.detect_btn
+            driver_select = link_panel.driver_select
 
             # Action buttons
             with ui.row().classes("gap-2 q-mt-sm items-center"):
@@ -941,6 +915,8 @@ def gps_config_page() -> None:
                     .props("flat round color=white")
                     .tooltip("Refresh serial port list")
                 )
+            link_panel.bind_buttons(connect_btn, cancel_btn, refresh_btn)
+            link_panel.add_stage_list()
 
             # Detection result. A persistent label rather than a toast:
             # the useful outcomes are two sentences of diagnosis, and a
@@ -1450,29 +1426,6 @@ def gps_config_page() -> None:
             except Exception as exc:
                 logger.warning("Failed to list ports: %s", exc)
 
-        def _load_saved_device_settings() -> None:
-            """Load saved port/baud/driver from config and pre-fill."""
-            profile = config_svc.get_device_profile()
-            if profile and profile.port:
-                port_select.value = profile.port
-            if profile and profile.baud_rate:
-                baud_select.value = profile.baud_rate
-            if profile and profile.vendor:
-                driver_select.value = profile.vendor
-
-        def _save_device_settings() -> None:
-            """Persist current port/baud/driver to config."""
-            try:
-                config_svc.save_device_profile(
-                    DeviceProfile(
-                        port=str(port_select.value or ""),
-                        baud_rate=int(baud_select.value or DEFAULT_BAUD),
-                        vendor=str(driver_select.value or "ublox"),
-                    )
-                )
-            except Exception:
-                pass  # Non-critical
-
         def _render_picker() -> None:
             """Render the profile picker dropdown from the current device identity.
 
@@ -1853,21 +1806,8 @@ def gps_config_page() -> None:
             connected = state == DeviceConnectionState.CONNECTED
             caps = svc.capabilities
 
-            # Status indicator
-            status_row.clear()
-            with status_row:
-                if state == DeviceConnectionState.CONNECTED:
-                    ui.icon("check_circle").classes("text-positive text-h6")
-                    ui.label("Connected").classes("text-positive")
-                elif state == DeviceConnectionState.CONNECTING:
-                    ui.spinner(size="sm")
-                    ui.label("Connecting...").classes("text-warning")
-                elif state == DeviceConnectionState.ERROR:
-                    ui.icon("error").classes("text-negative text-h6")
-                    ui.label("Error").classes("text-negative")
-                else:
-                    ui.icon("link_off").classes("text-grey text-h6")
-                    ui.label("Disconnected").classes("text-grey")
+            # Status line, toggle lock, link fields, Stage list
+            link_panel.update()
 
             # Buttons
             connecting = state == DeviceConnectionState.CONNECTING
@@ -2710,12 +2650,8 @@ def gps_config_page() -> None:
 
         async def _connect() -> None:
             """Connect to the selected device."""
-            port = port_select.value
-            baud = int(baud_select.value or DEFAULT_BAUD)
-            vendor = str(driver_select.value or "ublox")
-
-            if not port:
-                ui.notify("Select a serial port", type="warning")
+            link = link_panel.link()
+            if link is None:
                 return
 
             try:
@@ -2723,17 +2659,17 @@ def gps_config_page() -> None:
                     await svc.disconnect()
                     _clear_session_state()
 
-                driver = create_driver(vendor)
+                driver = create_driver(link_panel.vendor)
                 svc.set_driver(driver)
 
                 svc.set_connecting()
                 _update_ui_state()
 
-                await svc.connect(str(port), baud)
+                await link_panel.watch_connect(svc.connect(link))
                 ui.notify("Connected!", type="positive")
 
-                # Save port/baud for next time
-                _save_device_settings()
+                # Remember the kind, port/baud and driver for next time
+                link_panel.save()
 
             except Exception as exc:
                 # Decided in ``detection_status`` — a covered module —
@@ -2857,7 +2793,7 @@ def gps_config_page() -> None:
 
         # ---- Initial load ----
         _refresh_ports()
-        _load_saved_device_settings()
+        link_panel.load_saved()
         _update_ui_state()
 
         # Deferred auto-load for already-connected scenario

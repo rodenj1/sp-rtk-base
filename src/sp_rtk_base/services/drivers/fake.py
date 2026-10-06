@@ -56,7 +56,10 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseMode,
+    BluetoothLink,
     CandidateVerdict,
+    ConnectStage,
+    ConnectStageStatus,
     ConsolePortReading,
     ConsolePortUnknownReason,
     CorrectionInputCounters,
@@ -84,6 +87,8 @@ from sp_rtk_base.models.device_models import (
 from sp_rtk_base.models.hardware_identity import HARDWARE_UNKNOWN, HardwareConfidence
 from sp_rtk_base.models.signal_quality_models import Band, Signal, SignalSnapshot
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
+from sp_rtk_base.services.drivers.console_link import LinkOpener, LinkStream
 from sp_rtk_base.services.geodesy import llh_to_ecef
 
 # ---------------------------------------------------------------------------
@@ -199,6 +204,11 @@ FAKE_CONSOLE_UNKNOWN_PORT: str = "FAKE-CONSOLE-UNKNOWN"
 # capability), so a plain Survey-in is averaged by the station itself.
 FAKE_NO_SURVEY_IN_PORT: str = "FAKE-NO-SVIN"
 
+# What the fake reports as its ``port`` while connected over a Bluetooth
+# Console link (rtk_development#43). The bench base's module is wired to
+# UART2, so that is the Console port the fake identifies over Bluetooth.
+FAKE_BLUETOOTH_PORT: str = "FAKE-BLUETOOTH"
+
 # The simulated rover's survey positions (``get_survey_position``): a 3D
 # fix without corrections, scattered around the fake's location.
 _SURVEY_POSITION_NOISE_M: float = 0.5  # standard deviation per ECEF axis
@@ -214,6 +224,45 @@ _ROVER_FLOAT_NOISE_M: float = 0.15
 _ROVER_FLOAT_ACCURACY_M: float = 0.3
 _ROVER_FIXED_NOISE_M: float = 0.003
 _ROVER_FIXED_ACCURACY_M: float = 0.012
+
+
+class _NullStream:
+    """The byte stream a fake Bluetooth link opens: nothing goes over it."""
+
+    def __init__(self) -> None:
+        self.is_open = True
+
+    def read(self, size: int = 1) -> bytes:
+        return b""
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    def reset_input_buffer(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+class FakeBluetoothLinkOpener(BluetoothLinkOpener):
+    """A Bluetooth Console link opener with no BlueZ behind it.
+
+    Wired in place of the real opener when the fake GPS is on, so the
+    Connect panel's Bluetooth side can be driven end to end (e2e). It
+    reaches the Input profile's module as if it were already Bonded:
+    Pair is skipped and Connect passes.
+    """
+
+    def open(self, timeout: float) -> LinkStream:
+        self._report(
+            ConnectStage.PAIR, ConnectStageStatus.SKIPPED, "bonded", "Already paired"
+        )
+        self._report(ConnectStage.CONNECT, ConnectStageStatus.RUNNING)
+        self._report(
+            ConnectStage.CONNECT, ConnectStageStatus.PASSED, message="RFCOMM channel 1"
+        )
+        return _NullStream()
 
 
 def _count_frames(data: bytes) -> int:
@@ -245,6 +294,9 @@ class FakeGpsDriver(GpsReceiverDriver):
         self._connected: bool = False
         self._port: str | None = None
         self._baud_rate: int | None = None
+        # A Bluetooth Console link's opener and stream, held while connected.
+        self._opener: LinkOpener | None = None
+        self._link_stream: LinkStream | None = None
 
         # Flash-divergence sentinel (issue #101) — set by ``connect()``
         # when the port is ``FAKE_FLASH_DIVERGENCE_PORT``. Queued
@@ -470,6 +522,19 @@ class FakeGpsDriver(GpsReceiverDriver):
             self._has_receiver_survey_in = False
         return self._device_info
 
+    def connect_via(self, opener: LinkOpener) -> DeviceInfo:
+        """Connect over any Console link; a Bluetooth one is opened, then kept.
+
+        A serial link goes to :meth:`connect` as before. A Bluetooth link
+        is opened through *opener* (which reports its Stages) and closed
+        on :meth:`disconnect`, so the session runs as it does on a base.
+        """
+        if not isinstance(opener.link, BluetoothLink):
+            return super().connect_via(opener)
+        self._link_stream = opener.open(timeout=1.0)
+        self._opener = opener
+        return self.connect(FAKE_BLUETOOTH_PORT)
+
     def identify_console_port(self) -> ConsolePortReading:
         """UART1, like the reference rig this fake mirrors (issue #155).
 
@@ -478,6 +543,8 @@ class FakeGpsDriver(GpsReceiverDriver):
         """
         if self._port == FAKE_CONSOLE_UNKNOWN_PORT:
             return ConsolePortReading.unknown(ConsolePortUnknownReason.NO_ANSWER)
+        if self._port == FAKE_BLUETOOTH_PORT:
+            return ConsolePortReading.known(PortId.UART2)
         return ConsolePortReading.known(PortId.UART1)
 
     def try_baud_candidate(
@@ -496,6 +563,10 @@ class FakeGpsDriver(GpsReceiverDriver):
 
     def disconnect(self) -> None:
         """Mark the driver disconnected.  Safe when already disconnected."""
+        opener, self._opener = self._opener, None
+        if opener is not None:
+            opener.close()
+        self._link_stream = None
         self._connected = False
         self._port = None
         self._baud_rate = None

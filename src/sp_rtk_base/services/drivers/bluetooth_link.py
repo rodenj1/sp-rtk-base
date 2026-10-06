@@ -9,11 +9,13 @@ Two pieces (rtk_development#42):
   through the relay's shared RFCOMM helper (``open_rfcomm_link``) and
   reports the connect's Stages (Pair, Connect) as they pass.
 
-Every open builds a fresh ``BluetoothManager`` and hands it to the helper,
-and closing the stream closes that whole link with ``RfcommLink.close()``:
-ADR 0002's teardown order lives only in the relay. A reopen (a hardware
-reset) closes the old link, manager included, before it opens a new one,
-as the Relay's own Bluetooth input does on a reconnect.
+One ``BluetoothManager`` lives for the whole connected session: created at
+the first open, reused by every reopen (a hardware reset), closed last at
+the end. Each open hands the helper that manager behind a wrapper whose
+``close()`` does nothing, so closing a stream runs ``RfcommLink.close()``
+(``Device1.Disconnect``, then the socket) and leaves the session's manager
+alive; closing the opener then closes the real manager. ADR 0002's
+teardown order lives only in the relay.
 """
 
 from __future__ import annotations
@@ -279,9 +281,9 @@ class RfcommStream:
 class BluetoothLinkOpener(LinkOpener):
     """Opens the Bluetooth Input profile's module as the Console link.
 
-    Every open pairs on demand and connects through the relay's
-    ``open_rfcomm_link``, with a ``BluetoothManager`` of its own that the
-    open link owns from then on.
+    The ``BluetoothManager`` is created on the first open and kept until
+    :meth:`close`, at the end of the connected session. Every open pairs on
+    demand and connects through the relay's ``open_rfcomm_link``.
     """
 
     def __init__(
@@ -298,6 +300,8 @@ class BluetoothLinkOpener(LinkOpener):
         self._socket_factory = socket_factory
         self._read_limit = read_limit
         self.on_stage = on_stage
+        self._manager: Any = None
+        self._bonds_created: list[bool] = []
         self._stream: RfcommStream | None = None
 
     @property
@@ -317,13 +321,21 @@ class BluetoothLinkOpener(LinkOpener):
             open_rfcomm_link,
         )
 
-        self.close()
+        self._close_stream()
         self._report(ConnectStage.PAIR, ConnectStageStatus.RUNNING)
-        try:
-            manager = self._manager_factory(self._config.adapter_name)
-        except Exception as exc:
-            self._fail(ConnectStage.PAIR, ConnectStageCode.BLUETOOTH_UNAVAILABLE, exc)
-        bonds_created = _record_bond_creation(manager)
+        if self._manager is None:
+            try:
+                self._manager = self._manager_factory(self._config.adapter_name)
+            except Exception as exc:
+                self._fail(
+                    ConnectStage.PAIR, ConnectStageCode.BLUETOOTH_UNAVAILABLE, exc
+                )
+            self._bonds_created = _record_bond_creation(self._manager)
+        manager = self._manager
+        bonds_created = self._bonds_created
+        bonds_created.clear()
+        # Duck-typed as the manager: the helper sees a BluetoothManager.
+        session: Any = _SessionManager(manager)
 
         def _socket() -> Any:
             # Called by the helper right before it connects: preparing the
@@ -341,17 +353,11 @@ class BluetoothLinkOpener(LinkOpener):
             return self._socket_factory()
 
         try:
-            link = open_rfcomm_link(manager, self._config, socket_factory=_socket)
+            link = open_rfcomm_link(session, self._config, socket_factory=_socket)
         except BluetoothError as exc:
-            code = self._pair_failure_code(manager)
-            _close_unlinked(manager)
-            self._fail(ConnectStage.PAIR, code, exc)
+            self._fail(ConnectStage.PAIR, self._pair_failure_code(manager), exc)
         except (RfcommConnectError, OSError) as exc:
-            _close_unlinked(manager)
             self._fail(ConnectStage.CONNECT, ConnectStageCode.SOCKET_REFUSED, exc)
-        except BaseException:
-            _close_unlinked(manager)
-            raise
 
         self._report(
             ConnectStage.CONNECT,
@@ -367,7 +373,17 @@ class BluetoothLinkOpener(LinkOpener):
         return self._stream
 
     def close(self) -> None:
-        """Close the open link, if any: the helper's whole teardown."""
+        """End the session: the open link (if any), then the manager, last."""
+        self._close_stream()
+        manager, self._manager = self._manager, None
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception as exc:
+                logger.warning("Error closing the BluetoothManager: %s", exc)
+
+    def _close_stream(self) -> None:
+        """Close the open link, if any: ``RfcommLink.close()``, manager kept."""
         stream, self._stream = self._stream, None
         if stream is not None:
             stream.close()
@@ -407,17 +423,24 @@ class BluetoothLinkOpener(LinkOpener):
         ) from exc
 
 
-def _close_unlinked(manager: Any) -> None:
-    """Close a manager whose link never opened: nothing else to tear down.
+class _SessionManager:
+    """The session's ``BluetoothManager``, as one link sees it.
 
-    The helper leaves BlueZ as a clean close would when the connect fails,
-    and hands the manager back to its creator, as the Relay's own
-    Bluetooth input closes it.
+    ``open_rfcomm_link`` hands its manager to the ``RfcommLink``, whose
+    ``close()`` closes it last. The console's manager outlives each link
+    (a reset reopens through it), so the link gets this wrapper: everything
+    passes through except ``close()``, which does nothing. The opener
+    closes the real manager at the end of the session.
     """
-    try:
-        manager.close()
-    except Exception as exc:
-        logger.warning("Error closing the BluetoothManager: %s", exc)
+
+    def __init__(self, manager: Any) -> None:
+        self._manager = manager
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._manager, name)
+
+    def close(self) -> None:
+        """The session's manager stays open; the opener closes it."""
 
 
 def _record_bond_creation(manager: Any) -> list[bool]:
@@ -428,7 +451,7 @@ def _record_bond_creation(manager: Any) -> list[bool]:
     calls it through the instance. That return value is the only way to
     know the Pair Stage was skipped (there is no public ``Paired``
     accessor, ADR 0001), so the instance's ``pair_device`` is wrapped,
-    once, to record it.
+    once, to record it. The caller clears the list before each open.
     """
     created: list[bool] = []
     original: Callable[[str, str], object] = manager.pair_device

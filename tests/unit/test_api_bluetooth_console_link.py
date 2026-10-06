@@ -389,9 +389,10 @@ class TestTheConsoleWorksOverTheLink:
         assert resp.status_code == 200, resp.text
         assert 0x00 in receiver.resets
         assert module.connects == 2, "the link was not closed and reopened"
-        # The first link was torn down in ADR 0002's order before the
-        # reopen, and the reopen holds the only live manager.
-        assert bluez.log == [("disconnect", MAC), ("close", 0)]
+        # The first link was released before the reopen, and the reopen
+        # went through the session's one manager, still open.
+        assert bluez.log == [("disconnect", MAC)]
+        assert len(bluez.managers) == 1
         assert bluez.live == 1
         status = client.get("/api/device/status").json()
         assert status["state"] == "connected"
@@ -447,12 +448,13 @@ class TestTheConsoleWorksOverTheLink:
         resp = client.post("/api/device/disconnect")
 
         assert resp.status_code == 200, resp.text
+        # One manager for the whole session, closed last.
         assert bluez.log == [
             ("disconnect", MAC),
-            ("close", 0),
             ("disconnect", MAC),
-            ("close", 1),
+            ("close", 0),
         ]
+        assert len(bluez.managers) == 1
         assert bluez.live == 0
 
 

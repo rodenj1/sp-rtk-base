@@ -162,6 +162,15 @@ _Avoid_: baud-agnostic, ignores baud, fake serial port
 
 ### The console's own link
 
+**Console link**:
+This application's own connection to the receiver, the one every console
+page (Survey, Fixed base, GPS config, Signal) talks through. Its kind is
+**Serial** (a host serial device, including a receiver's own USB port seen
+as one) or **Bluetooth** (a Bluetooth console link to a module wired to one
+of the receiver's UARTs). Distinct from the Input profile, which is where
+the Relay reads RTCM from, even when both reach the same Bluetooth device.
+_Avoid_: connection, transport, device connection
+
 **Console port**:
 The receiver port this application's own serial link is attached to — as
 the receiver sees it (UART1, UART2, USB), never the host device path we

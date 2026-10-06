@@ -478,7 +478,7 @@ class DeviceService:
         self._last_error = None
         self._connect_stages = [ConnectStageResult(stage=s) for s in ConnectStage]
         opener = self._bluetooth_opener(config, on_stage=self._record_stage)
-        described = f"Bluetooth {config.device_name or config.mac_address}"
+        described = opener.link.described
 
         try:
             try:

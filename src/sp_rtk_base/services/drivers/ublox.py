@@ -33,7 +33,6 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseMode,
     CandidateVerdict,
-    ConsoleLink,
     ConsolePortReading,
     ConsolePortUnknownReason,
     CorrectionInputCounters,
@@ -287,13 +286,6 @@ class _TxGuardedSerial:
         return getattr(self._ser, name)
 
 
-def _describe(link: ConsoleLink) -> str:
-    """A Console link as the logs name it."""
-    if isinstance(link, SerialLink):
-        return f"{link.port} @ {link.baud_rate}"
-    return f"Bluetooth {link.device_name or link.mac}"
-
-
 def _tx_backlog(ser: Any) -> float | None:
     """Bytes the host still has queued to send (pyserial ``out_waiting``).
 
@@ -543,7 +535,7 @@ class UbloxDriver(GpsReceiverDriver):
                 "Connected to u-blox %s (FW %s) over %s",
                 info.model,
                 info.firmware_version,
-                _describe(link),
+                link.described,
             )
             return info
 
@@ -629,7 +621,7 @@ class UbloxDriver(GpsReceiverDriver):
         # 5. Reopen the same link and redo MON-VER.
         info = self.connect_via(opener)
         logger.info(
-            "Hardware reset + reconnect complete over %s", _describe(opener.link)
+            "Hardware reset + reconnect complete over %s", opener.link.described
         )
         return info
 

@@ -89,6 +89,11 @@ class SerialLink(BaseModel):
         default=DEFAULT_BAUD, ge=4800, le=921600, description="Serial baud rate"
     )
 
+    @property
+    def described(self) -> str:
+        """The link as messages and logs name it."""
+        return f"{self.port} @ {self.baud_rate}"
+
 
 class BluetoothLink(BaseModel):
     """A Bluetooth Console link, to a module wired to a receiver UART.
@@ -106,6 +111,16 @@ class BluetoothLink(BaseModel):
     mac: str | None = Field(
         default=None, description="The module's MAC address, from the Input profile"
     )
+
+    @property
+    def module_name(self) -> str:
+        """The module as the operator knows it: its name, else its MAC."""
+        return self.device_name or self.mac or "unnamed module"
+
+    @property
+    def described(self) -> str:
+        """The link as messages and logs name it."""
+        return f"Bluetooth {self.module_name}"
 
 
 #: A Console link of any kind, told apart by ``kind``.

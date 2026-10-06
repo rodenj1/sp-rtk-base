@@ -55,9 +55,8 @@ def connected_line(status: DeviceStatus) -> str:
     """The status line for a connected Console link."""
     link = status.link
     if isinstance(link, BluetoothLink):
-        name = link.device_name or link.mac or "module"
         port = status.console_port.value if status.console_port else "unknown"
-        return f"Connected: Bluetooth · {name} · console port {port}"
+        return f"Connected: Bluetooth · {link.module_name} · console port {port}"
     if isinstance(link, SerialLink):
         return f"Connected: {link.port} @ {link.baud_rate}"
     return "Connected"

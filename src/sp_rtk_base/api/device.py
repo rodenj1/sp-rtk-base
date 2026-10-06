@@ -30,7 +30,6 @@ from sp_rtk_base.models.device_models import (
     BaseInvariantsCheck,
     BaseMode,
     BluetoothLink,
-    ConsoleLink,
     CorrectedSurveyInConfig,
     CurrentBaseConfig,
     DetectionResult,
@@ -41,7 +40,6 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortProtocolConfig,
     RtcmPortConfig,
-    SerialLink,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -118,17 +116,12 @@ async def connect_device(
     except (ConnectionError, TimeoutError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # The link reached: a Bluetooth one names the Input profile's module.
+    reached = svc.get_status().link or link
     return DeviceActionResponse(
         status="ok",
-        message=f"Connected to {info.vendor} {info.model} {_over(link)}",
+        message=f"Connected to {info.vendor} {info.model} over {reached.described}",
     )
-
-
-def _over(link: ConsoleLink) -> str:
-    """Where a connect reached, as its response message says it."""
-    if isinstance(link, SerialLink):
-        return f"on {link.port}"
-    return "over Bluetooth"
 
 
 @router.post("/detect-baud", response_model=DetectionResult)
@@ -862,10 +855,9 @@ async def _handoff_bluetooth(
             status_code=500, detail=f"Relay start failed: {exc}"
         ) from exc
 
-    name = link.device_name or link.mac or "the Bluetooth module"
     return DeviceActionResponse(
         status="ok",
-        message=f"Handed off {name} to relay engine",
+        message=f"Handed off {link.module_name} to relay engine",
     )
 
 

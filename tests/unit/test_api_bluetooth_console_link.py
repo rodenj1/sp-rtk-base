@@ -131,6 +131,7 @@ class TestConnectOverBluetooth:
         resp = client.post("/api/device/connect", json=BLUETOOTH)
 
         assert resp.status_code == 200, resp.text
+        assert f"over Bluetooth {DEVICE_NAME}" in resp.json()["message"]
         status = client.get("/api/device/status").json()
         assert status["state"] == "connected"
         assert status["link"] == {

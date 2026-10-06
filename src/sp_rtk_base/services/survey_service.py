@@ -273,6 +273,7 @@ class SurveyService:
                 await feed.start()
             except Exception:
                 await self._restore_correction_input()
+                await self._fall_back_to_saved_base()
                 raise
             finally:
                 self._starting_source = None
@@ -312,6 +313,15 @@ class SurveyService:
         """Whether a Corrected survey-in is running."""
         return self.correction_source_in_use() is not None
 
+    async def survey_running(self) -> bool:
+        """Whether a Survey-in of either kind is running on the receiver.
+
+        Raises:
+            RuntimeError: If the receiver must be read and isn't connected.
+        """
+        current = await self.progress()
+        return current.active or current.outcome == "running"
+
     async def progress(self) -> SurveyInProgress:
         """The current survey's progress.
 
@@ -329,7 +339,7 @@ class SurveyService:
         return self._receiver_progress(raw)
 
     async def cancel(self) -> None:
-        """Stop the current survey and leave the receiver in rover mode.
+        """Stop the current survey; the receiver returns to its saved base.
 
         Raises:
             RuntimeError: If the device isn't connected or the relay runs.
@@ -345,7 +355,7 @@ class SurveyService:
                 if self._progress.outcome != "running":
                     return  # finished: never undo a committed fixed base
                 self._finish("cancelled")
-                await self._device.disable_base_mode()
+                await self._device.restore_saved_base_mode()
                 return
             await self._device.cancel_survey_in()
             if self._progress is not None and self._progress.outcome == "running":
@@ -366,6 +376,7 @@ class SurveyService:
             if self._progress is not None and self._progress.outcome == "running":
                 self._finish("aborted", "device_disconnected")
                 logger.warning("Survey-in aborted: the receiver was disconnected")
+                await self._fall_back_to_saved_base()
 
     # ------------------------------------------------------------------
     # Receiver survey-in
@@ -521,6 +532,9 @@ class SurveyService:
             # restores the receiver's input (already done before a commit).
             # Shielded: a second cancel mustn't cut the restore short.
             await asyncio.shield(self._stop_corrections())
+            # An abort leaves nothing behind: back to the saved base.
+            if self._progress is not None and self._progress.outcome == "aborted":
+                await asyncio.shield(self._fall_back_to_saved_base())
 
     def _is_observation(
         self, position: SurveyPosition, limits: _Limits, held_s: float
@@ -659,11 +673,11 @@ class SurveyService:
         )
 
     async def _commit(self, averaging: _Averaging) -> None:
-        """Make the mean the fixed base and save it, then report completion.
+        """Make the mean the fixed base (RAM and Flash), then report completion.
 
         A Corrected survey-in first stops its Relay instance and restores the
         receiver's input settings. If they can't be restored it commits
-        nothing: saving to flash would make the temporary input permanent.
+        nothing: the receiver is left in a state nobody chose to keep.
         """
         if not await self._stop_corrections():
             self._finish("aborted", "input_not_restored")
@@ -680,8 +694,7 @@ class SurveyService:
                 altitude_m=alt,
                 accuracy_mm=max(1, round(averaging.accuracy_m() * 1000.0)),
             )
-        )
-        await self._device.save_to_flash()
+        )  # writes Flash itself; nothing more to save (issue #221)
         self._finish("completed")
         logger.info("Survey-in completed: fixed base %.9f, %.9f, %.4f m", lat, lon, alt)
 
@@ -732,6 +745,13 @@ class SurveyService:
                 update={"source_connected": False}
             )
         return restored
+
+    async def _fall_back_to_saved_base(self) -> None:
+        """End an unfinished survey on the saved base (issue #221)."""
+        try:
+            await self._device.restore_saved_base_mode()
+        except Exception:
+            logger.exception("Could not return the receiver to its saved base")
 
     async def _restore_correction_input(self) -> bool:
         try:

@@ -285,6 +285,10 @@ class FakeGpsDriver(GpsReceiverDriver):
             accuracy_mm=0,
         )
 
+        # What the fake keeps "in flash": the last committed fixed base,
+        # which a survey that never commits falls back to (issue #221).
+        self._saved_base_config: CurrentBaseConfig = self._base_config
+
         # Survey-in clock.  Starts None — survey is not running.
         # Populated by ``configure_survey_in()``.
         self._survey_started_at: float | None = None
@@ -538,6 +542,13 @@ class FakeGpsDriver(GpsReceiverDriver):
             altitude_m=config.altitude_m,
             accuracy_mm=config.accuracy_mm,
         )
+        self._saved_base_config = self._base_config
+
+    def restore_saved_base_mode(self) -> None:
+        """Back to the last committed fixed base, or disabled if none."""
+        self._ensure_connected()
+        self._survey_started_at = None
+        self._base_config = self._saved_base_config
 
     def disable_base_mode(self) -> None:
         """Disable base mode (e.g. cancel an in-progress survey-in).

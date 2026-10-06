@@ -27,6 +27,7 @@ from sp_rtk_base.models.config_models import (
 from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseInvariantsCheck,
+    BaseMode,
     CorrectedSurveyInConfig,
     CurrentBaseConfig,
     DetectionResult,
@@ -369,9 +370,22 @@ async def apply_base_invariants(
 @router.post("/save", response_model=DeviceActionResponse)
 async def save_to_flash(
     svc: DeviceService = Depends(get_device_service),
+    survey: SurveyService = Depends(get_survey_service),
 ) -> DeviceActionResponse:
-    """Save the current device configuration to flash memory."""
+    """Save the receiver's whole RAM configuration to flash.
+
+    Refused (409) while a Survey-in runs, or has finished but not been
+    promoted: RAM then holds the survey's temporary base mode, and
+    saving it would make an uncommitted survey permanent (issue #221).
+    """
     try:
+        in_survey_mode = (await svc.get_base_config()).mode is BaseMode.SURVEY_IN
+        if in_survey_mode or await survey.survey_running():
+            raise HTTPException(
+                status_code=409,
+                detail="A Survey-in is running: finish or cancel it before "
+                "saving to flash, or the unfinished survey would be saved too",
+            )
         await svc.save_to_flash()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -823,8 +837,7 @@ async def promote_survey_in(
         accuracy_mm=max(1, int(status.mean_accuracy_mm)),
     )
     try:
-        await svc.configure_fixed_base(fixed_cfg)
-        await svc.save_to_flash()
+        await svc.configure_fixed_base(fixed_cfg)  # persists itself (#221)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -900,8 +913,7 @@ async def restore_base_position(
         accuracy_mm=max(1, int(position.accuracy_mm)),
     )
     try:
-        await svc.configure_fixed_base(fixed_cfg)
-        await svc.save_to_flash()
+        await svc.configure_fixed_base(fixed_cfg)  # persists itself (#221)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

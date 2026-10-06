@@ -184,6 +184,15 @@ class GpsReceiverDriver(abc.ABC):
         """
         return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
 
+    def repair_saved_config(self) -> None:
+        """Undo damage an earlier version left in the receiver's saved config.
+
+        Called once per Connect (issue #221). Concrete by default: a
+        driver with nothing to repair does nothing. Must never raise —
+        Connect never fails because a repair could not be made.
+        """
+        return
+
     # ------------------------------------------------------------------
     # Detection — the baud-rate sweep (issue #142)
     # ------------------------------------------------------------------
@@ -365,6 +374,19 @@ class GpsReceiverDriver(abc.ABC):
 
         Used to abort an in-progress survey-in or to clear a fixed-base
         configuration.  Equivalent to ``CFG_TMODE_MODE=0`` on u-blox.
+
+        Raises:
+            ConnectionError: If not connected.
+            RuntimeError: If configuration fails.
+        """
+
+    @abc.abstractmethod
+    def restore_saved_base_mode(self) -> None:
+        """Put the receiver back on its saved base configuration.
+
+        What a reset would bring back (a fixed base, or base mode off),
+        without the reset. How a survey that never commits ends: nothing
+        from it persists (issue #221).
 
         Raises:
             ConnectionError: If not connected.

@@ -22,6 +22,7 @@ from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.device_models import (
     BaseMode,
     DeviceConnectionState,
+    FixedBaseConfig,
     SurveyInProgress,
     SurveyPosition,
 )
@@ -154,7 +155,8 @@ class TestApplicationAveraging:
         assert base.mode is BaseMode.FIXED
         assert math.isclose(base.latitude, lat, abs_tol=1e-9)
         assert base.accuracy_mm == 500
-        assert fake.calls[-2:] == ["configure_fixed_base", "save_to_flash"]
+        assert fake.calls[-1] == "configure_fixed_base"
+        assert "save_to_flash" not in fake.calls  # it persists itself (#221)
 
     def test_a_fix_drop_pauses_the_survey_without_losing_observations(
         self, client: TestClient, fake: RecordingFake
@@ -323,6 +325,74 @@ def receiver_client(
         yield test_client
 
 
+class TestAnUnfinishedSurveyFallsBackToTheSavedBase:
+    """Nothing persists from a survey that never commits (issue #221)."""
+
+    SAVED = FixedBaseConfig(
+        latitude=32.7328957, longitude=-117.2362787, altitude_m=29.09, accuracy_mm=17
+    )
+
+    def test_cancel_returns_to_the_saved_fixed_base(
+        self, client: TestClient, fake: RecordingFake
+    ) -> None:
+        fake.configure_fixed_base(self.SAVED)
+        client.post(
+            START, json={"min_duration_seconds": 600, "accuracy_limit_mm": 1000}
+        )
+        deadline = time.monotonic() + 5.0
+        while client.get(SURVEY).json()["observations"] < 5:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+        assert client.post(CANCEL).status_code == 200
+
+        base = fake.get_base_config()
+        assert base.mode is BaseMode.FIXED
+        assert base.latitude == pytest.approx(32.7328957)
+
+    def test_an_abort_returns_to_the_saved_fixed_base(
+        self, client: TestClient, fake: RecordingFake
+    ) -> None:
+        fake.configure_fixed_base(self.SAVED)
+        x, y, z = TRUE_ECEF
+        fake.script_survey_positions(
+            _fix(x + (2.0 if i % 2 else -2.0), y, z) for i in range(3700)
+        )
+
+        client.post(START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 1000})
+        _wait_for_outcome(client, "aborted")
+
+        base = fake.get_base_config()
+        assert base.mode is BaseMode.FIXED
+        assert base.latitude == pytest.approx(32.7328957)
+
+
+class TestSaveRefusedDuringASurvey:
+    """A whole-RAM save mid-survey would make the survey permanent (#221)."""
+
+    def test_save_to_flash_is_refused_while_a_survey_runs(
+        self, client: TestClient, fake: RecordingFake
+    ) -> None:
+        client.post(
+            START, json={"min_duration_seconds": 600, "accuracy_limit_mm": 1000}
+        )
+
+        resp = client.post("/api/device/save")
+
+        assert resp.status_code == 409
+        assert "survey" in resp.json()["detail"].lower()
+        assert "save_to_flash" not in fake.calls
+        client.post(CANCEL)
+
+    def test_save_to_flash_works_when_no_survey_runs(
+        self, client: TestClient, fake: RecordingFake
+    ) -> None:
+        resp = client.post("/api/device/save")
+
+        assert resp.status_code == 200
+        assert "save_to_flash" in fake.calls
+
+
 class TestReceiverSurveyIn:
     def test_elapsed_time_counts_from_the_receivers_counter_at_the_start(
         self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
@@ -376,7 +446,7 @@ class TestReceiverSurveyIn:
         # the receiver path keeps its page-driven promote: nothing committed here
         assert "configure_fixed_base" not in receiver_fake.calls
 
-    def test_cancel_disables_the_receivers_survey_in(
+    def test_cancel_ends_the_receivers_survey_in(
         self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
     ) -> None:
         receiver_fake.statuses = [SurveyInProgress(active=True, duration_seconds=0)]
@@ -387,7 +457,48 @@ class TestReceiverSurveyIn:
         assert receiver_client.post(CANCEL).status_code == 200
 
         assert receiver_client.get(SURVEY).json()["outcome"] == "cancelled"
-        assert "disable_base_mode" in receiver_fake.calls
+        # Nothing saved: back to base mode off.
+        assert receiver_fake.get_base_config().mode is BaseMode.DISABLED
+
+    def test_cancel_returns_the_receiver_to_its_saved_fixed_base(
+        self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
+    ) -> None:
+        receiver_fake.configure_fixed_base(
+            FixedBaseConfig(
+                latitude=32.7328957,
+                longitude=-117.2362787,
+                altitude_m=29.09,
+                accuracy_mm=17,
+            )
+        )
+        receiver_fake.statuses = [SurveyInProgress(active=True, duration_seconds=0)]
+        receiver_client.post(
+            START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 50000}
+        )
+
+        assert receiver_client.post(CANCEL).status_code == 200
+
+        base = receiver_fake.get_base_config()
+        assert base.mode is BaseMode.FIXED
+        assert base.latitude == pytest.approx(32.7328957)
+
+    def test_save_is_refused_after_a_survey_completes_until_it_is_promoted(
+        self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
+    ) -> None:
+        receiver_fake.statuses = [
+            SurveyInProgress(active=True, duration_seconds=0),
+            SurveyInProgress(active=False, valid=True, duration_seconds=61),
+        ]
+        receiver_client.post(
+            START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 50000}
+        )
+        assert receiver_client.get(SURVEY).json()["outcome"] == "completed"
+
+        resp = receiver_client.post("/api/device/save")
+
+        # RAM still holds the survey's base mode until it is promoted.
+        assert resp.status_code == 409
+        assert "save_to_flash" not in receiver_fake.calls
 
 
 class TestSurveyBelongsToItsReceiver:

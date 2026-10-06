@@ -284,7 +284,7 @@ class TestCompletion:
         assert rover.written
         assert b"".join(FRAMES * 50).startswith(rover.written)
 
-    def test_the_engine_stops_and_input_is_restored_before_the_flash_save(
+    def test_the_engine_stops_and_input_is_restored_before_the_commit(
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
     ) -> None:
         caster.scripts.append(Script(reply=ICY, body=FRAMES * 50))
@@ -292,11 +292,8 @@ class TestCompletion:
         _start(client)
         _wait_for_outcome(client, "completed")
 
-        assert rover.calls[-3:] == [
-            "end_correction_input",
-            "configure_fixed_base",
-            "save_to_flash",
-        ]
+        # The commit persists itself: no whole-RAM save after it (#221).
+        assert rover.calls[-2:] == ["end_correction_input", "configure_fixed_base"]
         assert rover.hub_alive_at_commit is False
 
     def test_only_rtk_fixed_epochs_count_as_observations(

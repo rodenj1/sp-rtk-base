@@ -26,6 +26,7 @@ from sp_rtk_base.services.device_service import (
     DetectionRefusedError,
     DeviceService,
 )
+from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
 
 # ---------------------------------------------------------------------------
@@ -822,8 +823,7 @@ class TestHandoff:
             port="/dev/ttyUSB0",
             baud_rate=115200,
         )
-        mock_device_service.driver = MagicMock()
-        mock_device_service.driver.vendor_name = "u-blox"
+        mock_device_service.driver = create_driver("ublox")
         mock_device_service.disconnect = AsyncMock()
 
         resp = handoff_client.post("/api/device/handoff")
@@ -837,7 +837,7 @@ class TestHandoff:
         profile = mock_config_service.save_device_profile.call_args[0][0]
         assert profile.port == "/dev/ttyUSB0"
         assert profile.baud_rate == 115200
-        assert profile.vendor == "u-blox"
+        assert profile.vendor == "ublox"  # the driver's key, not "u-blox"
 
         mock_device_service.disconnect.assert_awaited_once()
 

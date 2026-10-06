@@ -62,6 +62,18 @@ def get_driver_class(vendor_key: str) -> type[GpsReceiverDriver] | None:
     return _DRIVER_REGISTRY.get(vendor_key)
 
 
+def driver_key(driver: GpsReceiverDriver) -> str | None:
+    """The vendor key ``driver`` was registered under, or ``None``.
+
+    The key, not the driver's display name (``vendor_name``), is what
+    ``create_driver`` and a saved device profile take.
+    """
+    for key, cls in _DRIVER_REGISTRY.items():
+        if type(driver) is cls:
+            return key
+    return None
+
+
 def list_drivers() -> list[str]:
     """Return all registered vendor keys.
 

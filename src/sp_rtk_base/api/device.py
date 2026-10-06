@@ -59,7 +59,7 @@ from sp_rtk_base.services.device_service import (
     DetectionRefusedError,
     DeviceService,
 )
-from sp_rtk_base.services.drivers import create_driver
+from sp_rtk_base.services.drivers import create_driver, driver_key
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.survey_service import SurveyService
 
@@ -770,7 +770,9 @@ async def handoff_to_relay(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     status = svc.get_status()
-    vendor = svc.driver.vendor_name if svc.driver else "ublox"
+    # The driver's key, as the Connect panel's Driver select and
+    # create_driver() take it (not its display name).
+    vendor = (driver_key(svc.driver) if svc.driver else None) or "ublox"
     if isinstance(status.link, BluetoothLink):
         return await _handoff_bluetooth(
             svc, relay, cfg, status.link, vendor, relay_dests

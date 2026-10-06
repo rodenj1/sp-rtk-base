@@ -583,6 +583,20 @@ class TestHandOffOverBluetooth:
         assert remembered.kind == "bluetooth"
         assert (remembered.port, remembered.baud_rate) == ("/dev/ttyUSB1", 38400)
 
+    def test_remembers_the_driver_by_its_key_for_the_connect_panel(
+        self, handoff_client: TestClient, config: ConfigService
+    ) -> None:
+        # The bench (rtk_development#46) saved "u-blox", the driver's
+        # display name, and the panel's Driver select then loaded blank.
+        handoff_client.post("/api/device/connect", json=BLUETOOTH)
+
+        resp = handoff_client.post("/api/device/handoff")
+
+        assert resp.status_code == 200, resp.text
+        remembered = config.get_device_profile()
+        assert remembered is not None
+        assert remembered.vendor == "ublox"
+
     def test_destinations_that_cannot_run_are_refused_and_the_console_stays(
         self,
         handoff_client: TestClient,

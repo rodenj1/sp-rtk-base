@@ -261,9 +261,12 @@ class DeviceService:
         # The Stages of the last Bluetooth connect, kept until the next one.
         self._connect_stages: list[ConnectStageResult] | None = None
         self._port: str | None = None
-        # The console port (ADR 0003): identified once per connect, kept
-        # through baud reopens and hardware resets, cleared on disconnect.
+        # The console port (ADR 0003): identified once per connect, and
+        # again whenever the driver reopens the link itself (a hardware
+        # reset); kept through baud reopens; cleared on disconnect.
         self._console_port: ConsolePortReading | None = None
+        # The driver's link_opens when the console port was last settled.
+        self._console_port_at_open = 0
         self._baud_rate: int | None = None
         self._info: DeviceInfo | None = None
         self._last_error: str | None = None
@@ -442,7 +445,27 @@ class DeviceService:
         """What every connect does once the receiver answers."""
         await self._probe_gnss_capability_once(driver)
         await self._repair_saved_config_once(driver)
-        self._console_port = await self._identify_console_port_once(driver)
+        await self._identify_console_port(driver)
+
+    async def _identify_console_port(
+        self, driver: GpsReceiverDriver
+    ) -> ConsolePortReading:
+        """Ask the receiver for the console port, on the link open now."""
+        reading = await self._identify_console_port_once(driver)
+        self._console_port = reading
+        self._console_port_at_open = driver.link_opens
+        return reading
+
+    async def _identify_again_after_a_reset(self, driver: GpsReceiverDriver) -> None:
+        """Ask for the console port again if the driver reopened the link.
+
+        A hardware reset reopens the link: from Reset GPS, from Cancel,
+        after a failed Start, or inside a Start that clears an old
+        survey first. Each reopen is a new connection to the receiver, so
+        the console port is asked again (ADR 0003).
+        """
+        if driver.link_opens != self._console_port_at_open:
+            await self._identify_console_port(driver)
 
     async def _connect_bluetooth(self, driver: GpsReceiverDriver) -> DeviceInfo:
         """Connect over the Bluetooth Input profile's module, Stage by Stage.
@@ -795,6 +818,7 @@ class DeviceService:
         self._state = DeviceConnectionState.CONFIGURING
         try:
             await asyncio.to_thread(driver.configure_survey_in, config)
+            await self._identify_again_after_a_reset(driver)
             self._state = DeviceConnectionState.CONNECTED
             logger.info(
                 "Survey-in configured: %ds min, %dmm accuracy",
@@ -818,6 +842,7 @@ class DeviceService:
             if hasattr(driver, "reset_and_reconnect"):
                 try:
                     await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+                    await self._identify_again_after_a_reset(driver)
                     logger.info("Auto-reset receiver after configure_survey_in failure")
                 except Exception:
                     logger.exception(
@@ -959,6 +984,7 @@ class DeviceService:
             if hasattr(driver, "reset_and_reconnect"):
                 try:
                     await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+                    await self._identify_again_after_a_reset(driver)
                     logger.info("Survey-in cancelled and receiver reset")
                     return
                 except Exception:
@@ -995,9 +1021,7 @@ class DeviceService:
         self._state = DeviceConnectionState.CONFIGURING
         try:
             info = await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
-            # The reopen is a new connection to the receiver: ask again
-            # which port it hears us on (ADR 0003).
-            self._console_port = await self._identify_console_port_once(driver)
+            await self._identify_again_after_a_reset(driver)
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = None
             logger.info("Receiver hardware-reset and reconnected")
@@ -1615,13 +1639,15 @@ class DeviceService:
             self._state = DeviceConnectionState.CONNECTED
             ports_at_rate = [p for p, r in changed_bauds.items() if r == rate]
             if len(ports_at_rate) == 1:
-                self._console_port = ConsolePortReading.known(ports_at_rate[0])
+                reading = ConsolePortReading.known(ports_at_rate[0])
+                self._console_port = reading
+                self._console_port_at_open = driver.link_opens
             else:
-                self._console_port = await self._identify_console_port_once(driver)
+                reading = await self._identify_console_port(driver)
             logger.info(
                 "apply-config: link recovered at %d; console port is now %s",
                 rate,
-                self._console_port.port or self._console_port.unknown_reason,
+                reading.port or reading.unknown_reason,
             )
             return
 
@@ -1655,6 +1681,8 @@ class DeviceService:
 
         try:
             info = await asyncio.to_thread(driver.reconnect_at_baud, new_baud)
+            # The console port is the same one, at its new rate (ADR 0003).
+            self._console_port_at_open = driver.link_opens
             self._baud_rate = new_baud
             self._info = info
             return
@@ -1669,6 +1697,7 @@ class DeviceService:
 
         try:
             info = await asyncio.to_thread(driver.reconnect_at_baud, previous_baud)
+            self._console_port_at_open = driver.link_opens
             self._baud_rate = previous_baud
             self._info = info
             self._state = DeviceConnectionState.CONNECTED

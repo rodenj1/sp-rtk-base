@@ -368,6 +368,8 @@ class UbloxDriver(GpsReceiverDriver):
         # ``reset_and_reconnect()`` and ``reconnect_at_baud()`` reopen
         # through it (rtk_development#40).
         self._opener: LinkOpener | None = None
+        # Each successful open of the link, reopens included (link_opens).
+        self._link_opens = 0
         # Advisories queued by ``_write_and_verify_locked`` for a flash
         # divergence (issue #103) — drained by ``drain_warnings``.
         self._warnings: list[str] = []
@@ -536,6 +538,7 @@ class UbloxDriver(GpsReceiverDriver):
             self._device_info = info
             # Reopened through by reset_and_reconnect() and reconnect_at_baud().
             self._opener = opener
+            self._link_opens += 1
             logger.info(
                 "Connected to u-blox %s (FW %s) over %s",
                 info.model,
@@ -633,6 +636,10 @@ class UbloxDriver(GpsReceiverDriver):
     @property
     def is_connected(self) -> bool:
         return self._serial is not None and self._serial.is_open
+
+    @property
+    def link_opens(self) -> int:
+        return self._link_opens
 
     def _cleanup(self) -> None:
         """Close serial port and reset internal state."""

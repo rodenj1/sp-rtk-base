@@ -192,6 +192,17 @@ class GpsReceiverDriver(abc.ABC):
     def is_connected(self) -> bool:
         """Whether the driver currently has an open connection."""
 
+    @property
+    def link_opens(self) -> int:
+        """How many times this driver has opened its Console link.
+
+        A driver that reopens the link on its own, as a hardware reset
+        does, counts each open here, so the caller knows to ask the
+        receiver for the console port again (ADR 0003). A driver that
+        never reopens on its own reports 0.
+        """
+        return 0
+
     # ------------------------------------------------------------------
     # Console port (issue #155, ADR 0003)
     # ------------------------------------------------------------------

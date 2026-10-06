@@ -337,6 +337,46 @@ class TestTheConsoleWorksOverTheLink:
         assert status["link"]["kind"] == "bluetooth"
         assert status["console_port"] == "UART1"
 
+    def test_cancel_resets_and_identifies_the_console_port_again(
+        self, client: TestClient, receiver: SimulatedUblox
+    ) -> None:
+        client.post("/api/device/connect", json=BLUETOOTH)
+        client.post("/api/device/configure/survey-in", json=SURVEY)
+        receiver.console_port_id = UART1_PORT_ID
+
+        resp = client.post("/api/device/cancel-survey-in")
+
+        assert resp.status_code == 200, resp.text
+        assert 0x00 in receiver.resets
+        assert client.get("/api/device/status").json()["console_port"] == "UART1"
+
+    def test_a_failed_start_resets_and_identifies_the_console_port_again(
+        self, client: TestClient, receiver: SimulatedUblox
+    ) -> None:
+        client.post("/api/device/connect", json=BLUETOOTH)
+        receiver.survey_engine_stalls = True
+        receiver.console_port_id = UART1_PORT_ID
+
+        resp = client.post("/api/device/configure/survey-in", json=SURVEY)
+
+        assert resp.status_code >= 400
+        assert 0x00 in receiver.resets
+        assert client.get("/api/device/status").json()["console_port"] == "UART1"
+
+    def test_a_start_that_resets_first_identifies_the_console_port_again(
+        self, client: TestClient, receiver: SimulatedUblox
+    ) -> None:
+        client.post("/api/device/connect", json=BLUETOOTH)
+        # A finished survey's accumulator: Start resets the receiver first.
+        receiver.svin_dur = 120
+        receiver.console_port_id = UART1_PORT_ID
+
+        resp = client.post("/api/device/configure/survey-in", json=SURVEY)
+
+        assert resp.status_code == 200, resp.text
+        assert 0x00 in receiver.resets
+        assert client.get("/api/device/status").json()["console_port"] == "UART1"
+
     def test_disconnect_after_a_reset_tears_down_the_reopened_link(
         self, client: TestClient, bluez: FakeBlueZ
     ) -> None:

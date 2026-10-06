@@ -275,6 +275,8 @@ class DeviceService:
         self._relay_running_check: _RelayRunningCheck | None = None
         # Awaited before the receiver is disconnected, while it still answers.
         self._before_disconnect: list[Callable[[], Awaitable[None]]] = []
+        # A lost link's teardown, while it runs (see _notice_lost_link).
+        self._lost_link_teardown: asyncio.Task[None] | None = None
         # Steps whose drained warnings were non-empty on the previous
         # apply-config call — excluded from the next call's skip so
         # pressing Apply again actually retries them (issue #99).
@@ -406,6 +408,8 @@ class DeviceService:
                 "Cannot connect to device while relay is running — stop relay first"
             )
             raise RuntimeError(self._last_error)
+
+        await self._lost_link_torn_down()
 
         if isinstance(link, str):
             link = SerialLink(port=link, baud_rate=baud_rate)
@@ -749,24 +753,35 @@ class DeviceService:
 
         Safe to call when already disconnected.
         """
+        await self._lost_link_torn_down()
+        # A link the module dropped still holds a session to tear down.
+        await self._end_session(
+            self._driver is not None
+            and (self._driver.is_connected or self._link_kind is not None)
+        )
+        self._forget_link()
+        self._state = DeviceConnectionState.DISCONNECTED
+        self._last_error = None
+        logger.info("Device disconnected")
+
+    async def _end_session(self, close_driver: bool) -> None:
+        """The before-disconnect hooks, then the driver's disconnect, off the loop."""
         for hook in self._before_disconnect:
             try:
                 await hook()
             except Exception:
                 logger.exception("Before-disconnect hook failed")
-        # A link the module dropped still holds a session to tear down.
-        if self._driver is not None and (
-            self._driver.is_connected or self._link_kind is not None
-        ):
+        if close_driver and self._driver is not None:
             try:
                 await asyncio.to_thread(self._driver.disconnect)
             except Exception:
                 logger.exception("Error during disconnect")
 
-        self._forget_link()
-        self._state = DeviceConnectionState.DISCONNECTED
-        self._last_error = None
-        logger.info("Device disconnected")
+    async def _lost_link_torn_down(self) -> None:
+        """Wait for a lost link's teardown, if one is still running."""
+        task, self._lost_link_teardown = self._lost_link_teardown, None
+        if task is not None and not task.done():
+            await task
 
     def _forget_link(self) -> None:
         """Clear everything known about the session's link."""
@@ -783,8 +798,10 @@ class DeviceService:
 
         A Bluetooth module that powers off or goes out of range closes the
         RFCOMM link; the driver then reports itself not connected. The
-        session is torn down (ADR 0002's order) and the status says why.
-        Checked wherever the service is asked whether it is connected.
+        device is marked lost at once, and the status says why; the session
+        is torn down in the background the way :meth:`disconnect` does it
+        (hooks first, then the driver, off the event loop). Checked
+        wherever the service is asked whether it is connected.
         """
         if (
             self._state is not DeviceConnectionState.CONNECTED
@@ -797,13 +814,18 @@ class DeviceService:
             return
         what = "the Bluetooth module closed the link"
         logger.warning("Device lost: %s", what)
-        try:
-            self._driver.disconnect()
-        except Exception:
-            logger.exception("Error tearing down a lost link")
         self._forget_link()
         self._state = DeviceConnectionState.DISCONNECTED
         self._last_error = f"Device lost — {what}"
+        # The teardown talks to BlueZ (D-Bus) and runs the hooks, so it
+        # goes through disconnect()'s path, off this (sync) call.
+        teardown = self._end_session(close_driver=True)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(teardown)  # no event loop here to hold up
+        else:
+            self._lost_link_teardown = loop.create_task(teardown)
 
     # ------------------------------------------------------------------
     # Configuration commands

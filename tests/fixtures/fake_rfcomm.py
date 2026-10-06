@@ -56,6 +56,10 @@ class FakeBlueZ:
         #: where ``n`` numbers the manager closed.
         self.log: list[tuple[str, object]] = []
         self.managers: list[FakeBluetoothManager] = []
+        #: Cleared to make ``Device1.Disconnect`` block (up to 5 s) until set,
+        #: like a D-Bus call BlueZ is slow to answer.
+        self.dbus_free = threading.Event()
+        self.dbus_free.set()
 
     def manager(self, adapter: str = "hci0") -> FakeBluetoothManager:
         made = FakeBluetoothManager(self, number=len(self.managers))
@@ -124,6 +128,7 @@ class FakeBluetoothManager:
 
     def disconnect_device(self, mac_address: str) -> bool:
         self._check_open()
+        self._bluez.dbus_free.wait(timeout=5)
         self._bluez.log.append(("disconnect", mac_address))
         return True
 

@@ -10,6 +10,7 @@ the receiver ends up holding.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections.abc import Iterator
@@ -28,6 +29,7 @@ from sp_rtk_base.models.config_models import (
     DeviceProfile,
     InputProfile,
 )
+from sp_rtk_base.models.device_models import BluetoothLink, DeviceConnectionState
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
@@ -36,6 +38,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.survey_service import SurveyService
@@ -302,6 +305,36 @@ class TestALinkClosedMidSessionIsALostDevice:
         assert status["link"] is None
         assert "lost" in status["last_error"].lower()
         # Torn down in ADR 0002's order, once.
+        assert bluez.log == [("disconnect", MAC), ("close", 0)]
+
+    @pytest.mark.asyncio()
+    async def test_the_teardown_runs_off_the_event_loop_after_the_disconnect_hooks(
+        self, service: DeviceService, module: FakeRfcommModule, bluez: FakeBlueZ
+    ) -> None:
+        hooks: list[str] = []
+
+        async def before_disconnect() -> None:
+            hooks.append("ran")
+
+        service.add_before_disconnect(before_disconnect)
+        service.set_driver(create_driver("ublox"))
+        await service.connect(BluetoothLink())
+        bluez.dbus_free.clear()  # BlueZ is slow to answer Device1.Disconnect
+        module.drop()
+
+        started = time.monotonic()
+        status = service.get_status()
+        took = time.monotonic() - started
+
+        assert took < 1, "the status read waited on BlueZ"
+        assert status.state is DeviceConnectionState.DISCONNECTED
+        assert status.last_error is not None and "lost" in status.last_error.lower()
+        bluez.dbus_free.set()
+        for _ in range(100):
+            if bluez.closed:
+                break
+            await asyncio.sleep(0.05)
+        assert hooks == ["ran"]
         assert bluez.log == [("disconnect", MAC), ("close", 0)]
 
     def test_a_poll_after_the_drop_is_refused_as_not_connected(

@@ -30,7 +30,8 @@ Corrected survey-in started now would receive corrections it can use.
 _Avoid_: test, connection test, probe
 
 **Stage**:
-One named, operator-meaningful step of a Verification. The stage names are a
+One named, operator-meaningful step of a Verification, or of a Bluetooth
+Console link connect (Pair, Connect, Identify). The stage names are a
 single shared vocabulary — the UI, the logs, and the tests all use the same
 ones, so that a failure can be described by *which step* failed rather than by
 whatever error text the layer below produced. A step earns the name only if it

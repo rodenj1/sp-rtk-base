@@ -289,7 +289,9 @@ class _TxGuardedSerial:
 
 def _describe(link: ConsoleLink) -> str:
     """A Console link as the logs name it."""
-    return f"{link.port} @ {link.baud_rate}"
+    if isinstance(link, SerialLink):
+        return f"{link.port} @ {link.baud_rate}"
+    return f"Bluetooth {link.device_name or link.mac}"
 
 
 def _tx_backlog(ser: Any) -> float | None:

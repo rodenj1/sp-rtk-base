@@ -119,7 +119,11 @@ relay_service: RelayService = RelayService()
 config_service: ConfigService = ConfigService()
 event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
-device_service: DeviceService = DeviceService()
+# A Bluetooth Console link uses the saved Input profile's device; read
+# through the module global so a reloaded ConfigService is honoured.
+device_service: DeviceService = DeviceService(
+    input_profile=lambda: config_service.get_input_config()
+)
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)

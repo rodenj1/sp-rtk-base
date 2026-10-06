@@ -18,6 +18,9 @@ persistence.md`` on the ``research/ubx-config-layers-tmode`` branch):
 - ``NAV-SVIN.dur`` grows while RAM ``CFG_TMODE_MODE`` is 1 and is cleared
   only by a hardware reset (``resetMode`` 0x00), as the driver's comments
   record from the bench.
+- ``MON-COMMS`` answers only when the test says which port the host is
+  attached to (``console_port_id``); that port counts every UBX message
+  it receives, so the driver can identify the Console port (ADR 0003).
 
 Not modelled: timing, the TMODE edge-trigger, other message classes.
 """
@@ -27,11 +30,14 @@ from __future__ import annotations
 import struct
 from typing import Any
 
-from pyubx2 import UBX_CONFIG_DATABASE
+from pyubx2 import GET, UBX_CONFIG_DATABASE, UBXMessage
 
 RAM, BBR, FLASH, DEFAULT = "ram", "bbr", "flash", "default"
 _VALGET_LAYER = {0: RAM, 1: BBR, 2: FLASH, 7: DEFAULT}
 _KEY_BY_ID = {kid: (name, typ) for name, (kid, typ) in UBX_CONFIG_DATABASE.items()}
+
+#: MON-COMMS ``portId``s (Integration Manual Table 27): UART1, UART2, USB.
+UART1_PORT_ID, UART2_PORT_ID, USB_PORT_ID = 0x0100, 0x0201, 0x0300
 
 #: Defaults for the keys the tests touch; every other known key defaults to 0.
 DEFAULTS: dict[str, int] = {"CFG_RATE_MEAS": 1000, "CFG_UART1_BAUDRATE": 38400}
@@ -69,6 +75,11 @@ class SimulatedUblox:
         self.survey_engine_stalls = False
         #: When set, writes ACK but never reach Flash (a failing flash).
         self.flash_ignores_writes = False
+        #: The MON-COMMS ``portId`` the host is attached to. ``None``: the
+        #: receiver NAKs MON-COMMS, so the Console port stays unknown.
+        self.console_port_id: int | None = None
+        #: Per port: (bytes received, UBX messages received).
+        self._rx_counts: dict[int, tuple[int, int]] = {}
         self._rebuild_ram()
 
     # -- the test's view -------------------------------------------------
@@ -104,6 +115,14 @@ class SimulatedUblox:
 
     def handle(self, cls: int, mid: int, payload: bytes) -> bytes:
         """Answer one complete UBX message from the host."""
+        if self.console_port_id is not None:
+            rx_bytes, ubx_msgs = self._rx_counts.get(self.console_port_id, (0, 0))
+            self._rx_counts[self.console_port_id] = (
+                rx_bytes + len(payload) + 8,
+                ubx_msgs + 1,
+            )
+        if (cls, mid) == (0x0A, 0x36) and not payload:
+            return self._mon_comms()
         if (cls, mid) == (0x06, 0x8A):
             return self._valset(payload)
         if (cls, mid) == (0x06, 0x8B):
@@ -197,6 +216,20 @@ class SimulatedUblox:
         for ext in ("FWVER=HPG 1.51", "PROTVER=27.50", "MOD=ZED-F9P"):
             payload += pad(ext, 30)
         return _frame(0x0A, 0x04, payload)
+
+    def _mon_comms(self) -> bytes:
+        if self.console_port_id is None:
+            return _frame(0x05, 0x00, b"\x0a\x36")
+        fields: dict[str, int] = {"nPorts": 3, "protIds_01": 0, "protIds_02": 1}
+        fields |= {"protIds_03": 5, "protIds_04": 0xFF}
+        for n, port_id in enumerate((UART1_PORT_ID, UART2_PORT_ID, USB_PORT_ID), 1):
+            rx_bytes, ubx_msgs = self._rx_counts.get(port_id, (0, 0))
+            fields |= {
+                f"portId_{n:02d}": port_id,
+                f"rxBytes_{n:02d}": rx_bytes,
+                f"msgs_{n:02d}_01": ubx_msgs,
+            }
+        return UBXMessage("MON", "MON-COMMS", GET, **fields).serialize()  # type: ignore[no-any-return]
 
     def _nav_svin(self) -> bytes:
         active = self._ram("CFG_TMODE_MODE") == 1

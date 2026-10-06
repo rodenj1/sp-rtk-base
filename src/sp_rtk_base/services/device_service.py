@@ -13,12 +13,16 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import NamedTuple, Protocol, cast
+from typing import TYPE_CHECKING, NamedTuple, Protocol, cast
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
     DEFAULT_BAUD,
     BaseInvariantsCheck,
+    BluetoothLink,
+    ConnectStage,
+    ConnectStageResult,
+    ConnectStageStatus,
     ConsoleLink,
     ConsoleLinkKind,
     ConsolePortReading,
@@ -70,6 +74,20 @@ from sp_rtk_base.services.drivers.base import (
     DETECTION_BUDGET_S,
     GpsReceiverDriver,
 )
+from sp_rtk_base.services.drivers.bluetooth_link import (
+    STAGE_ADVICE,
+    BluetoothLinkOpener,
+    LinkStageError,
+    StageListener,
+    bluetooth_config_from,
+)
+
+if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.input_sources.bluetooth_input import (
+        BluetoothConfig,
+    )
+
+    from sp_rtk_base.models.config_models import InputProfile
 
 logger = logging.getLogger(__name__)
 
@@ -218,12 +236,30 @@ class DeviceService:
     - Async wrappers around synchronous driver methods
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        input_profile: Callable[[], InputProfile | None] | None = None,
+        bluetooth_opener: BluetoothOpenerFactory = BluetoothLinkOpener,
+    ) -> None:
+        """Set up a disconnected service.
+
+        Args:
+            input_profile: Reads the saved Input profile. A Bluetooth
+                Console link uses its device (adapter, MAC, PIN).
+            bluetooth_opener: Builds the Bluetooth link's opener from that
+                device; injected by tests to reach a fake module.
+        """
         self._driver: GpsReceiverDriver | None = None
         self._state = DeviceConnectionState.DISCONNECTED
+        self._input_profile = input_profile
+        self._bluetooth_opener = bluetooth_opener
         # The Console link in use: its kind, and for a serial link the host
         # port and the rate it is open at (which a baud reopen changes).
         self._link_kind: ConsoleLinkKind | None = None
+        self._bluetooth_link: BluetoothLink | None = None
+        # The Stages of the last Bluetooth connect, kept until the next one.
+        self._connect_stages: list[ConnectStageResult] | None = None
         self._port: str | None = None
         # The console port (ADR 0003): identified once per connect, kept
         # through baud reopens and hardware resets, cleared on disconnect.
@@ -253,6 +289,7 @@ class DeviceService:
     @property
     def is_connected(self) -> bool:
         """Whether a GPS device is currently connected."""
+        self._notice_lost_link()
         return self._state == DeviceConnectionState.CONNECTED
 
     @property
@@ -368,10 +405,13 @@ class DeviceService:
 
         if isinstance(link, str):
             link = SerialLink(port=link, baud_rate=baud_rate)
+        if isinstance(link, BluetoothLink):
+            return await self._connect_bluetooth(self._driver)
         port = link.port
 
         self._state = DeviceConnectionState.CONNECTING
         self._last_error = None
+        self._connect_stages = None
 
         try:
             info = await asyncio.to_thread(
@@ -390,15 +430,125 @@ class DeviceService:
                 info.model,
                 port,
             )
-            await self._probe_gnss_capability_once(self._driver)
-            await self._repair_saved_config_once(self._driver)
-            self._console_port = await self._identify_console_port_once(self._driver)
+            await self._after_connect(self._driver)
             return info
         except Exception as exc:
             self._state = DeviceConnectionState.ERROR
             self._last_error = str(exc)
             logger.error("Failed to connect to %s: %s", port, exc)
             raise
+
+    async def _after_connect(self, driver: GpsReceiverDriver) -> None:
+        """What every connect does once the receiver answers."""
+        await self._probe_gnss_capability_once(driver)
+        await self._repair_saved_config_once(driver)
+        self._console_port = await self._identify_console_port_once(driver)
+
+    async def _connect_bluetooth(self, driver: GpsReceiverDriver) -> DeviceInfo:
+        """Connect over the Bluetooth Input profile's module, Stage by Stage.
+
+        Pair and Connect are reported by the opener as they pass; Identify
+        is the receiver answering UBX through the link and the Console port
+        being read. A failure is Red on its Stage, with that Stage's advice.
+        """
+        config = self._bluetooth_config()
+        if config is None:
+            self._state = DeviceConnectionState.DISCONNECTED
+            self._last_error = (
+                "No Bluetooth Input profile — set one up on the Input page "
+                "to connect the console over Bluetooth"
+            )
+            raise RuntimeError(self._last_error)
+
+        self._state = DeviceConnectionState.CONNECTING
+        self._last_error = None
+        self._connect_stages = [ConnectStageResult(stage=s) for s in ConnectStage]
+        opener = self._bluetooth_opener(config, on_stage=self._record_stage)
+        described = f"Bluetooth {config.device_name or config.mac_address}"
+
+        try:
+            try:
+                info = await asyncio.to_thread(driver.connect_via, opener)
+            except LinkStageError:
+                raise
+            except Exception as exc:
+                # The link opened; the receiver never answered through it.
+                self._record_stage(
+                    ConnectStage.IDENTIFY,
+                    ConnectStageStatus.FAILED,
+                    "no_ubx_answer",
+                    str(exc),
+                )
+                raise
+            self._record_stage(ConnectStage.IDENTIFY, ConnectStageStatus.RUNNING)
+            self._state = DeviceConnectionState.CONNECTED
+            self._link_kind = "bluetooth"
+            self._bluetooth_link = opener.link
+            self._info = info
+            self._connected_at = datetime.now(tz=timezone.utc)
+            self._steps_warned_last_apply = set()
+            logger.info(
+                "Connected to %s %s over %s", info.vendor, info.model, described
+            )
+            await self._after_connect(driver)
+            self._record_stage(
+                ConnectStage.IDENTIFY,
+                ConnectStageStatus.PASSED,
+                message=self._identified(info),
+            )
+            # Reopens later in the session (a reset) report no Stages.
+            opener.on_stage = None
+            return info
+        except Exception as exc:
+            opener.close()
+            self._state = DeviceConnectionState.ERROR
+            self._last_error = str(exc)
+            logger.error("Failed to connect over %s: %s", described, exc)
+            raise
+
+    def _bluetooth_config(self) -> BluetoothConfig | None:
+        """The Bluetooth Input profile's device, or ``None`` without one."""
+        profile = self._input_profile() if self._input_profile is not None else None
+        return bluetooth_config_from(profile)
+
+    def _record_stage(
+        self,
+        stage: ConnectStage,
+        status: ConnectStageStatus,
+        code: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Record one Stage's change, with advice on a failure.
+
+        Called from the connect's worker thread; the list is replaced
+        whole, so a status read never sees half an update.
+        """
+        if self._connect_stages is None:
+            return
+        advice = (
+            STAGE_ADVICE.get(code or "")
+            if status is ConnectStageStatus.FAILED
+            else None
+        )
+        result = ConnectStageResult(
+            stage=stage, status=status, code=code, message=message, advice=advice
+        )
+        self._connect_stages = [
+            result if s.stage is stage else s for s in self._connect_stages
+        ]
+
+    def _identified(self, info: DeviceInfo) -> str:
+        reading = self._console_port
+        if reading is not None and reading.port is not None:
+            console = f"console port {reading.port.value}"
+        else:
+            reason = (
+                reading.unknown_reason.value
+                if reading and reading.unknown_reason
+                else "unknown"
+            )
+            console = f"console port unknown ({reason})"
+        return f"{info.vendor} {info.model}; {console}"
 
     async def detect_baud(
         self,
@@ -554,21 +704,56 @@ class DeviceService:
                 await hook()
             except Exception:
                 logger.exception("Before-disconnect hook failed")
-        if self._driver is not None and self._driver.is_connected:
+        # A link the module dropped still holds a session to tear down.
+        if self._driver is not None and (
+            self._driver.is_connected or self._link_kind is not None
+        ):
             try:
                 await asyncio.to_thread(self._driver.disconnect)
             except Exception:
                 logger.exception("Error during disconnect")
 
+        self._forget_link()
         self._state = DeviceConnectionState.DISCONNECTED
+        self._last_error = None
+        logger.info("Device disconnected")
+
+    def _forget_link(self) -> None:
+        """Clear everything known about the session's link."""
         self._link_kind = None
+        self._bluetooth_link = None
         self._port = None
         self._baud_rate = None
         self._info = None
         self._console_port = None
         self._connected_at = None
-        self._last_error = None
-        logger.info("Device disconnected")
+
+    def _notice_lost_link(self) -> None:
+        """Treat a Bluetooth link that closed mid-session as a lost device.
+
+        A Bluetooth module that powers off or goes out of range closes the
+        RFCOMM link; the driver then reports itself not connected. The
+        session is torn down (ADR 0002's order) and the status says why.
+        Checked wherever the service is asked whether it is connected.
+        """
+        if (
+            self._state is not DeviceConnectionState.CONNECTED
+            # Serial is unchanged: a pulled cable doesn't close pyserial's
+            # handle, so a serial driver keeps reporting itself connected.
+            or self._link_kind != "bluetooth"
+            or self._driver is None
+            or self._driver.is_connected
+        ):
+            return
+        what = "the Bluetooth module closed the link"
+        logger.warning("Device lost: %s", what)
+        try:
+            self._driver.disconnect()
+        except Exception:
+            logger.exception("Error tearing down a lost link")
+        self._forget_link()
+        self._state = DeviceConnectionState.DISCONNECTED
+        self._last_error = f"Device lost — {what}"
 
     # ------------------------------------------------------------------
     # Configuration commands
@@ -582,8 +767,9 @@ class DeviceService:
         """
         if self._driver is None:
             raise RuntimeError("No GPS driver loaded")
+        self._notice_lost_link()
         if self._state != DeviceConnectionState.CONNECTED:
-            raise RuntimeError("Device not connected")
+            raise RuntimeError(self._last_error or "Device not connected")
         if self._relay_running_check is not None and self._relay_running_check():
             raise RuntimeError(
                 "Cannot configure device while relay is running — stop relay first"
@@ -809,6 +995,9 @@ class DeviceService:
         self._state = DeviceConnectionState.CONFIGURING
         try:
             info = await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
+            # The reopen is a new connection to the receiver: ask again
+            # which port it hears us on (ADR 0003).
+            self._console_port = await self._identify_console_port_once(driver)
             self._state = DeviceConnectionState.CONNECTED
             self._last_error = None
             logger.info("Receiver hardware-reset and reconnected")
@@ -1583,6 +1772,8 @@ class DeviceService:
 
     def _current_link(self) -> ConsoleLink | None:
         """The Console link in use, as the status reports it."""
+        if self._link_kind == "bluetooth":
+            return self._bluetooth_link
         if (
             self._link_kind == "serial"
             and self._port is not None
@@ -1597,11 +1788,13 @@ class DeviceService:
         Returns:
             Device status including state, info, capabilities.
         """
+        self._notice_lost_link()
         return DeviceStatus(
             state=self._state,
             port=self._port,
             baud_rate=self._baud_rate,
             link=self._current_link(),
+            connect_stages=self._connect_stages,
             info=self._info,
             capabilities=sorted(self.capabilities),
             survey_in=None,
@@ -1617,6 +1810,14 @@ class DeviceService:
 # ---------------------------------------------------------------------------
 # Type alias for relay running check callback
 # ---------------------------------------------------------------------------
+
+
+class BluetoothOpenerFactory(Protocol):
+    """Builds the Bluetooth Console link's opener for one connect."""
+
+    def __call__(
+        self, config: BluetoothConfig, *, on_stage: StageListener | None = ...
+    ) -> BluetoothLinkOpener: ...
 
 
 class _RelayRunningCheck(Protocol):

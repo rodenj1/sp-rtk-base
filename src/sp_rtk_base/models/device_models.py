@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,9 +73,8 @@ DEFAULT_BAUD: int = 57600
 # Console link (rtk_development#40)
 # ---------------------------------------------------------------------------
 
-#: The kinds of Console link (see ``CONTEXT.md``). Serial only for now;
-#: Bluetooth joins it as a second member (rtk_development#42).
-ConsoleLinkKind = Literal["serial"]
+#: The kinds of Console link (see ``CONTEXT.md``).
+ConsoleLinkKind = Literal["serial", "bluetooth"]
 
 
 class SerialLink(BaseModel):
@@ -91,9 +90,67 @@ class SerialLink(BaseModel):
     )
 
 
-#: A Console link of any kind, told apart by ``kind``. Becomes a
-#: discriminated union when the Bluetooth kind joins (rtk_development#42).
-ConsoleLink = SerialLink
+class BluetoothLink(BaseModel):
+    """A Bluetooth Console link, to a module wired to a receiver UART.
+
+    The device always comes from the Bluetooth Input profile, never from
+    the request (rtk_development#38): a Connect asks for
+    ``{"kind": "bluetooth"}`` alone, and the status fills in the module it
+    reached.
+    """
+
+    kind: Literal["bluetooth"] = "bluetooth"
+    device_name: str | None = Field(
+        default=None, description="The module's name, from the Input profile"
+    )
+    mac: str | None = Field(
+        default=None, description="The module's MAC address, from the Input profile"
+    )
+
+
+#: A Console link of any kind, told apart by ``kind``.
+ConsoleLink = Annotated[SerialLink | BluetoothLink, Field(discriminator="kind")]
+
+
+class ConnectStage(str, enum.Enum):
+    """One Stage of a Bluetooth Console link connect, in the order walked.
+
+    - ``PAIR``: the module is paired with the Input profile's PIN; skipped
+      when a Bond already exists.
+    - ``CONNECT``: the RFCOMM socket connects. Discovery can take up to
+      30 s and can't be cancelled.
+    - ``IDENTIFY``: the receiver answers UBX through the link, and the
+      Console port is read.
+    """
+
+    PAIR = "pair"
+    CONNECT = "connect"
+    IDENTIFY = "identify"
+
+
+class ConnectStageStatus(str, enum.Enum):
+    """Where one connect Stage stands. ``FAILED`` is a Red on that Stage."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ConnectStageResult(BaseModel):
+    """What one Stage of the last connect did.
+
+    ``code`` is from a small closed set clients key off; ``message`` is the
+    detail from the layer below; ``advice`` is what the operator does next,
+    set on a failure.
+    """
+
+    stage: ConnectStage
+    status: ConnectStageStatus = ConnectStageStatus.PENDING
+    code: str | None = None
+    message: str | None = None
+    advice: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -925,6 +982,11 @@ class DeviceStatus(BaseModel):
         default=None,
         description="The Console link in use (when connected); the flat "
         "port/baud_rate stay filled for a serial link",
+    )
+    connect_stages: list[ConnectStageResult] | None = Field(
+        default=None,
+        description="The Stages of the last Bluetooth connect attempt, in "
+        "order, kept until the next connect; none for a serial connect",
     )
     info: DeviceInfo | None = Field(
         default=None, description="Device identity (when connected)"

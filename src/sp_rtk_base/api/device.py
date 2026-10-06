@@ -28,6 +28,7 @@ from sp_rtk_base.models.device_models import (
     DEFAULT_BAUD,
     BaseInvariantsCheck,
     BaseMode,
+    ConsoleLink,
     CorrectedSurveyInConfig,
     CurrentBaseConfig,
     DetectionResult,
@@ -38,6 +39,7 @@ from sp_rtk_base.models.device_models import (
     GpsPosition,
     PortProtocolConfig,
     RtcmPortConfig,
+    SerialLink,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -116,8 +118,15 @@ async def connect_device(
 
     return DeviceActionResponse(
         status="ok",
-        message=f"Connected to {info.vendor} {info.model} on {link.port}",
+        message=f"Connected to {info.vendor} {info.model} {_over(link)}",
     )
+
+
+def _over(link: ConsoleLink) -> str:
+    """Where a connect reached, as its response message says it."""
+    if isinstance(link, SerialLink):
+        return f"on {link.port}"
+    return "over Bluetooth"
 
 
 @router.post("/detect-baud", response_model=DetectionResult)

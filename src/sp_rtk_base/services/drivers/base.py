@@ -35,6 +35,7 @@ from sp_rtk_base.models.device_models import (
     ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
+    SerialLink,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -166,13 +167,17 @@ class GpsReceiverDriver(abc.ABC):
         change or a hardware reset) keeps *opener* and reopens through it.
         This default serves a driver that only knows serial links, by
         handing the link's port and rate to :meth:`connect`; a second kind
-        of link (rtk_development#42) must refuse here rather than reach it.
+        of link (rtk_development#42) is refused here.
 
         Raises:
             ConnectionError: If the connection fails.
             TimeoutError: If the device does not respond.
         """
         link = opener.link
+        if not isinstance(link, SerialLink):
+            raise ConnectionError(
+                f"The {self.vendor_name} driver can't connect over a {link.kind} link"
+            )
         return self.connect(link.port, link.baud_rate)
 
     @abc.abstractmethod

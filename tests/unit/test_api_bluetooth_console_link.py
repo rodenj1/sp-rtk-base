@@ -10,6 +10,7 @@ the receiver ends up holding.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Iterator
 from functools import partial
@@ -158,6 +159,32 @@ class TestConnectOverBluetooth:
         stages = _stages(client.get("/api/device/status").json())
         assert stages["pair"]["status"] == "passed"
         assert MAC in bluez.bonded
+
+
+class TestIdentifyIsShownWhileItRuns:
+    def test_identify_runs_as_soon_as_the_link_connects(
+        self, client: TestClient, module: FakeRfcommModule
+    ) -> None:
+        module.answering.clear()
+        connecting = threading.Thread(
+            target=client.post,
+            args=("/api/device/connect",),
+            kwargs={"json": BLUETOOTH},
+        )
+        connecting.start()
+        try:
+            assert module.heard.wait(timeout=5), "the receiver was never polled"
+
+            status = client.get("/api/device/status").json()
+
+            stages = _stages(status)
+            assert stages["connect"]["status"] == "passed"
+            assert stages["identify"]["status"] == "running"
+        finally:
+            module.answering.set()
+            connecting.join(timeout=15)
+        stages = _stages(client.get("/api/device/status").json())
+        assert stages["identify"]["status"] == "passed"
 
 
 class TestAFailedConnectIsRedOnItsStage:

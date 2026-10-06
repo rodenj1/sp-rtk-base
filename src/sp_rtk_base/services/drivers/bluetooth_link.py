@@ -89,6 +89,10 @@ STAGE_ADVICE: dict[str, str] = {
         "powered on and in range, and that nothing else holds it: stop the "
         "Relay, and disconnect any other host using the module."
     ),
+    "identify_failed": (
+        "The receiver answered, but reading it after the connect failed. "
+        "Connect again; if it fails again, power-cycle the receiver."
+    ),
     "no_ubx_answer": (
         "The link connected but the receiver never answered. The module's "
         "baud rate probably doesn't match the receiver UART it is wired to: "

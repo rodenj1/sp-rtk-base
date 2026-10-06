@@ -143,6 +143,11 @@ class FakeRfcommModule:
         #: Whether the module sends garbage instead of the receiver's bytes.
         self.garbage = False
         self.connects = 0
+        #: Set once the host has sent the module anything.
+        self.heard = threading.Event()
+        #: Cleared to hold the receiver's answers back until it is set.
+        self.answering = threading.Event()
+        self.answering.set()
         self._peer: socket.socket | None = None
         self._threads: list[threading.Thread] = []
 
@@ -190,6 +195,8 @@ class FakeRfcommModule:
                 return
             if not data:
                 return
+            self.heard.set()
+            self.answering.wait()
             uart.write(data)
             answer = uart.read(uart.in_waiting)
             if answer:

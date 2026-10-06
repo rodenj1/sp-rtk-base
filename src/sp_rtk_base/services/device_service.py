@@ -81,6 +81,7 @@ from sp_rtk_base.services.drivers.bluetooth_link import (
     StageListener,
     bluetooth_config_from,
 )
+from sp_rtk_base.services.drivers.console_link import LinkOpener
 
 if TYPE_CHECKING:
     from sp_rtk_base_relay.core.input_sources.bluetooth_input import (
@@ -503,7 +504,6 @@ class DeviceService:
                     str(exc),
                 )
                 raise
-            self._record_stage(ConnectStage.IDENTIFY, ConnectStageStatus.RUNNING)
             self._state = DeviceConnectionState.CONNECTED
             self._link_kind = "bluetooth"
             self._bluetooth_link = opener.link
@@ -513,7 +513,16 @@ class DeviceService:
             logger.info(
                 "Connected to %s %s over %s", info.vendor, info.model, described
             )
-            await self._after_connect(driver)
+            try:
+                await self._after_connect(driver)
+            except Exception as exc:
+                self._record_stage(
+                    ConnectStage.IDENTIFY,
+                    ConnectStageStatus.FAILED,
+                    "identify_failed",
+                    str(exc),
+                )
+                raise
             self._record_stage(
                 ConnectStage.IDENTIFY,
                 ConnectStageStatus.PASSED,
@@ -523,11 +532,21 @@ class DeviceService:
             opener.on_stage = None
             return info
         except Exception as exc:
-            opener.close()
+            self._forget_link()
+            await asyncio.to_thread(self._close_failed_connect, driver, opener)
             self._state = DeviceConnectionState.ERROR
             self._last_error = str(exc)
             logger.error("Failed to connect over %s: %s", described, exc)
             raise
+
+    @staticmethod
+    def _close_failed_connect(driver: GpsReceiverDriver, opener: LinkOpener) -> None:
+        """Release whatever a failed connect left open, driver then link."""
+        try:
+            driver.disconnect()
+        except Exception:
+            logger.exception("Error closing the driver after a failed connect")
+        opener.close()
 
     def _bluetooth_config(self) -> BluetoothConfig | None:
         """The Bluetooth Input profile's device, or ``None`` without one."""
@@ -556,9 +575,17 @@ class DeviceService:
         result = ConnectStageResult(
             stage=stage, status=status, code=code, message=message, advice=advice
         )
-        self._connect_stages = [
-            result if s.stage is stage else s for s in self._connect_stages
-        ]
+        stages = [result if s.stage is stage else s for s in self._connect_stages]
+        if stage is ConnectStage.CONNECT and status is ConnectStageStatus.PASSED:
+            # Identify starts the moment the link is up: the receiver is
+            # polled through it straight away.
+            stages = [
+                ConnectStageResult(stage=s.stage, status=ConnectStageStatus.RUNNING)
+                if s.stage is ConnectStage.IDENTIFY
+                else s
+                for s in stages
+            ]
+        self._connect_stages = stages
 
     def _identified(self, info: DeviceInfo) -> str:
         reading = self._console_port

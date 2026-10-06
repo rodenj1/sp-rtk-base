@@ -180,6 +180,17 @@ disconnect; it may be **unknown**, which is a state to handle rather than
 an error.
 _Avoid_: connected port, management port, host port
 
+### The saved base
+
+**Saved base**:
+The base configuration the receiver keeps through a reset or power cycle:
+a fixed base, or base mode off. Only committing a finished Survey-in, or
+setting or restoring a fixed base, changes it. A Survey-in that ends any
+other way (cancelled, aborted, or cut short by a reset) is abandoned, and
+the receiver goes back to the saved base, because nothing about an
+uncommitted Survey-in is ever saved.
+_Avoid_: persisted config, flash config, stored base
+
 ### Corrected survey-in
 
 **Stall**:

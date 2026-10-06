@@ -313,8 +313,9 @@ class TestPromoteSurveyIn:
         assert abs(call_args.longitude - 8.545594) < 0.0001
         assert abs(call_args.altitude_m - 408.123) < 0.01
 
-        # Verify save-to-flash was called
-        mock_device_service.save_to_flash.assert_awaited_once()
+        # The fixed-base write persists itself; a whole-RAM save after it
+        # would copy unsaved RAM too (issue #221).
+        mock_device_service.save_to_flash.assert_not_awaited()
 
     def test_promote_not_valid(
         self,
@@ -464,7 +465,7 @@ class TestRestoreBasePosition:
         assert "Restored" in resp.json()["message"]
 
         mock_device_service.configure_fixed_base.assert_awaited_once()
-        mock_device_service.save_to_flash.assert_awaited_once()
+        mock_device_service.save_to_flash.assert_not_awaited()
 
     def test_restore_not_found(
         self,

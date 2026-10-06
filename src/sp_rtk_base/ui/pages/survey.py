@@ -910,8 +910,7 @@ def survey_page() -> None:
                         altitude_m=alt,
                         accuracy_mm=acc,
                     )
-                )
-                await svc.save_to_flash()
+                )  # writes Flash itself; nothing more to save (issue #221)
                 return True
             except Exception as exc:
                 ui.notify(f"Commit failed: {exc}", type="negative")
@@ -1868,10 +1867,8 @@ def survey_page() -> None:
                         svin_cancel_btn.set_visibility(False)
                         return
 
-                # Step 2: Save to flash
-                await svc.save_to_flash()
-
-                # Step 3: Refresh the fixed base card
+                # Step 2: Refresh the fixed base card (the promote wrote
+                # Flash itself; issue #221)
                 await _read_fixed_base()
 
                 svin_status_label.text = "✓ Survey complete — position committed!"

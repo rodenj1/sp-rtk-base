@@ -216,6 +216,29 @@ _RECEIVER_SCALAR_KEYS: list[str] = [
 # which the profile schema doesn't claim (see RtcmStreamConfig).
 _MATRIX_PORTS: tuple[PortId, ...] = (PortId.UART1, PortId.UART2, PortId.USB)
 
+# Every TMODE key (base mode, survey-in and fixed-position). A base's
+# saved config lives in Flash only; none of these may be left in BBR,
+# which outranks Flash at every reset (issue #221).
+_TMODE_KEYS: tuple[str, ...] = (
+    "CFG_TMODE_MODE",
+    "CFG_TMODE_POS_TYPE",
+    "CFG_TMODE_ECEF_X",
+    "CFG_TMODE_ECEF_Y",
+    "CFG_TMODE_ECEF_Z",
+    "CFG_TMODE_ECEF_X_HP",
+    "CFG_TMODE_ECEF_Y_HP",
+    "CFG_TMODE_ECEF_Z_HP",
+    "CFG_TMODE_LAT",
+    "CFG_TMODE_LON",
+    "CFG_TMODE_HEIGHT",
+    "CFG_TMODE_LAT_HP",
+    "CFG_TMODE_LON_HP",
+    "CFG_TMODE_HEIGHT_HP",
+    "CFG_TMODE_FIXED_POS_ACC",
+    "CFG_TMODE_SVIN_MIN_DUR",
+    "CFG_TMODE_SVIN_ACC_LIMIT",
+)
+
 
 class _DeadlineStream:
     """The stream ``UBXReader`` reads through, so a deadline can end a read.
@@ -539,13 +562,12 @@ class UbloxDriver(GpsReceiverDriver):
         leave ``dur`` unchanged; only ``resetMode=0`` (hardware
         reset immediate) actually resets it.
 
+        The receiver rebuilds RAM from its saved layers, so it comes
+        back as the base saved in Flash (a fixed base, or base mode
+        off), and a Survey-in held in RAM is abandoned (issue #221).
+
         Sequence:
-          1. Write ``CFG_TMODE_MODE=0`` to layer=7 (RAM+BBR+Flash)
-             so the post-reset boot lands in rover mode regardless
-             of what state was last persisted.  Saved fixed-base
-             coordinates (LAT/LON/HEIGHT/ECEF keys) remain in Flash
-             — only the MODE key is touched, so the operator can
-             still Restore back to a fixed base from the UI.
+          1. (Nothing is written first: the saved config is left as is.)
           2. Send UBX-CFG-RST with ``resetMode=0x00`` and the
              ``pos`` BBR bit set.  This triggers an immediate chip
              reset and causes the USB serial port to re-enumerate.
@@ -573,11 +595,10 @@ class UbloxDriver(GpsReceiverDriver):
         baud_rate = self._baud_rate
 
         with self._lock:
-            # 1. Pin Flash to TMODE_MODE=0 so the post-reset boot
-            # is rover mode regardless of prior state.
-            self._send_cfg_valset_locked(
-                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
-            )
+            # 1. Nothing is written before the reset (issue #221): the
+            # receiver rebuilds RAM from its saved layers, so it comes
+            # back as the base saved in Flash, and an unfinished
+            # Survey-in, held in RAM only, is abandoned.
             # 2. Hardware reset (drops USB).
             ser, _ = self._require_connection()
             msg = UBXMessage(  # type: ignore[misc]
@@ -661,26 +682,22 @@ class UbloxDriver(GpsReceiverDriver):
     # whole-second counter.  2 s gives a 1-2 tick delta with margin.
     _SVIN_DUR_VERIFY_GAP_S: float = 2.0
 
-    # CFG-VALSET layer bitmask.  Layer 1=RAM, 2=BBR, 4=Flash.
-    # Per u-blox's own "F9P Base Survey in disable.txt" reference
-    # script in the C099 board package, a clean TMODE-disable writes
-    # to all three layers (1|2|4 = 7) so any TMODE-related config
-    # from a prior session is also wiped.  Writing only to RAM leaves
-    # BBR pinned at TMODE=1 across host restarts.
-    _TMODE_DISABLE_ALL_LAYERS: int = 7
-
-    # CFG-VALGET poll-layer enum — NOT the CFG-VALSET bitmask above.
+    # CFG-VALSET and CFG-VALDEL take a layer *bitmask*: 1=RAM, 2=BBR,
+    # 4=Flash. CFG-VALGET takes a poll-layer *enum* instead.
     # u-blox defines this field as 0=RAM, 1=BBR, 2=Flash, 7=Default,
     # a plain enum rather than an OR-able bitmask. Default for
     # ``_read_cfg_keys_locked`` (issue #94): every existing caller
     # wants RAM, matching this method's pre-#94 hardcoded behaviour.
     _CFG_LAYER_RAM: int = 0
+    _CFG_LAYER_BBR: int = 1
     # CFG-VALSET layer bitmask for RAM only (temporary, never saved).
     _CFG_VALSET_RAM_ONLY: int = 1
     _CFG_LAYER_FLASH: int = 2
+    # CFG-VALDEL layer bitmask for BBR (2=BBR, 4=Flash; RAM can't be
+    # deleted from).
+    _CFG_VALDEL_BBR: int = 2
 
-    # The CFG-VALSET bitmask's Flash bit (see the layer comment above:
-    # 1=RAM, 2=BBR, 4=Flash). Gates the flash read-back in
+    # The CFG-VALSET bitmask's Flash bit (see the layer comment above). Gates the flash read-back in
     # ``_write_and_verify_locked`` (issue #103) — a write that never
     # targets flash has nothing durable to check.
     _CFG_VALSET_FLASH_BIT: int = 4
@@ -735,14 +752,11 @@ class UbloxDriver(GpsReceiverDriver):
         # while having no effect.  See memory-bank/progress.md
         # 2026-05-27 "Cancel Survey-In doesn't cancel" entry.
         with self._lock:
-            # Step 1: full-layer TMODE disable.  Per u-blox's own C099
-            # "F9P Base Survey in disable.txt" script, the canonical
-            # disable writes to all three layers (1|2|4 = 7) so any
-            # TMODE config from a prior session is wiped consistently.
-            # Flashed ECEF/LLH coordinates from a completed prior
-            # survey persist — only the MODE key is touched, so the
-            # operator can still switch back to a known fixed-base
-            # position manually via Restore.
+            # Step 1: TMODE disable, RAM only. A Survey-in is never
+            # persisted (issue #221): an interrupted one is abandoned and
+            # the receiver falls back to the base saved in Flash, so
+            # nothing here may touch BBR or Flash. The saved base stays
+            # exactly as it was until a completed survey is committed.
             #
             # Note: this does NOT reset the BBR-backed NAV-SVIN.dur
             # accumulator.  On HPG 1.12 only a hardware reset
@@ -750,7 +764,7 @@ class UbloxDriver(GpsReceiverDriver):
             # dur-floor check below catches stale state and tells
             # the operator to use Reset GPS.
             self._send_cfg_valset_locked(
-                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
+                [("CFG_TMODE_MODE", 0)], layer=self._CFG_VALSET_RAM_ONLY
             )
 
             # Step 2: settle.  The ZED-F9P needs a brief quiet period
@@ -759,15 +773,12 @@ class UbloxDriver(GpsReceiverDriver):
             # rather than coalesced with the previous state.
             time.sleep(self._TMODE_RESTART_DELAY_S)
 
-            # Step 3: write the new survey-in parameters and enable.
-            # Issue #42: this used to write RAM only (layer=1) on the
-            # theory that survey-in is transient state; in practice
-            # that meant the *enable* never survived a reboot or even
-            # the app re-opening the port, silently reverting the base
-            # to disabled. Write RAM+Flash (layer=5) instead, matching
-            # ``configure_fixed_base`` — the transition intent must be
-            # durable even though CFG_TMODE_MODE=1 is conceptually
-            # transient while the survey itself is running.
+            # Step 3: write the new survey-in parameters and enable, in
+            # RAM only. Issue #221 reverses issue #42's layer=5 write: a
+            # Survey-in that a reset or power cycle interrupts is
+            # abandoned, and the receiver comes back as the base saved
+            # in Flash. Only committing a finished survey
+            # (``configure_fixed_base``) persists anything.
             # CFG_TMODE_SVIN_ACC_LIMIT is in 0.1 mm units on the
             # wire (u-blox spec: "1 m = 10000, 3.2598 m = 32598").
             # The Python API uses mm, so multiply by 10 here.  Same
@@ -786,12 +797,12 @@ class UbloxDriver(GpsReceiverDriver):
                 # Survey-in mode (last so params land first)
                 ("CFG_TMODE_MODE", 1),
             ]
-            # Verify-after-write: an ACK'd layer=5 write that silently
-            # didn't persist is exactly issue #42's original failure
-            # mode, and it wouldn't be caught by the dur-progression
-            # check below (that confirms the survey *engine* started,
-            # not that these CFG keys landed in flash).
-            self._write_and_verify_locked(cfg_data, layer=5, label="Survey-in config")
+            # Verify-after-write: the dur-progression check below
+            # confirms the survey *engine* started, not that these keys
+            # landed in RAM.
+            self._write_and_verify_locked(
+                cfg_data, layer=self._CFG_VALSET_RAM_ONLY, label="Survey-in config"
+            )
 
             # Step 5: confirm a *fresh* survey is running.  Two
             # signals together:
@@ -818,12 +829,11 @@ class UbloxDriver(GpsReceiverDriver):
 
             if stale_accumulator or not_progressing:
                 # Roll back so a failed start doesn't leave the
-                # receiver in TMODE=1 with phantom-survey state.
+                # receiver in TMODE=1 with phantom-survey state: back to
+                # the base saved in Flash, as for any abandoned
+                # Survey-in (issue #221).
                 try:
-                    self._send_cfg_valset_locked(
-                        [("CFG_TMODE_MODE", 0)],
-                        layer=self._TMODE_DISABLE_ALL_LAYERS,
-                    )
+                    self._restore_saved_tmode_locked()
                 except Exception:
                     logger.exception(
                         "Failed to roll back TMODE after survey-in start "
@@ -841,7 +851,7 @@ class UbloxDriver(GpsReceiverDriver):
                         "'Reset GPS' to issue a hardware reset (the "
                         "only software-issuable way to clear this "
                         "state), then try Start Survey-In again.  "
-                        "TMODE has been reset to 0."
+                        "The receiver is back on its saved base configuration."
                     )
                 raise RuntimeError(
                     "Survey-in start failed: NAV-SVIN.dur did not "
@@ -851,8 +861,8 @@ class UbloxDriver(GpsReceiverDriver):
                     f"dur={after.duration_seconds}s "
                     f"obs={after.observations}).  The receiver "
                     "accepted the configuration but the survey-in "
-                    "state machine did not engage.  TMODE has been "
-                    "reset to 0."
+                    "state machine did not engage.  The receiver is "
+                    "back on its saved base configuration."
                 )
 
             # Issue #63: this used to force-apply an RTCM-only UART1/
@@ -874,8 +884,8 @@ class UbloxDriver(GpsReceiverDriver):
         """Disable TMODE on the receiver (CFG_TMODE_MODE=0).
 
         Used to cancel an in-progress survey-in or clear a fixed-base
-        configuration.  Applied to RAM only — call ``save_to_flash()``
-        afterwards if the change should persist.
+        configuration.  Applied to RAM only, and never saved: a reset
+        brings back the saved base (issue #221).
 
         Verify-and-retry semantics: after the CFG-VALSET ACK is
         received, this method polls NAV-SVIN once to confirm
@@ -913,11 +923,18 @@ class UbloxDriver(GpsReceiverDriver):
                     )
         logger.info("Base mode disabled (TMODE=0)")
 
+    def restore_saved_base_mode(self) -> None:
+        with self._lock:
+            self._restore_saved_tmode_locked()
+        logger.info("Base mode restored from the saved configuration")
+
     def configure_fixed_base(self, config: FixedBaseConfig) -> None:
-        # u-blox uses degrees * 1e-7 for lat/lon in integer form
-        lat_hp = int(config.latitude * 1e7)
-        lon_hp = int(config.longitude * 1e7)
-        alt_cm = int(config.altitude_m * 100)
+        # u-blox splits each LLH value into a main part (1e-7 deg, cm)
+        # and a high-precision part (1e-9 deg, 0.1 mm). Both are written,
+        # so an HP part left by an earlier base can't shift this one.
+        lat_e7, lat_hp = self._deg_to_e7_hp(config.latitude)
+        lon_e7, lon_hp = self._deg_to_e7_hp(config.longitude)
+        alt_cm, alt_hp = self._m_to_cm_hp(config.altitude_m)
 
         # The ZED-F9P base engine will not generate RTCM corrections
         # unless a valid (non-origin) 3D position is present in ECEF —
@@ -936,9 +953,12 @@ class UbloxDriver(GpsReceiverDriver):
         cfg_data = [
             ("CFG_TMODE_MODE", 2),  # Fixed mode
             ("CFG_TMODE_POS_TYPE", 1),  # LLH
-            ("CFG_TMODE_LAT", lat_hp),
-            ("CFG_TMODE_LON", lon_hp),
+            ("CFG_TMODE_LAT", lat_e7),
+            ("CFG_TMODE_LON", lon_e7),
             ("CFG_TMODE_HEIGHT", alt_cm),
+            ("CFG_TMODE_LAT_HP", lat_hp),
+            ("CFG_TMODE_LON_HP", lon_hp),
+            ("CFG_TMODE_HEIGHT_HP", alt_hp),
             # CFG_TMODE_FIXED_POS_ACC is in 0.1 mm units on the
             # wire (same convention as CFG_TMODE_SVIN_ACC_LIMIT).
             # The Python API uses mm, so multiply by 10 here.
@@ -959,10 +979,13 @@ class UbloxDriver(GpsReceiverDriver):
             # ``configure_survey_in``.  The visible symptom is that
             # "Restore Past Survey" appears to succeed (200 OK, ACK
             # received) but ``NAV-SVIN.dur`` keeps ticking and
-            # ``base-config.mode`` stays ``survey_in``.
+            # ``base-config.mode`` stays ``survey_in``. The edge only
+            # needs RAM; writing 0 to BBR too would outrank the Flash
+            # copy below at the next reset (issue #221).
             self._send_cfg_valset_locked(
-                [("CFG_TMODE_MODE", 0)], layer=self._TMODE_DISABLE_ALL_LAYERS
+                [("CFG_TMODE_MODE", 0)], layer=self._CFG_VALSET_RAM_ONLY
             )
+            self._clear_tmode_from_bbr_locked()
             time.sleep(self._TMODE_RESTART_DELAY_S)
             # Write to RAM+Flash (layer=5) directly via CFG-VALSET.
             # The legacy ``save_to_flash`` path (CFG-CFG saveMask) does
@@ -1004,6 +1027,22 @@ class UbloxDriver(GpsReceiverDriver):
                         f"expected {expected_ecef} cm after two write "
                         "attempts. Try disconnecting and reconnecting, "
                         "or power-cycle the receiver."
+                    )
+
+            # The base must also come back after a reset: Flash holds
+            # it, and BBR holds no TMODE key to outrank it (issue #221).
+            # Retried once, like the ECEF check above.
+            if not self._base_is_saved_locked(cfg_data):
+                logger.warning("Fixed base not saved after first write — retrying")
+                self._clear_tmode_from_bbr_locked()
+                self._send_cfg_valset_locked(cfg_data, layer=5)
+                if not self._base_is_saved_locked(cfg_data):
+                    raise RuntimeError(
+                        "Fixed base is set but not saved: the receiver's "
+                        "Flash doesn't hold it (or BBR would override it), "
+                        "so it will not survive a reset or power cycle. "
+                        "Try again; if it persists, the receiver's flash "
+                        "may be failing."
                     )
 
             # Issue #63: no longer force-applies the RTCM-only output
@@ -1848,14 +1887,19 @@ class UbloxDriver(GpsReceiverDriver):
         return self.connect(port, baud_rate)
 
     def save_to_flash(self) -> None:
-        """Save current RAM config to BBR + Flash (layers 7)."""
-        # CFG-CFG: save current config to all non-volatile layers
+        """Save the whole RAM config to Flash, and only Flash (issue #221).
+
+        Never to BBR: a copy there would outrank every later RAM+Flash
+        write at the next reset. pyubx2 has no ``deviceMask`` field (it
+        dropped the old argument and sent an all-zero mask, which saved
+        nowhere); the device bits are ``devBBR``/``devFlash``/... flags.
+        """
         msg = UBXMessage(
             "CFG",
             "CFG-CFG",
             SET,
-            saveMask=b"\x1f\x1f\x00\x00",  # Save all sections
-            deviceMask=b"\x17",  # BBR + Flash + SPI flash
+            saveMask=b"\x1f\x1f\x00\x00",  # protocol > 23.01: any bit = all
+            devFlash=1,
         )
         with self._lock:
             ser, _ = self._require_connection()
@@ -2551,6 +2595,19 @@ class UbloxDriver(GpsReceiverDriver):
             return counters
         raise TimeoutError("No MON-COMMS response from device")
 
+    @staticmethod
+    def _deg_to_e7_hp(value_deg: float) -> tuple[int, int]:
+        """Split degrees into wire-format (1e-7 deg, 1e-9 deg HP) for CFG_TMODE_LAT/LON.
+
+        Same rule as :meth:`_m_to_cm_hp`: HP (range -99..99) shares the
+        main part's sign, so the split truncates toward zero.
+        """
+        total_e9 = round(value_deg * 1e9)
+        e7, hp = divmod(abs(total_e9), 100)
+        if total_e9 < 0:
+            e7, hp = -e7, -hp
+        return e7, hp
+
     def _poll_mon_ver(self, timeout_s: float | None = None) -> DeviceInfo:
         """Poll MON-VER and parse device identity.
 
@@ -2779,6 +2836,95 @@ class UbloxDriver(GpsReceiverDriver):
         ser.reset_input_buffer()
         ser.write(msg.serialize())  # type: ignore[union-attr]
         self._wait_for_ack("CFG-VALSET")
+
+    def repair_saved_config(self) -> None:
+        """Delete TMODE keys an older version left in BBR (issue #221).
+
+        BBR never holds TMODE keys now, so any found there are damage
+        from before the fix: they outrank the base saved in Flash at
+        the next reset. RAM isn't touched, so a running base carries on.
+        Best effort: a receiver that can't be repaired still connects.
+        """
+        try:
+            with self._lock:
+                residue = self._read_stored_keys_locked(
+                    list(_TMODE_KEYS), layer=self._CFG_LAYER_BBR
+                )
+                if not residue:
+                    return
+                self._clear_tmode_from_bbr_locked()
+            logger.warning(
+                "Removed TMODE keys left in BBR by an earlier version, which "
+                "would have overridden the saved base at the next reset: %s",
+                residue,
+            )
+        except Exception:
+            logger.exception("Could not check BBR for leftover TMODE keys")
+
+    def _base_is_saved_locked(self, cfg_data: list[tuple[str, int]]) -> bool:
+        """Whether a reset would bring back ``cfg_data`` (must hold lock)."""
+        expected = dict(cfg_data)
+        in_flash = self._read_stored_keys_locked(
+            list(expected), layer=self._CFG_LAYER_FLASH
+        )
+        in_bbr = self._read_stored_keys_locked(
+            list(_TMODE_KEYS), layer=self._CFG_LAYER_BBR
+        )
+        return in_flash == expected and not in_bbr
+
+    def _read_stored_keys_locked(self, keys: list[str], layer: int) -> dict[str, int]:
+        """The ``keys`` stored in BBR or Flash; ``{}`` if it stores none (must hold lock).
+
+        A layer that stores none of the keys answers the poll with a NAK.
+        """
+        try:
+            return self._read_cfg_keys_locked(keys, layer=layer)
+        except RuntimeError as exc:
+            if "NAK" in str(exc):
+                return {}
+            raise
+
+    def _restore_saved_tmode_locked(self) -> None:
+        """Put RAM's TMODE back to the saved base (must hold lock).
+
+        What a reset would do for TMODE, without the reset: the saved
+        keys (BBR outranking Flash, as at a reset) are copied into RAM,
+        base mode last and through a RAM 0 first, so the transition
+        registers (see ``configure_survey_in``). Nothing saved means base
+        mode off.
+        """
+        saved = self._read_stored_keys_locked(
+            list(_TMODE_KEYS), layer=self._CFG_LAYER_FLASH
+        )
+        saved.update(
+            self._read_stored_keys_locked(list(_TMODE_KEYS), layer=self._CFG_LAYER_BBR)
+        )
+        self._send_cfg_valset_locked(
+            [("CFG_TMODE_MODE", 0)], layer=self._CFG_VALSET_RAM_ONLY
+        )
+        mode = saved.pop("CFG_TMODE_MODE", 0)
+        if mode == 0:
+            return
+        time.sleep(self._TMODE_RESTART_DELAY_S)
+        self._send_cfg_valset_locked(
+            [*saved.items(), ("CFG_TMODE_MODE", mode)],
+            layer=self._CFG_VALSET_RAM_ONLY,
+        )
+
+    def _clear_tmode_from_bbr_locked(self) -> None:
+        """Delete every TMODE key from BBR (must hold lock), issue #221.
+
+        A reset rebuilds RAM with BBR outranking Flash, so any TMODE key
+        left in BBR overrides the base Flash holds. Saved base config
+        lives in Flash only; deleting a key BBR doesn't hold is a valid
+        no-op, so this is safe to repeat.
+        """
+        ser, _ = self._require_connection()
+        keys: list[int | str] = list(_TMODE_KEYS)
+        msg = UBXMessage.config_del(self._CFG_VALDEL_BBR, 0, keys)
+        ser.reset_input_buffer()
+        ser.write(msg.serialize())  # type: ignore[union-attr]
+        self._wait_for_ack("CFG-VALDEL")
 
     def _wait_for_ack(self, expected_msg: str) -> None:
         """Read UBX messages until ACK-ACK or ACK-NAK is received.

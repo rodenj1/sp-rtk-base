@@ -375,6 +375,7 @@ class DeviceService:
                 port,
             )
             await self._probe_gnss_capability_once(self._driver)
+            await self._repair_saved_config_once(self._driver)
             self._console_port = await self._identify_console_port_once(self._driver)
             return info
         except Exception as exc:
@@ -475,6 +476,17 @@ class DeviceService:
         if not isinstance(reading, ConsolePortReading):
             return ConsolePortReading.unknown(ConsolePortUnknownReason.UNSUPPORTED)
         return reading
+
+    @staticmethod
+    async def _repair_saved_config_once(driver: GpsReceiverDriver) -> None:
+        """Let the driver undo old damage to the saved config (issue #221).
+
+        Never raises: a receiver that can't be repaired still connects.
+        """
+        try:
+            await asyncio.to_thread(driver.repair_saved_config)
+        except Exception as exc:
+            logger.warning("Saved-config repair raised at connect: %s", exc)
 
     @staticmethod
     async def _probe_gnss_capability_once(driver: GpsReceiverDriver) -> None:
@@ -723,42 +735,42 @@ class DeviceService:
         )
 
     async def cancel_survey_in(self) -> None:
-        """Cancel an in-progress survey-in by disabling TMODE.
+        """Cancel an in-progress survey-in; the receiver returns to its saved base.
 
-        Sends ``CFG_TMODE_MODE=0`` then issues a hardware reset +
-        reconnect so the receiver's BBR-backed survey accumulator
-        is wiped.  Without the reset, the next Start would inherit
-        the cancelled session's ``dur`` counter and the receiver
-        would treat it as a continuation rather than a fresh start.
+        Issues a hardware reset + reconnect. The Survey-in lives in RAM
+        only, so the reset abandons it and reloads the saved base (issue
+        #221), and it also wipes the receiver's BBR-backed survey
+        accumulator. Without that, the next Start would inherit the
+        cancelled session's ``dur`` counter and the receiver would treat
+        it as a continuation rather than a fresh start. A driver that
+        can't reset, or a reset that fails, restores the saved base
+        directly instead.
 
         Raises:
-            RuntimeError: If not connected or relay is running.
+            RuntimeError: If not connected or relay is running, or if the
+                saved base can't be restored.
         """
         driver = self._require_connected()
         self._state = DeviceConnectionState.CONFIGURING
         try:
-            await asyncio.to_thread(driver.disable_base_mode)
-            # Reset to clear the BBR survey accumulator so the next
-            # Start sees a clean dur=0.  Without this, dur carries
-            # over from the cancelled session and the receiver
-            # treats subsequent surveys as continuations.
             if hasattr(driver, "reset_and_reconnect"):
                 try:
                     await asyncio.to_thread(driver.reset_and_reconnect)  # type: ignore[attr-defined]
                     logger.info("Survey-in cancelled and receiver reset")
+                    return
                 except Exception:
                     logger.exception(
-                        "TMODE was disabled but the post-cancel reset "
-                        "failed — receiver may carry stale state into "
-                        "the next survey"
+                        "The post-cancel reset failed — restoring the saved "
+                        "base directly; the receiver may carry stale state "
+                        "into the next survey"
                     )
-            else:
-                logger.info("Survey-in cancelled (TMODE disabled)")
-            self._state = DeviceConnectionState.CONNECTED
+            await asyncio.to_thread(driver.restore_saved_base_mode)
+            logger.info("Survey-in cancelled (saved base restored)")
         except Exception as exc:
-            self._state = DeviceConnectionState.CONNECTED
             self._last_error = str(exc)
             raise
+        finally:
+            self._state = DeviceConnectionState.CONNECTED
 
     async def reset_receiver(self) -> DeviceInfo:
         """Hardware-reset the receiver and reconnect on the same port.
@@ -1502,6 +1514,18 @@ class DeviceService:
         """
         driver = self._require_connected()
         await asyncio.to_thread(driver.end_correction_input)
+
+    async def restore_saved_base_mode(self) -> None:
+        """Put the receiver back on its saved base configuration.
+
+        How a survey that never commits ends (issue #221): the receiver
+        returns to the fixed base it had, or base mode off.
+
+        Raises:
+            RuntimeError: If not connected or the relay is running.
+        """
+        driver = self._require_connected()
+        await asyncio.to_thread(driver.restore_saved_base_mode)
 
     async def disable_base_mode(self) -> None:
         """Put the receiver in rover mode (no survey-in, no fixed base).

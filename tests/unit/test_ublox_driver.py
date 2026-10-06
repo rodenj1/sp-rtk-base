@@ -331,10 +331,9 @@ class TestUbloxDriverConfiguration:
         # configure_survey_in now performs (issue #63 retired the
         # trailing base-output-profile / dyn-model force-applies):
         #   0. NAV-SVIN baseline poll                       -> dur=0 (no pre-reset)
-        #   1. CFG-VALSET TMODE=0 (layer=7: RAM+BBR+Flash)  -> ACK
-        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=5)   -> ACK
+        #   1. CFG-VALSET TMODE=0 (layer=1: RAM only)       -> ACK
+        #   2. CFG-VALSET TMODE=1 + SVIN params (layer=1)   -> ACK
         #   3. CFG-VALGET RAM read-back                     -> matches (issue #42)
-        #   4. CFG-VALGET flash read-back                   -> matches (issue #103)
         #   5. NAV-SVIN poll                                -> dur=0
         #   6. (~2 s gap)
         #   7. NAV-SVIN poll                                -> dur=3 (incremented)
@@ -347,10 +346,9 @@ class TestUbloxDriverConfiguration:
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),  # baseline
-            (b"", _make_ack_response()),  # full-layer disable
+            (b"", _make_ack_response()),  # RAM disable
             (b"", _make_ack_response()),  # enable
             (b"", enable_read_back),  # enable RAM read-back — matches
-            (b"", enable_read_back),  # enable flash read-back — matches
             (b"", _make_nav_svin_response(active=0, valid=0, dur=0, obs=0)),
             (b"", _make_nav_svin_response(active=0, valid=0, dur=3, obs=1)),
         ]
@@ -367,24 +365,21 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_survey_in(config)
 
-        # Issue #63: only two CFG-VALSET calls now — layer=7 disable and
-        # layer=5 enable (issue #42). The base output profile and dyn
-        # model force-applies (issues #40/#38) were retired: they used
-        # to overwrite an operator-applied profile on every transition.
+        # Issue #63: only two CFG-VALSET calls — the disable and the
+        # enable. The base output profile and dyn model force-applies
+        # (issues #40/#38) were retired: they used to overwrite an
+        # operator-applied profile on every transition.
         assert mock_ubx_msg.config_set.call_count == 2
         disable_layer = mock_ubx_msg.config_set.call_args_list[0][0][0]
         disable_cfg = mock_ubx_msg.config_set.call_args_list[0][0][2]
         enable_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
         enable_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
 
-        # Disable must hit RAM|BBR|Flash (7), per u-blox C099 reference
-        # script — RAM-only leaves BBR pinned and the ``dur`` counter
-        # accumulating from prior sessions.
-        assert disable_layer == 7
+        # Both RAM only (issue #221): a Survey-in is never persisted, so
+        # an interrupted one falls back to the base saved in Flash.
+        assert disable_layer == 1
         assert disable_cfg == [("CFG_TMODE_MODE", 0)]
-        # Enable is RAM+Flash (issue #42) — a RAM-only write reverted
-        # to the last-flashed selection on reboot / port reopen.
-        assert enable_layer == 5
+        assert enable_layer == 1
         keys = [k for k, _ in enable_cfg]
         assert "CFG_TMODE_MODE" in keys
         assert "CFG_TMODE_SVIN_MIN_DUR" in keys
@@ -436,15 +431,17 @@ class TestUbloxDriverConfiguration:
         # retired the trailing base-output-profile / dyn-model
         # force-applies):
         #   1. UBX-CFG-RST (no ACK read needed)
-        #   2. CFG-VALSET TMODE=0 (layer=7)  -> ACK
+        #   2. CFG-VALSET TMODE=0 (layer=1, RAM only) -> ACK
+        #      CFG-VALDEL of every TMODE key from BBR -> ACK (issue #221)
         #   3. CFG-VALSET TMODE=2 + coords + ECEF (layer=5) -> ACK
         #   4. CFG-VALGET ECEF read-back verify -> matches written ECEF
         # Read-back values are the exact CFG_TMODE_ECEF_X/Y/Z cm the
         # driver computes for lat=47.3977, lon=8.5456, alt=408.0m —
         # the verify step now checks equality, not just non-zero.
-        reader.read.side_effect = [
+        scripted = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for the RAM disable
+            (b"", _make_ack_response()),  # ACK for the BBR TMODE delete
             (b"", _make_ack_response()),  # ACK for layer=5 fixed-base write
             (
                 b"",
@@ -456,6 +453,19 @@ class TestUbloxDriverConfiguration:
                 ),
             ),
         ]
+
+        def read() -> tuple[bytes, SimpleNamespace]:
+            if scripted:
+                return scripted.pop(0)
+            if not hasattr(read, "flash_done"):
+                # Saved check (issue #221): Flash answers with what was
+                # written, then BBR holds none of the TMODE keys.
+                read.flash_done = True  # type: ignore[attr-defined]
+                written = mock_ubx_msg.config_set.call_args_list[-1][0][2]
+                return (b"", SimpleNamespace(identity="CFG-VALGET", **dict(written)))
+            return (b"", _make_nak_response())
+
+        reader.read.side_effect = read
         mock_reader_cls.return_value = reader
 
         mock_msg = MagicMock()
@@ -474,8 +484,8 @@ class TestUbloxDriverConfiguration:
         with patch("sp_rtk_base.services.drivers.ublox.time.sleep"):
             driver.configure_fixed_base(config)
 
-        # Issue #63: only two CFG-VALSETs now — layer=7 disable and
-        # layer=5 fixed-base. The base output profile and dyn model
+        # Issue #63: only two CFG-VALSETs — the RAM disable and the
+        # layer=5 fixed-base write. The base output profile and dyn model
         # force-applies (issues #40/#38) were retired: they used to
         # overwrite an operator-applied profile on every transition.
         # Pre-disable mirrors configure_survey_in — without it, a
@@ -488,7 +498,9 @@ class TestUbloxDriverConfiguration:
         fixed_layer = mock_ubx_msg.config_set.call_args_list[1][0][0]
         fixed_cfg = mock_ubx_msg.config_set.call_args_list[1][0][2]
 
-        assert disable_layer == 7
+        # RAM only: a BBR copy of 0 would outrank Flash at the next
+        # reset (issue #221).
+        assert disable_layer == 1
         assert disable_cfg == [("CFG_TMODE_MODE", 0)]
         # configure_fixed_base writes the new TMODE config to RAM+Flash
         # (layer=5) directly, bypassing CFG-CFG which doesn't reliably
@@ -560,7 +572,8 @@ class TestUbloxDriverConfiguration:
         reader = MagicMock()
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for the RAM disable
+            (b"", _make_ack_response()),  # ACK for the BBR TMODE delete
             (b"", _make_ack_response()),  # ACK for first layer=5 write
             (b"", zero_ecef),  # first read-back — still zero
             (b"", _make_ack_response()),  # ACK for retried layer=5 write
@@ -582,7 +595,7 @@ class TestUbloxDriverConfiguration:
             with pytest.raises(RuntimeError, match="did not take effect"):
                 driver.configure_fixed_base(config)
 
-        # Retried once: layer=7 disable + two layer=5 writes.
+        # Retried once: RAM disable + two layer=5 writes.
         assert mock_ubx_msg.config_set.call_count == 3
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")
@@ -614,7 +627,8 @@ class TestUbloxDriverConfiguration:
         reader = MagicMock()
         reader.read.side_effect = [
             (b"", _make_mon_ver_response()),
-            (b"", _make_ack_response()),  # ACK for layer=7 disable
+            (b"", _make_ack_response()),  # ACK for the RAM disable
+            (b"", _make_ack_response()),  # ACK for the BBR TMODE delete
             (b"", _make_ack_response()),  # ACK for first layer=5 write
             (b"", stale_ecef),  # first read-back — stale, wrong position
             (b"", _make_ack_response()),  # ACK for retried layer=5 write
@@ -636,7 +650,7 @@ class TestUbloxDriverConfiguration:
             with pytest.raises(RuntimeError, match="did not take effect"):
                 driver.configure_fixed_base(config)
 
-        # Retried once: layer=7 disable + two layer=5 writes.
+        # Retried once: RAM disable + two layer=5 writes.
         assert mock_ubx_msg.config_set.call_count == 3
 
     @patch("sp_rtk_base.services.drivers.ublox.UBXMessage")

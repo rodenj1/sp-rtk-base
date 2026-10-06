@@ -127,10 +127,17 @@ def _default_manager_factory(adapter: str) -> Any:
     return BluetoothManager(adapter_name=adapter)
 
 
-def _default_socket_factory() -> socket.socket:
-    from sp_rtk_base_relay.core.rfcomm_link import rfcomm_socket
+def rfcomm_socket() -> socket.socket:
+    """An unconnected RFCOMM socket, made by the relay's own helper.
 
-    return rfcomm_socket()
+    The default socket factory of both the Console link and the Bluetooth
+    Verification. Imported late, so environments without dbus-fast (CI,
+    macOS dev boxes) can still import this module; the address family
+    and protocol constants live once, in the relay's ``rfcomm_link``.
+    """
+    from sp_rtk_base_relay.core import rfcomm_link
+
+    return rfcomm_link.rfcomm_socket()
 
 
 class RfcommStream:
@@ -282,7 +289,7 @@ class BluetoothLinkOpener(LinkOpener):
         config: BluetoothConfig,
         *,
         manager_factory: ManagerFactory = _default_manager_factory,
-        socket_factory: Callable[[], Any] = _default_socket_factory,
+        socket_factory: Callable[[], Any] = rfcomm_socket,
         read_limit: float = READ_LIMIT_S,
         on_stage: StageListener | None = None,
     ) -> None:

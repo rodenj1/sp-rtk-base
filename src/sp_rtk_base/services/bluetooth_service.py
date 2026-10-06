@@ -35,6 +35,7 @@ from sp_rtk_base.models.bluetooth_models import (
     build_result,
     normalize_pin,
 )
+from sp_rtk_base.services.drivers.bluetooth_link import rfcomm_socket
 from sp_rtk_base.services.verification import (
     VerificationRefusedError as VerificationRefusedError,
 )
@@ -96,15 +97,6 @@ def _default_manager_factory(adapter: str) -> Any:
     return BluetoothManager(adapter_name=adapter)
 
 
-def _default_socket_factory() -> Any:
-    """Create an ``AF_BLUETOOTH`` RFCOMM socket with the relay's own helper.
-
-    The address family and protocol constants live once, in the relay's
-    ``rfcomm_link``, so they cannot drift away from the relay's.
-    """
-    return _rfcomm_link().rfcomm_socket()
-
-
 def _rfcomm_link() -> Any:
     """The relay's shared RFCOMM link helper module, imported lazily.
 
@@ -123,7 +115,7 @@ class BluetoothVerificationService:
         relay_service: RelayService,
         config_service: ConfigService,
         manager_factory: ManagerFactory = _default_manager_factory,
-        socket_factory: SocketFactory = _default_socket_factory,
+        socket_factory: SocketFactory = rfcomm_socket,
         data_window_seconds: float = DATA_WINDOW_SECONDS,
     ) -> None:
         """Wire up the service.

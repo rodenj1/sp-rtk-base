@@ -29,7 +29,8 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.correction_verification import (
     CorrectionSourceVerificationService,
 )
-from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceService
+from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
@@ -119,19 +120,26 @@ relay_service: RelayService = RelayService()
 config_service: ConfigService = ConfigService()
 event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
+
+
+def _bluetooth_opener() -> BluetoothOpenerFactory:
+    """The Bluetooth Console link's opener: the real one, or the fake GPS's.
+
+    The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
+    """
+    if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
+
+        return FakeBluetoothLinkOpener
+    return BluetoothLinkOpener
+
+
 # A Bluetooth Console link uses the saved Input profile's device; read
 # through the module global so a reloaded ConfigService is honoured.
 device_service: DeviceService = DeviceService(
-    input_profile=lambda: config_service.get_input_config()
+    input_profile=lambda: config_service.get_input_config(),
+    bluetooth_opener=_bluetooth_opener(),
 )
-if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
-    # The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
-    from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
-
-    device_service = DeviceService(
-        input_profile=lambda: config_service.get_input_config(),
-        bluetooth_opener=FakeBluetoothLinkOpener,
-    )
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)

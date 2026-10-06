@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Literal, Protocol
 
@@ -90,6 +91,25 @@ def _summarise_input(input_config: InputConfig) -> str:
     return str(src)
 
 
+CONSOLE_CONNECTED_MESSAGE = (
+    "The console is connected to the receiver. Disconnect the console or "
+    "use Hand off to start the relay."
+)
+
+
+class RelayStartRefusedError(ServiceError):
+    """Start did not run, and nothing was touched.
+
+    ``code`` is what a client branches on: 409 is shared with unrelated
+    refusals (ADR 0002).
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class FrameSubscriber(Protocol):
     """A Frame subscriber: reads the Relay's input Frames while it runs.
 
@@ -123,6 +143,16 @@ class RelayService:
         self._start_monotonic: float | None = None
         self._start_trigger: str | None = None
         self._frame_subscriber: FrameSubscriber | None = None
+        self._console_connected_check: Callable[[], bool] | None = None
+
+    def set_console_check(self, check: Callable[[], bool]) -> None:
+        """Set a callback that says whether the console is connected.
+
+        The other half of the console/Relay mutual exclusion: Connect
+        refuses while the Relay runs, and Start refuses while the
+        console is connected, for every Console link kind.
+        """
+        self._console_connected_check = check
 
     def set_frame_subscriber(self, subscriber: FrameSubscriber) -> None:
         """Register the Frame subscriber told about every relay start and stop.
@@ -177,6 +207,8 @@ class RelayService:
         input_config: InputConfig,
         destinations: list[DestinationConfig] | None = None,
         trigger: str = "unknown",
+        *,
+        refuse_while_console_connected: bool = True,
     ) -> None:
         """Start the relay engine.
 
@@ -190,13 +222,27 @@ class RelayService:
                 start (``"auto-start"``, ``"api"``, ``"handoff"``,
                 etc.) — surfaced on the journal/Loki log line so
                 operators can tell apart who/what kicked off the run.
+            refuse_while_console_connected: Refuse while the console is
+                connected.  Only auto-start at boot passes ``False``.
 
         Raises:
+            RelayStartRefusedError: ``console_connected`` while the
+                console is connected.  Nothing was touched.
             ServiceError: If the engine is already running.
             ConfigurationError: If the configuration is invalid.
         """
         if self._engine is not None and self._engine.is_running:
             raise ServiceError("Relay engine is already running")
+
+        # Before the stale-handle release: over Bluetooth that release
+        # cuts a live console link (ConnectionAbortedError 103 on the
+        # bench), so a refused Start must touch nothing.
+        if (
+            refuse_while_console_connected
+            and self._console_connected_check is not None
+            and self._console_connected_check()
+        ):
+            raise RelayStartRefusedError("console_connected", CONSOLE_CONNECTED_MESSAGE)
 
         # Best-effort stale-handle release, on *every* path into the
         # relay.  This used to live in ``init_services`` behind the

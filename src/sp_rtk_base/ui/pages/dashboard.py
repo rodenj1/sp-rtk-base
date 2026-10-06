@@ -25,6 +25,7 @@ from sp_rtk_base.services import (
     get_relay_service,
     get_signal_quality_service,
 )
+from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
@@ -749,7 +750,9 @@ def dashboard_page() -> None:
                 # integer between 1 and 65535 | Key: input.config.port")
                 # which leaks the internal config tree shape.
                 exc_text = str(exc)
-                if (
+                if isinstance(exc, RelayStartRefusedError):
+                    friendly = exc.message
+                elif (
                     "port must be an integer" in exc_text
                     or "input.config.port" in exc_text
                 ):

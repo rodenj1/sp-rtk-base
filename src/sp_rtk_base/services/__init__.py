@@ -294,6 +294,16 @@ def get_profile_store() -> ProfileStore:
 # ---------------------------------------------------------------------------
 
 
+def wire_console_relay_exclusion(device: DeviceService, relay: RelayService) -> None:
+    """Make the console and the Relay exclude each other in both directions.
+
+    Connect refuses while the Relay runs; Start refuses while the console
+    is connected.
+    """
+    device.set_relay_check(lambda: relay.is_running)
+    relay.set_console_check(lambda: device.is_connected)
+
+
 async def _auto_start_with_retry(
     input_config: InputConfig,
     dest_configs: list[DestinationConfig],
@@ -334,7 +344,10 @@ async def _auto_start_with_retry(
         _set_auto_start_status("in_progress", attempt, last_error)
         try:
             await relay_service.start_relay(
-                input_config, dest_configs, trigger=f"auto-start (attempt {attempt})"
+                input_config,
+                dest_configs,
+                trigger=f"auto-start (attempt {attempt})",
+                refuse_while_console_connected=False,
             )
         except (ValidationError, ConfigurationError) as exc:
             # Permanent — config is malformed; retrying won't help.
@@ -392,8 +405,7 @@ async def init_services() -> None:
     config = config_service.load_config()
     logger.info("Services initialized — config loaded")
 
-    # Wire up device service ↔ relay mutual exclusion
-    device_service.set_relay_check(lambda: relay_service.is_running)
+    wire_console_relay_exclusion(device_service, relay_service)
 
     settings = config.settings
     if not settings.auto_start:

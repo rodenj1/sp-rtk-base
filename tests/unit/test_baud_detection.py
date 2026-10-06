@@ -25,6 +25,7 @@ from sp_rtk_base.models.device_models import (
     CandidateVerdict,
     DetectionOutcome,
     DeviceInfo,
+    SerialLink,
 )
 from sp_rtk_base.services.device_service import (
     DetectionRefusedError,
@@ -490,7 +491,7 @@ class TestServiceDetection:
         """The rate is already known — there is nothing to detect."""
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
-        await svc.connect("FAKE", 115200)
+        await svc.connect(SerialLink(port="FAKE", baud_rate=115200))
 
         with pytest.raises(DetectionRefusedError) as exc:
             await svc.detect_baud("FAKE", vendor="fake")

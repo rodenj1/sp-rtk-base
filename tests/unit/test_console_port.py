@@ -22,6 +22,7 @@ from sp_rtk_base.models.device_models import (
     ConsolePortReading,
     ConsolePortUnknownReason,
     PortId,
+    SerialLink,
 )
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
@@ -322,7 +323,7 @@ class TestServiceLifecycle:
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
 
-        await svc.connect("FAKE", 57600)
+        await svc.connect(SerialLink(port="FAKE", baud_rate=57600))
 
         assert svc.console_port == ConsolePortReading.known(PortId.UART1)
 
@@ -331,7 +332,7 @@ class TestServiceLifecycle:
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
 
-        await svc.connect(FAKE_CONSOLE_UNKNOWN_PORT, 57600)
+        await svc.connect(SerialLink(port=FAKE_CONSOLE_UNKNOWN_PORT, baud_rate=57600))
 
         assert svc.is_connected
         assert svc.console_port is not None
@@ -343,7 +344,7 @@ class TestServiceLifecycle:
         svc = DeviceService()
         svc.set_driver(_ExplodingIdentifier())
 
-        await svc.connect("FAKE", 57600)
+        await svc.connect(SerialLink(port="FAKE", baud_rate=57600))
 
         assert svc.is_connected
         assert svc.console_port == ConsolePortReading.unknown(
@@ -354,7 +355,7 @@ class TestServiceLifecycle:
     async def test_disconnect_forgets_the_console_port(self) -> None:
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
-        await svc.connect("FAKE", 57600)
+        await svc.connect(SerialLink(port="FAKE", baud_rate=57600))
 
         await svc.disconnect()
 
@@ -364,7 +365,7 @@ class TestServiceLifecycle:
     async def test_status_exposes_a_known_port(self) -> None:
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
-        await svc.connect("FAKE", 57600)
+        await svc.connect(SerialLink(port="FAKE", baud_rate=57600))
 
         status = svc.get_status()
 
@@ -376,7 +377,7 @@ class TestServiceLifecycle:
         """The reason is what makes a refusal actionable."""
         svc = DeviceService()
         svc.set_driver(FakeGpsDriver())
-        await svc.connect(FAKE_CONSOLE_UNKNOWN_PORT, 57600)
+        await svc.connect(SerialLink(port=FAKE_CONSOLE_UNKNOWN_PORT, baud_rate=57600))
 
         status = svc.get_status()
 

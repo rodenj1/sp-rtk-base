@@ -72,6 +72,7 @@ from sp_rtk_base.models.device_models import (
     BAUD_RATES,
     DEFAULT_BAUD,
     RTCM_MESSAGE_GROUPS,
+    BluetoothLink,
     CurrentBaseConfig,
     DeviceConnectionState,
     DeviceStatus,
@@ -650,7 +651,7 @@ def console_baud_lock(
     the Console port is unknown, both are. ``None`` over serial or when
     nothing is locked. The note names the rate the module runs at.
     """
-    if status.link is None or status.link.kind != "bluetooth":
+    if not isinstance(status.link, BluetoothLink):
         return None
     rates = {"uart1": live.uart1, "uart2": live.uart2}
     by_port: dict[PortId, Literal["uart1", "uart2"]] = {

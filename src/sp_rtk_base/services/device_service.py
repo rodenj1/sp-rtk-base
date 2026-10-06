@@ -17,14 +17,12 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, cast
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS,
-    DEFAULT_BAUD,
     BaseInvariantsCheck,
     BluetoothLink,
     ConnectStage,
     ConnectStageResult,
     ConnectStageStatus,
     ConsoleLink,
-    ConsoleLinkKind,
     ConsolePortReading,
     ConsolePortUnknownReason,
     CorrectionInputCounters,
@@ -255,20 +253,16 @@ class DeviceService:
         self._state = DeviceConnectionState.DISCONNECTED
         self._input_profile = input_profile
         self._bluetooth_opener = bluetooth_opener
-        # The Console link in use: its kind, and for a serial link the host
-        # port and the rate it is open at (which a baud reopen changes).
-        self._link_kind: ConsoleLinkKind | None = None
-        self._bluetooth_link: BluetoothLink | None = None
+        # The Console link in use; a serial link's rate follows baud reopens.
+        self._link: ConsoleLink | None = None
         # The Stages of the last Bluetooth connect, kept until the next one.
         self._connect_stages: list[ConnectStageResult] | None = None
-        self._port: str | None = None
         # The console port (ADR 0003): identified once per connect, and
         # again whenever the driver reopens the link itself (a hardware
         # reset); kept through baud reopens; cleared on disconnect.
         self._console_port: ConsolePortReading | None = None
         # The driver's link_opens when the console port was last settled.
         self._console_port_at_open = 0
-        self._baud_rate: int | None = None
         self._info: DeviceInfo | None = None
         self._last_error: str | None = None
         self._connected_at: datetime | None = None
@@ -366,15 +360,11 @@ class DeviceService:
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(
-        self, link: ConsoleLink | str, baud_rate: int = DEFAULT_BAUD
-    ) -> DeviceInfo:
+    async def connect(self, link: ConsoleLink) -> DeviceInfo:
         """Connect to a GPS receiver over a Console link.
 
         Args:
-            link: The Console link, or a bare serial port path (e.g.
-                ``/dev/ttyACM0``) as shorthand for a serial link.
-            baud_rate: Serial baud rate, with the bare-port shorthand only.
+            link: The Console link to connect over.
 
         Returns:
             Device identity information.
@@ -411,8 +401,6 @@ class DeviceService:
 
         await self._lost_link_torn_down()
 
-        if isinstance(link, str):
-            link = SerialLink(port=link, baud_rate=baud_rate)
         if isinstance(link, BluetoothLink):
             return await self._connect_bluetooth(self._driver)
         port = link.port
@@ -426,9 +414,7 @@ class DeviceService:
                 self._driver.connect, link.port, link.baud_rate
             )
             self._state = DeviceConnectionState.CONNECTED
-            self._link_kind = link.kind
-            self._port = link.port
-            self._baud_rate = link.baud_rate
+            self._link = link
             self._info = info
             self._connected_at = datetime.now(tz=timezone.utc)
             self._steps_warned_last_apply = set()
@@ -509,8 +495,7 @@ class DeviceService:
                 )
                 raise
             self._state = DeviceConnectionState.CONNECTED
-            self._link_kind = "bluetooth"
-            self._bluetooth_link = opener.link
+            self._link = opener.link
             self._info = info
             self._connected_at = datetime.now(tz=timezone.utc)
             self._steps_warned_last_apply = set()
@@ -757,7 +742,7 @@ class DeviceService:
         # A link the module dropped still holds a session to tear down.
         await self._end_session(
             self._driver is not None
-            and (self._driver.is_connected or self._link_kind is not None)
+            and (self._driver.is_connected or self._link is not None)
         )
         self._forget_link()
         self._state = DeviceConnectionState.DISCONNECTED
@@ -785,10 +770,7 @@ class DeviceService:
 
     def _forget_link(self) -> None:
         """Clear everything known about the session's link."""
-        self._link_kind = None
-        self._bluetooth_link = None
-        self._port = None
-        self._baud_rate = None
+        self._link = None
         self._info = None
         self._console_port = None
         self._connected_at = None
@@ -807,7 +789,7 @@ class DeviceService:
             self._state is not DeviceConnectionState.CONNECTED
             # Serial is unchanged: a pulled cable doesn't close pyserial's
             # handle, so a serial driver keeps reporting itself connected.
-            or self._link_kind != "bluetooth"
+            or not isinstance(self._link, BluetoothLink)
             or self._driver is None
             or self._driver.is_connected
         ):
@@ -1404,7 +1386,7 @@ class DeviceService:
         if console is None or console.port is None:
             self._refuse_dropping_ubx_in_anywhere(assertion, pre_assertion)
 
-        if self._link_kind == "bluetooth":
+        if isinstance(self._link, BluetoothLink):
             self._refuse_console_baud_over_bluetooth(assertion, pre_assertion)
 
         if assertion.tmode_mode != pre_assertion.tmode_mode:
@@ -1677,13 +1659,13 @@ class DeviceService:
                 exc,
             )
 
-        previous_baud = self._baud_rate
+        previous_baud = self._serial_baud()
         for rate in dict.fromkeys(changed_bauds.values()):
             try:
                 info = await asyncio.to_thread(driver.reconnect_at_baud, rate)
             except Exception:
                 continue
-            self._baud_rate = rate
+            self._follow_baud(rate)
             self._info = info
             self._state = DeviceConnectionState.CONNECTED
             ports_at_rate = [p for p, r in changed_bauds.items() if r == rate]
@@ -1723,7 +1705,7 @@ class DeviceService:
         fight the write that just landed, and retrying the old rate
         forever would hang.
         """
-        previous_baud = self._baud_rate
+        previous_baud = self._serial_baud()
         assert (
             previous_baud is not None
         )  # set by connect(), which _require_connected() guarantees ran
@@ -1732,7 +1714,7 @@ class DeviceService:
             info = await asyncio.to_thread(driver.reconnect_at_baud, new_baud)
             # The console port is the same one, at its new rate (ADR 0003).
             self._console_port_at_open = driver.link_opens
-            self._baud_rate = new_baud
+            self._follow_baud(new_baud)
             self._info = info
             return
         except Exception as exc:
@@ -1747,7 +1729,7 @@ class DeviceService:
         try:
             info = await asyncio.to_thread(driver.reconnect_at_baud, previous_baud)
             self._console_port_at_open = driver.link_opens
-            self._baud_rate = previous_baud
+            self._follow_baud(previous_baud)
             self._info = info
             self._state = DeviceConnectionState.CONNECTED
         except Exception as exc:
@@ -1896,17 +1878,14 @@ class DeviceService:
         scalars = await asyncio.to_thread(driver.get_receiver_scalars)
         return scalars.meas_period_ms
 
-    def _current_link(self) -> ConsoleLink | None:
-        """The Console link in use, as the status reports it."""
-        if self._link_kind == "bluetooth":
-            return self._bluetooth_link
-        if (
-            self._link_kind == "serial"
-            and self._port is not None
-            and self._baud_rate is not None
-        ):
-            return SerialLink(port=self._port, baud_rate=self._baud_rate)
-        return None
+    def _serial_baud(self) -> int | None:
+        """The rate a serial Console link is open at; ``None`` otherwise."""
+        return self._link.baud_rate if isinstance(self._link, SerialLink) else None
+
+    def _follow_baud(self, baud_rate: int) -> None:
+        """Note that a serial Console link was reopened at ``baud_rate``."""
+        if isinstance(self._link, SerialLink):
+            self._link = self._link.model_copy(update={"baud_rate": baud_rate})
 
     def get_status(self) -> DeviceStatus:
         """Return a full device status snapshot.
@@ -1917,9 +1896,9 @@ class DeviceService:
         self._notice_lost_link()
         return DeviceStatus(
             state=self._state,
-            port=self._port,
-            baud_rate=self._baud_rate,
-            link=self._current_link(),
+            port=self._link.port if isinstance(self._link, SerialLink) else None,
+            baud_rate=self._serial_baud(),
+            link=self._link,
             connect_stages=self._connect_stages,
             info=self._info,
             capabilities=sorted(self.capabilities),

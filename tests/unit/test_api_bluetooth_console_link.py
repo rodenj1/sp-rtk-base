@@ -13,17 +13,30 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from functools import partial
+from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sp_rtk_base.app import create_api_app
-from sp_rtk_base.models.config_models import InputProfile
-from sp_rtk_base.services import get_device_service, get_survey_service
+from sp_rtk_base.models.config_models import (
+    DestinationProfile,
+    DeviceProfile,
+    InputProfile,
+)
+from sp_rtk_base.services import (
+    get_config_service,
+    get_device_service,
+    get_relay_service,
+    get_survey_service,
+)
+from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
+from sp_rtk_base.services.relay_service import RelayService
 from sp_rtk_base.services.survey_service import SurveyService
 from tests.fixtures.fake_rfcomm import (
     DEVICE_NAME,
@@ -322,3 +335,98 @@ class TestTheConsoleWorksOverTheLink:
         assert status["state"] == "connected"
         assert status["link"]["kind"] == "bluetooth"
         assert status["console_port"] == "UART1"
+
+
+class TestHandOffOverBluetooth:
+    """``POST /api/device/handoff`` with the console on Bluetooth (#44)."""
+
+    @pytest.fixture()
+    def config(
+        self, tmp_path: Path, input_profile: list[InputProfile | None]
+    ) -> ConfigService:
+        cfg = ConfigService(config_path=tmp_path / "config.yaml")
+        saved = input_profile[0]
+        assert saved is not None
+        cfg.save_input_config(saved)
+        return cfg
+
+    @pytest.fixture()
+    def relay(self) -> MagicMock:
+        svc = MagicMock(spec=RelayService)
+        svc.is_running = False
+        svc.start_relay = AsyncMock()
+        return svc
+
+    @pytest.fixture()
+    def handoff_client(
+        self, client: TestClient, config: ConfigService, relay: MagicMock
+    ) -> TestClient:
+        app = client.app
+        assert isinstance(app, FastAPI)
+        app.dependency_overrides[get_config_service] = lambda: config
+        app.dependency_overrides[get_relay_service] = lambda: relay
+        return client
+
+    def test_disconnects_the_console_and_starts_the_relay_on_the_bluetooth_input(
+        self,
+        handoff_client: TestClient,
+        config: ConfigService,
+        relay: MagicMock,
+        manager: FakeBluetoothManager,
+    ) -> None:
+        before = config.get_input_config()
+        assert before is not None
+        config.save_device_profile(DeviceProfile(port="/dev/ttyUSB1", baud_rate=38400))
+        handoff_client.post("/api/device/connect", json=BLUETOOTH)
+
+        resp = handoff_client.post("/api/device/handoff")
+
+        assert resp.status_code == 200, resp.text
+        status = handoff_client.get("/api/device/status").json()
+        assert status["state"] == "disconnected"
+        # ADR 0002's teardown, once.
+        assert manager.disconnects == [MAC]
+        assert manager.closed == 1
+        relay.start_relay.assert_awaited_once()
+        relay_input = relay.start_relay.call_args.args[0]
+        assert relay_input == before.to_relay_config()
+        assert config.get_input_config() == before
+        # The Connect panel reopens on Bluetooth, and still remembers the
+        # cable's port and baud for the serial side.
+        remembered = config.get_device_profile()
+        assert remembered is not None
+        assert remembered.kind == "bluetooth"
+        assert (remembered.port, remembered.baud_rate) == ("/dev/ttyUSB1", 38400)
+
+    def test_destinations_that_cannot_run_are_refused_and_the_console_stays(
+        self,
+        handoff_client: TestClient,
+        config: ConfigService,
+        relay: MagicMock,
+        manager: FakeBluetoothManager,
+    ) -> None:
+        before = config.get_input_config()
+        config.save_destination(
+            DestinationProfile(
+                name="rtk2go",
+                type="ntrip",
+                config={
+                    "caster": "rtk2go.com",
+                    "mountpoint": "MP1",
+                    "password": "secret",
+                    "version": "2.0",
+                },
+            )
+        )
+        handoff_client.post("/api/device/connect", json=BLUETOOTH)
+
+        resp = handoff_client.post("/api/device/handoff")
+
+        assert resp.status_code == 422
+        assert "rtk2go" in resp.json()["detail"]
+        status = handoff_client.get("/api/device/status").json()
+        assert status["state"] == "connected"
+        assert status["link"]["kind"] == "bluetooth"
+        assert manager.closed == 0
+        relay.start_relay.assert_not_called()
+        assert config.get_input_config() == before

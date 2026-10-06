@@ -17,6 +17,7 @@ from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BluetoothLink,
     ConnectStage,
+    ConnectStageCode,
     ConnectStageResult,
     ConnectStageStatus,
     DeviceConnectionState,
@@ -95,7 +96,7 @@ def _pairing(stages: list[ConnectStageResult] | None) -> str:
         return "pairing not checked yet"
     if pair.status in (ConnectStageStatus.PASSED, ConnectStageStatus.SKIPPED):
         return "paired at the last connect"
-    if pair.code == "pin_rejected":
+    if pair.code is ConnectStageCode.PIN_REJECTED:
         return "not paired at the last connect"
     return "pairing unknown"
 

@@ -29,6 +29,8 @@ from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BluetoothLink,
     ConnectStage,
+    ConnectStageCode,
+    ConnectStageResult,
     ConnectStageStatus,
 )
 from sp_rtk_base.services.drivers.console_link import LinkOpener, LinkStream
@@ -51,10 +53,8 @@ READ_LIMIT_S = 12.0
 
 #: Builds the ``BluetoothManager`` for an adapter.
 ManagerFactory = Callable[[str], Any]
-#: Hears each connect Stage as it changes: (stage, status, code, message).
-StageListener = Callable[
-    [ConnectStage, ConnectStageStatus, str | None, str | None], None
-]
+#: Hears each connect Stage as it changes.
+StageListener = Callable[[ConnectStageResult], None]
 
 
 class LinkClosedError(ConnectionError):
@@ -64,36 +64,38 @@ class LinkClosedError(ConnectionError):
 class LinkStageError(ConnectionError):
     """Opening the link failed, at a named connect Stage."""
 
-    def __init__(self, stage: ConnectStage, code: str, message: str) -> None:
+    def __init__(
+        self, stage: ConnectStage, code: ConnectStageCode, message: str
+    ) -> None:
         super().__init__(message)
         self.stage = stage
         self.code = code
 
 
 #: What the operator does next, for each way a Stage can fail.
-STAGE_ADVICE: dict[str, str] = {
-    "bluetooth_unavailable": (
+STAGE_ADVICE: dict[ConnectStageCode, str] = {
+    ConnectStageCode.BLUETOOTH_UNAVAILABLE: (
         "The Bluetooth adapter couldn't be used. Check the adapter in the "
         "Bluetooth Input profile, and that Bluetooth is running on this host."
     ),
-    "device_not_found": (
+    ConnectStageCode.DEVICE_NOT_FOUND: (
         "The Bluetooth module wasn't found. Check it is powered on and in "
         "range, and that the MAC in the Bluetooth Input profile is right."
     ),
-    "pin_rejected": (
+    ConnectStageCode.PIN_REJECTED: (
         "The module refused the PIN. Correct the PIN in the Bluetooth Input "
         "profile on the Input page, then connect again."
     ),
-    "socket_refused": (
+    ConnectStageCode.SOCKET_REFUSED: (
         "The module is paired but didn't accept a connection. Check it is "
         "powered on and in range, and that nothing else holds it: stop the "
         "Relay, and disconnect any other host using the module."
     ),
-    "identify_failed": (
+    ConnectStageCode.IDENTIFY_FAILED: (
         "The receiver answered, but reading it after the connect failed. "
         "Connect again; if it fails again, power-cycle the receiver."
     ),
-    "no_ubx_answer": (
+    ConnectStageCode.NO_UBX_ANSWER: (
         "The link connected but the receiver never answered. The module's "
         "baud rate probably doesn't match the receiver UART it is wired to: "
         "set that UART to the module's rate over a serial cable, or check "
@@ -313,7 +315,7 @@ class BluetoothLinkOpener(LinkOpener):
         try:
             manager = self._manager_factory(self._config.adapter_name)
         except Exception as exc:
-            self._fail(ConnectStage.PAIR, "bluetooth_unavailable", exc)
+            self._fail(ConnectStage.PAIR, ConnectStageCode.BLUETOOTH_UNAVAILABLE, exc)
         bonds_created = _record_bond_creation(manager)
 
         def _socket() -> Any:
@@ -325,7 +327,7 @@ class BluetoothLinkOpener(LinkOpener):
                 self._report(
                     ConnectStage.PAIR,
                     ConnectStageStatus.SKIPPED,
-                    "bonded",
+                    ConnectStageCode.BONDED,
                     "Already paired",
                 )
             self._report(ConnectStage.CONNECT, ConnectStageStatus.RUNNING)
@@ -339,7 +341,7 @@ class BluetoothLinkOpener(LinkOpener):
             self._fail(ConnectStage.PAIR, code, exc)
         except (RfcommConnectError, OSError) as exc:
             _close_unlinked(manager)
-            self._fail(ConnectStage.CONNECT, "socket_refused", exc)
+            self._fail(ConnectStage.CONNECT, ConnectStageCode.SOCKET_REFUSED, exc)
         except BaseException:
             _close_unlinked(manager)
             raise
@@ -363,25 +365,35 @@ class BluetoothLinkOpener(LinkOpener):
         if stream is not None:
             stream.close()
 
-    def _pair_failure_code(self, manager: Any) -> str:
+    def _pair_failure_code(self, manager: Any) -> ConnectStageCode:
         """Tell an absent module from a refused PIN, as the Verification does."""
         try:
             found = bool(manager.find_device_by_mac(self._config.mac_address))
         except Exception:
             found = True
-        return "pin_rejected" if found else "device_not_found"
+        return (
+            ConnectStageCode.PIN_REJECTED
+            if found
+            else ConnectStageCode.DEVICE_NOT_FOUND
+        )
 
     def _report(
         self,
         stage: ConnectStage,
         status: ConnectStageStatus,
-        code: str | None = None,
+        code: ConnectStageCode | None = None,
         message: str | None = None,
     ) -> None:
         if self.on_stage is not None:
-            self.on_stage(stage, status, code, message)
+            self.on_stage(
+                ConnectStageResult(
+                    stage=stage, status=status, code=code, message=message
+                )
+            )
 
-    def _fail(self, stage: ConnectStage, code: str, exc: Exception) -> NoReturn:
+    def _fail(
+        self, stage: ConnectStage, code: ConnectStageCode, exc: Exception
+    ) -> NoReturn:
         self._report(stage, ConnectStageStatus.FAILED, code, str(exc))
         raise LinkStageError(
             stage, code, f"{stage.value.capitalize()} failed: {exc}"

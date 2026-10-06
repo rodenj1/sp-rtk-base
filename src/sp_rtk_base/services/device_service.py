@@ -20,6 +20,7 @@ from sp_rtk_base.models.device_models import (
     BaseInvariantsCheck,
     BluetoothLink,
     ConnectStage,
+    ConnectStageCode,
     ConnectStageResult,
     ConnectStageStatus,
     ConsoleLink,
@@ -495,10 +496,12 @@ class DeviceService:
             except Exception as exc:
                 # The link opened; the receiver never answered through it.
                 self._record_stage(
-                    ConnectStage.IDENTIFY,
-                    ConnectStageStatus.FAILED,
-                    "no_ubx_answer",
-                    str(exc),
+                    ConnectStageResult(
+                        stage=ConnectStage.IDENTIFY,
+                        status=ConnectStageStatus.FAILED,
+                        code=ConnectStageCode.NO_UBX_ANSWER,
+                        message=str(exc),
+                    )
                 )
                 raise
             self._state = DeviceConnectionState.CONNECTED
@@ -513,16 +516,20 @@ class DeviceService:
                 await self._after_connect(driver)
             except Exception as exc:
                 self._record_stage(
-                    ConnectStage.IDENTIFY,
-                    ConnectStageStatus.FAILED,
-                    "identify_failed",
-                    str(exc),
+                    ConnectStageResult(
+                        stage=ConnectStage.IDENTIFY,
+                        status=ConnectStageStatus.FAILED,
+                        code=ConnectStageCode.IDENTIFY_FAILED,
+                        message=str(exc),
+                    )
                 )
                 raise
             self._record_stage(
-                ConnectStage.IDENTIFY,
-                ConnectStageStatus.PASSED,
-                message=self._identified(info),
+                ConnectStageResult(
+                    stage=ConnectStage.IDENTIFY,
+                    status=ConnectStageStatus.PASSED,
+                    message=self._identified(info),
+                )
             )
             # Reopens later in the session (a reset) report no Stages.
             opener.on_stage = None
@@ -549,13 +556,7 @@ class DeviceService:
         profile = self._input_profile() if self._input_profile is not None else None
         return bluetooth_config_from(profile)
 
-    def _record_stage(
-        self,
-        stage: ConnectStage,
-        status: ConnectStageStatus,
-        code: str | None = None,
-        message: str | None = None,
-    ) -> None:
+    def _record_stage(self, result: ConnectStageResult) -> None:
         """Record one Stage's change, with advice on a failure.
 
         Called from the connect's worker thread; the list is replaced
@@ -563,16 +564,15 @@ class DeviceService:
         """
         if self._connect_stages is None:
             return
-        advice = (
-            STAGE_ADVICE.get(code or "")
-            if status is ConnectStageStatus.FAILED
-            else None
-        )
-        result = ConnectStageResult(
-            stage=stage, status=status, code=code, message=message, advice=advice
-        )
-        stages = [result if s.stage is stage else s for s in self._connect_stages]
-        if stage is ConnectStage.CONNECT and status is ConnectStageStatus.PASSED:
+        if result.status is ConnectStageStatus.FAILED and result.code is not None:
+            result = result.model_copy(update={"advice": STAGE_ADVICE.get(result.code)})
+        stages = [
+            result if s.stage is result.stage else s for s in self._connect_stages
+        ]
+        if (
+            result.stage is ConnectStage.CONNECT
+            and result.status is ConnectStageStatus.PASSED
+        ):
             # Identify starts the moment the link is up: the receiver is
             # polled through it straight away.
             stages = [

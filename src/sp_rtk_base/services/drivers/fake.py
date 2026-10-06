@@ -59,6 +59,7 @@ from sp_rtk_base.models.device_models import (
     BluetoothLink,
     CandidateVerdict,
     ConnectStage,
+    ConnectStageCode,
     ConnectStageStatus,
     ConsolePortReading,
     ConsolePortUnknownReason,
@@ -256,7 +257,10 @@ class FakeBluetoothLinkOpener(BluetoothLinkOpener):
 
     def open(self, timeout: float) -> LinkStream:
         self._report(
-            ConnectStage.PAIR, ConnectStageStatus.SKIPPED, "bonded", "Already paired"
+            ConnectStage.PAIR,
+            ConnectStageStatus.SKIPPED,
+            ConnectStageCode.BONDED,
+            "Already paired",
         )
         self._report(ConnectStage.CONNECT, ConnectStageStatus.RUNNING)
         self._report(

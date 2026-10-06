@@ -14,6 +14,7 @@ from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BluetoothLink,
     ConnectStage,
+    ConnectStageCode,
     ConnectStageResult,
     ConnectStageStatus,
     DeviceConnectionState,
@@ -45,7 +46,7 @@ def _bluetooth_profile() -> InputProfile:
 
 
 def _stages(
-    *statuses: tuple[ConnectStageStatus, str | None],
+    *statuses: tuple[ConnectStageStatus, ConnectStageCode | None],
 ) -> list[ConnectStageResult]:
     """Every Stage, the first ones at *statuses* and the rest pending."""
     padded = [*statuses] + [(ConnectStageStatus.PENDING, None)] * 3
@@ -122,7 +123,7 @@ class TestBluetoothModuleLine:
     def test_paired_at_the_last_connect_once_one_found_or_made_the_bond(
         self,
     ) -> None:
-        skipped = _stages((ConnectStageStatus.SKIPPED, "bonded"))
+        skipped = _stages((ConnectStageStatus.SKIPPED, ConnectStageCode.BONDED))
         paired = _stages((ConnectStageStatus.PASSED, None))
 
         assert str(bluetooth_module_line(_bluetooth_profile(), skipped)).endswith(
@@ -134,15 +135,18 @@ class TestBluetoothModuleLine:
 
     def test_a_refused_pin_is_not_paired_at_the_last_connect(self) -> None:
         # The PIN is only tried when there is no Bond.
-        refused = _stages((ConnectStageStatus.FAILED, "pin_rejected"))
+        refused = _stages((ConnectStageStatus.FAILED, ConnectStageCode.PIN_REJECTED))
 
         assert str(bluetooth_module_line(_bluetooth_profile(), refused)).endswith(
             "· not paired at the last connect"
         )
 
-    @pytest.mark.parametrize("code", ["device_not_found", "bluetooth_unavailable"])
+    @pytest.mark.parametrize(
+        "code",
+        [ConnectStageCode.DEVICE_NOT_FOUND, ConnectStageCode.BLUETOOTH_UNAVAILABLE],
+    )
     def test_a_pair_failure_that_says_nothing_of_the_bond_is_unknown(
-        self, code: str
+        self, code: ConnectStageCode
     ) -> None:
         failed = _stages((ConnectStageStatus.FAILED, code))
 
@@ -171,7 +175,9 @@ class TestStageRows:
         assert {r.status for r in rows} == {ConnectStageStatus.PENDING}
 
     def test_a_skipped_pair_says_already_paired(self) -> None:
-        rows = stage_rows(_stages((ConnectStageStatus.SKIPPED, "bonded")))
+        rows = stage_rows(
+            _stages((ConnectStageStatus.SKIPPED, ConnectStageCode.BONDED))
+        )
 
         assert rows[0].detail == "Already paired"
 
@@ -183,7 +189,7 @@ class TestStageRows:
             ConnectStageResult(
                 stage=ConnectStage.CONNECT,
                 status=ConnectStageStatus.FAILED,
-                code="socket_refused",
+                code=ConnectStageCode.SOCKET_REFUSED,
                 message="Connection refused",
                 advice="Stop the Relay.",
             ),
@@ -222,7 +228,7 @@ class TestControls:
 
     def test_cancel_is_disabled_while_the_connect_stage_runs(self) -> None:
         connecting = _stages(
-            (ConnectStageStatus.SKIPPED, "bonded"),
+            (ConnectStageStatus.SKIPPED, ConnectStageCode.BONDED),
             (ConnectStageStatus.RUNNING, None),
         )
 

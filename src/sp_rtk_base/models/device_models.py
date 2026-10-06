@@ -153,17 +153,32 @@ class ConnectStageStatus(str, enum.Enum):
     SKIPPED = "skipped"
 
 
+class ConnectStageCode(str, enum.Enum):
+    """Why a connect Stage ended as it did: a small closed set clients key off.
+
+    ``BONDED`` is the one non-failure: Pair skipped on an existing Bond.
+    """
+
+    BONDED = "bonded"
+    BLUETOOTH_UNAVAILABLE = "bluetooth_unavailable"
+    DEVICE_NOT_FOUND = "device_not_found"
+    PIN_REJECTED = "pin_rejected"
+    SOCKET_REFUSED = "socket_refused"
+    NO_UBX_ANSWER = "no_ubx_answer"
+    IDENTIFY_FAILED = "identify_failed"
+
+
 class ConnectStageResult(BaseModel):
     """What one Stage of the last connect did.
 
-    ``code`` is from a small closed set clients key off; ``message`` is the
+    ``code`` is from a small closed set clients key off (:class:`ConnectStageCode`); ``message`` is the
     detail from the layer below; ``advice`` is what the operator does next,
     set on a failure.
     """
 
     stage: ConnectStage
     status: ConnectStageStatus = ConnectStageStatus.PENDING
-    code: str | None = None
+    code: ConnectStageCode | None = None
     message: str | None = None
     advice: str | None = None
 

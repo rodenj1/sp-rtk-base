@@ -60,6 +60,8 @@ class FakeBlueZ:
         #: like a D-Bus call BlueZ is slow to answer.
         self.dbus_free = threading.Event()
         self.dbus_free.set()
+        #: Set while a ``Device1.Disconnect`` is waiting on ``dbus_free``.
+        self.disconnect_waiting = threading.Event()
 
     def manager(self, adapter: str = "hci0") -> FakeBluetoothManager:
         made = FakeBluetoothManager(self, number=len(self.managers))
@@ -128,7 +130,11 @@ class FakeBluetoothManager:
 
     def disconnect_device(self, mac_address: str) -> bool:
         self._check_open()
-        self._bluez.dbus_free.wait(timeout=5)
+        self._bluez.disconnect_waiting.set()
+        try:
+            self._bluez.dbus_free.wait(timeout=5)
+        finally:
+            self._bluez.disconnect_waiting.clear()
         self._bluez.log.append(("disconnect", mac_address))
         return True
 

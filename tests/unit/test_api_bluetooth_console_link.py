@@ -457,6 +457,39 @@ class TestTheConsoleWorksOverTheLink:
         assert len(bluez.managers) == 1
         assert bluez.live == 0
 
+    def test_a_status_read_while_disconnect_waits_on_bluez_leaves_the_teardown_alone(
+        self, client: TestClient, bluez: FakeBlueZ
+    ) -> None:
+        # The bench (rtk_development#46): while Device1.Disconnect waited on
+        # BlueZ, a status read saw the closing link as a lost device and
+        # closed the session's manager under the call, which then never
+        # returned (60 s D-Bus timeout).
+        client.post("/api/device/connect", json=BLUETOOTH)
+        client.post("/api/device/reset")
+        bluez.dbus_free.clear()  # BlueZ is slow to answer Device1.Disconnect
+        disconnecting = threading.Thread(
+            target=client.post, args=("/api/device/disconnect",)
+        )
+        disconnecting.start()
+        try:
+            assert bluez.disconnect_waiting.wait(timeout=5), "Disconnect never ran"
+
+            status = client.get("/api/device/status").json()
+
+            assert "lost" not in (status["last_error"] or "").lower()
+        finally:
+            bluez.dbus_free.set()
+            disconnecting.join(timeout=10)
+        # The reset's link, then the last link, then the manager, last.
+        assert bluez.log == [
+            ("disconnect", MAC),
+            ("disconnect", MAC),
+            ("close", 0),
+        ]
+        status = client.get("/api/device/status").json()
+        assert status["state"] == "disconnected"
+        assert status["last_error"] is None
+
 
 class TestHandOffOverBluetooth:
     """``POST /api/device/handoff`` with the console on Bluetooth (#44)."""

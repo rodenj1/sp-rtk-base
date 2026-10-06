@@ -279,6 +279,9 @@ class DeviceService:
         self._before_disconnect: list[Callable[[], Awaitable[None]]] = []
         # A lost link's teardown, while it runs (see _notice_lost_link).
         self._lost_link_teardown: asyncio.Task[None] | None = None
+        # Set while disconnect() closes the link: the link reads as closed
+        # then, and that is not a lost device.
+        self._disconnecting = False
         # Steps whose drained warnings were non-empty on the previous
         # apply-config call — excluded from the next call's skip so
         # pressing Apply again actually retries them (issue #99).
@@ -742,10 +745,14 @@ class DeviceService:
         """
         await self._lost_link_torn_down()
         # A link the module dropped still holds a session to tear down.
-        await self._end_session(
-            self._driver is not None
-            and (self._driver.is_connected or self._link is not None)
-        )
+        self._disconnecting = True
+        try:
+            await self._end_session(
+                self._driver is not None
+                and (self._driver.is_connected or self._link is not None)
+            )
+        finally:
+            self._disconnecting = False
         self._forget_link()
         self._state = DeviceConnectionState.DISCONNECTED
         self._last_error = None
@@ -789,6 +796,10 @@ class DeviceService:
         """
         if (
             self._state is not DeviceConnectionState.CONNECTED
+            # The link closing under disconnect() is no lost device: a
+            # second teardown would close the session's BluetoothManager
+            # while Device1.Disconnect waits on it (rtk_development#46).
+            or self._disconnecting
             # Serial is unchanged: a pulled cable doesn't close pyserial's
             # handle, so a serial driver keeps reporting itself connected.
             or not isinstance(self._link, BluetoothLink)

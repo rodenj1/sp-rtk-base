@@ -28,6 +28,7 @@ Not modelled: timing, the TMODE edge-trigger, other message classes.
 from __future__ import annotations
 
 import struct
+from collections.abc import Callable
 from typing import Any
 
 from pyubx2 import GET, UBX_CONFIG_DATABASE, UBXMessage
@@ -78,6 +79,8 @@ class SimulatedUblox:
         #: The MON-COMMS ``portId`` the host is attached to. ``None``: the
         #: receiver NAKs MON-COMMS, so the Console port stays unknown.
         self.console_port_id: int | None = None
+        #: Called before each MON-COMMS answer, e.g. to hold it back.
+        self.before_mon_comms: Callable[[], None] | None = None
         #: Per port: (bytes received, UBX messages received).
         self._rx_counts: dict[int, tuple[int, int]] = {}
         self._rebuild_ram()
@@ -122,6 +125,8 @@ class SimulatedUblox:
                 ubx_msgs + 1,
             )
         if (cls, mid) == (0x0A, 0x36) and not payload:
+            if self.before_mon_comms is not None:
+                self.before_mon_comms()
             return self._mon_comms()
         if (cls, mid) == (0x06, 0x8A):
             return self._valset(payload)

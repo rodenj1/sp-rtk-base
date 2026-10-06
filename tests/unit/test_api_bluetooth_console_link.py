@@ -190,6 +190,38 @@ class TestIdentifyIsShownWhileItRuns:
         stages = _stages(client.get("/api/device/status").json())
         assert stages["identify"]["status"] == "passed"
 
+    def test_the_status_is_still_connecting_while_the_console_port_is_asked(
+        self, client: TestClient, receiver: SimulatedUblox
+    ) -> None:
+        # The bench (rtk_development#46): the status read "Connected ...
+        # console port unknown" for ~2.6 s while Identify still ran.
+        asked, answer = threading.Event(), threading.Event()
+
+        def hold_mon_comms() -> None:
+            asked.set()
+            answer.wait(timeout=5)
+
+        receiver.before_mon_comms = hold_mon_comms
+        connecting = threading.Thread(
+            target=client.post,
+            args=("/api/device/connect",),
+            kwargs={"json": BLUETOOTH},
+        )
+        connecting.start()
+        try:
+            assert asked.wait(timeout=10), "the console port was never asked"
+
+            status = client.get("/api/device/status").json()
+
+            assert status["state"] == "connecting"
+            assert _stages(status)["identify"]["status"] == "running"
+        finally:
+            answer.set()
+            connecting.join(timeout=15)
+        status = client.get("/api/device/status").json()
+        assert status["state"] == "connected"
+        assert status["console_port"] == "UART2"
+
 
 class TestAFailedConnectIsRedOnItsStage:
     def test_a_refused_pin_is_red_at_pair(

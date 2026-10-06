@@ -424,10 +424,8 @@ class DeviceService:
             info = await asyncio.to_thread(
                 self._driver.connect, link.port, link.baud_rate
             )
-            self._state = DeviceConnectionState.CONNECTED
             self._link = link
             self._info = info
-            self._connected_at = datetime.now(tz=timezone.utc)
             self._steps_warned_last_apply = set()
             logger.info(
                 "Connected to %s %s on %s",
@@ -436,6 +434,9 @@ class DeviceService:
                 port,
             )
             await self._after_connect(self._driver)
+            # Connected once the console port is read (see _connect_bluetooth).
+            self._state = DeviceConnectionState.CONNECTED
+            self._connected_at = datetime.now(tz=timezone.utc)
             return info
         except Exception as exc:
             self._state = DeviceConnectionState.ERROR
@@ -507,10 +508,8 @@ class DeviceService:
                     )
                 )
                 raise
-            self._state = DeviceConnectionState.CONNECTED
             self._link = opener.link
             self._info = info
-            self._connected_at = datetime.now(tz=timezone.utc)
             self._steps_warned_last_apply = set()
             logger.info(
                 "Connected to %s %s over %s", info.vendor, info.model, described
@@ -527,6 +526,10 @@ class DeviceService:
                     )
                 )
                 raise
+            # Connected once Identify has read the console port, never
+            # before: until then the status would claim it unknown.
+            self._state = DeviceConnectionState.CONNECTED
+            self._connected_at = datetime.now(tz=timezone.utc)
             self._record_stage(
                 ConnectStageResult(
                     stage=ConnectStage.IDENTIFY,

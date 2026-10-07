@@ -251,13 +251,56 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------
+  # Integration tests — real services driven through the REST API, with
+  # local TCP / NTRIP simulators (no hardware, no network).  Excluded
+  # from the default `pytest` run (norecursedirs), so this job is what
+  # keeps them from going stale (rtk_development#52).  One Python
+  # version, as for e2e.
+  # ------------------------------------------------------------------
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Run integration tests
+        # --no-cov: coverage is enforced by the `test` job.
+        run: |
+          uv run pytest tests/integration \
+            --no-cov \
+            --junitxml=pytest-integration-junit.xml \
+            -ra
+
+      - name: Upload integration JUnit report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pytest-integration-junit
+          path: pytest-integration-junit.xml
+          retention-days: 14
+
+  # ------------------------------------------------------------------
   # Package build sanity check — proves the project still produces a
   # valid sdist + wheel even though we haven't released to PyPI yet.
   # ------------------------------------------------------------------
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    needs: [test, e2e]
+    needs: [test, e2e, integration]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

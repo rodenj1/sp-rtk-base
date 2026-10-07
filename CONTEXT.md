@@ -214,3 +214,37 @@ survey discards its average and settles again, so the two are never mixed
 into one fixed base. A slow drift (a long baseline's) is not a jump: it is
 averaged.
 _Avoid_: false fix (either side may be the right one), outlier
+
+### Updating the base
+
+**Update**:
+The operator replacing the installed application and Relay with the newest
+stable release, then restarting so the base runs it. Always started by a
+person; a base never updates itself. Refused while a Survey-in runs or the
+Console link is connected; a running Relay only drops its corrections
+briefly and comes back as it would after a reboot.
+_Avoid_: upgrade, self-update, patch
+
+**Available update**:
+A stable release newer than the one running. Pre-releases and yanked
+releases never are.
+_Avoid_: new version, latest version (the running one may already be it)
+
+**Release notes**:
+What changed in every release after the running one, up to and including
+the Available update: the application's and the Relay's, read before
+pressing Update.
+_Avoid_: changelog (the file), version notes, what's new
+
+**Host setup**:
+The system files only the installer lays down: the service units and the
+pieces that let the operator start an Update. Update cannot change them, so
+a release that needs newer Host setup asks for the installer to be re-run
+once instead of offering the button.
+_Avoid_: plumbing, provisioning (that's the network's)
+
+**Rollback**:
+An Update undone because its new version failed to start, putting the
+previous application and Relay back. Automatic; the operator never starts
+one.
+_Avoid_: downgrade, revert

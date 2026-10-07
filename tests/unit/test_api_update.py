@@ -14,6 +14,7 @@ from sp_rtk_base.app import create_api_app
 from sp_rtk_base.services import get_update_check_service
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.update.release import urllib_fetch
+from tests.fixtures.fake_github import FakeGitHub, Web
 from tests.fixtures.fake_pypi import APP_INDEX, FakePyPI
 
 CHECKED_AT = datetime(2026, 10, 7, 9, 12, tzinfo=timezone.utc)
@@ -25,9 +26,14 @@ def pypi() -> FakePyPI:
 
 
 @pytest.fixture()
-def client(pypi: FakePyPI) -> Iterator[TestClient]:
+def github() -> FakeGitHub:
+    return FakeGitHub()
+
+
+@pytest.fixture()
+def client(pypi: FakePyPI, github: FakeGitHub) -> Iterator[TestClient]:
     service = UpdateCheckService(
-        pypi,
+        Web(pypi, github),
         running_app="0.9.0",
         running_relay="4.1.0",
         python=(3, 11),
@@ -52,11 +58,24 @@ class TestGetUpdate:
         }
 
     def test_after_a_check_finds_an_available_update(
-        self, client: TestClient, pypi: FakePyPI
+        self, client: TestClient, pypi: FakePyPI, github: FakeGitHub
     ) -> None:
         pypi.publish_relay("4.2.0")
         pypi.publish_app("0.10.0", relay_pin="<5,>=4.2.0")
         pypi.publish_app("0.11.0", requires_python=">=3.12")
+        github.publish_changelog(
+            "sp-rtk-base",
+            "0.10.0",
+            "## v0.10.0 (2026-10-20)\n\n- Update.\n\n"
+            "## v0.10.0-beta.1 (2026-10-10)\n\n- Beta.",
+            on_top_of="0.9.0",
+        )
+        github.publish_changelog(
+            "sp-rtk-base-relay",
+            "4.2.0",
+            "## v4.2.0 (2026-10-18)\n\n- Relay.",
+            on_top_of="4.1.0",
+        )
         client.post("/api/update/check")
 
         body = client.get("/api/update").json()
@@ -71,6 +90,40 @@ class TestGetUpdate:
                 "newer_needs_python": {"version": "0.11.0", "python": "3.12"},
             },
             "checked_at": "2026-10-07T09:12:00Z",
+            "notes": {
+                "app": {
+                    "loaded": True,
+                    "releases": [
+                        {
+                            "version": "0.10.0",
+                            "date": "2026-10-20",
+                            "source": "changelog",
+                            "body": "- Update.",
+                            "includes": [
+                                {
+                                    "version": "0.10.0-beta.1",
+                                    "date": "2026-10-10",
+                                    "body": "- Beta.",
+                                }
+                            ],
+                        }
+                    ],
+                    "error": None,
+                },
+                "relay": {
+                    "loaded": True,
+                    "releases": [
+                        {
+                            "version": "4.2.0",
+                            "date": "2026-10-18",
+                            "source": "changelog",
+                            "body": "- Relay.",
+                            "includes": [],
+                        }
+                    ],
+                    "error": None,
+                },
+            },
             "available": True,
         }
 

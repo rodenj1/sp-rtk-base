@@ -10,6 +10,7 @@ import pytest
 
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.update.release import NewerNeedsPython
+from tests.fixtures.fake_github import FakeGitHub, Web, changelog_url
 from tests.fixtures.fake_pypi import APP_INDEX, FakePyPI
 
 pytestmark = pytest.mark.asyncio
@@ -36,7 +37,7 @@ def clock() -> Clock:
 
 
 def _service(
-    pypi: FakePyPI, clock: Clock, *, running_app: str = "0.9.0"
+    pypi: FakePyPI | Web, clock: Clock, *, running_app: str = "0.9.0"
 ) -> UpdateCheckService:
     return UpdateCheckService(
         pypi,
@@ -97,6 +98,74 @@ class TestCheckNow:
         assert status.last_good.target.newer_needs_python == NewerNeedsPython(
             version="0.11.0", python="3.12"
         )
+
+
+class TestReleaseNotes:
+    """An Available update brings its Release notes; GitHub never fails a check."""
+
+    @staticmethod
+    def _web(pypi: FakePyPI) -> tuple[Web, FakeGitHub]:
+        github = FakeGitHub()
+        pypi.publish_relay("4.2.0")
+        pypi.publish_app("0.10.0", relay_pin="<5,>=4.2.0")
+        github.publish_changelog(
+            "sp-rtk-base",
+            "0.10.0",
+            "## v0.10.0 (2026-10-20)\n\n- Update from the web UI.",
+            on_top_of="0.9.0",
+        )
+        github.publish_changelog(
+            "sp-rtk-base-relay",
+            "4.2.0",
+            "## v4.2.0 (2026-10-18)\n\n- A sourcetable on reconnect.",
+            on_top_of="4.1.0",
+        )
+        return Web(pypi, github), github
+
+    async def test_an_available_update_has_notes_for_both(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        web, _ = self._web(pypi)
+
+        status = await _service(web, clock).check_now()
+
+        assert status.last_good is not None
+        notes = status.last_good.notes
+        assert notes is not None
+        assert [(r.version, r.body) for r in notes.app.releases] == [
+            ("0.10.0", "- Update from the web UI.")
+        ]
+        assert [(r.version, r.date) for r in notes.relay.releases] == [
+            ("4.2.0", "2026-10-18")
+        ]
+
+    async def test_up_to_date_fetches_no_notes(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        github = FakeGitHub()
+
+        status = await _service(Web(pypi, github), clock).check_now()
+
+        assert status.last_good is not None
+        assert status.last_good.notes is None
+        assert github.fetched == []
+
+    async def test_github_failing_is_not_a_failed_check(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        web, github = self._web(pypi)
+        github.fail(changelog_url("sp-rtk-base", "0.10.0"), 403)
+        github.fail(changelog_url("sp-rtk-base-relay", "4.2.0"), 429)
+
+        status = await _service(web, clock).check_now()
+
+        assert not status.last_check_failed
+        assert status.last_good is not None
+        assert status.last_good.available
+        notes = status.last_good.notes
+        assert notes is not None
+        assert not notes.app.loaded
+        assert not notes.relay.loaded
 
 
 class TestFailedCheck:

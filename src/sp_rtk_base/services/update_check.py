@@ -26,6 +26,7 @@ from sp_rtk_base.update.release import (
     resolve_release,
     urllib_fetch,
 )
+from sp_rtk_base.update.release_notes import ReleaseNotes, release_notes
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class UpdateCheck(BaseModel):
     """The running Python (``A.B.C``), the one ``target`` was resolved for."""
     target: ReleaseTarget
     checked_at: datetime
+    notes: ReleaseNotes | None = None
+    """The Release notes up to the target; only for an Available update."""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -125,7 +128,7 @@ class UpdateCheckService:
     async def _run_check(self) -> UpdateCheckStatus:
         self._status = self._status.model_copy(update={"checking": True})
         try:
-            target = await asyncio.to_thread(resolve_release, self._fetch, self._python)
+            check = await asyncio.to_thread(self._check_once)
         except Exception as exc:
             logger.warning("Update check failed: %s", exc)
             self._status = self._status.model_copy(
@@ -136,16 +139,29 @@ class UpdateCheckService:
                 }
             )
         else:
-            self._status = UpdateCheckStatus(
-                last_good=UpdateCheck(
-                    running_app=self._running_app,
-                    running_relay=self._running_relay,
-                    running_python=".".join(str(part) for part in self._python),
-                    target=target,
-                    checked_at=self._clock(),
-                )
-            )
+            self._status = UpdateCheckStatus(last_good=check)
         return self._status
+
+    def _check_once(self) -> UpdateCheck:
+        """Resolve the target; for an Available update, load its notes too.
+
+        Only resolution can fail the check: the notes report a GitHub
+        failure themselves.
+        """
+        target = resolve_release(self._fetch, self._python)
+        check = UpdateCheck(
+            running_app=self._running_app,
+            running_relay=self._running_relay,
+            running_python=".".join(str(part) for part in self._python),
+            target=target,
+            checked_at=self._clock(),
+        )
+        if not check.available:
+            return check
+        notes = release_notes(
+            self._fetch, self._running_app, self._running_relay, target
+        )
+        return check.model_copy(update={"notes": notes})
 
     # ------------------------------------------------------------------
     # Background schedule

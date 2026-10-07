@@ -19,6 +19,7 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
+from tests.fixtures.saved_start import with_saved_start
 
 
 @pytest.fixture()
@@ -45,14 +46,14 @@ def mock_config_service(config_path: Path) -> ConfigService:
 
 
 @pytest.fixture()
-def mock_relay_service() -> MagicMock:
-    """Create a mock RelayService."""
+def mock_relay_service(mock_config_service: ConfigService) -> MagicMock:
+    """Create a mock RelayService that starts from ``mock_config_service``."""
     mock = MagicMock(spec=RelayService)
     mock.is_running = False
     mock.engine = None
     mock.get_destination_names.return_value = []
     mock.get_recent_events.return_value = []
-    return mock
+    return with_saved_start(mock, mock_config_service)
 
 
 @pytest.fixture()

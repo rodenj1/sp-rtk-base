@@ -42,6 +42,7 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_result,
 )
 from sp_rtk_base.ui.layout import page_layout
+from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
 from sp_rtk_base.ui.validators import (
     FieldDef,
     port_validation,
@@ -636,27 +637,18 @@ def input_page() -> None:
                         if not _save_input():
                             return
                         try:
-                            config = config_svc.get_config()
-                            enabled = [d for d in config.destinations if d.enabled]
-                            if not enabled:
-                                ui.notify(
-                                    "No enabled destinations — add one in "
-                                    "Outputs first",
-                                    type="warning",
-                                )
-                                return
-                            if config.input is None:
-                                ui.notify("No input configured", type="warning")
-                                return
-                            await relay_svc.start_relay(
-                                config.input.to_relay_config(),
-                                [d.to_relay_config() for d in enabled],
-                                trigger="verification-handoff",
-                            )
+                            await relay_svc.start_saved(trigger="verification-handoff")
                             ui.notify("Relay started ✓", type="positive")
                             _clear_green()
                         except RelayStartRefusedError as exc:
-                            ui.notify(exc.message, type="warning")
+                            # A refusal the operator can act on is a warning;
+                            # a saved config that can't run is an error.
+                            tone = (
+                                "warning"
+                                if needs_setup(exc) or exc.code == "console_connected"
+                                else "negative"
+                            )
+                            ui.notify(start_failure_text(exc), type=tone)
                         except Exception as exc:
                             logger.exception("Start after Verification failed")
                             ui.notify(

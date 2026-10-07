@@ -20,11 +20,13 @@ from sp_rtk_base.models.api_models import (
     RelayStatusResponse,
 )
 from sp_rtk_base.services import (
-    get_config_service,
     get_relay_service,
 )
-from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
+from sp_rtk_base.services.relay_service import (
+    RelayService,
+    RelayStartRefusedError,
+    StartRefusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +66,23 @@ async def get_relay_status(
     return RelayStatusResponse.model_validate(status_dict)
 
 
+# The HTTP status of each start refusal, for every route that starts the
+# Relay.  A saved config that can't be turned into Relay config (e.g. a
+# SurePath output saved with an empty Username from a pre-v0.3.15 UI) is
+# unprocessable.
+START_REFUSAL_STATUS: dict[StartRefusal, int] = {
+    "already_running": 409,
+    "console_connected": 409,
+    "no_input": 400,
+    "no_destinations": 400,
+    "config_invalid": 422,
+}
+
+
 @router.post("/start", response_model=RelayActionResponse)
 async def start_relay(
     request: RelayStartRequest | None = None,
     relay: RelayService = Depends(get_relay_service),
-    config_svc: ConfigService = Depends(get_config_service),
 ) -> RelayActionResponse | JSONResponse:
     """Start the relay engine.
 
@@ -78,50 +92,13 @@ async def start_relay(
     Returns 409 with ``code: console_connected`` while the console is
     connected, whatever the Console link kind; nothing is touched.
     """
-    if relay.is_running:
-        return JSONResponse(
-            status_code=409,
-            content={"status": "error", "message": "Relay engine is already running"},
-        )
-
-    config = config_svc.get_config()
-
-    if config.input is None:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "message": "No input source configured. Configure an input source first.",
-            },
-        )
-
-    enabled_dests = [d for d in config.destinations if d.enabled]
-    if not enabled_dests:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "message": "No enabled destinations configured.",
-            },
-        )
-
     try:
-        # ``to_relay_config()`` runs pydantic on each profile and is
-        # the most common source of config-shape errors (e.g. a
-        # SurePath profile saved with empty Username/Password from
-        # a pre-v0.3.15 UI).  Keep this inside the try/except so
-        # the status-code mapping below (422 / 502 / 500) catches
-        # it instead of letting the exception escape as a raw
-        # HTML 500.
-        input_config = config.input.to_relay_config()
-        dest_configs = [d.to_relay_config() for d in enabled_dests]
-        await relay.start_relay(input_config, dest_configs, trigger="api")
-
+        await relay.start_saved(trigger="api")
         return RelayActionResponse(status="ok", message="Relay engine started")
     except RelayStartRefusedError as exc:
         logger.info("Start refused (%s): %s", exc.code, exc.message)
         return JSONResponse(
-            status_code=409,
+            status_code=START_REFUSAL_STATUS[exc.code],
             content={"status": "error", "message": exc.message, "code": exc.code},
         )
     except Exception as exc:

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from sp_rtk_base_relay.config import InputConfig
 
+from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services.relay_service import RelayService
 
 # ``services/__init__`` binds singletons named ``relay_service`` and
@@ -32,7 +33,7 @@ bt_mod = import_module("sp_rtk_base.services.bluetooth_service")
 @pytest.fixture()
 def relay(monkeypatch: pytest.MonkeyPatch) -> RelayService:
     """A RelayService whose engine is a stub, so start_relay is cheap."""
-    svc = RelayService()
+    svc = RelayService(AppConfig)
     engine = MagicMock()
     engine.is_running = False
 

@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import (
+    AppConfig,
     CorrectionSourceProfile,
     NtripCorrectionConfig,
 )
@@ -150,7 +151,7 @@ def rover() -> RecordingRover:
 
 @pytest.fixture
 def relay() -> RelayService:
-    return RelayService()
+    return RelayService(AppConfig)
 
 
 @pytest.fixture

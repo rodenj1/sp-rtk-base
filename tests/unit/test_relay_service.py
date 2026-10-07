@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services.relay_service import RelayService
 
 # Get a reference to the actual module (not the singleton variable
@@ -87,18 +88,18 @@ class TestRelayServiceConstruction:
 
     def test_initial_state(self) -> None:
         """New RelayService is not running with no engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         assert svc.is_running is False
         assert svc.engine is None
 
     def test_get_destination_names_when_no_engine(self) -> None:
         """get_destination_names returns empty list without engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         assert svc.get_destination_names() == []
 
     def test_get_recent_events_when_no_engine(self) -> None:
         """get_recent_events returns empty list without engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         assert svc.get_recent_events() == []
 
 
@@ -113,7 +114,7 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_start_creates_engine(self) -> None:
         """start_relay creates a RelayEngine and starts it."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
@@ -130,7 +131,7 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_start_with_destinations(self) -> None:
         """start_relay passes destinations to engine.start()."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
         dests = [_make_dest_config()]
 
@@ -145,7 +146,7 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_start_when_already_running_raises(self) -> None:
         """start_relay raises ServiceError if already running."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
@@ -160,7 +161,7 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_stop_relay(self) -> None:
         """stop_relay calls engine.stop()."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
             mock_engine = MagicMock()
@@ -174,14 +175,14 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_stop_noop_when_not_running(self) -> None:
         """stop_relay is a no-op when engine is not running."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         # No engine — should not raise
         await svc.stop_relay()
 
     @pytest.mark.asyncio()
     async def test_stop_noop_when_engine_stopped(self) -> None:
         """stop_relay is a no-op when engine exists but is stopped."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = False
         svc._engine = mock_engine
@@ -194,7 +195,7 @@ class TestRelayServiceLifecycle:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """v0.3.30: start log includes trigger + input source + dest names."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
         dests = [_make_dest_config()]
 
@@ -219,7 +220,7 @@ class TestRelayServiceLifecycle:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """v0.3.30: stop log includes trigger, uptime, bytes_in, chunks_out."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
@@ -252,7 +253,7 @@ class TestRelayServiceLifecycle:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Callers that don't pass a trigger still get a sensible default."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input_cfg = _make_input_config()
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
             mock_engine = MagicMock()
@@ -265,7 +266,7 @@ class TestRelayServiceLifecycle:
     @pytest.mark.asyncio()
     async def test_recreates_engine_on_config_change(self) -> None:
         """start_relay recreates engine if input config changes."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         input1 = InputConfig(source="tcp", config={"host": "1.1.1.1", "port": 5015})
         input2 = InputConfig(source="tcp", config={"host": "2.2.2.2", "port": 5015})
 
@@ -298,7 +299,7 @@ class TestRelayServiceStatus:
     @pytest.mark.asyncio()
     async def test_get_status_when_running(self) -> None:
         """get_status returns RelayStatus when engine is running."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         mock_engine.get_status.return_value = _MockRelayStatus()
@@ -311,13 +312,13 @@ class TestRelayServiceStatus:
     @pytest.mark.asyncio()
     async def test_get_status_when_not_running(self) -> None:
         """get_status returns None when engine is not running."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         assert await svc.get_status() is None
 
     @pytest.mark.asyncio()
     async def test_get_status_handles_service_error(self) -> None:
         """get_status returns None if engine throws ServiceError."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         mock_engine.get_status.side_effect = ServiceError("stopped")
@@ -328,7 +329,7 @@ class TestRelayServiceStatus:
 
     def test_is_running_property(self) -> None:
         """is_running reflects engine state."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         assert svc.is_running is False
 
         mock_engine = MagicMock()
@@ -348,7 +349,7 @@ class TestRelayServiceDestinations:
     @pytest.mark.asyncio()
     async def test_add_destination(self) -> None:
         """add_destination delegates to engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         mock_engine.add_destination.return_value = "rtk2go"
@@ -361,14 +362,14 @@ class TestRelayServiceDestinations:
     @pytest.mark.asyncio()
     async def test_add_destination_when_not_running(self) -> None:
         """add_destination raises ServiceError when not running."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         with pytest.raises(ServiceError):
             await svc.add_destination(_make_dest_config())
 
     @pytest.mark.asyncio()
     async def test_remove_destination(self) -> None:
         """remove_destination delegates to engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         svc._engine = mock_engine
@@ -379,7 +380,7 @@ class TestRelayServiceDestinations:
     @pytest.mark.asyncio()
     async def test_start_destination(self) -> None:
         """start_destination delegates to engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         svc._engine = mock_engine
@@ -390,7 +391,7 @@ class TestRelayServiceDestinations:
     @pytest.mark.asyncio()
     async def test_stop_destination(self) -> None:
         """stop_destination delegates to engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.is_running = True
         svc._engine = mock_engine
@@ -400,7 +401,7 @@ class TestRelayServiceDestinations:
 
     def test_get_destination_names(self) -> None:
         """get_destination_names delegates to engine."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
         mock_engine.get_destination_names.return_value = ["rtk2go", "local-tcp"]
         svc._engine = mock_engine
@@ -419,7 +420,7 @@ class TestRelayServiceEvents:
 
     def test_get_recent_events(self) -> None:
         """get_recent_events returns serialized events."""
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         mock_engine = MagicMock()
 
         from sp_rtk_base_relay import RelayEvent
@@ -466,7 +467,7 @@ class TestRelayServiceFrameSubscriber:
     async def test_every_start_feeds_the_subscriber_including_a_reused_engine(
         self,
     ) -> None:
-        svc = RelayService()
+        svc = RelayService(AppConfig)
         consumer = _RecordingConsumer()
         svc.set_frame_subscriber(consumer)
         input_cfg = _make_input_config()
@@ -493,7 +494,7 @@ class TestRelayServiceFrameSubscriber:
 
     @pytest.mark.asyncio()
     async def test_without_a_subscriber_nothing_subscribes(self) -> None:
-        svc = RelayService()
+        svc = RelayService(AppConfig)
 
         with patch.object(_relay_module, "RelayEngine") as mock_cls:
             engine = MagicMock()
@@ -507,7 +508,7 @@ class TestRelayServiceFrameSubscriber:
     async def test_a_subscriber_that_fails_to_attach_does_not_leak_or_stop_relaying(
         self,
     ) -> None:
-        svc = RelayService()
+        svc = RelayService(AppConfig)
 
         class _Broken:
             def relay_started(self, subscription: object) -> None:

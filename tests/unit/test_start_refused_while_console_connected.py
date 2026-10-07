@@ -54,8 +54,8 @@ def released(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture()
-def relay(monkeypatch: pytest.MonkeyPatch) -> RelayService:
-    svc = RelayService()
+def relay(monkeypatch: pytest.MonkeyPatch, config: ConfigService) -> RelayService:
+    svc = RelayService(config.get_config)
     engine = MagicMock()
     engine.is_running = False
 

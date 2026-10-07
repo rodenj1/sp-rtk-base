@@ -81,6 +81,7 @@ class TestGetRelayStatus:
         assert data["auto_start"]["state"] in (
             "idle",
             "skipped_no_input",
+            "skipped_no_destinations",
             "in_progress",
             "succeeded",
             "succeeded_user",
@@ -369,3 +370,25 @@ class TestStartWithAnOutputThatCannotRun:
         assert "rtk2go" in message
         assert "username" in message
         mock_relay_service.start_relay.assert_not_called()
+
+
+class TestStartRefusalStatus:
+    def test_every_start_refusal_has_an_http_status(self) -> None:
+        """A new refusal code can't reach a route without a status."""
+        from typing import get_args
+
+        from sp_rtk_base.api.relay import START_REFUSAL_STATUS
+        from sp_rtk_base.services.relay_service import StartRefusal
+
+        assert set(START_REFUSAL_STATUS) == set(get_args(StartRefusal))
+
+    def test_a_refusal_says_its_code(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+    ) -> None:
+        """Clients branch on the code, not the 409 (ADR 0002)."""
+        mock_relay_service.is_running = True
+        resp = api_client_with_services.post("/api/relay/start")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "already_running"

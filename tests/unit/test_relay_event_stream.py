@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 from sp_rtk_base_relay.config import InputConfig
 
+from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services.relay_events import STREAM_QUEUE_SIZE, EventStream
 from sp_rtk_base.services.relay_service import RelayService
 
@@ -50,7 +51,7 @@ def tcp_input() -> Iterator[Any]:
 
 @pytest_asyncio.fixture()
 async def relay() -> Any:
-    svc = RelayService()
+    svc = RelayService(AppConfig)
     yield svc
     await svc.stop_relay(trigger="test")
 

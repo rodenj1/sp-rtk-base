@@ -29,6 +29,7 @@ from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
+from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +528,15 @@ def dashboard_page() -> None:
             auto_start_banner.clear()
             snapshot = services_mod.auto_start_status
             state = snapshot.state
-            if state in ("idle", "succeeded", "succeeded_user", "skipped_no_input"):
+            # Skipped starts need no banner: the disabled Start button
+            # already says what to configure.
+            if state in (
+                "idle",
+                "succeeded",
+                "succeeded_user",
+                "skipped_no_input",
+                "skipped_no_destinations",
+            ):
                 return
             if state in auto_start_dismissed_states:
                 return
@@ -732,56 +741,25 @@ def dashboard_page() -> None:
             start_error_label.text = ""
             start_error_label.set_visibility(False)
             try:
-                config = config_svc.get_config()
-                if config.input is None:
-                    ui.notify(
-                        "No input source configured — go to Input first", type="warning"
-                    )
+                await relay.start_saved(trigger="ui")
+            except RelayStartRefusedError as exc:
+                if needs_setup(exc):
+                    ui.notify(start_failure_text(exc), type="warning")
                     return
-                enabled = [d for d in config.destinations if d.enabled]
-                if not enabled:
-                    ui.notify(
-                        "No enabled destinations — add one in Outputs first",
-                        type="warning",
-                    )
-                    return
-                input_cfg = config.input.to_relay_config()
-                dest_cfgs = [d.to_relay_config() for d in enabled]
-                await relay.start_relay(input_cfg, dest_cfgs, trigger="ui")
-                ui.notify("Relay started", type="positive")
-                await _refresh_status()
+                friendly = start_failure_text(exc)
             except Exception as exc:
                 logger.exception("Failed to start relay")
-                # Map common ConfigurationError patterns to friendly
-                # messages.  Without this the operator sees the raw
-                # exception path (e.g. "input.config.port must be an
-                # integer between 1 and 65535 | Key: input.config.port")
-                # which leaks the internal config tree shape.
-                exc_text = str(exc)
-                if isinstance(exc, RelayStartRefusedError):
-                    friendly = exc.message
-                elif (
-                    "port must be an integer" in exc_text
-                    or "input.config.port" in exc_text
-                ):
-                    friendly = (
-                        "Failed to start: TCP input port is not a number. "
-                        "Re-save the Input config (Input page) and try again."
-                    )
-                elif "input.config" in exc_text or "destinations" in exc_text:
-                    friendly = (
-                        "Failed to start: configuration error.  Check the "
-                        "Input and Outputs pages for fields that need "
-                        "valid values, then re-save."
-                    )
-                else:
-                    friendly = f"Failed to start relay: {exc}"
-                # Persistent banner stays visible until the next
-                # Start click — the toast still fires for
-                # consistency but the banner is the primary signal.
-                start_error_label.text = friendly
-                start_error_label.set_visibility(True)
-                ui.notify(friendly, type="negative")
+                friendly = start_failure_text(exc)
+            else:
+                ui.notify("Relay started", type="positive")
+                await _refresh_status()
+                return
+            # Persistent banner stays visible until the next Start click —
+            # the toast still fires for consistency but the banner is the
+            # primary signal.
+            start_error_label.text = friendly
+            start_error_label.set_visibility(True)
+            ui.notify(friendly, type="negative")
 
         async def _stop_relay() -> None:
             """Stop the relay engine."""

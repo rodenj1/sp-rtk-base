@@ -320,8 +320,20 @@ DEFAULT_BT_SCAN_TIMEOUT_SECONDS: int = 20
 class InputProfile(BaseModel):
     """Input source configuration for persistence."""
 
-    source: Literal["serial", "usb_serial", "tcp", "bluetooth"]
+    source: Literal["serial", "tcp", "bluetooth"]
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _usb_serial_is_serial(cls, value: object) -> object:
+        """Read a saved ``usb_serial`` source as ``serial``.
+
+        The Console handoff used to save ``usb_serial``, which the relay's
+        input factory doesn't know, so the relay refused to start from that
+        saved input (issue #48).  Installs that already saved it load as
+        ``serial`` here.
+        """
+        return "serial" if value == "usb_serial" else value
 
     # ------------------------------------------------------------------
     # Proven PIN — a durable record, deliberately NOT in ``config``

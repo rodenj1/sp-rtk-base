@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sp_rtk_base_relay.core.input_sources.input_factory import InputSourceFactory
 
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.device_models import (
@@ -843,11 +844,16 @@ class TestHandoff:
 
         mock_config_service.save_input_config.assert_called_once()
         input_cfg = mock_config_service.save_input_config.call_args[0][0]
-        assert input_cfg.source == "usb_serial"
+        assert input_cfg.source == "serial"
         assert input_cfg.config["port"] == "/dev/ttyUSB0"
         assert input_cfg.config["baudrate"] == 115200
 
         mock_relay_service.start_relay.assert_awaited_once()
+        # The relay input must be one the Relay's own factory builds (#48):
+        # it used to be ``usb_serial``, which the factory refuses.
+        relay_input = mock_relay_service.start_relay.call_args[0][0]
+        assert relay_input == input_cfg.to_relay_config()
+        InputSourceFactory.create_input_source(relay_input.source, relay_input.config)
 
     def test_handoff_not_connected(
         self,

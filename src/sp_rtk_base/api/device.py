@@ -743,7 +743,7 @@ async def handoff_to_relay(
 
     1. Remembers port/baud from the active device connection.
     2. Disconnects the GPS receiver driver.
-    3. Updates the input config to ``usb_serial`` with the same port/baud.
+    3. Updates the input config to ``serial`` with the same port/baud.
     4. Persists the device profile and input config.
     5. Starts the relay engine.
 
@@ -795,7 +795,7 @@ async def handoff_to_relay(
 
     # 3. Configure relay input source with same serial port
     input_profile = InputProfile(
-        source="usb_serial",
+        source="serial",
         config={"port": port, "baudrate": baud},
     )
     cfg.save_input_config(input_profile)

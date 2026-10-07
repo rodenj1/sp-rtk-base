@@ -14,6 +14,7 @@ from sp_rtk_base_relay.config import (
     TcpServerDestinationConfig,
 )
 from sp_rtk_base_relay.core.input_sources.bluetooth_input import BluetoothConfig
+from sp_rtk_base_relay.core.input_sources.input_factory import InputSourceFactory
 
 from sp_rtk_base.models.config_models import (
     DEFAULT_BT_SCAN_TIMEOUT_SECONDS,
@@ -406,6 +407,24 @@ class TestInputProfile:
         )
         cfg = ip.to_relay_config()
         assert "scan_timeout" not in cfg.config
+
+    def test_saved_usb_serial_input_starts_as_a_serial_relay_input(self) -> None:
+        """An input saved as ``usb_serial`` (by a pre-#48 handoff) still runs.
+
+        The relay's input factory knows only ``serial``, so the profile
+        must hand it ``serial``; checked against the real factory, which
+        builds the source without opening the port.
+        """
+        ip = InputProfile.model_validate(
+            {
+                "source": "usb_serial",
+                "config": {"port": "/dev/ttyACM0", "baudrate": 38400},
+            }
+        )
+        cfg = ip.to_relay_config()
+        assert cfg.source == "serial"
+        assert cfg.config == {"port": "/dev/ttyACM0", "baudrate": 38400}
+        InputSourceFactory.create_input_source(cfg.source, cfg.config)
 
 
 # ---------------------------------------------------------------------------

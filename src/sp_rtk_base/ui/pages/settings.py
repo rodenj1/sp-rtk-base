@@ -25,12 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 @ui.page("/settings")
-def settings_page() -> None:
+def settings_page(variant: str = "A", state: str = "available") -> None:
     """Render the settings page."""
-    config_svc = get_config_service()
+    from sp_rtk_base.ui.pages import update_prototype as proto  # PROTOTYPE
 
-    with page_layout("Settings"):
+    config_svc = get_config_service()
+    variant = variant if variant in proto.VARIANTS else "A"
+    state, scenario = proto.scenario(state)
+
+    with page_layout("Settings", lambda: proto.header_badge(scenario)):
         ui.label("Settings").classes("text-h4 text-white q-mb-md")
+        if variant in ("B", "C"):
+            proto.render(variant, scenario)
 
         # ---- Application Settings Section ----
         with ui.card().classes("w-full q-pa-md"):
@@ -122,7 +128,13 @@ def settings_page() -> None:
                 ("Platform", platform.platform()),
             ]
 
+            if variant == "A":
+                version_rows = version_rows[2:]
             for label, version in version_rows:
                 with ui.row().classes("w-full items-center q-py-xs"):
                     ui.label(label).classes("text-grey-4").style("min-width: 140px")
                     ui.label(version).classes("text-white text-weight-medium")
+
+        if variant == "A":
+            proto.render("A", scenario)
+        proto.switcher(variant, state)

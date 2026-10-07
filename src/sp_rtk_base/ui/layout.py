@@ -6,7 +6,7 @@ across all pages. Optimized for mobile/tablet with responsive behavior.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from nicegui import ui
@@ -49,7 +49,9 @@ NAVIGATION_SECTIONS: list[tuple[str | None, list[tuple[str, str, str]]]] = [
 
 
 @contextmanager
-def page_layout(title: str) -> Iterator[None]:
+def page_layout(
+    title: str, header_extra: Callable[[], None] | None = None
+) -> Iterator[None]:
     """Context manager that wraps page content with the shared layout.
 
     Provides a responsive header with navigation drawer toggle,
@@ -99,6 +101,8 @@ def page_layout(title: str) -> Iterator[None]:
             "flat color=white round"
         )
         ui.label("SP-Base").classes("text-h6 text-white q-ml-sm")
+        if header_extra is not None:  # PROTOTYPE: Update badge
+            header_extra()
         ui.space()
         ui.label(title).classes("text-subtitle1 text-white")
 

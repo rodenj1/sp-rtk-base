@@ -9,6 +9,80 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## v0.9.0 (2026-10-07)
+
+### Bluetooth console link: survey and configure over Bluetooth
+
+The **Console link** can now be **Bluetooth** as well as a serial cable
+(spec rtk_development#38). On a base whose receiver is reachable only
+through the Bluetooth module of its Bluetooth Input profile, Survey-in,
+Corrected survey-in, Fixed base, GPS config, the RTCM matrix and Signal
+Quality all work without opening the enclosure. On the bench (an
+HC-05-family module on UART2 at 115200), Connect took about 4 s, a
+Corrected survey-in completed and was committed, and Reset GPS reconnected
+by itself in 10 to 13 s.
+
+- **Connect panel.** Both Connection cards (Survey and GPS config) have a
+  **Serial cable / Bluetooth** toggle, locked while connecting or
+  connected. The serial side is unchanged. The Bluetooth side shows the
+  Input profile's module (name, MAC, whether it was paired at the last
+  connect), or a prompt to set up a Bluetooth Input profile, in which
+  case Connect is disabled. The panel opens on the kind used last.
+- **Stages.** A Bluetooth connect shows **Pair** (skipped when Bonded),
+  **Connect** (RFCOMM; discovery can take up to 30 s and can't be
+  cancelled) and **Identify** (the receiver answers UBX and the Console
+  port is read). A failure is Red on its Stage with advice for that
+  Stage: a refused PIN, a module that doesn't answer, or a link that
+  carries garbage (a module/UART baud mismatch), which ends on a read
+  time limit instead of hanging.
+- **One module, one owner.** The Bluetooth link uses the Input profile's
+  device and PIN, pairing on demand, and stores no settings of its own.
+  Connect is refused while the Relay runs, and **Start is now refused
+  while the console is connected** (409 `console_connected`), over either
+  kind of link. Auto-start at boot and a Corrected survey-in's own Relay
+  instance are unaffected.
+- **Hand off** over Bluetooth disconnects the console and starts the
+  Relay on the Bluetooth Input profile unchanged.
+- **Baud guard.** The module can't follow a baud change on the UART it's
+  wired to, so over Bluetooth Apply refuses a baud change on the Console
+  port (`console_baud_over_bluetooth`), naming the UART and its rate.
+  While the Console port is unknown, every UART is covered. The GPS
+  config page disables the matching baud fields with a note. The other
+  UART, and everything over a serial cable, are unchanged.
+- **Drops and resets.** A Bluetooth link that closes mid-session shows as
+  a lost device, like a pulled cable. Reset GPS and the survey's
+  automatic resets reopen the link by themselves, and the Console port is
+  identified again after every reset, over either kind of link.
+- The Bluetooth Verification on the Input page now opens and closes its
+  link through the same shared helper as the Relay and the console, and
+  retries a busy channel straight after a close instead of going Red.
+
+### Fixed
+
+- **The saved Fixed base survives resets** (#221). A reset or a
+  battery-backed power cycle could bring the receiver back with base
+  mode off, because the Fixed base write left a stale setting in
+  battery-backed RAM. The Fixed base is now saved so that a reset brings
+  it back, a Survey-in is never persisted, and every way a Survey-in
+  ends without committing falls back to the saved base. Connect repairs
+  receivers affected before this fix. **Save to flash** now actually
+  saves, and is refused while a Survey-in runs.
+
+### Changed
+
+- `POST /api/device/connect` takes a `link` object: `{kind: "serial",
+  port, baud_rate}` or `{kind: "bluetooth"}`. The flat `port`/`baud_rate`
+  request is still accepted as serial.
+- `GET /api/device/status` adds `link` (Bluetooth adds `device_name` and
+  `mac`) and `connect_stages`. The flat `port`/`baud_rate` stay filled
+  for serial and are `null` over Bluetooth. The status stays connecting
+  until Identify has read the Console port.
+- The saved device profile gains `kind`. Profiles saved by older
+  versions load as serial.
+- `POST /api/relay/start` returns 409 `console_connected` while the
+  console is connected.
+- Requires `sp-rtk-base-relay>=4.1.0,<5` (the shared RFCOMM link helper).
+
 ## v0.8.1 (2026-10-05)
 
 ### Security: destination passwords are write-only

@@ -34,6 +34,7 @@ from sp_rtk_base.api.network import router as network_router
 from sp_rtk_base.api.profiles import router as profiles_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
+from sp_rtk_base.api.update import router as update_router
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ def create_api_app() -> FastAPI:
     api.include_router(network_router)
     api.include_router(profiles_router)
     api.include_router(bluetooth_router)
+    api.include_router(update_router)
     return api
 
 
@@ -101,6 +103,9 @@ async def startup_services() -> None:
     # Signal Quality polls the receiver in the background while it is
     # connected, so pages (and metrics) see it whether or not one is open.
     services_mod.signal_quality_service.start()
+
+    # Check PyPI for an Available update now, then every 24 h.
+    services_mod.update_check_service.start()
 
 
 async def shutdown_services() -> None:
@@ -166,6 +171,17 @@ async def shutdown_services() -> None:
         logger.warning("Timed out stopping the Signal Quality poller")
     except Exception:
         logger.exception("Error stopping the Signal Quality poller")
+
+    # 0b'. Update check schedule — nothing depends on it; just stop it.
+    try:
+        await asyncio.wait_for(
+            services_mod.update_check_service.stop(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the update check")
+    except Exception:
+        logger.exception("Error stopping the update check")
 
     # 0c. Survey-in — stop the station's averaging before the device goes.
     try:

@@ -9,12 +9,17 @@ A failed check shows on Settings only, as "Couldn't check (last checked
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
+import markdown2  # type: ignore[import-untyped]
+
 from sp_rtk_base.services.update_check import UpdateCheckStatus
+from sp_rtk_base.update.release_notes import PackageNotes, ReleaseNote
 
 UP_TO_DATE_TEXT = "Up to date."
+NO_NOTES_TEXT = "No notes for this release."
+NOTE_NOT_LOADED_TEXT = "Notes for this release couldn't be loaded."
 
 
 @dataclass(frozen=True)
@@ -104,3 +109,98 @@ def python_note(status: UpdateCheckStatus) -> str | None:
     if last.available:
         note += f" Offering {last.target.app}, the newest release that runs here."
     return note
+
+
+# ---------------------------------------------------------------------------
+# Release notes (sp-rtk-base#237)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PreReleaseView:
+    """A pre-release folded under its stable release."""
+
+    heading: str
+    html: str
+
+
+@dataclass(frozen=True)
+class ReleaseView:
+    """One release in a notes tab: its heading, then its notes or a line."""
+
+    heading: str
+    html: str | None
+    """The notes as safe HTML (see :func:`notes_html`), or ``None``."""
+    text: str | None = None
+    """Shown instead of ``html``: there are no notes, or they didn't load."""
+    includes: str | None = None
+    """"Includes 0.10.0-beta.1, 0.10.0-beta.2", when pre-releases fold here."""
+    pre_releases: list[PreReleaseView] = field(default_factory=list[PreReleaseView])
+
+
+@dataclass(frozen=True)
+class NotesTab:
+    """The SP-Base or the Relay tab of the Release notes expander."""
+
+    label: str
+    text: str | None
+    """A line instead of releases: GitHub failed, or the package doesn't change."""
+    releases: list[ReleaseView]
+    """Newest first."""
+
+
+def notes_html(markdown: str) -> str:
+    """Render notes from GitHub as HTML, with any raw HTML in them escaped.
+
+    A changelog can't put markup on the page: tags show as text, and
+    ``javascript:`` links are dropped.
+    """
+    html: str = markdown2.markdown(
+        markdown, safe_mode="escape", extras=["fenced-code-blocks", "tables"]
+    )
+    return html
+
+
+def notes_tabs(status: UpdateCheckStatus) -> list[NotesTab] | None:
+    """The Release notes tabs, or ``None`` when there's nothing to show."""
+    last = status.last_good
+    if last is None or not last.available or last.notes is None:
+        return None
+    return [
+        _tab("SP-Base", last.notes.app, last.target.app),
+        _tab("Relay", last.notes.relay, last.target.relay),
+    ]
+
+
+def _tab(label: str, notes: PackageNotes, target: str) -> NotesTab:
+    if not notes.loaded:
+        return NotesTab(
+            label,
+            f"{label} notes couldn't be loaded (GitHub didn't answer). "
+            "Update still works.",
+            [],
+        )
+    if not notes.releases:
+        return NotesTab(label, f"The {label} stays on {target}.", [])
+    return NotesTab(label, None, [_release(label, r) for r in notes.releases])
+
+
+def _dated(title: str, date: str | None) -> str:
+    return f"{title} · {date}" if date else title
+
+
+def _release(label: str, note: ReleaseNote) -> ReleaseView:
+    heading = _dated(f"{label} {note.version}", note.date)
+    pre_releases = [
+        PreReleaseView(_dated(p.version, p.date), notes_html(p.body))
+        for p in note.includes
+    ]
+    includes = (
+        "Includes " + ", ".join(p.version for p in reversed(note.includes))
+        if note.includes
+        else None
+    )
+    if note.source in ("changelog", "release"):
+        return ReleaseView(heading, notes_html(note.body), None, includes, pre_releases)
+    text = NOTE_NOT_LOADED_TEXT if note.source == "unavailable" else NO_NOTES_TEXT
+    return ReleaseView(heading, None, text, includes, pre_releases)

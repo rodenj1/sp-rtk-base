@@ -29,6 +29,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.fake_pypi import FakePyPI
 
 
@@ -74,20 +75,47 @@ def _wait_for_http(url: str, timeout: float = 30.0) -> None:
 E2E_UPDATE_APP = "99.0.0"
 #: A newer release still, that needs a Python no base runs.
 E2E_NEEDS_PYTHON_APP = "100.0.0"
+#: Releases between the running one and the Available update: one whose
+#: notes are only in its GitHub Release, one with no notes anywhere.
+E2E_RELEASE_BODY_APP = "97.0.0"
+E2E_NO_NOTES_APP = "98.0.0"
+#: ``CHANGELOG.md`` at the Available update's tag adds these sections.
+E2E_CHANGELOG = (
+    "## v99.0.0 (2026-10-20)\n\n"
+    "### Added\n\n"
+    "- **Release notes** before you Update.\n"
+    "- Markup shows as text: <b>not bold</b> "
+    '<img src=x onerror="window.__notesInjected = true">\n\n'
+    "## v99.0.0-beta.1 (2026-10-10)\n\n"
+    "- Notes written up in a beta.\n"
+)
 
 
 @pytest.fixture(scope="session")
 def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """PyPI as recorded, plus an Available update, for the e2e server.
+    """PyPI and GitHub as recorded, plus an Available update and its Release
+    notes, for the e2e server.
 
     Session-scoped like the server: a test that breaks it (to fail a
     check) must put it back.
     """
     pypi = FakePyPI()
-    pypi.publish_app(E2E_UPDATE_APP)
+    for version in (E2E_RELEASE_BODY_APP, E2E_NO_NOTES_APP, E2E_UPDATE_APP):
+        pypi.publish_app(version)
     pypi.publish_app(E2E_NEEDS_PYTHON_APP, requires_python=">=3.99")
+    github = FakeGitHub()
+    github.publish_changelog(
+        "sp-rtk-base", E2E_UPDATE_APP, E2E_CHANGELOG, on_top_of="0.9.0"
+    )
+    github.publish_release(
+        "sp-rtk-base",
+        E2E_RELEASE_BODY_APP,
+        "Notes from the GitHub Release.",
+        published="2026-10-15",
+    )
     directory = tmp_path_factory.mktemp("fake-pypi")
     pypi.write_to(directory)
+    github.write_to(directory)
     return directory
 
 
@@ -127,7 +155,8 @@ def sp_rtk_base_server(
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
     env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
-    # The update check reads PyPI from this directory, never the network.
+    # The update check reads PyPI and GitHub from this directory, never the
+    # network.
     env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and

@@ -29,6 +29,13 @@ from pydantic import BaseModel, ConfigDict
 APP_PACKAGE = "sp-rtk-base"
 RELAY_PACKAGE = "sp-rtk-base-relay"
 PYPI_BASE_URL = "https://pypi.org/pypi"
+GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
+GITHUB_API_BASE_URL = "https://api.github.com"
+GITHUB_REPOS = {
+    APP_PACKAGE: "rodenj1/sp-rtk-base",
+    RELAY_PACKAGE: "rodenj1/sp-rtk-base-relay",
+}
+"""Each package's GitHub repository; release ``X`` is tagged ``vX`` there."""
 FETCH_TIMEOUT_SECONDS = 15.0
 
 Fetch = Callable[[str], bytes]
@@ -69,6 +76,20 @@ def urllib_fetch(url: str) -> bytes:
     with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
         body: bytes = response.read()
         return body
+
+
+def github_raw_url(package: str, version: str, path: str) -> str:
+    """A file of ``package``'s repository as it was at release ``version``."""
+    return f"{GITHUB_RAW_BASE_URL}/{GITHUB_REPOS[package]}/v{version}/{path}"
+
+
+def stable_versions(fetch: Fetch, package: str) -> list[Version]:
+    """Every stable release of ``package`` with a file not yanked, newest first.
+
+    Raises:
+        ReleaseCheckError: PyPI failed.
+    """
+    return [r.version for r in _stable_releases(_get_json(fetch, _index_url(package)))]
 
 
 def resolve_release(fetch: Fetch, python: PythonVersion) -> ReleaseTarget:

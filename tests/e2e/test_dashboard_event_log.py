@@ -78,3 +78,27 @@ def test_live_events_keep_their_badge_colours_order_and_cap(
         badge = log.get_by_text(event_type, exact=True).first
         expect(badge).to_have_css("color", colour)
         expect(badge).to_have_css("border-color", colour)
+
+
+@pytest.mark.e2e
+def test_an_empty_log_says_no_events_yet(
+    page: Page, base_url: str, clean_config: None
+) -> None:
+    page.route_web_socket("**/api/events/ws", _serve_events())
+    page.goto("/")
+    expect(_event_log(page).get_by_text("No events yet", exact=True)).to_be_visible()
+
+
+@pytest.mark.e2e
+def test_no_events_yet_goes_with_the_first_live_event(
+    page: Page, base_url: str, clean_config: None
+) -> None:
+    """The placeholder for an empty log gives way to live events (issue #53)."""
+    page.route_web_socket(
+        "**/api/events/ws",
+        _serve_events({"event_type": "input.connected", "message": "first"}),
+    )
+    page.goto("/")
+    log = _event_log(page)
+    expect(log.get_by_text("first", exact=True)).to_be_visible()
+    expect(log.get_by_text("No events yet", exact=True)).to_have_count(0)

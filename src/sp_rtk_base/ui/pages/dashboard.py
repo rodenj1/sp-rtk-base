@@ -646,7 +646,11 @@ def dashboard_page() -> None:
                 event_log.clear()
                 with event_log:
                     if not events:
-                        ui.label("No events yet").classes("text-grey-6")
+                        # The live script removes this by its class when
+                        # the first live event arrives.
+                        ui.label("No events yet").classes(
+                            "text-grey-6 no-events-placeholder"
+                        )
                     else:
                         for evt in reversed(events):
                             _render_event(evt)

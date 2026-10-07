@@ -269,6 +269,23 @@ class _DeadlineStream:
             return b""
         return self._stream.read(size)  # type: ignore[attr-defined,no-any-return]
 
+    def readline(self) -> bytes:
+        """Read up to and including ``\\n``; less at end-of-stream.
+
+        pyubx2 reads an NMEA sentence with ``readline()`` once it has seen
+        the ``$`` (issue #220); without it every NMEA sentence raised and
+        was dropped, so NMEA never counted as a frame.  Built on
+        :meth:`read`, so the armed deadline ends a line that never ends,
+        and so it needs nothing from the wrapped stream beyond ``read``.
+        """
+        line = bytearray()
+        while not line.endswith(b"\n"):
+            byte = self.read(1)
+            if not byte:
+                break
+            line += byte
+        return bytes(line)
+
 
 class _TxGuardedSerial:
     """A serial port whose every write holds ``tx_lock`` (see UbloxDriver)."""

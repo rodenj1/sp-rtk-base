@@ -705,3 +705,67 @@ class TestABusyLineCannotHangATrial:
 
         assert finished, "connect hung on a busy line"
         assert BAUD_MISMATCH_HINT in str(message)
+
+
+class _BytePort:
+    """A serial port that only *reads* ``chunk``, over and over.
+
+    It offers ``read`` alone, as a ``LinkStream`` promises; and it ignores
+    the host's MON-VER poll, as a receiver with UBX input off does.
+    """
+
+    def __init__(self, chunk: bytes) -> None:
+        self._chunk = chunk
+        self._at = 0
+        self.is_open = True
+
+    def read(self, size: int = 1) -> bytes:
+        out = bytearray()
+        for _ in range(size):
+            out.append(self._chunk[self._at % len(self._chunk)])
+            self._at += 1
+        return bytes(out)
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    def reset_input_buffer(self) -> None:
+        pass
+
+    def fileno(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+class TestUbloxTrialOverRealFrames:
+    """``try_baud_candidate`` with pyubx2's real ``UBXReader`` (issue #220)."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_fcntl(self) -> Iterator[None]:
+        with patch("sp_rtk_base.services.drivers.ublox.fcntl.flock"):
+            yield
+
+    def test_nmea_without_a_reply_is_bytes_no_answer(self) -> None:
+        """A receiver at this rate talking NMEA, with UBX input off."""
+        port = _BytePort(b"$GNGLL,,,,,,V,N*7A\r\n")
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=port
+        ):
+            verdict, info = UbloxDriver().try_baud_candidate("/dev/ttyUSB0", 38400, 0.2)
+
+        assert verdict is CandidateVerdict.BYTES_NO_ANSWER
+        assert info is None
+
+    def test_an_endless_line_ends_with_the_candidates_budget(self) -> None:
+        """A ``$`` and then no newline, ever: reading the line still stops."""
+        port = _BytePort(b"$" + bytes(range(0x30, 0x7F)))
+        with patch(
+            "sp_rtk_base.services.drivers.ublox.serial.Serial", return_value=port
+        ):
+            started = time.monotonic()
+            verdict, _ = UbloxDriver().try_baud_candidate("/dev/ttyUSB0", 38400, 0.2)
+
+        assert time.monotonic() - started < 2.0
+        assert verdict is CandidateVerdict.SILENT

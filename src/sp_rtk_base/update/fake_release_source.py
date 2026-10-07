@@ -8,10 +8,13 @@ failed fetch, so a test fails the check by removing one.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-from sp_rtk_base.update.release import PYPI_BASE_URL, Fetch
+from sp_rtk_base.update.release import PYPI_BASE_URL, Fetch, urllib_fetch
+
+FAKE_PYPI_DIR_ENV = "SP_RTK_BASE_FAKE_PYPI_DIR"
 
 _PYPI_URL = re.compile(
     re.escape(PYPI_BASE_URL)
@@ -36,3 +39,12 @@ def directory_fetch(directory: Path) -> Fetch:
             raise OSError(f"HTTP 404 for {url}") from exc
 
     return fetch
+
+
+def fetch_from_env() -> Fetch:
+    """Where releases are read: PyPI, or this fake when
+    ``SP_RTK_BASE_FAKE_PYPI_DIR`` names a directory (e2e, tests)."""
+    fake_dir = os.environ.get(FAKE_PYPI_DIR_ENV)
+    if fake_dir:
+        return directory_fetch(Path(fake_dir))
+    return urllib_fetch

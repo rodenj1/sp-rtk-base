@@ -244,6 +244,38 @@ Hardening directives (`NoNewPrivileges`, `ProtectSystem=strict`,
 and tested on Raspberry Pi OS Bookworm.  If you hit permission errors
 during bring-up, comment them out one at a time.
 
+### Update units (`sp-rtk-base-update.service`, `sp-rtk-base-update.path`)
+
+Installed in both modes. They let the operator install an Update from the
+web UI without giving the app any privilege (see
+[ADR 0005](adr/0005-update-runs-in-its-own-unit-triggered-by-a-request-file.md)):
+
+- The app writes a request file, `/var/lib/sp-rtk-base/update/request.json`,
+  naming the versions the operator read Release notes for.
+- `sp-rtk-base-update.path` sees it and starts `sp-rtk-base-update.service`,
+  a oneshot unit with its own sandbox that may write only `/opt/sp-rtk-base`,
+  `/var/lib/sp-rtk-base` and `/etc/sp-rtk-base`.
+- The unit runs `sp-rtk-base-apply-update` as `sp-rtk-base`. It deletes the
+  request, resolves the newest release itself, refuses unless that is what
+  the request named ("A newer release appeared; check again."), and installs
+  exactly `sp-rtk-base==X sp-rtk-base-relay==Y`.
+- Its only root steps are two fixed lines that restart `sp-rtk-base` and
+  (if present) `sp-rtk-base-net-provision`.
+- Progress and outcome go to `/var/lib/sp-rtk-base/update/status.json`; the
+  unit's log is `sudo journalctl -u sp-rtk-base-update`.
+
+**Turning Update off.** Install with `--no-update`, or disable the path
+unit; the web app cannot turn it back on, and a later `install.sh` re-run
+keeps it off:
+
+```bash
+sudo ./deploy/install.sh --mode managed-host --no-update
+# or, on an installed base:
+sudo systemctl disable --now sp-rtk-base-update.path
+# and to turn it back on:
+sudo systemctl enable --now sp-rtk-base-update.path
+```
+
 ### Default config (`/etc/sp-rtk-base/config.yaml`)
 
 ```yaml

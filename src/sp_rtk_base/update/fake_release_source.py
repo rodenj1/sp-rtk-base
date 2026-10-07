@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import email.message
 import io
+import os
 import re
 import urllib.error
 from pathlib import Path
@@ -24,7 +25,10 @@ from sp_rtk_base.update.release import (
     GITHUB_RAW_BASE_URL,
     PYPI_BASE_URL,
     Fetch,
+    urllib_fetch,
 )
+
+FAKE_PYPI_DIR_ENV = "SP_RTK_BASE_FAKE_PYPI_DIR"
 
 _PYPI_URL = re.compile(
     re.escape(PYPI_BASE_URL)
@@ -67,3 +71,12 @@ def _path_for(directory: Path, url: str) -> Path:
     if match is not None and ".." not in match["path"].split("/"):
         return directory / url.removeprefix("https://")
     raise OSError(f"The fake release source serves no {url}")
+
+
+def fetch_from_env() -> Fetch:
+    """Where releases are read: PyPI, or this fake when
+    ``SP_RTK_BASE_FAKE_PYPI_DIR`` names a directory (e2e, tests)."""
+    fake_dir = os.environ.get(FAKE_PYPI_DIR_ENV)
+    if fake_dir:
+        return directory_fetch(Path(fake_dir))
+    return urllib_fetch

@@ -1,0 +1,13 @@
+[Unit]
+Description=SP-RTK-Base — watch for an Update request from the web UI
+Documentation=https://github.com/rodenj1/sp-rtk-base/blob/main/docs/adr/0005-update-runs-in-its-own-unit-triggered-by-a-request-file.md
+
+[Path]
+# The app writes the request beside this name and renames it into place.
+# The updater deletes it first thing, so this can't fire again on it.
+# Disabling this unit turns Update off on this host (install.sh --no-update).
+PathExists=/var/lib/sp-rtk-base/update/request.json
+Unit=sp-rtk-base-update.service
+
+[Install]
+WantedBy=paths.target

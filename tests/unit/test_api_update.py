@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import sp_rtk_base.services as services_mod
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.services import get_update_check_service
 from sp_rtk_base.services.update_check import UpdateCheckService
+from sp_rtk_base.update.fake_release_source import fetch_from_env
 from sp_rtk_base.update.release import urllib_fetch
 from tests.fixtures.fake_github import FakeGitHub, Web
 from tests.fixtures.fake_pypi import APP_INDEX, FakePyPI
@@ -155,7 +155,7 @@ class TestReleaseSource:
     def test_pypi_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SP_RTK_BASE_FAKE_PYPI_DIR", raising=False)
 
-        assert services_mod._release_fetch() is urllib_fetch  # pyright: ignore[reportPrivateUsage]
+        assert fetch_from_env() is urllib_fetch
 
     def test_a_fake_directory_for_e2e(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -163,6 +163,6 @@ class TestReleaseSource:
         (tmp_path / "sp-rtk-base.json").write_text("{}")
         monkeypatch.setenv("SP_RTK_BASE_FAKE_PYPI_DIR", str(tmp_path))
 
-        fetch = services_mod._release_fetch()  # pyright: ignore[reportPrivateUsage]
+        fetch = fetch_from_env()
 
         assert fetch(APP_INDEX) == b"{}"

@@ -11,6 +11,8 @@ Debian-based host) as a systemd-managed service running under a dedicated
 | [`uninstall.sh`](uninstall.sh) | Remove service + (optionally) config + state |
 | [`sp-rtk-base.service`](sp-rtk-base.service) | Hardened systemd unit for the web UI + relay |
 | [`sp-rtk-base-net-provision.service`](sp-rtk-base-net-provision.service) | Independent systemd unit for the headless network-provisioning supervisor (issue #9) |
+| [`sp-rtk-base-update.service`](sp-rtk-base-update.service) | Oneshot unit that installs an Update the web UI asked for (ADR 0005) |
+| [`sp-rtk-base-update.path`](sp-rtk-base-update.path) | Starts the Update unit when the app writes its request file; disabled by `install.sh --no-update` |
 | [`polkit/10-sp-rtk-base-net-provision.rules`](polkit/10-sp-rtk-base-net-provision.rules) | Grants the service account NetworkManager control (no session to authenticate against otherwise) |
 
 See **[`docs/deployment-pi.md`](../docs/deployment-pi.md)** for the full
@@ -44,6 +46,9 @@ curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/ins
 /var/lib/sp-rtk-base/                           runtime state (incl. durable provisioning clocks)
 /etc/systemd/system/sp-rtk-base.service         systemd unit — web UI + relay
 /etc/systemd/system/sp-rtk-base-net-provision.service   systemd unit — network provisioning (independent, issue #9)
+/etc/systemd/system/sp-rtk-base-update.service  systemd unit — installs an Update (oneshot, ADR 0005)
+/etc/systemd/system/sp-rtk-base-update.path     starts it on /var/lib/sp-rtk-base/update/request.json
+/var/lib/sp-rtk-base/update/                    Update request file and status.json
 /etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules  NetworkManager control for the service account
 (NetworkManager connection profile named after ap_ssid)   setup-AP profile (issue #11) — lives in NetworkManager's own store, not a plain file
 ```

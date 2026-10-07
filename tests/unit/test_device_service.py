@@ -23,6 +23,7 @@ from sp_rtk_base.models.device_models import (
     ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
+    SerialLink,
     SurveyInConfig,
     SurveyInProgress,
     UbxProtocol,
@@ -168,7 +169,7 @@ class TestConnection:
         driver = _make_mock_driver()
         svc.set_driver(driver)
 
-        info = await svc.connect("/dev/ttyACM0", 115200)
+        info = await svc.connect(SerialLink(port="/dev/ttyACM0", baud_rate=115200))
 
         assert info.vendor == "MockVendor"
         assert info.model == "MockModel"
@@ -189,7 +190,7 @@ class TestConnection:
         driver.get_gnss_config.return_value = GnssConfig()
         svc.set_driver(driver)
 
-        await svc.connect("/dev/ttyACM0", 115200)
+        await svc.connect(SerialLink(port="/dev/ttyACM0", baud_rate=115200))
 
         driver.get_gnss_config.assert_called_once()
 
@@ -202,7 +203,7 @@ class TestConnection:
         driver.get_gnss_config.side_effect = RuntimeError("no legacy support")
         svc.set_driver(driver)
 
-        info = await svc.connect("/dev/ttyACM0", 115200)
+        info = await svc.connect(SerialLink(port="/dev/ttyACM0", baud_rate=115200))
 
         assert info.vendor == "MockVendor"
         assert svc.state == DeviceConnectionState.CONNECTED
@@ -211,16 +212,16 @@ class TestConnection:
     async def test_connect_no_driver_raises(self) -> None:
         svc = DeviceService()
         with pytest.raises(RuntimeError, match="No GPS driver loaded"):
-            await svc.connect("/dev/ttyACM0")
+            await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
     @pytest.mark.asyncio()
     async def test_connect_already_connected_raises(self) -> None:
         svc = DeviceService()
         svc.set_driver(_make_mock_driver())
-        await svc.connect("/dev/ttyACM0")
+        await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
         with pytest.raises(RuntimeError, match="Already connected"):
-            await svc.connect("/dev/ttyACM0")
+            await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
     @pytest.mark.asyncio()
     async def test_connect_relay_running_raises(self) -> None:
@@ -229,7 +230,7 @@ class TestConnection:
         svc.set_relay_check(lambda: True)
 
         with pytest.raises(RuntimeError, match="relay is running"):
-            await svc.connect("/dev/ttyACM0")
+            await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
     @pytest.mark.asyncio()
     async def test_connect_failure_sets_error_state(self) -> None:
@@ -239,7 +240,7 @@ class TestConnection:
         svc.set_driver(driver)
 
         with pytest.raises(ConnectionError, match="Port busy"):
-            await svc.connect("/dev/ttyACM0")
+            await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
         assert svc.state == DeviceConnectionState.ERROR
         status = svc.get_status()
@@ -250,7 +251,7 @@ class TestConnection:
         svc = DeviceService()
         driver = _make_mock_driver(connected=True)
         svc.set_driver(driver)
-        await svc.connect("/dev/ttyACM0")
+        await svc.connect(SerialLink(port="/dev/ttyACM0"))
 
         await svc.disconnect()
 
@@ -270,7 +271,7 @@ class TestConnection:
     async def test_status_when_connected(self) -> None:
         svc = DeviceService()
         svc.set_driver(_make_mock_driver())
-        await svc.connect("/dev/ttyACM0", 115200)
+        await svc.connect(SerialLink(port="/dev/ttyACM0", baud_rate=115200))
 
         status = svc.get_status()
         assert status.state == DeviceConnectionState.CONNECTED
@@ -651,7 +652,7 @@ class TestApplyReceiverConfig:
         svc.set_driver(driver)
         svc._state = DeviceConnectionState.CONNECTED
         svc._info = DeviceInfo(vendor="MockVendor", model="MockModel")
-        svc._baud_rate = 57600
+        svc._link = SerialLink(port="/dev/ttyACM0", baud_rate=57600)
         # The reference rig's console port (#153: identified as UART1 on
         # real hardware). Known-UART1 is exactly the old premise, so the
         # pre-#155 reopen tests below keep their meaning unchanged.
@@ -805,7 +806,7 @@ class TestApplyReceiverConfig:
     ) -> None:
         driver = connected_svc.driver
         assert driver is not None
-        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        connected_svc._link = SerialLink(port="/dev/ttyACM0", baud_rate=57600)  # pyright: ignore[reportPrivateUsage]
         driver.reconnect_at_baud.return_value = DeviceInfo(  # type: ignore[union-attr]
             vendor="MockVendor", model="MockModel"
         )
@@ -813,7 +814,7 @@ class TestApplyReceiverConfig:
 
         await connected_svc.apply_receiver_config(request)
 
-        assert connected_svc._baud_rate == 115200  # pyright: ignore[reportPrivateUsage]
+        assert connected_svc.get_status().baud_rate == 115200
 
     @pytest.mark.asyncio()
     async def test_baud_uart1_reopen_failure_retries_at_previous_baud_then_raises(
@@ -821,7 +822,7 @@ class TestApplyReceiverConfig:
     ) -> None:
         driver = connected_svc.driver
         assert driver is not None
-        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        connected_svc._link = SerialLink(port="/dev/ttyACM0", baud_rate=57600)  # pyright: ignore[reportPrivateUsage]
         driver.reconnect_at_baud.side_effect = ConnectionError(  # type: ignore[union-attr]
             "no response"
         )
@@ -850,7 +851,7 @@ class TestApplyReceiverConfig:
         act, not just silently limp along at the stale baud."""
         driver = connected_svc.driver
         assert driver is not None
-        connected_svc._baud_rate = 57600  # pyright: ignore[reportPrivateUsage]
+        connected_svc._link = SerialLink(port="/dev/ttyACM0", baud_rate=57600)  # pyright: ignore[reportPrivateUsage]
         driver.reconnect_at_baud.side_effect = [  # type: ignore[union-attr]
             ConnectionError("no response at new baud"),
             DeviceInfo(vendor="MockVendor", model="MockModel"),
@@ -861,7 +862,7 @@ class TestApplyReceiverConfig:
             await connected_svc.apply_receiver_config(request)
 
         assert connected_svc.state == DeviceConnectionState.CONNECTED
-        assert connected_svc._baud_rate == 57600  # pyright: ignore[reportPrivateUsage]
+        assert connected_svc.get_status().baud_rate == 57600
         # Called once, for the pre-write pre-read (issue #99) — see
         # the sibling test above.
         driver.get_rtcm_port_config.assert_called_once()  # type: ignore[union-attr]

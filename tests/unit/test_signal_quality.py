@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from sp_rtk_base.models.device_models import GnssConstellation
+from sp_rtk_base.models.device_models import GnssConstellation, SerialLink
 from sp_rtk_base.models.signal_quality_models import (
     Band,
     Signal,
@@ -38,7 +38,7 @@ class Clock:
 async def _connected(driver: FakeGpsDriver) -> DeviceService:
     device = DeviceService()
     device.set_driver(driver)
-    await device.connect("FAKE", 115200)
+    await device.connect(SerialLink(port="FAKE", baud_rate=115200))
     return device
 
 
@@ -225,7 +225,7 @@ async def test_a_verdict_does_not_survive_a_reconnect() -> None:
 
     await device.disconnect()
     await service.poll_once()  # the poller ticks while disconnected
-    await device.connect("FAKE", 115200)
+    await device.connect(SerialLink(port="FAKE", baud_rate=115200))
 
     assert isinstance(service.current(), SignalQualityNoData)
 

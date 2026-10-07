@@ -35,6 +35,7 @@ from sp_rtk_base.models.device_models import (
     ReceiverScalarConfig,
     RtcmPortConfig,
     RtcmRowId,
+    SerialLink,
     SerialPortInfo,
     SurveyInConfig,
     SurveyInProgress,
@@ -42,6 +43,7 @@ from sp_rtk_base.models.device_models import (
     UbxProtocol,
 )
 from sp_rtk_base.models.signal_quality_models import SignalSnapshot
+from sp_rtk_base.services.drivers.console_link import LinkOpener
 
 # ---------------------------------------------------------------------------
 # Detection constants (issue #142)
@@ -157,6 +159,27 @@ class GpsReceiverDriver(abc.ABC):
             TimeoutError: If the device does not respond.
         """
 
+    def connect_via(self, opener: LinkOpener) -> DeviceInfo:
+        """Open the Console link *opener* opens, and identify the device.
+
+        The general form of :meth:`connect`, for any kind of Console link
+        (rtk_development#40). A driver that reopens its link (after a baud
+        change or a hardware reset) keeps *opener* and reopens through it.
+        This default serves a driver that only knows serial links, by
+        handing the link's port and rate to :meth:`connect`; a second kind
+        of link (rtk_development#42) is refused here.
+
+        Raises:
+            ConnectionError: If the connection fails.
+            TimeoutError: If the device does not respond.
+        """
+        link = opener.link
+        if not isinstance(link, SerialLink):
+            raise ConnectionError(
+                f"The {self.vendor_name} driver can't connect over a {link.kind} link"
+            )
+        return self.connect(link.port, link.baud_rate)
+
     @abc.abstractmethod
     def disconnect(self) -> None:
         """Close the serial connection.
@@ -168,6 +191,17 @@ class GpsReceiverDriver(abc.ABC):
     @abc.abstractmethod
     def is_connected(self) -> bool:
         """Whether the driver currently has an open connection."""
+
+    @property
+    def link_opens(self) -> int:
+        """How many times this driver has opened its Console link.
+
+        A driver that reopens the link on its own, as a hardware reset
+        does, counts each open here, so the caller knows to ask the
+        receiver for the console port again (ADR 0003). A driver that
+        never reopens on its own reports 0.
+        """
+        return 0
 
     # ------------------------------------------------------------------
     # Console port (issue #155, ADR 0003)

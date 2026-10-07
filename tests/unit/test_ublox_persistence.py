@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sp_rtk_base.models.device_models import FixedBaseConfig, SurveyInConfig
+from sp_rtk_base.models.device_models import FixedBaseConfig, SerialLink, SurveyInConfig
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.ublox import UbloxDriver
 from tests.fixtures.simulated_ublox import (
@@ -155,7 +155,7 @@ class TestConnectRepairsBbrResidue:
 
         service = DeviceService()
         service.set_driver(unconnected)
-        await service.connect("/dev/sim")
+        await service.connect(SerialLink(port="/dev/sim"))
 
         assert receiver.value("CFG_TMODE_MODE", BBR) is None
         assert receiver.value("CFG_TMODE_MODE") == FIXED

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,6 +67,120 @@ BAUD_RATES: tuple[int, ...] = (
 #: ``models/`` is the bottom layer: ``api_models`` and ``config_models``
 #: both need this value, and neither may import from ``services/``.
 DEFAULT_BAUD: int = 57600
+
+
+# ---------------------------------------------------------------------------
+# Console link (rtk_development#40)
+# ---------------------------------------------------------------------------
+
+#: The kinds of Console link (see ``CONTEXT.md``).
+ConsoleLinkKind = Literal["serial", "bluetooth"]
+
+
+class SerialLink(BaseModel):
+    """A Serial Console link: a host serial device at one baud rate.
+
+    Covers a receiver's own USB port seen as a serial device too.
+    """
+
+    kind: Literal["serial"] = "serial"
+    port: str = Field(description="Host serial device path (e.g. /dev/ttyUSB0)")
+    baud_rate: int = Field(
+        default=DEFAULT_BAUD, ge=4800, le=921600, description="Serial baud rate"
+    )
+
+    @property
+    def described(self) -> str:
+        """The link as messages and logs name it."""
+        return f"{self.port} @ {self.baud_rate}"
+
+
+class BluetoothLink(BaseModel):
+    """A Bluetooth Console link, to a module wired to a receiver UART.
+
+    The device always comes from the Bluetooth Input profile, never from
+    the request (rtk_development#38): a Connect asks for
+    ``{"kind": "bluetooth"}`` alone, and the status fills in the module it
+    reached.
+    """
+
+    kind: Literal["bluetooth"] = "bluetooth"
+    device_name: str | None = Field(
+        default=None, description="The module's name, from the Input profile"
+    )
+    mac: str | None = Field(
+        default=None, description="The module's MAC address, from the Input profile"
+    )
+
+    @property
+    def module_name(self) -> str:
+        """The module as the operator knows it: its name, else its MAC."""
+        return self.device_name or self.mac or "unnamed module"
+
+    @property
+    def described(self) -> str:
+        """The link as messages and logs name it."""
+        return f"Bluetooth {self.module_name}"
+
+
+#: A Console link of any kind, told apart by ``kind``.
+ConsoleLink = Annotated[SerialLink | BluetoothLink, Field(discriminator="kind")]
+
+
+class ConnectStage(str, enum.Enum):
+    """One Stage of a Bluetooth Console link connect, in the order walked.
+
+    - ``PAIR``: the module is paired with the Input profile's PIN; skipped
+      when a Bond already exists.
+    - ``CONNECT``: the RFCOMM socket connects. Discovery can take up to
+      30 s and can't be cancelled.
+    - ``IDENTIFY``: the receiver answers UBX through the link, and the
+      Console port is read.
+    """
+
+    PAIR = "pair"
+    CONNECT = "connect"
+    IDENTIFY = "identify"
+
+
+class ConnectStageStatus(str, enum.Enum):
+    """Where one connect Stage stands. ``FAILED`` is a Red on that Stage."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ConnectStageCode(str, enum.Enum):
+    """Why a connect Stage ended as it did: a small closed set clients key off.
+
+    ``BONDED`` is the one non-failure: Pair skipped on an existing Bond.
+    """
+
+    BONDED = "bonded"
+    BLUETOOTH_UNAVAILABLE = "bluetooth_unavailable"
+    DEVICE_NOT_FOUND = "device_not_found"
+    PIN_REJECTED = "pin_rejected"
+    SOCKET_REFUSED = "socket_refused"
+    NO_UBX_ANSWER = "no_ubx_answer"
+    IDENTIFY_FAILED = "identify_failed"
+
+
+class ConnectStageResult(BaseModel):
+    """What one Stage of the last connect did.
+
+    ``code`` is from a small closed set clients key off (:class:`ConnectStageCode`); ``message`` is the
+    detail from the layer below; ``advice`` is what the operator does next,
+    set on a failure.
+    """
+
+    stage: ConnectStage
+    status: ConnectStageStatus = ConnectStageStatus.PENDING
+    code: ConnectStageCode | None = None
+    message: str | None = None
+    advice: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +1008,16 @@ class DeviceStatus(BaseModel):
     state: DeviceConnectionState = DeviceConnectionState.DISCONNECTED
     port: str | None = Field(default=None, description="Connected serial port path")
     baud_rate: int | None = Field(default=None, description="Serial baud rate")
+    link: ConsoleLink | None = Field(
+        default=None,
+        description="The Console link in use (when connected); the flat "
+        "port/baud_rate stay filled for a serial link",
+    )
+    connect_stages: list[ConnectStageResult] | None = Field(
+        default=None,
+        description="The Stages of the last Bluetooth connect attempt, in "
+        "order, kept until the next connect; none for a serial connect",
+    )
     info: DeviceInfo | None = Field(
         default=None, description="Device identity (when connected)"
     )

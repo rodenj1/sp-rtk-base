@@ -38,9 +38,12 @@ from unittest.mock import patch
 
 import pytest
 
+from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BaseMode,
+    BluetoothLink,
     DeviceCapability,
+    DeviceConnectionState,
     DynModel,
     FixedBaseConfig,
     GnssConstellation,
@@ -52,11 +55,13 @@ from sp_rtk_base.models.device_models import (
     SurveyPosition,
     UbxProtocol,
 )
+from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.fake import (
     FAKE_FLASH_DIVERGENCE_PORT,
     FAKE_NO_SURVEY_IN_PORT,
     FAKE_PORT_LABEL,
+    FakeBluetoothLinkOpener,
     FakeGpsDriver,
 )
 from sp_rtk_base.services.geodesy import llh_to_ecef
@@ -955,3 +960,74 @@ class TestRover:
         rover.write_corrections(_FRAME)
 
         assert rover.get_survey_position().rtk_status == "none"
+
+
+# ---------------------------------------------------------------------------
+# Bluetooth Console link (rtk_development#43): the e2e connects the Connect
+# panel's Bluetooth side to the fake, with no BlueZ behind it.
+# ---------------------------------------------------------------------------
+
+
+def _bluetooth_input_profile() -> InputProfile:
+    return InputProfile(
+        source="bluetooth",
+        config={
+            "device_name": "RTK_BASE_TST",
+            "mac_address": "98:D3:71:FE:FC:47",
+            "pin": "1234",
+        },
+    )
+
+
+def _bluetooth_device_service() -> DeviceService:
+    svc = DeviceService(
+        input_profile=_bluetooth_input_profile,
+        bluetooth_opener=FakeBluetoothLinkOpener,
+    )
+    svc.set_driver(FakeGpsDriver())
+    return svc
+
+
+class TestFakeBluetoothConsoleLink:
+    """The fake connects over Bluetooth the way the bench base does."""
+
+    @pytest.mark.asyncio
+    async def test_connects_on_the_input_profiles_module_on_uart2(self) -> None:
+        svc = _bluetooth_device_service()
+
+        await svc.connect(BluetoothLink())
+
+        status = svc.get_status()
+        assert status.state == DeviceConnectionState.CONNECTED
+        assert status.link == BluetoothLink(
+            device_name="RTK_BASE_TST", mac="98:D3:71:FE:FC:47"
+        )
+        assert status.console_port == PortId.UART2
+
+    @pytest.mark.asyncio
+    async def test_reports_pair_skipped_as_already_bonded(self) -> None:
+        svc = _bluetooth_device_service()
+
+        await svc.connect(BluetoothLink())
+
+        stages = svc.get_status().connect_stages
+        assert stages is not None
+        assert [(s.stage.value, s.status.value, s.code) for s in stages] == [
+            ("pair", "skipped", "bonded"),
+            ("connect", "passed", None),
+            ("identify", "passed", None),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_disconnect_ends_the_session(self) -> None:
+        svc = _bluetooth_device_service()
+        await svc.connect(BluetoothLink())
+
+        await svc.disconnect()
+
+        status = svc.get_status()
+        assert status.state == DeviceConnectionState.DISCONNECTED
+        assert status.link is None
+        # A fresh connect works again after the session is closed.
+        await svc.connect(BluetoothLink())
+        assert svc.is_connected

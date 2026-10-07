@@ -13,7 +13,7 @@ from collections.abc import Iterable
 import pytest
 from sp_rtk_base_relay import Frame, FrameSubscription
 
-from sp_rtk_base.models.device_models import GnssConstellation
+from sp_rtk_base.models.device_models import GnssConstellation, SerialLink
 from sp_rtk_base.models.signal_quality_models import (
     Band,
     Signal,
@@ -70,7 +70,7 @@ async def _survey_reading(signals: tuple[Signal, ...]) -> SignalQualityVerdict:
     driver.set_signals(signals)
     device = DeviceService()
     device.set_driver(driver)
-    await device.connect("FAKE", 115200)
+    await device.connect(SerialLink(port="FAKE", baud_rate=115200))
     service = SignalQualityService(device, clock=Clock())
     await service.poll_once()
     reading = service.current("survey")
@@ -215,7 +215,7 @@ async def test_handoff_starts_the_relay_verdict_afresh_and_survey_shows_it_too()
     driver.set_signals(sky(20, l1=52.0, l2=50.0))
     device = DeviceService()
     device.set_driver(driver)
-    await device.connect("FAKE", 115200)
+    await device.connect(SerialLink(port="FAKE", baud_rate=115200))
     service = SignalQualityService(device, clock=clock)
     await service.poll_once()
     assert isinstance(service.current("survey"), SignalQualityVerdict)

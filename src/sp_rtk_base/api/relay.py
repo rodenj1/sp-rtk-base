@@ -26,7 +26,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.event_bridge import EventBridge
-from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,9 @@ async def start_relay(
 
     By default, uses the saved configuration. The relay must have
     a configured input source and at least one destination.
+
+    Returns 409 with ``code: console_connected`` while the console is
+    connected, whatever the Console link kind; nothing is touched.
     """
     if relay.is_running:
         return JSONResponse(
@@ -122,6 +125,12 @@ async def start_relay(
             event_bridge.start(relay)
 
         return RelayActionResponse(status="ok", message="Relay engine started")
+    except RelayStartRefusedError as exc:
+        logger.info("Start refused (%s): %s", exc.code, exc.message)
+        return JSONResponse(
+            status_code=409,
+            content={"status": "error", "message": exc.message, "code": exc.code},
+        )
     except Exception as exc:
         logger.exception("Failed to start relay engine")
         # Map common failure shapes to better status codes:

@@ -30,7 +30,8 @@ Corrected survey-in started now would receive corrections it can use.
 _Avoid_: test, connection test, probe
 
 **Stage**:
-One named, operator-meaningful step of a Verification. The stage names are a
+One named, operator-meaningful step of a Verification, or of a Bluetooth
+Console link connect (Pair, Connect, Identify). The stage names are a
 single shared vocabulary — the UI, the logs, and the tests all use the same
 ones, so that a failure can be described by *which step* failed rather than by
 whatever error text the layer below produced. A step earns the name only if it
@@ -172,10 +173,10 @@ the Relay reads RTCM from, even when both reach the same Bluetooth device.
 _Avoid_: connection, transport, device connection
 
 **Console port**:
-The receiver port this application's own serial link is attached to — as
-the receiver sees it (UART1, UART2, USB), never the host device path we
-opened. `/dev/ttyUSB0` is where we are; UART1 is where the receiver hears
-us. Learned by asking the receiver once per connection, and kept until
+The receiver port this application's own Console link is attached to — as
+the receiver sees it (UART1, UART2, USB), never the host end we opened.
+`/dev/ttyUSB0` (or a Bluetooth module) is where we are; UART1 is where the
+receiver hears us. Learned by asking the receiver once per connection, and kept until
 disconnect; it may be **unknown**, which is a state to handle rather than
 an error.
 _Avoid_: connected port, management port, host port

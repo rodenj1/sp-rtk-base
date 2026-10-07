@@ -111,6 +111,8 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_destinations_crud.py`       | REST create → list → update → delete; UI reflects the list                       |
 | `test_settings_interaction.py`    | "Save Settings" button click triggers Quasar toast                               |
 | `test_device_connection.py`       | Connect / disconnect lifecycle on the fake GPS driver (REST)                     |
+| `test_console_link_connect_panel.py` | Connect panel's Serial cable / Bluetooth toggle: the set-up prompt without a Bluetooth Input profile, the module line, a Bluetooth connect on the fake (Pair skipped, console port UART2), the toggle locked while connected on both Connection cards, reopening on the last kind used |
+| `test_gps_config_console_baud_lock.py` | GPS config over a Bluetooth Console link on the fake: the module's UART2 baud field is disabled with a note naming its rate, UART1 stays editable; over a serial cable nothing is locked |
 | `test_gps_data_flow.py`           | NAV-PVT polling + GNSS / RTCM round-trips on `/gps-config` (REST + browser)      |
 | `test_survey_save_position.py`    | Survey-In → save base position dialog persists to config                         |
 | `test_survey_buttons.py`          | Start Survey-In confirm/cancel, Fixed-Base Edit/Commit/Cancel button-handlers    |

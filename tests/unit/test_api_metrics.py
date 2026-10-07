@@ -17,6 +17,7 @@ from sp_rtk_base_relay.core.status import (
 
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import AppSettings
+from sp_rtk_base.models.device_models import SerialLink
 from sp_rtk_base.models.signal_quality_models import Signal
 from sp_rtk_base.services import (
     get_config_service,
@@ -293,7 +294,7 @@ class TestSignalQualityGauges:
         driver = FakeGpsDriver()  # clear sky: L1 52, L2 51, 28 satellites
         device = DeviceService()
         device.set_driver(driver)
-        await device.connect("FAKE", 115200)
+        await device.connect(SerialLink(port="FAKE", baud_rate=115200))
         service = SignalQualityService(device)
         await service.poll_once()
 

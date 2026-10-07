@@ -24,7 +24,7 @@ from sp_rtk_base_relay.config import (
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.models.bluetooth_models import normalize_pin
-from sp_rtk_base.models.device_models import DEFAULT_BAUD
+from sp_rtk_base.models.device_models import DEFAULT_BAUD, ConsoleLinkKind
 
 # ---------------------------------------------------------------------------
 # Filter profile
@@ -478,11 +478,13 @@ class CorrectionSourceProfile(BaseModel):
 class DeviceProfile(BaseModel):
     """Remembered GPS device connection settings.
 
-    Persisted so the Device page can pre-fill the last-used port,
-    baud rate, and driver vendor across restarts.
+    Persisted so the Device page can pre-fill the last-used Console link
+    kind, port, baud rate, and driver vendor across restarts. A profile
+    saved before link kinds existed has no ``kind`` and loads as serial.
     """
 
     vendor: str = "ublox"
+    kind: ConsoleLinkKind = "serial"
     port: str = ""
     baud_rate: int = DEFAULT_BAUD
 

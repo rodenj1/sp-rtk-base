@@ -31,6 +31,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.bluetooth_status import (
     GreenLostReason,
     HeldGreen,
@@ -654,6 +655,8 @@ def input_page() -> None:
                             )
                             ui.notify("Relay started ✓", type="positive")
                             _clear_green()
+                        except RelayStartRefusedError as exc:
+                            ui.notify(exc.message, type="warning")
                         except Exception as exc:
                             logger.exception("Start after Verification failed")
                             ui.notify(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,7 @@ from sp_rtk_base.models.config_models import (
 )
 from sp_rtk_base.services import AutoStartStatus
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
@@ -405,3 +407,59 @@ class TestAutoStartWithAnOutputThatCannotRun:
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
+
+
+class TestAutoStartWithConsoleConnected:
+    """Start refuses while the console is connected, but auto-start doesn't."""
+
+    @pytest.mark.asyncio()
+    async def test_auto_start_starts_the_relay_with_the_console_connected(
+        self,
+        tmp_path: Path,
+        reset_auto_start_status: None,
+        no_backoff_sleep: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        relay_mod = import_module("sp_rtk_base.services.relay_service")
+        engine = MagicMock()
+        engine.is_running = False
+
+        def _start(destinations: object = None) -> None:
+            engine.is_running = True
+
+        engine.start = _start
+
+        def _engine(cfg: object) -> MagicMock:
+            return engine
+
+        monkeypatch.setattr(relay_mod, "RelayEngine", _engine)
+
+        config_svc = ConfigService(config_path=tmp_path / "config.yaml")
+        config_svc.save_config(_make_auto_start_config())
+        relay = RelayService()
+        device = MagicMock(spec=DeviceService)
+        device.is_connected = True
+
+        original = (
+            services_mod.config_service,
+            services_mod.relay_service,
+            services_mod.device_service,
+            services_mod.event_bridge,
+        )
+        try:
+            services_mod.config_service = config_svc
+            services_mod.relay_service = relay
+            services_mod.device_service = device
+            services_mod.event_bridge = MagicMock(spec=EventBridge)
+            await services_mod.init_services()
+            assert services_mod.auto_start_task is not None
+            await services_mod.auto_start_task
+            assert relay.is_running is True
+            assert services_mod.auto_start_status.state == "succeeded"
+        finally:
+            (
+                services_mod.config_service,
+                services_mod.relay_service,
+                services_mod.device_service,
+                services_mod.event_bridge,
+            ) = original

@@ -20,10 +20,7 @@ from typing import NamedTuple
 
 from nicegui import ui
 
-from sp_rtk_base.models.config_models import DeviceProfile
 from sp_rtk_base.models.device_models import (
-    BAUD_RATES,
-    DEFAULT_BAUD,
     BaseMode,
     DeviceCapability,
     DeviceConnectionState,
@@ -38,8 +35,9 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.correction_feed import CorrectionSourceUnreachableError
 from sp_rtk_base.services.device_service import DetectionRefusedError
-from sp_rtk_base.services.drivers import create_driver, list_drivers
+from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
+from sp_rtk_base.ui.components.console_link_panel import ConsoleLinkPanel
 from sp_rtk_base.ui.components.correction_source import correction_source_dialog
 from sp_rtk_base.ui.components.correction_verification import (
     CODE_TEXT,
@@ -92,35 +90,13 @@ def survey_page() -> None:
             ui.label("Connection & Live Position").classes("text-h6 text-white")
             ui.separator()
 
-            status_row = ui.row().classes("items-center gap-2 q-mt-sm")
+            link_panel = ConsoleLinkPanel(svc, config_svc)
             error_label = ui.label("").classes("text-negative q-mt-xs")
             error_label.set_visibility(False)
-
-            with ui.row().classes("w-full gap-4 q-mt-sm sp-metric-row"):
-                port_select = ui.select(
-                    options=[],
-                    label="Serial Port",
-                    with_input=True,
-                ).classes("col-grow")
-                baud_select = ui.select(
-                    options={r: str(r) for r in BAUD_RATES},
-                    label="Baud Rate",
-                    value=DEFAULT_BAUD,
-                ).classes("w-40")
-                detect_btn = (
-                    ui.button("Detect", icon="search")
-                    .props("outline color=info")
-                    .classes("self-center sp-detect-baud")
-                    .tooltip(
-                        "Try each baud rate on the selected port until the "
-                        "receiver answers"
-                    )
-                )
-                driver_select = ui.select(
-                    options=list_drivers(),
-                    label="Driver",
-                    value="ublox",
-                ).classes("w-40")
+            port_select = link_panel.port_select
+            baud_select = link_panel.baud_select
+            detect_btn = link_panel.detect_btn
+            driver_select = link_panel.driver_select
 
             with ui.row().classes("gap-2 q-mt-sm items-center"):
                 connect_btn = ui.button("Connect", icon="link")
@@ -140,6 +116,8 @@ def survey_page() -> None:
                     .props("flat round color=white")
                     .tooltip("Refresh serial port list")
                 )
+            link_panel.bind_buttons(connect_btn, cancel_btn, refresh_btn)
+            link_panel.add_stage_list()
 
             # Detection result. A persistent label rather than a toast:
             # the useful outcomes are two sentences of diagnosis, and a
@@ -690,46 +668,12 @@ def survey_page() -> None:
             except Exception as exc:
                 logger.warning("Failed to list ports: %s", exc)
 
-        def _load_saved_device_settings() -> None:
-            profile = config_svc.get_device_profile()
-            if profile and profile.port:
-                port_select.value = profile.port
-            if profile and profile.baud_rate:
-                baud_select.value = profile.baud_rate
-            if profile and profile.vendor:
-                driver_select.value = profile.vendor
-
-        def _save_device_settings() -> None:
-            try:
-                config_svc.save_device_profile(
-                    DeviceProfile(
-                        port=str(port_select.value or ""),
-                        baud_rate=int(baud_select.value or DEFAULT_BAUD),
-                        vendor=str(driver_select.value or "ublox"),
-                    )
-                )
-            except Exception:
-                pass
-
         def _update_ui_state() -> None:
             state = svc.state
             connected = state == DeviceConnectionState.CONNECTED
             caps = svc.capabilities
 
-            status_row.clear()
-            with status_row:
-                if state == DeviceConnectionState.CONNECTED:
-                    ui.icon("check_circle").classes("text-positive text-h6")
-                    ui.label("Connected").classes("text-positive")
-                elif state == DeviceConnectionState.CONNECTING:
-                    ui.spinner(size="sm")
-                    ui.label("Connecting...").classes("text-warning")
-                elif state == DeviceConnectionState.ERROR:
-                    ui.icon("error").classes("text-negative text-h6")
-                    ui.label("Error").classes("text-negative")
-                else:
-                    ui.icon("link_off").classes("text-grey text-h6")
-                    ui.label("Disconnected").classes("text-grey")
+            link_panel.update()
 
             connecting = state == DeviceConnectionState.CONNECTING
             connect_btn.set_visibility(not connected and not connecting)
@@ -1120,11 +1064,8 @@ def survey_page() -> None:
 
         async def _connect() -> None:
             nonlocal pos_timer, svin_timer
-            port = port_select.value
-            baud = int(baud_select.value or DEFAULT_BAUD)
-            vendor = str(driver_select.value or "ublox")
-            if not port:
-                ui.notify("Select a serial port", type="warning")
+            link = link_panel.link()
+            if link is None:
                 return
             # Clear any survey-card state left over from a prior
             # session so a reconnect doesn't surface stale "Cancel
@@ -1144,13 +1085,13 @@ def survey_page() -> None:
             try:
                 if svc.is_connected:
                     await svc.disconnect()
-                driver = create_driver(vendor)
+                driver = create_driver(link_panel.vendor)
                 svc.set_driver(driver)
                 svc.set_connecting()
                 _update_ui_state()
-                await svc.connect(str(port), baud)
+                await link_panel.watch_connect(svc.connect(link))
                 ui.notify("Connected!", type="positive")
-                _save_device_settings()
+                link_panel.save()
                 if pos_timer is not None:
                     pos_timer.active = False
                 pos_timer = ui.timer(2.0, _poll_position)
@@ -2100,7 +2041,7 @@ def survey_page() -> None:
 
         # ---- Initial load ----
         _refresh_ports()
-        _load_saved_device_settings()
+        link_panel.load_saved()
         _update_ui_state()
         _refresh_saved_positions()
         ui.timer(interval=0.1, callback=_on_page_load, once=True)

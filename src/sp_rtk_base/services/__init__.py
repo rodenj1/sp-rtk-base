@@ -29,7 +29,8 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.correction_verification import (
     CorrectionSourceVerificationService,
 )
-from sp_rtk_base.services.device_service import DeviceService
+from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceService
+from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
@@ -119,7 +120,26 @@ relay_service: RelayService = RelayService()
 config_service: ConfigService = ConfigService()
 event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
-device_service: DeviceService = DeviceService()
+
+
+def _bluetooth_opener() -> BluetoothOpenerFactory:
+    """The Bluetooth Console link's opener: the real one, or the fake GPS's.
+
+    The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
+    """
+    if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
+
+        return FakeBluetoothLinkOpener
+    return BluetoothLinkOpener
+
+
+# A Bluetooth Console link uses the saved Input profile's device; read
+# through the module global so a reloaded ConfigService is honoured.
+device_service: DeviceService = DeviceService(
+    input_profile=lambda: config_service.get_input_config(),
+    bluetooth_opener=_bluetooth_opener(),
+)
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
@@ -294,6 +314,16 @@ def get_profile_store() -> ProfileStore:
 # ---------------------------------------------------------------------------
 
 
+def wire_console_relay_exclusion(device: DeviceService, relay: RelayService) -> None:
+    """Make the console and the Relay exclude each other in both directions.
+
+    Connect refuses while the Relay runs; Start refuses while the console
+    is connected.
+    """
+    device.set_relay_check(lambda: relay.is_running)
+    relay.set_console_check(lambda: device.is_connected)
+
+
 async def _auto_start_with_retry(
     input_config: InputConfig,
     dest_configs: list[DestinationConfig],
@@ -334,7 +364,10 @@ async def _auto_start_with_retry(
         _set_auto_start_status("in_progress", attempt, last_error)
         try:
             await relay_service.start_relay(
-                input_config, dest_configs, trigger=f"auto-start (attempt {attempt})"
+                input_config,
+                dest_configs,
+                trigger=f"auto-start (attempt {attempt})",
+                refuse_while_console_connected=False,
             )
         except (ValidationError, ConfigurationError) as exc:
             # Permanent — config is malformed; retrying won't help.
@@ -392,8 +425,7 @@ async def init_services() -> None:
     config = config_service.load_config()
     logger.info("Services initialized — config loaded")
 
-    # Wire up device service ↔ relay mutual exclusion
-    device_service.set_relay_check(lambda: relay_service.is_running)
+    wire_console_relay_exclusion(device_service, relay_service)
 
     settings = config.settings
     if not settings.auto_start:

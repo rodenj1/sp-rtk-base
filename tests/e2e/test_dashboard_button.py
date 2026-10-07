@@ -116,3 +116,33 @@ def test_dashboard_button_disabled_without_enabled_destinations(
 
     # No second button.
     expect(page.get_by_role("button", name="Stop")).to_have_count(0)
+
+
+@pytest.mark.e2e
+def test_start_with_the_console_connected_shows_the_refusal(
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    clean_config: None,
+) -> None:
+    """Start refuses while the console is connected, and the Dashboard says why."""
+    _put_tcp_input(api_base_url)
+    _post_enabled_tcp_destination(api_base_url, "e2e-dash-console-dest", 5096)
+    connect = httpx.post(
+        f"{api_base_url}/api/device/connect",
+        json={"vendor": "fake", "port": "FAKE", "baud_rate": 115200},
+        timeout=10.0,
+    )
+    assert connect.status_code == 200, connect.text
+    try:
+        page.goto(f"{base_url}/")
+        page.get_by_role("button", name="Start").click()
+
+        expect(
+            page.get_by_text("Disconnect the console or use Hand off").first
+        ).to_be_visible(timeout=10_000)
+        expect(page.get_by_role("button", name="Stop")).to_have_count(0)
+        status = httpx.get(f"{api_base_url}/api/relay/status", timeout=5.0)
+        assert status.json()["running"] is False
+    finally:
+        httpx.post(f"{api_base_url}/api/device/disconnect", timeout=5.0)

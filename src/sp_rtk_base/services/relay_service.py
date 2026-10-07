@@ -85,9 +85,9 @@ def _summarise_input(input_config: InputConfig) -> str:
         host = cfg.get("host", "?")
         port = cfg.get("port", "?")
         return f"tcp({host}:{port})"
-    if src in ("serial", "usb_serial"):
+    if src == "serial":
         port = cfg.get("port", "?")
-        return f"{src}({port})"
+        return f"serial({port})"
     return str(src)
 
 

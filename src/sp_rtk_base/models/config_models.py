@@ -328,10 +328,10 @@ class InputProfile(BaseModel):
     def _usb_serial_is_serial(cls, value: object) -> object:
         """Read a saved ``usb_serial`` source as ``serial``.
 
-        The Console handoff used to save ``usb_serial``, which the relay's
-        input factory doesn't know, so the relay refused to start from that
-        saved input (issue #48).  Installs that already saved it load as
-        ``serial`` here.
+        Hand off used to save ``usb_serial``, which the Relay's input
+        factory doesn't know, so the Relay refused to start from that saved
+        Input profile (rtk_development#48).  Installs that already saved it
+        load as ``serial`` here.
         """
         return "serial" if value == "usb_serial" else value
 

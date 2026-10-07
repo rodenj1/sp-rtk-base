@@ -43,25 +43,33 @@ def _add_ntrip_destination(
     caster_port: int,
     mountpoint: str = "TEST_MOUNT",
     password: str = "test_password",
+    username: str | None = None,
     version: str = "1.0",
 ) -> None:
-    """Add an NTRIP destination via API."""
+    """Add an NTRIP destination via API.
+
+    An NTRIP v2 output needs a ``username``, or the Relay refuses to start
+    (sp-rtk-base#198).
+    """
+    config: dict[str, Any] = {
+        "caster": caster_host,
+        "port": caster_port,
+        "mountpoint": mountpoint,
+        "password": password,
+        "version": version,
+        "connection_timeout": 5,
+        "retry_initial_delay": 2,
+        "retry_max_delay": 10,
+    }
+    if username is not None:
+        config["username"] = username
     resp = client.post(
         "/api/destinations",
         json={
             "name": name,
             "type": "ntrip",
             "enabled": True,
-            "config": {
-                "caster": caster_host,
-                "port": caster_port,
-                "mountpoint": mountpoint,
-                "password": password,
-                "version": version,
-                "connection_timeout": 5,
-                "retry_initial_delay": 2,
-                "retry_max_delay": 10,
-            },
+            "config": config,
         },
     )
     assert resp.status_code == 201, f"Failed to add NTRIP destination: {resp.text}"
@@ -162,6 +170,7 @@ class TestNtripDestinationPipeline:
                 name="test-ntrip-v2",
                 caster_host="127.0.0.1",
                 caster_port=caster.port,
+                username="test_user",
                 version="2.0",
             )
 

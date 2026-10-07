@@ -12,13 +12,15 @@ setup required to activate the Codecov badge.
 
 ## Workflow overview (`.github/workflows/ci.yml`)
 
-Four jobs run on every push/PR to `main`:
+Six jobs run on every push/PR to `main`:
 
 | Job | Python | Purpose | Blocking |
 |-----|--------|---------|----------|
 | **pre-commit (all files)** | 3.12 | runs the full `.pre-commit-config.yaml` hook suite (whitespace, ruff, gitleaks, …) — guards against `git commit --no-verify` | ✅ |
 | **Lint & Type Check** | 3.12 | `ruff check` + `ruff format --check` + `mypy --strict` + `pyright` (strict) | ✅ |
 | **Test** (matrix) | 3.10 / 3.11 / 3.12 / 3.13 | `uv run pytest tests/unit` with coverage (≥ 90 % gate from `pyproject.toml`) | ✅ |
+| **E2E (Playwright)** | 3.12 | `uv run pytest tests/e2e --no-cov`: the real server driven through headless Chromium (see `docs/e2e-testing.md`) | ✅ |
+| **Integration** | 3.12 | `uv run pytest tests/integration --no-cov`: real services through the REST API with local TCP / NTRIP simulators. Not in the default `pytest` run, so this job is what runs them | ✅ |
 | **Build distribution** | 3.12 | `uv build` (sdist + wheel) — proves packaging still works | ✅ |
 
 Additional advisory steps:

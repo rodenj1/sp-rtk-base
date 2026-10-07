@@ -49,10 +49,11 @@ def _add_tcp_destination(
 
 
 def _get_destinations(client: TestClient) -> list[dict[str, Any]]:
-    """List all destinations."""
+    """List all destinations (the ``destinations`` of the list response)."""
     resp = client.get("/api/destinations")
     assert resp.status_code == 200
-    return resp.json()
+    destinations: list[dict[str, Any]] = resp.json()["destinations"]
+    return destinations
 
 
 def _get_destination(client: TestClient, name: str) -> dict[str, Any]:

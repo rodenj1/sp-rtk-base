@@ -1,9 +1,10 @@
 """Give a mocked ``RelayService`` the real start-from-saved-config logic.
 
 Tests that mock ``RelayService`` set ``is_running`` and ``start_relay``
-on the mock.  Binding the real ``check_saved`` / ``start_saved`` to it
-keeps those tests running the real refusals over their own saved
-config, while the engine-facing ``start_relay`` stays mocked.
+on the mock.  With the real ``check_start`` over their own saved config
+behind ``check_saved``, and the real ``start_saved`` (which goes through
+``check_saved`` and ``start_relay``), those tests run the real refusals
+while the engine-facing ``start_relay`` stays mocked.
 """
 
 from __future__ import annotations
@@ -13,15 +14,16 @@ from unittest.mock import MagicMock
 
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.relay_service import RelayService, SavedStart
+from sp_rtk_base.services.relay_service import RelayService, SavedStart, check_start
 
 
 def with_saved_start(relay: MagicMock, config_service: ConfigService) -> MagicMock:
-    """Bind the real ``check_saved`` and ``start_saved`` to ``relay``."""
-    relay._config_service = config_service
+    """Make ``relay`` start from ``config_service`` the way RelayService does."""
 
     def check_saved(input_profile: InputProfile | None = None) -> SavedStart:
-        return RelayService.check_saved(relay, input_profile)
+        return check_start(
+            config_service.get_config(), input_profile, running=relay.is_running
+        )
 
     async def start_saved(trigger: str = "unknown", **kwargs: Any) -> None:
         await RelayService.start_saved(relay, trigger, **kwargs)

@@ -453,7 +453,7 @@ class TestAutoStartWithConsoleConnected:
 
         config_svc = ConfigService(config_path=tmp_path / "config.yaml")
         config_svc.save_config(_make_auto_start_config())
-        relay = RelayService(config_svc)
+        relay = RelayService(config_svc.get_config)
         device = MagicMock(spec=DeviceService)
         device.is_connected = True
 

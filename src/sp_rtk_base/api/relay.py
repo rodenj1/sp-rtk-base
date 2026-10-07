@@ -22,7 +22,11 @@ from sp_rtk_base.models.api_models import (
 from sp_rtk_base.services import (
     get_relay_service,
 )
-from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
+from sp_rtk_base.services.relay_service import (
+    RelayService,
+    RelayStartRefusedError,
+    StartRefusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +66,11 @@ async def get_relay_status(
     return RelayStatusResponse.model_validate(status_dict)
 
 
-# How each start refusal is reported.  A saved config that can't be
-# turned into Relay config (e.g. a SurePath output saved with an empty
-# Username from a pre-v0.3.15 UI) is unprocessable.
-_REFUSAL_STATUS = {
+# The HTTP status of each start refusal, for every route that starts the
+# Relay.  A saved config that can't be turned into Relay config (e.g. a
+# SurePath output saved with an empty Username from a pre-v0.3.15 UI) is
+# unprocessable.
+START_REFUSAL_STATUS: dict[StartRefusal, int] = {
     "already_running": 409,
     "console_connected": 409,
     "no_input": 400,
@@ -92,11 +97,10 @@ async def start_relay(
         return RelayActionResponse(status="ok", message="Relay engine started")
     except RelayStartRefusedError as exc:
         logger.info("Start refused (%s): %s", exc.code, exc.message)
-        content: dict[str, str] = {"status": "error", "message": exc.message}
-        if exc.code == "console_connected":
-            content["code"] = exc.code
-        status_code = _REFUSAL_STATUS.get(exc.code, 409)
-        return JSONResponse(status_code=status_code, content=content)
+        return JSONResponse(
+            status_code=START_REFUSAL_STATUS[exc.code],
+            content={"status": "error", "message": exc.message, "code": exc.code},
+        )
     except Exception as exc:
         logger.exception("Failed to start relay engine")
         # Map common failure shapes to better status codes:

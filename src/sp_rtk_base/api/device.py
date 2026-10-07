@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from sp_rtk_base.api.relay import START_REFUSAL_STATUS
 from sp_rtk_base.models.api_models import (
     DetectBaudRequest,
     DeviceActionResponse,
@@ -806,11 +807,9 @@ def _check_handoff_can_start(relay: RelayService, input_profile: InputProfile) -
     try:
         relay.check_saved(input_profile)
     except RelayStartRefusedError as exc:
-        status_code = {"no_destinations": 400, "config_invalid": 422}.get(exc.code, 409)
-        detail = (
-            "Relay is already running" if exc.code == "already_running" else exc.message
-        )
-        raise HTTPException(status_code=status_code, detail=detail) from exc
+        raise HTTPException(
+            status_code=START_REFUSAL_STATUS[exc.code], detail=exc.message
+        ) from exc
 
 
 async def _handoff_bluetooth(

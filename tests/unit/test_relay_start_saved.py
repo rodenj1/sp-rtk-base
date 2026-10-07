@@ -70,7 +70,7 @@ def config(tmp_path: Path) -> ConfigService:
 
 @pytest_asyncio.fixture()
 async def relay(config: ConfigService) -> AsyncIterator[RelayService]:
-    svc = RelayService(config)
+    svc = RelayService(config.get_config)
     yield svc
     await svc.stop_relay(trigger="test")
 

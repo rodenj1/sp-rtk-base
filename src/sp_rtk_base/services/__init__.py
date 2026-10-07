@@ -116,7 +116,7 @@ def _set_auto_start_status(
 # ---------------------------------------------------------------------------
 
 config_service: ConfigService = ConfigService()
-relay_service: RelayService = RelayService(config_service)
+relay_service: RelayService = RelayService(config_service.get_config)
 metrics_service: MetricsService = MetricsService()
 
 
@@ -315,18 +315,22 @@ def wire_console_relay_exclusion(device: DeviceService, relay: RelayService) -> 
 
 def _report_auto_start_refusal(exc: RelayStartRefusedError, attempt: int) -> None:
     """Record why auto-start didn't start the saved configuration."""
-    if exc.code == "no_input":
-        _set_auto_start_status("skipped_no_input", attempt)
-        logger.info("Auto-start enabled but no input source configured — skipping")
-    elif exc.code == "no_destinations":
-        _set_auto_start_status("skipped_no_destinations", attempt)
-        logger.info("Auto-start enabled but no output is enabled — skipping")
-    elif exc.code == "already_running":
-        _set_auto_start_status("succeeded_user", attempt)
-        logger.info("Auto-start aborted: the relay is already running")
-    else:
-        _set_auto_start_status("failed_config", attempt, exc.message)
-        logger.error("Auto-start skipped: the saved configuration can't run: %s", exc)
+    match exc.code:
+        case "no_input":
+            _set_auto_start_status("skipped_no_input", attempt)
+            logger.info("Auto-start enabled but no input source configured — skipping")
+        case "no_destinations":
+            _set_auto_start_status("skipped_no_destinations", attempt)
+            logger.info("Auto-start enabled but no output is enabled — skipping")
+        case "already_running":
+            _set_auto_start_status("succeeded_user", attempt)
+            logger.info("Auto-start aborted: the relay is already running")
+        case "config_invalid" | "console_connected":
+            # Auto-start never refuses for the console; reported if it did.
+            _set_auto_start_status("failed_config", attempt, exc.message)
+            logger.error(
+                "Auto-start skipped: the saved configuration can't run: %s", exc
+            )
 
 
 async def _auto_start_with_retry() -> None:

@@ -35,7 +35,7 @@ def services(
 ) -> Generator[tuple[RelayService, ConfigService], None, None]:
     """Create fresh, real service instances backed by a temp config file."""
     config_svc = ConfigService(config_path=tmp_config_dir / "config.yaml")
-    relay_svc = RelayService(config_svc)
+    relay_svc = RelayService(config_svc.get_config)
 
     # Load config from the (empty) temp file — creates defaults
     config_svc.load_config()

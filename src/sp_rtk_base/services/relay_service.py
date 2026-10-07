@@ -24,8 +24,7 @@ from sp_rtk_base_relay import (
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ConfigurationError, ServiceError
 
-from sp_rtk_base.models.config_models import InputProfile
-from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.models.config_models import AppConfig, InputProfile
 from sp_rtk_base.services.relay_events import EventStream, RelayEvents
 
 logger = logging.getLogger(__name__)
@@ -101,6 +100,16 @@ CONSOLE_CONNECTED_MESSAGE = (
 )
 
 
+# Why a start was refused; what a client branches on (ADR 0002).
+StartRefusal = Literal[
+    "already_running",
+    "console_connected",
+    "no_input",
+    "no_destinations",
+    "config_invalid",
+]
+
+
 class RelayStartRefusedError(ServiceError):
     """Start did not run, and nothing was touched.
 
@@ -108,9 +117,9 @@ class RelayStartRefusedError(ServiceError):
     refusals (ADR 0002).
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: StartRefusal, message: str) -> None:
         super().__init__(message)
-        self.code = code
+        self.code: StartRefusal = code
         self.message = message
 
 
@@ -124,6 +133,42 @@ class SavedStart(NamedTuple):
 
     input: InputConfig
     destinations: list[DestinationConfig]
+
+
+def check_start(
+    config: AppConfig,
+    input_profile: InputProfile | None = None,
+    *,
+    running: bool,
+) -> SavedStart:
+    """Check ``config`` can start the Relay, and translate it for the Relay.
+
+    Args:
+        config: The saved configuration.
+        input_profile: Check this Input profile instead of the saved one.
+        running: Whether the Relay is running now.
+
+    Raises:
+        RelayStartRefusedError: ``already_running``, ``no_input``,
+            ``no_destinations``, or ``config_invalid`` when a profile can't
+            be turned into Relay config (its message is the reason).
+    """
+    if running:
+        raise RelayStartRefusedError("already_running", ALREADY_RUNNING_MESSAGE)
+    profile = input_profile or config.input
+    if profile is None:
+        raise RelayStartRefusedError("no_input", NO_INPUT_MESSAGE)
+    enabled = [d for d in config.destinations if d.enabled]
+    if not enabled:
+        raise RelayStartRefusedError("no_destinations", NO_DESTINATIONS_MESSAGE)
+    # Running pydantic on each profile is where a saved config that can't
+    # run shows up (e.g. an NTRIP v2 output without a username, issue #198).
+    try:
+        return SavedStart(
+            profile.to_relay_config(), [d.to_relay_config() for d in enabled]
+        )
+    except (ConfigurationError, ValidationError, ValueError) as exc:
+        raise RelayStartRefusedError("config_invalid", str(exc)) from exc
 
 
 class FrameSubscriber(Protocol):
@@ -149,12 +194,12 @@ class RelayService:
     and recreated if the input configuration changes.
 
     Args:
-        config_service: Where :meth:`start_saved` reads the saved
-            Input profile and outputs from.
+        saved_config: Returns the saved configuration that
+            :meth:`start_saved` starts from (``ConfigService.get_config``).
     """
 
-    def __init__(self, config_service: ConfigService | None = None) -> None:
-        self._config_service = config_service
+    def __init__(self, saved_config: Callable[[], AppConfig]) -> None:
+        self._saved_config = saved_config
         self._engine: RelayEngine | None = None
         self._input_config: InputConfig | None = None
         # Captured at each successful start so the stop log can include
@@ -328,31 +373,10 @@ class RelayService:
             The Relay input and enabled outputs to start with.
 
         Raises:
-            RelayStartRefusedError: ``already_running``, ``no_input``,
-                ``no_destinations``, or ``config_invalid`` when a profile
-                can't be turned into Relay config (its message is the
-                reason).  Nothing was touched.
+            RelayStartRefusedError: As for :func:`check_start`.  Nothing
+                was touched.
         """
-        if self.is_running:
-            raise RelayStartRefusedError("already_running", ALREADY_RUNNING_MESSAGE)
-        if self._config_service is None:
-            raise ServiceError("RelayService has no ConfigService to read from")
-        config = self._config_service.get_config()
-        profile = input_profile or config.input
-        if profile is None:
-            raise RelayStartRefusedError("no_input", NO_INPUT_MESSAGE)
-        enabled = [d for d in config.destinations if d.enabled]
-        if not enabled:
-            raise RelayStartRefusedError("no_destinations", NO_DESTINATIONS_MESSAGE)
-        # Running pydantic on each profile is where a saved config that
-        # can't run shows up (e.g. an NTRIP v2 output without a username,
-        # issue #198).
-        try:
-            return SavedStart(
-                profile.to_relay_config(), [d.to_relay_config() for d in enabled]
-            )
-        except (ConfigurationError, ValidationError, ValueError) as exc:
-            raise RelayStartRefusedError("config_invalid", str(exc)) from exc
+        return check_start(self._saved_config(), input_profile, running=self.is_running)
 
     async def start_saved(
         self, trigger: str = "unknown", *, refuse_while_console_connected: bool = True

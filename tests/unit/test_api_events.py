@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sp_rtk_base_relay.config import InputConfig
 
 from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.config_models import AppConfig
 from sp_rtk_base.services import get_relay_service
 from sp_rtk_base.services.relay_service import RelayService
 
@@ -150,7 +151,7 @@ class TestWebSocketEvents:
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
         port = srv.getsockname()[1]
-        relay = RelayService()
+        relay = RelayService(AppConfig)
         app = create_api_app()
         app.dependency_overrides[get_relay_service] = lambda: relay
         try:

@@ -29,6 +29,7 @@ from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
+from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
 
 logger = logging.getLogger(__name__)
 
@@ -100,30 +101,6 @@ def _compute_relay_control_state(
         primary_enabled=True,
         config_message=None,
     )
-
-
-def _start_failure_text(exc: Exception) -> str:
-    """What to tell the operator when Start didn't start the Relay.
-
-    A saved config that can't run is put in words: the raw error names
-    the internal config tree (e.g. "input.config.port must be an integer
-    between 1 and 65535 | Key: input.config.port").
-    """
-    if isinstance(exc, RelayStartRefusedError) and exc.code != "config_invalid":
-        return exc.message
-    text = exc.message if isinstance(exc, RelayStartRefusedError) else str(exc)
-    if "port must be an integer" in text or "input.config.port" in text:
-        return (
-            "Failed to start: TCP input port is not a number. "
-            "Re-save the Input config (Input page) and try again."
-        )
-    if "input.config" in text or "destinations" in text:
-        return (
-            "Failed to start: configuration error.  Check the "
-            "Input and Outputs pages for fields that need "
-            "valid values, then re-save."
-        )
-    return f"Failed to start relay: {text}"
 
 
 def _format_bytes(n: int) -> str:
@@ -766,13 +743,13 @@ def dashboard_page() -> None:
             try:
                 await relay.start_saved(trigger="ui")
             except RelayStartRefusedError as exc:
-                if exc.code in ("no_input", "no_destinations"):
-                    ui.notify(exc.message, type="warning")
+                if needs_setup(exc):
+                    ui.notify(start_failure_text(exc), type="warning")
                     return
-                friendly = _start_failure_text(exc)
+                friendly = start_failure_text(exc)
             except Exception as exc:
                 logger.exception("Failed to start relay")
-                friendly = _start_failure_text(exc)
+                friendly = start_failure_text(exc)
             else:
                 ui.notify("Relay started", type="positive")
                 await _refresh_status()

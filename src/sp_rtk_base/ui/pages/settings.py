@@ -12,13 +12,11 @@ Input source configuration has moved to the dedicated Input page.
 from __future__ import annotations
 
 import logging
-import platform
-import sys
 
 from nicegui import ui
 
-from sp_rtk_base import __version__ as app_version
 from sp_rtk_base.services import get_config_service
+from sp_rtk_base.ui.components.version_update_card import version_update_card
 from sp_rtk_base.ui.layout import page_layout
 
 logger = logging.getLogger(__name__)
@@ -101,28 +99,5 @@ def settings_page() -> None:
                 "color=primary"
             ).classes("q-mt-md")
 
-        # ---- Version Information Section ----
-        with ui.card().classes("w-full q-pa-md q-mt-md"):
-            ui.label("Version Information").classes("text-h6 text-white")
-            ui.separator()
-
-            # Get relay version
-            try:
-                from sp_rtk_base_relay import __version__ as relay_version
-            except ImportError:
-                relay_version = "not installed"
-
-            version_rows: list[tuple[str, str]] = [
-                ("SP-Base", app_version),
-                ("SP-Base Relay", relay_version),
-                (
-                    "Python",
-                    f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                ),
-                ("Platform", platform.platform()),
-            ]
-
-            for label, version in version_rows:
-                with ui.row().classes("w-full items-center q-py-xs"):
-                    ui.label(label).classes("text-grey-4").style("min-width: 140px")
-                    ui.label(version).classes("text-white text-weight-medium")
+        # ---- Version & Update ----
+        version_update_card()

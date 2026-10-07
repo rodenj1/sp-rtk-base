@@ -29,6 +29,8 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from tests.fixtures.fake_pypi import FakePyPI
+
 
 def _find_free_port() -> int:
     """Return an OS-assigned free TCP port on localhost.
@@ -67,8 +69,32 @@ def _wait_for_http(url: str, timeout: float = 30.0) -> None:
     )
 
 
+#: The Available update the e2e server finds: far above any real version,
+#: so the tests hold however the running version moves.
+E2E_UPDATE_APP = "99.0.0"
+#: A newer release still, that needs a Python no base runs.
+E2E_NEEDS_PYTHON_APP = "100.0.0"
+
+
 @pytest.fixture(scope="session")
-def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """PyPI as recorded, plus an Available update, for the e2e server.
+
+    Session-scoped like the server: a test that breaks it (to fail a
+    check) must put it back.
+    """
+    pypi = FakePyPI()
+    pypi.publish_app(E2E_UPDATE_APP)
+    pypi.publish_app(E2E_NEEDS_PYTHON_APP, requires_python=">=3.99")
+    directory = tmp_path_factory.mktemp("fake-pypi")
+    pypi.write_to(directory)
+    return directory
+
+
+@pytest.fixture(scope="session")
+def sp_rtk_base_server(
+    tmp_path_factory: pytest.TempPathFactory, fake_pypi_dir: Path
+) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
     Yields:
@@ -101,6 +127,8 @@ def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
     env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
+    # The update check reads PyPI from this directory, never the network.
+    env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

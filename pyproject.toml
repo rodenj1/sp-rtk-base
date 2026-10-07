@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "fastapi>=0.135.3",
     "nicegui>=3.9.0",
+    "packaging>=24",
     "pydantic>=2.12.5",
     "pyrtcm>=1.1.12",
     "pyserial>=3.5",

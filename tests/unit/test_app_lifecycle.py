@@ -78,7 +78,8 @@ class TestStartupServices:
     async def test_startup_delegates_to_init_services(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """startup_services calls init_services exactly once."""
+        """startup_services calls init_services exactly once, then starts the
+        Signal Quality poller and the update check (at startup, then daily)."""
         called: list[str] = []
 
         async def _fake_init() -> None:
@@ -88,8 +89,11 @@ class TestStartupServices:
         monkeypatch.setattr(
             services_mod.signal_quality_service, "start", lambda: called.append("sq")
         )
+        monkeypatch.setattr(
+            services_mod.update_check_service, "start", lambda: called.append("update")
+        )
         await startup_services()
-        assert called == ["init", "sq"]
+        assert called == ["init", "sq", "update"]
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +133,36 @@ class TestShutdownServicesOrdering:
 
         await shutdown_services()
         assert order.index("device") < order.index("relay")
+
+    @pytest.mark.asyncio()
+    async def test_the_update_check_schedule_is_stopped(
+        self,
+        patched_services: tuple[MagicMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stop = AsyncMock()
+        monkeypatch.setattr(services_mod.update_check_service, "stop", stop)
+
+        await shutdown_services()
+
+        stop.assert_awaited_once()
+
+    @pytest.mark.asyncio()
+    async def test_a_failing_update_check_stop_does_not_block_the_relay(
+        self,
+        patched_services: tuple[MagicMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _device, relay = patched_services
+        monkeypatch.setattr(
+            services_mod.update_check_service,
+            "stop",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        )
+
+        await shutdown_services()
+
+        relay.stop_relay.assert_awaited_once()
 
 
 class TestShutdownServicesResilience:

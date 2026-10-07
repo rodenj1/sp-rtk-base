@@ -12,7 +12,12 @@ from contextlib import contextmanager
 from nicegui import ui
 
 from sp_rtk_base import __version__ as app_version
-from sp_rtk_base.services import get_config_service
+from sp_rtk_base.services import get_config_service, get_update_check_service
+from sp_rtk_base.services.update_check import UpdateCheckStatus
+from sp_rtk_base.ui.update_status import badge_text
+
+_BADGE_POLL_S = 5.0
+"""How often the header badge looks for a new check result (in memory)."""
 
 # Navigation structure: list of (section_header | None, label, path, icon)
 # A None section_header means "no header before this item".
@@ -99,6 +104,7 @@ def page_layout(title: str) -> Iterator[None]:
             "flat color=white round"
         )
         ui.label("SP-Base").classes("text-h6 text-white q-ml-sm")
+        _update_badge()
         ui.space()
         ui.label(title).classes("text-subtitle1 text-white")
 
@@ -138,6 +144,31 @@ def page_layout(title: str) -> Iterator[None]:
         .style("background-color: #0f0f1e; height: 32px;")
     ):
         ui.label(f"SP-Base v{app_version}").classes("text-caption text-grey-6")
+
+
+def _update_badge() -> None:
+    """Show "Update X" next to "SP-Base" when there is an Available update.
+
+    Links to Settings. A failed check never shows here, only on Settings.
+    """
+    service = get_update_check_service()
+    holder = ui.row().classes("items-center")
+    shown: list[UpdateCheckStatus | None] = [None]
+
+    def render() -> None:
+        status = service.status
+        if status is shown[0]:
+            return
+        shown[0] = status
+        holder.clear()
+        text = badge_text(status)
+        if text is None:
+            return
+        with holder, ui.link(target="/settings").classes("no-underline q-ml-sm"):
+            ui.badge(text, color="teal").props('rounded data-testid="update-badge"')
+
+    render()
+    ui.timer(_BADGE_POLL_S, render)
 
 
 def _nav_link(label: str, path: str, icon: str, drawer: ui.left_drawer) -> None:

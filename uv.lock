@@ -2715,6 +2715,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "nicegui" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyrtcm" },
     { name = "pyserial" },
@@ -2745,6 +2746,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "nicegui", specifier = ">=3.9.0" },
+    { name = "packaging", specifier = ">=24" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyrtcm", specifier = ">=1.1.12" },
     { name = "pyserial", specifier = ">=3.5" },

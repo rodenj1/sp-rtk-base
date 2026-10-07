@@ -2,7 +2,7 @@
 
 The Relay's Frame subscription is synchronous; this reads it on a daemon
 thread and schedules each Frame onto the asyncio loop, the same pattern
-``EventBridge`` uses for relay events.
+``EventFanout`` uses for relay events.
 """
 
 from __future__ import annotations

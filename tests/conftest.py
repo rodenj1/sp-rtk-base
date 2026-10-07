@@ -11,13 +11,11 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.services import (
     get_config_service,
-    get_event_bridge,
     get_metrics_service,
     get_profile_store,
     get_relay_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService
@@ -54,15 +52,6 @@ def mock_relay_service() -> MagicMock:
     mock.engine = None
     mock.get_destination_names.return_value = []
     mock.get_recent_events.return_value = []
-    mock.subscribe_events.return_value = None
-    return mock
-
-
-@pytest.fixture()
-def mock_event_bridge() -> MagicMock:
-    """Create a mock EventBridge."""
-    mock = MagicMock(spec=EventBridge)
-    mock.is_running = False
     return mock
 
 
@@ -88,7 +77,6 @@ def mock_profile_store(profiles_dir: Path) -> ProfileStore:
 def api_client_with_services(
     mock_config_service: ConfigService,
     mock_relay_service: MagicMock,
-    mock_event_bridge: MagicMock,
     mock_metrics_service: MetricsService,
     mock_profile_store: ProfileStore,
 ) -> TestClient:
@@ -101,7 +89,6 @@ def api_client_with_services(
 
     app.dependency_overrides[get_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_relay_service] = lambda: mock_relay_service
-    app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
     app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
     app.dependency_overrides[get_profile_store] = lambda: mock_profile_store
 

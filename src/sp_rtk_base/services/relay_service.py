@@ -15,7 +15,6 @@ from dataclasses import asdict
 from typing import Any, Literal, Protocol
 
 from sp_rtk_base_relay import (
-    EventSubscription,
     FrameSubscription,
     RelayEngine,
     RelayEvent,
@@ -23,6 +22,8 @@ from sp_rtk_base_relay import (
 )
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ServiceError
+
+from sp_rtk_base.services.relay_events import EventStream, RelayEvents
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ class RelayService:
         self._start_trigger: str | None = None
         self._frame_subscriber: FrameSubscriber | None = None
         self._console_connected_check: Callable[[], bool] | None = None
+        self._events = RelayEvents()
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
         """Set a callback that says whether the console is connected.
@@ -270,7 +272,15 @@ class RelayService:
             self._input_config = input_config
             logger.info("Created new RelayEngine with source=%s", input_config.source)
 
-        await asyncio.to_thread(self._engine.start, destinations)
+        # Follow before starting so open streams see the start's own events.
+        self._events.follow(self._engine)
+        try:
+            await asyncio.to_thread(self._engine.start, destinations)
+        except Exception:
+            # Not on cancellation: the start carries on in its thread, so
+            # keep following the engine it may yet bring up.
+            await asyncio.to_thread(self._events.unfollow)
+            raise
         self._notify_subscriber_started(self._engine)
 
         # Record start state so stop_relay can compose the uptime/totals
@@ -317,7 +327,10 @@ class RelayService:
             pass
 
         self._notify_subscriber_stopped()
-        await asyncio.to_thread(self._engine.stop)
+        try:
+            await asyncio.to_thread(self._engine.stop)
+        finally:
+            await asyncio.to_thread(self._events.unfollow)
 
         # Compute uptime from start_monotonic if we recorded one.
         uptime_str = "—"
@@ -434,15 +447,15 @@ class RelayService:
     # Events
     # ------------------------------------------------------------------
 
-    def subscribe_events(self) -> EventSubscription | None:
-        """Create a new event subscription.
+    def stream_events(self) -> EventStream:
+        """Open a live stream of relay events for one client.
 
-        Returns:
-            An ``EventSubscription``, or None if engine does not exist.
+        Call from the event loop the client reads on.  The stream receives
+        every event emitted after it was opened, across stops, starts and
+        engine replacement, until it is closed.  History is
+        :meth:`get_recent_events`.
         """
-        if self._engine is None:
-            return None
-        return self._engine.subscribe_events()
+        return self._events.open()
 
     def get_recent_events(self, count: int = 50) -> list[dict[str, Any]]:
         """Get recent events from the ring buffer as dicts.

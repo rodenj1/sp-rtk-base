@@ -35,7 +35,6 @@ def mock_device_service() -> DeviceService:
 def api_client_with_device(
     mock_config_service: ConfigService,
     mock_relay_service: MagicMock,
-    mock_event_bridge: MagicMock,
     mock_metrics_service: MetricsService,
     mock_profile_store: ProfileStore,
     mock_device_service: DeviceService,
@@ -43,7 +42,6 @@ def api_client_with_device(
     """``api_client_with_services`` plus an overridable device service."""
     from sp_rtk_base.services import (
         get_config_service,
-        get_event_bridge,
         get_metrics_service,
         get_relay_service,
     )
@@ -51,7 +49,6 @@ def api_client_with_device(
     app = create_api_app()
     app.dependency_overrides[get_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_relay_service] = lambda: mock_relay_service
-    app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
     app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
     app.dependency_overrides[get_profile_store] = lambda: mock_profile_store
     app.dependency_overrides[get_device_service] = lambda: mock_device_service
@@ -62,7 +59,6 @@ def api_client_with_device(
 def api_client_with_unavailable_store(
     mock_config_service: ConfigService,
     mock_relay_service: MagicMock,
-    mock_event_bridge: MagicMock,
     mock_metrics_service: MetricsService,
     mock_device_service: DeviceService,
 ) -> TestClient:
@@ -70,7 +66,6 @@ def api_client_with_unavailable_store(
     issue #81 (``ProtectHome=true`` hiding ``~`` on appliance installs)."""
     from sp_rtk_base.services import (
         get_config_service,
-        get_event_bridge,
         get_metrics_service,
         get_relay_service,
     )
@@ -89,7 +84,6 @@ def api_client_with_unavailable_store(
     app = create_api_app()
     app.dependency_overrides[get_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_relay_service] = lambda: mock_relay_service
-    app.dependency_overrides[get_event_bridge] = lambda: mock_event_bridge
     app.dependency_overrides[get_metrics_service] = lambda: mock_metrics_service
     app.dependency_overrides[get_profile_store] = lambda: unavailable_store
     app.dependency_overrides[get_device_service] = lambda: mock_device_service

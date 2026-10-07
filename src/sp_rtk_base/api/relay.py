@@ -21,11 +21,9 @@ from sp_rtk_base.models.api_models import (
 )
 from sp_rtk_base.services import (
     get_config_service,
-    get_event_bridge,
     get_relay_service,
 )
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 
 logger = logging.getLogger(__name__)
@@ -71,7 +69,6 @@ async def start_relay(
     request: RelayStartRequest | None = None,
     relay: RelayService = Depends(get_relay_service),
     config_svc: ConfigService = Depends(get_config_service),
-    event_bridge: EventBridge = Depends(get_event_bridge),
 ) -> RelayActionResponse | JSONResponse:
     """Start the relay engine.
 
@@ -120,10 +117,6 @@ async def start_relay(
         dest_configs = [d.to_relay_config() for d in enabled_dests]
         await relay.start_relay(input_config, dest_configs, trigger="api")
 
-        # Start event bridge for real-time events
-        if not event_bridge.is_running:
-            event_bridge.start(relay)
-
         return RelayActionResponse(status="ok", message="Relay engine started")
     except RelayStartRefusedError as exc:
         logger.info("Start refused (%s): %s", exc.code, exc.message)
@@ -170,12 +163,10 @@ async def start_relay(
 @router.post("/stop", response_model=RelayActionResponse)
 async def stop_relay(
     relay: RelayService = Depends(get_relay_service),
-    event_bridge: EventBridge = Depends(get_event_bridge),
 ) -> RelayActionResponse | JSONResponse:
     """Stop the relay engine.
 
-    Stops the relay engine and event bridge. Safe to call when
-    already stopped.
+    Safe to call when already stopped.
     """
     if not relay.is_running:
         return JSONResponse(
@@ -184,7 +175,6 @@ async def stop_relay(
         )
 
     try:
-        event_bridge.stop()
         await relay.stop_relay(trigger="api")
         return RelayActionResponse(status="ok", message="Relay engine stopped")
     except Exception as exc:

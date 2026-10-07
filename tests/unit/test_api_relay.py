@@ -136,12 +136,10 @@ class TestStartRelay:
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """Returns 200 and starts relay when properly configured."""
         mock_relay_service.is_running = False
         mock_relay_service.start_relay = AsyncMock()
-        mock_event_bridge.is_running = False
 
         # Configure input and destination
         mock_config_service.save_input_config(
@@ -178,7 +176,6 @@ class TestStopRelay:
         self,
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """Returns 200 and stops relay."""
         mock_relay_service.is_running = True
@@ -188,13 +185,11 @@ class TestStopRelay:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
         mock_relay_service.stop_relay.assert_called_once()
-        mock_event_bridge.stop.assert_called_once()
 
     def test_stop_failure_returns_500(
         self,
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """Returns 500 when stop raises an exception."""
         mock_relay_service.is_running = True
@@ -215,7 +210,6 @@ class TestStartRelayErrorBranches:
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """v0.3.14: network-side failures (connection refused, DNS, etc.)
         map to 502 Bad Gateway rather than 500 — the relay engine is
@@ -226,7 +220,6 @@ class TestStartRelayErrorBranches:
         mock_relay_service.start_relay = AsyncMock(
             side_effect=RuntimeError("Connection refused")
         )
-        mock_event_bridge.is_running = False
 
         mock_config_service.save_input_config(
             InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
@@ -248,7 +241,6 @@ class TestStartRelayErrorBranches:
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """v0.3.14: config-shape failures (pydantic ValidationError,
         ConfigurationError) map to 422 Unprocessable Entity — the
@@ -260,7 +252,6 @@ class TestStartRelayErrorBranches:
                 "ConfigurationError: input.config.port must be an integer"
             )
         )
-        mock_event_bridge.is_running = False
 
         mock_config_service.save_input_config(
             InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
@@ -282,7 +273,6 @@ class TestStartRelayErrorBranches:
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """v0.3.18: the actual ``ConfigurationError`` class from the relay
         engine maps to 422 even when its message text doesn't contain
@@ -301,7 +291,6 @@ class TestStartRelayErrorBranches:
                 "filter.message_ids is required when mode is 'allowlist'"
             )
         )
-        mock_event_bridge.is_running = False
 
         mock_config_service.save_input_config(
             InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})
@@ -323,14 +312,12 @@ class TestStartRelayErrorBranches:
         api_client_with_services: TestClient,
         mock_relay_service: MagicMock,
         mock_config_service: ConfigService,
-        mock_event_bridge: MagicMock,
     ) -> None:
         """v0.3.14: genuine server bugs that don't match network or
         config patterns still return 500.
         """
         mock_relay_service.is_running = False
         mock_relay_service.start_relay = AsyncMock(side_effect=RuntimeError("kaboom"))
-        mock_event_bridge.is_running = False
 
         mock_config_service.save_input_config(
             InputProfile(source="tcp", config={"host": "127.0.0.1", "port": 5015})

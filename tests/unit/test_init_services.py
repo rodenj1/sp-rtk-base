@@ -19,7 +19,6 @@ from sp_rtk_base.models.config_models import (
 from sp_rtk_base.services import AutoStartStatus
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
 
@@ -69,11 +68,6 @@ class TestDependencyInjectionHelpers:
         """get_config_service returns a ConfigService instance."""
         result = services_mod.get_config_service()
         assert isinstance(result, ConfigService)
-
-    def test_get_event_bridge_returns_event_bridge(self) -> None:
-        """get_event_bridge returns an EventBridge instance."""
-        result = services_mod.get_event_bridge()
-        assert isinstance(result, EventBridge)
 
     def test_get_metrics_service_returns_metrics_service(self) -> None:
         """get_metrics_service returns a MetricsService instance."""
@@ -139,27 +133,22 @@ class TestInitServices:
         mock_relay_svc = MagicMock(spec=RelayService)
         mock_relay_svc.is_running = False
         mock_relay_svc.start_relay = AsyncMock()
-        mock_eb = MagicMock(spec=EventBridge)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
-        original_eb = services_mod.event_bridge
         try:
             services_mod.config_service = mock_config_svc
             services_mod.relay_service = mock_relay_svc
-            services_mod.event_bridge = mock_eb
             await services_mod.init_services()
             # init_services schedules a background task — await it.
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
             mock_relay_svc.start_relay.assert_called_once()
-            mock_eb.start.assert_called_once_with(mock_relay_svc)
             assert services_mod.auto_start_status.state == "succeeded"
             assert services_mod.auto_start_status.attempts == 1
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
-            services_mod.event_bridge = original_eb
 
     @pytest.mark.asyncio()
     async def test_init_auto_start_no_input_skips(
@@ -216,26 +205,21 @@ class TestAutoStartRetryLoop:
                 None,
             ]
         )
-        mock_eb = MagicMock(spec=EventBridge)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
-        original_eb = services_mod.event_bridge
         try:
             services_mod.config_service = mock_config_svc
             services_mod.relay_service = mock_relay_svc
-            services_mod.event_bridge = mock_eb
             await services_mod.init_services()
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
             assert mock_relay_svc.start_relay.call_count == 4
             assert services_mod.auto_start_status.state == "succeeded"
             assert services_mod.auto_start_status.attempts == 4
-            mock_eb.start.assert_called_once_with(mock_relay_svc)
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
-            services_mod.event_bridge = original_eb
 
     @pytest.mark.asyncio()
     async def test_all_attempts_fail_records_failed_after_retries(
@@ -255,15 +239,12 @@ class TestAutoStartRetryLoop:
         mock_relay_svc.start_relay = AsyncMock(
             side_effect=[InputSourceError(f"err {i}") for i in range(total)]
         )
-        mock_eb = MagicMock(spec=EventBridge)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
-        original_eb = services_mod.event_bridge
         try:
             services_mod.config_service = mock_config_svc
             services_mod.relay_service = mock_relay_svc
-            services_mod.event_bridge = mock_eb
             await services_mod.init_services()
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
@@ -272,11 +253,9 @@ class TestAutoStartRetryLoop:
             assert services_mod.auto_start_status.attempts == total
             assert services_mod.auto_start_status.last_error is not None
             assert f"err {total - 1}" in services_mod.auto_start_status.last_error
-            mock_eb.start.assert_not_called()
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
-            services_mod.event_bridge = original_eb
 
     @pytest.mark.asyncio()
     async def test_configuration_error_fails_fast_no_retry(
@@ -295,15 +274,12 @@ class TestAutoStartRetryLoop:
         mock_relay_svc.start_relay = AsyncMock(
             side_effect=ConfigurationError("filter.message_ids is required")
         )
-        mock_eb = MagicMock(spec=EventBridge)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
-        original_eb = services_mod.event_bridge
         try:
             services_mod.config_service = mock_config_svc
             services_mod.relay_service = mock_relay_svc
-            services_mod.event_bridge = mock_eb
             await services_mod.init_services()
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
@@ -313,11 +289,9 @@ class TestAutoStartRetryLoop:
             assert "filter.message_ids" in (
                 services_mod.auto_start_status.last_error or ""
             )
-            mock_eb.start.assert_not_called()
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
-            services_mod.event_bridge = original_eb
 
     @pytest.mark.asyncio()
     async def test_user_starts_during_backoff_aborts_loop(
@@ -341,26 +315,21 @@ class TestAutoStartRetryLoop:
             raise InputSourceError("Host is down")
 
         mock_relay_svc.start_relay = AsyncMock(side_effect=_start_relay_impl)
-        mock_eb = MagicMock(spec=EventBridge)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
-        original_eb = services_mod.event_bridge
         try:
             services_mod.config_service = mock_config_svc
             services_mod.relay_service = mock_relay_svc
-            services_mod.event_bridge = mock_eb
             await services_mod.init_services()
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
             # Exactly one attempt before user-initiated start was detected.
             assert mock_relay_svc.start_relay.call_count == 1
             assert services_mod.auto_start_status.state == "succeeded_user"
-            mock_eb.start.assert_not_called()
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
-            services_mod.event_bridge = original_eb
 
 
 class TestAutoStartWithAnOutputThatCannotRun:
@@ -444,13 +413,11 @@ class TestAutoStartWithConsoleConnected:
             services_mod.config_service,
             services_mod.relay_service,
             services_mod.device_service,
-            services_mod.event_bridge,
         )
         try:
             services_mod.config_service = config_svc
             services_mod.relay_service = relay
             services_mod.device_service = device
-            services_mod.event_bridge = MagicMock(spec=EventBridge)
             await services_mod.init_services()
             assert services_mod.auto_start_task is not None
             await services_mod.auto_start_task
@@ -461,5 +428,4 @@ class TestAutoStartWithConsoleConnected:
                 services_mod.config_service,
                 services_mod.relay_service,
                 services_mod.device_service,
-                services_mod.event_bridge,
             ) = original

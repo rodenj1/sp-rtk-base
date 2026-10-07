@@ -676,13 +676,20 @@ def dashboard_page() -> None:
                             const placeholder = container.querySelector('.no-events-placeholder');
                             if (placeholder) placeholder.remove();
 
+                            // Event text can come from outside (a Bluetooth
+                            // device name, a caster's reply): set it as text,
+                            // never as markup (issue #51).
                             const row = document.createElement('div');
                             row.className = 'row items-center gap-2 q-py-xs';
-                            row.innerHTML =
-                                '<span class="q-badge q-badge--outline" ' +
-                                'style="border-color:' + badgeColor + ';color:' + badgeColor + '">' +
-                                etype + '</span>' +
-                                '<span class="text-grey-3 text-caption">' + msg + '</span>';
+                            const badge = document.createElement('span');
+                            badge.className = 'q-badge q-badge--outline';
+                            badge.style.borderColor = badgeColor;
+                            badge.style.color = badgeColor;
+                            badge.textContent = etype;
+                            const text = document.createElement('span');
+                            text.className = 'text-grey-3 text-caption';
+                            text.textContent = msg;
+                            row.append(badge, text);
 
                             container.insertBefore(row, container.firstChild);
 

@@ -44,10 +44,10 @@ def test_save_settings_button_emits_notification(
 
 @pytest.mark.e2e
 def test_settings_page_shows_version_card(page: Page, base_url: str) -> None:
-    """The Version Information card lists SP-Base and Python versions."""
+    """The Version & Update card lists SP-Base and Python versions."""
     page.goto(f"{base_url}/settings")
 
-    expect(page.locator("text=Version Information").first).to_be_visible(timeout=15_000)
+    expect(page.locator("text=Version & Update").first).to_be_visible(timeout=15_000)
     expect(page.locator("text=SP-Base").first).to_be_visible()
     expect(page.locator("text=Python").first).to_be_visible()
 

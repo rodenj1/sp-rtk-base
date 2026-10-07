@@ -49,6 +49,7 @@ from tests.fixtures.fake_rfcomm import (
     FakeBlueZ,
     FakeRfcommModule,
 )
+from tests.fixtures.saved_start import with_saved_start
 from tests.fixtures.simulated_ublox import (
     UART1_PORT_ID,
     UART2_PORT_ID,
@@ -534,14 +535,17 @@ class TestHandOffOverBluetooth:
         saved = input_profile[0]
         assert saved is not None
         cfg.save_input_config(saved)
+        cfg.save_destination(
+            DestinationProfile(name="out", type="tcp_server", config={"port": 9000})
+        )
         return cfg
 
     @pytest.fixture()
-    def relay(self) -> MagicMock:
+    def relay(self, config: ConfigService) -> MagicMock:
         svc = MagicMock(spec=RelayService)
         svc.is_running = False
         svc.start_relay = AsyncMock()
-        return svc
+        return with_saved_start(svc, config)
 
     @pytest.fixture()
     def handoff_client(

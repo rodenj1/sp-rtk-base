@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from sp_rtk_base_relay.core.input_sources.input_factory import InputSourceFactory
 
 from sp_rtk_base.app import create_api_app
+from sp_rtk_base.models.config_models import DestinationProfile
 from sp_rtk_base.models.device_models import (
     BaseMode,
     Candidate,
@@ -29,6 +31,7 @@ from sp_rtk_base.services.device_service import (
 )
 from sp_rtk_base.services.drivers import create_driver
 from sp_rtk_base.services.relay_service import RelayService
+from tests.fixtures.saved_start import with_saved_start
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,20 +51,33 @@ def mock_device_service() -> DeviceService:
 
 
 @pytest.fixture()
-def mock_relay_service() -> RelayService:
-    """Create a mock RelayService for handoff tests."""
-    svc = MagicMock(spec=RelayService)
-    svc.is_running = False
-    svc.start_relay = AsyncMock()
+def saved_config(tmp_path: Path) -> ConfigService:
+    """The saved config handoff tests start from: one enabled output."""
+    svc = ConfigService(config_path=tmp_path / "config.yaml")
+    svc.load_config()
+    svc.save_destination(
+        DestinationProfile(
+            name="tcp1",
+            type="tcp_server",
+            config={"host": "0.0.0.0", "port": 5016},
+        )
+    )
     return svc
 
 
 @pytest.fixture()
-def mock_config_service() -> ConfigService:
-    """Create a mock ConfigService for handoff tests."""
-    svc = MagicMock(spec=ConfigService)
-    svc.get_destinations.return_value = []
-    return svc
+def mock_config_service(saved_config: ConfigService) -> ConfigService:
+    """A ConfigService spy over ``saved_config``, for handoff tests."""
+    return MagicMock(spec=ConfigService, wraps=saved_config)
+
+
+@pytest.fixture()
+def mock_relay_service(mock_config_service: ConfigService) -> RelayService:
+    """A mock RelayService for handoff tests; only the engine start is faked."""
+    svc = MagicMock(spec=RelayService)
+    svc.is_running = False
+    svc.start_relay = AsyncMock()
+    return with_saved_start(svc, mock_config_service)
 
 
 @pytest.fixture()
@@ -851,6 +867,7 @@ class TestHandoff:
         mock_relay_service.start_relay.assert_awaited_once()
         # The relay input must be one the Relay's own factory builds (#48):
         # it used to be ``usb_serial``, which the factory refuses.
+        mock_relay_service.start_saved.assert_awaited_once_with(trigger="handoff")
         relay_input = mock_relay_service.start_relay.call_args[0][0]
         assert relay_input == input_cfg.to_relay_config()
         InputSourceFactory.create_input_source(relay_input.source, relay_input.config)
@@ -910,10 +927,9 @@ class TestHandoff:
         mock_device_service: MagicMock,
         mock_relay_service: MagicMock,
         mock_config_service: MagicMock,
+        saved_config: ConfigService,
     ) -> None:
         """A saved v2 NTRIP output without a username (issue #198)."""
-        from sp_rtk_base.models.config_models import DestinationProfile
-
         mock_device_service.is_connected = True
         mock_device_service.get_status.return_value = DeviceStatus(
             state=DeviceConnectionState.CONNECTED,
@@ -923,7 +939,7 @@ class TestHandoff:
         mock_device_service.driver = MagicMock()
         mock_device_service.driver.vendor_name = "u-blox"
         mock_device_service.disconnect = AsyncMock()
-        mock_config_service.get_destinations.return_value = [
+        saved_config.save_destination(
             DestinationProfile(
                 name="rtk2go",
                 type="ntrip",
@@ -933,13 +949,39 @@ class TestHandoff:
                     "password": "secret",
                     "version": "2.0",
                 },
-            ),
-        ]
+            )
+        )
 
         resp = handoff_client.post("/api/device/handoff")
 
         assert resp.status_code == 422
         assert "rtk2go" in resp.json()["detail"]
+        mock_device_service.disconnect.assert_not_called()
+        mock_config_service.save_input_config.assert_not_called()
+        mock_relay_service.start_relay.assert_not_called()
+
+    def test_handoff_refuses_without_an_enabled_output_before_disconnecting(
+        self,
+        handoff_client: TestClient,
+        mock_device_service: MagicMock,
+        mock_relay_service: MagicMock,
+        mock_config_service: MagicMock,
+        saved_config: ConfigService,
+    ) -> None:
+        """A Relay with no output would leave the station with neither (#50)."""
+        mock_device_service.is_connected = True
+        mock_device_service.get_status.return_value = DeviceStatus(
+            state=DeviceConnectionState.CONNECTED,
+            port="/dev/ttyUSB0",
+            baud_rate=115200,
+        )
+        mock_device_service.disconnect = AsyncMock()
+        saved_config.remove_destination("tcp1")
+
+        resp = handoff_client.post("/api/device/handoff")
+
+        assert resp.status_code == 400
+        assert "No enabled destinations" in resp.json()["detail"]
         mock_device_service.disconnect.assert_not_called()
         mock_config_service.save_input_config.assert_not_called()
         mock_relay_service.start_relay.assert_not_called()
@@ -950,10 +992,9 @@ class TestHandoff:
         mock_device_service: MagicMock,
         mock_relay_service: MagicMock,
         mock_config_service: MagicMock,
+        saved_config: ConfigService,
     ) -> None:
         """Handoff passes enabled destinations to relay start."""
-        from sp_rtk_base.models.config_models import DestinationProfile
-
         mock_device_service.is_connected = True
         mock_device_service.get_status.return_value = DeviceStatus(
             state=DeviceConnectionState.CONNECTED,
@@ -964,20 +1005,14 @@ class TestHandoff:
         mock_device_service.driver.vendor_name = "u-blox"
         mock_device_service.disconnect = AsyncMock()
 
-        mock_config_service.get_destinations.return_value = [
-            DestinationProfile(
-                name="tcp1",
-                type="tcp_server",
-                enabled=True,
-                config={"host": "0.0.0.0", "port": 5016},
-            ),
+        saved_config.save_destination(
             DestinationProfile(
                 name="disabled",
                 type="tcp_server",
                 enabled=False,
                 config={"host": "0.0.0.0", "port": 5017},
-            ),
-        ]
+            )
+        )
 
         resp = handoff_client.post("/api/device/handoff")
         assert resp.status_code == 200

@@ -21,7 +21,6 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import ValidationError
-from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
@@ -34,7 +33,7 @@ from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.profile_store import ProfileStore
-from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
 from sp_rtk_base.services.survey_service import (
     FIXED_SETTLE_S,
@@ -53,6 +52,7 @@ logger = logging.getLogger(__name__)
 AutoStartState = Literal[
     "idle",
     "skipped_no_input",
+    "skipped_no_destinations",
     "in_progress",
     "succeeded",
     "succeeded_user",
@@ -115,8 +115,8 @@ def _set_auto_start_status(
 # Module-level singleton instances
 # ---------------------------------------------------------------------------
 
-relay_service: RelayService = RelayService()
 config_service: ConfigService = ConfigService()
+relay_service: RelayService = RelayService(config_service)
 metrics_service: MetricsService = MetricsService()
 
 
@@ -313,10 +313,23 @@ def wire_console_relay_exclusion(device: DeviceService, relay: RelayService) -> 
     relay.set_console_check(lambda: device.is_connected)
 
 
-async def _auto_start_with_retry(
-    input_config: InputConfig,
-    dest_configs: list[DestinationConfig],
-) -> None:
+def _report_auto_start_refusal(exc: RelayStartRefusedError, attempt: int) -> None:
+    """Record why auto-start didn't start the saved configuration."""
+    if exc.code == "no_input":
+        _set_auto_start_status("skipped_no_input", attempt)
+        logger.info("Auto-start enabled but no input source configured — skipping")
+    elif exc.code == "no_destinations":
+        _set_auto_start_status("skipped_no_destinations", attempt)
+        logger.info("Auto-start enabled but no output is enabled — skipping")
+    elif exc.code == "already_running":
+        _set_auto_start_status("succeeded_user", attempt)
+        logger.info("Auto-start aborted: the relay is already running")
+    else:
+        _set_auto_start_status("failed_config", attempt, exc.message)
+        logger.error("Auto-start skipped: the saved configuration can't run: %s", exc)
+
+
+async def _auto_start_with_retry() -> None:
     """Retry-with-backoff loop for the auto-start path.
 
     Runs as a background task scheduled by :func:`init_services`.  At
@@ -325,9 +338,11 @@ async def _auto_start_with_retry(
     1. Sleeps for the scheduled delay (0 on the first pass).
     2. Bails out if the operator manually started the relay during
        the wait — they win the race.
-    3. Tries :meth:`RelayService.start_relay`.  Permanent config-shape
-       errors (``ValidationError`` / ``ConfigurationError``) fail fast
-       — no amount of retrying will fix bad YAML.  All other errors
+    3. Tries :meth:`RelayService.start_saved`, so each attempt starts
+       from the configuration as saved now.  Permanent config-shape
+       errors (``config_invalid``, ``ValidationError`` /
+       ``ConfigurationError``) fail fast — no amount of retrying will
+       fix bad YAML.  All other errors
        are treated as transient (typical case: Bluetooth peer not yet
        reachable after a power cycle, USB-serial device not yet
        enumerated, NTRIP caster TCP timeout) and retried.
@@ -352,12 +367,14 @@ async def _auto_start_with_retry(
 
         _set_auto_start_status("in_progress", attempt, last_error)
         try:
-            await relay_service.start_relay(
-                input_config,
-                dest_configs,
+            await relay_service.start_saved(
                 trigger=f"auto-start (attempt {attempt})",
                 refuse_while_console_connected=False,
             )
+        except RelayStartRefusedError as exc:
+            # The saved config changed during the backoff window.
+            _report_auto_start_refusal(exc, attempt)
+            return
         except (ValidationError, ConfigurationError) as exc:
             # Permanent — config is malformed; retrying won't help.
             last_error = str(exc)
@@ -419,28 +436,19 @@ async def init_services() -> None:
     if not settings.auto_start:
         return
 
-    if config.input is None:
-        _set_auto_start_status("skipped_no_input", 0)
-        logger.info(
-            "Auto-start enabled but no input source configured — skipping",
-        )
-        return
-
-    # A saved config the Relay can't run (e.g. an NTRIP v2 output without
-    # a username, issue #198) is reported, not raised: startup carries on
-    # and the Dashboard shows why the relay didn't start.
+    # A saved config the Relay can't start is reported, not raised:
+    # startup carries on and the Dashboard shows why the relay didn't
+    # start (e.g. an NTRIP v2 output without a username, issue #198).
     try:
-        dest_configs = [d.to_relay_config() for d in config.destinations if d.enabled]
-        input_config = config.input.to_relay_config()
-    except (ConfigurationError, ValidationError, ValueError) as exc:
-        _set_auto_start_status("failed_config", 0, str(exc))
-        logger.error("Auto-start skipped: the saved configuration can't run: %s", exc)
+        relay_service.check_saved()
+    except RelayStartRefusedError as exc:
+        _report_auto_start_refusal(exc, 0)
         return
 
     # Schedule the retry loop as a background task.  Hold the
     # reference at module scope so it isn't GC'd and so tests can
     # ``await`` it to synchronise on completion.
     auto_start_task = asyncio.create_task(
-        _auto_start_with_retry(input_config, dest_configs),
+        _auto_start_with_retry(),
         name="sp_rtk_base.auto_start",
     )

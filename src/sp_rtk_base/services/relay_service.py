@@ -12,8 +12,9 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
+from pydantic import ValidationError
 from sp_rtk_base_relay import (
     FrameSubscription,
     RelayEngine,
@@ -21,8 +22,10 @@ from sp_rtk_base_relay import (
     RelayStatus,
 )
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
-from sp_rtk_base_relay.exceptions import ServiceError
+from sp_rtk_base_relay.exceptions import ConfigurationError, ServiceError
 
+from sp_rtk_base.models.config_models import InputProfile
+from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.relay_events import EventStream, RelayEvents
 
 logger = logging.getLogger(__name__)
@@ -111,6 +114,18 @@ class RelayStartRefusedError(ServiceError):
         self.message = message
 
 
+ALREADY_RUNNING_MESSAGE = "Relay engine is already running"
+NO_INPUT_MESSAGE = "No input source configured. Configure an input source first."
+NO_DESTINATIONS_MESSAGE = "No enabled destinations configured."
+
+
+class SavedStart(NamedTuple):
+    """The saved configuration, translated into what the Relay runs."""
+
+    input: InputConfig
+    destinations: list[DestinationConfig]
+
+
 class FrameSubscriber(Protocol):
     """A Frame subscriber: reads the Relay's input Frames while it runs.
 
@@ -132,9 +147,14 @@ class RelayService:
 
     The engine is created lazily on the first ``start_relay()`` call
     and recreated if the input configuration changes.
+
+    Args:
+        config_service: Where :meth:`start_saved` reads the saved
+            Input profile and outputs from.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config_service: ConfigService | None = None) -> None:
+        self._config_service = config_service
         self._engine: RelayEngine | None = None
         self._input_config: InputConfig | None = None
         # Captured at each successful start so the stop log can include
@@ -294,6 +314,68 @@ class RelayService:
             trigger,
             _summarise_input(input_config),
             dest_names if dest_names else "[]",
+        )
+
+    def check_saved(self, input_profile: InputProfile | None = None) -> SavedStart:
+        """Check the saved configuration can start, without starting it.
+
+        Args:
+            input_profile: Check this Input profile with the saved outputs
+                instead of the saved one: Hand off checks the profile it
+                is about to save before it lets go of the console.
+
+        Returns:
+            The Relay input and enabled outputs to start with.
+
+        Raises:
+            RelayStartRefusedError: ``already_running``, ``no_input``,
+                ``no_destinations``, or ``config_invalid`` when a profile
+                can't be turned into Relay config (its message is the
+                reason).  Nothing was touched.
+        """
+        if self.is_running:
+            raise RelayStartRefusedError("already_running", ALREADY_RUNNING_MESSAGE)
+        if self._config_service is None:
+            raise ServiceError("RelayService has no ConfigService to read from")
+        config = self._config_service.get_config()
+        profile = input_profile or config.input
+        if profile is None:
+            raise RelayStartRefusedError("no_input", NO_INPUT_MESSAGE)
+        enabled = [d for d in config.destinations if d.enabled]
+        if not enabled:
+            raise RelayStartRefusedError("no_destinations", NO_DESTINATIONS_MESSAGE)
+        # Running pydantic on each profile is where a saved config that
+        # can't run shows up (e.g. an NTRIP v2 output without a username,
+        # issue #198).
+        try:
+            return SavedStart(
+                profile.to_relay_config(), [d.to_relay_config() for d in enabled]
+            )
+        except (ConfigurationError, ValidationError, ValueError) as exc:
+            raise RelayStartRefusedError("config_invalid", str(exc)) from exc
+
+    async def start_saved(
+        self, trigger: str = "unknown", *, refuse_while_console_connected: bool = True
+    ) -> None:
+        """Start the Relay from the saved Input profile and enabled outputs.
+
+        The one way every start path starts from saved config.
+
+        Args:
+            trigger: Who started it, for the log (see :data:`RelayTrigger`).
+            refuse_while_console_connected: As for :meth:`start_relay`.
+
+        Raises:
+            RelayStartRefusedError: As for :meth:`check_saved`, or
+                ``console_connected``.  Nothing was touched.
+            Exception: Whatever bringing the Relay up raised.
+        """
+        saved = self.check_saved()
+        await self.start_relay(
+            saved.input,
+            saved.destinations,
+            trigger,
+            refuse_while_console_connected=refuse_while_console_connected,
         )
 
     async def stop_relay(self, trigger: str = "unknown") -> None:

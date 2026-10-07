@@ -636,23 +636,7 @@ def input_page() -> None:
                         if not _save_input():
                             return
                         try:
-                            config = config_svc.get_config()
-                            enabled = [d for d in config.destinations if d.enabled]
-                            if not enabled:
-                                ui.notify(
-                                    "No enabled destinations — add one in "
-                                    "Outputs first",
-                                    type="warning",
-                                )
-                                return
-                            if config.input is None:
-                                ui.notify("No input configured", type="warning")
-                                return
-                            await relay_svc.start_relay(
-                                config.input.to_relay_config(),
-                                [d.to_relay_config() for d in enabled],
-                                trigger="verification-handoff",
-                            )
+                            await relay_svc.start_saved(trigger="verification-handoff")
                             ui.notify("Relay started ✓", type="positive")
                             _clear_green()
                         except RelayStartRefusedError as exc:

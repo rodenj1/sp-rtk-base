@@ -11,9 +11,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
-from sp_rtk_base_relay.config import DestinationConfig
-from sp_rtk_base_relay.exceptions import ConfigurationError
+from pydantic import BaseModel, Field
 
 from sp_rtk_base.models.api_models import (
     DetectBaudRequest,
@@ -60,7 +58,7 @@ from sp_rtk_base.services.device_service import (
     DeviceService,
 )
 from sp_rtk_base.services.drivers import create_driver, driver_key
-from sp_rtk_base.services.relay_service import RelayService
+from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 from sp_rtk_base.services.survey_service import SurveyService
 
 logger = logging.getLogger(__name__)
@@ -751,35 +749,28 @@ async def handoff_to_relay(
     teardown) and the relay starts on the saved Bluetooth Input profile,
     unchanged: the console took its module from that profile.
 
-    Returns 409 if the device is not connected or the relay is already
-    running, and 422, before disconnecting, if the saved destinations
-    can't run.
+    Before disconnecting, refuses with 409 if the device is not connected
+    or the relay is already running, 400 if no output is enabled, and 422
+    if the Input profile or an output can't run: a handoff that fails after
+    disconnecting leaves the station with neither.
     """
     if not svc.is_connected:
         raise HTTPException(status_code=409, detail="Device not connected")
-
-    if relay.is_running:
-        raise HTTPException(status_code=409, detail="Relay is already running")
-
-    # Check the saved outputs can run before letting go of the receiver: a
-    # handoff that fails after disconnecting leaves the station with neither
-    # (e.g. an NTRIP v2 output without a username, issue #198).
-    try:
-        relay_dests = [d.to_relay_config() for d in cfg.get_destinations() if d.enabled]
-    except (ConfigurationError, ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     status = svc.get_status()
     # The driver's key, as the Connect panel's Driver select and
     # create_driver() take it (not its display name).
     vendor = (driver_key(svc.driver) if svc.driver else None) or "ublox"
     if isinstance(status.link, BluetoothLink):
-        return await _handoff_bluetooth(
-            svc, relay, cfg, status.link, vendor, relay_dests
-        )
+        return await _handoff_bluetooth(svc, relay, cfg, status.link, vendor)
 
     port = status.port or ""
     baud = status.baud_rate or DEFAULT_BAUD
+    input_profile = InputProfile(
+        source="serial",
+        config={"port": port, "baudrate": baud},
+    )
+    _check_handoff_can_start(relay, input_profile)
 
     # 1. Persist device profile
     cfg.save_device_profile(
@@ -793,18 +784,12 @@ async def handoff_to_relay(
     # 2. Disconnect driver (releases serial port)
     await svc.disconnect()
 
-    # 3. Configure relay input source with same serial port
-    input_profile = InputProfile(
-        source="serial",
-        config={"port": port, "baudrate": baud},
-    )
+    # 3. Point the Input profile at the same serial port
     cfg.save_input_config(input_profile)
 
-    # 4. Build the relay input and start
-    relay_input = input_profile.to_relay_config()
-
+    # 4. Start the relay from it
     try:
-        await relay.start_relay(relay_input, relay_dests, trigger="handoff")
+        await relay.start_saved(trigger="handoff")
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"Relay start failed: {exc}"
@@ -816,13 +801,24 @@ async def handoff_to_relay(
     )
 
 
+def _check_handoff_can_start(relay: RelayService, input_profile: InputProfile) -> None:
+    """Refuse a handoff whose relay start would be refused."""
+    try:
+        relay.check_saved(input_profile)
+    except RelayStartRefusedError as exc:
+        status_code = {"no_destinations": 400, "config_invalid": 422}.get(exc.code, 409)
+        detail = (
+            "Relay is already running" if exc.code == "already_running" else exc.message
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
 async def _handoff_bluetooth(
     svc: DeviceService,
     relay: RelayService,
     cfg: ConfigService,
     link: BluetoothLink,
     vendor: str,
-    relay_dests: list[DestinationConfig],
 ) -> DeviceActionResponse:
     """Hand a Bluetooth Console link's module back to the relay.
 
@@ -836,10 +832,7 @@ async def _handoff_bluetooth(
             detail="The Input profile is no longer Bluetooth; set it up on the "
             "Input page before handing off.",
         )
-    try:
-        relay_input = input_profile.to_relay_config()
-    except (ConfigurationError, ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _check_handoff_can_start(relay, input_profile)
 
     # Remember the kind for the Connect panel, keeping the serial side's
     # last port and baud for a later cabled connect.
@@ -851,7 +844,7 @@ async def _handoff_bluetooth(
     await svc.disconnect()
 
     try:
-        await relay.start_relay(relay_input, relay_dests, trigger="handoff")
+        await relay.start_saved(trigger="handoff")
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"Relay start failed: {exc}"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.pages.dashboard import (
     RelayControlState,
     _compute_relay_control_state,
@@ -17,6 +18,7 @@ from sp_rtk_base.ui.pages.dashboard import (
     _format_bytes,
     _format_count_rate,
     _format_uptime,
+    _start_failure_text,
 )
 
 
@@ -201,3 +203,36 @@ class TestFormatUptime:
     )
     def test_format_uptime(self, seconds: float | None, expected: str) -> None:
         assert _format_uptime(seconds) == expected
+
+
+class TestStartFailureText:
+    """What the Dashboard says when Start doesn't start the Relay."""
+
+    def test_a_saved_input_port_that_is_not_a_number(self) -> None:
+        refused = RelayStartRefusedError(
+            "config_invalid",
+            "input.config.port must be an integer between 1 and 65535"
+            " | Key: input.config.port",
+        )
+        assert _start_failure_text(refused) == (
+            "Failed to start: TCP input port is not a number. "
+            "Re-save the Input config (Input page) and try again."
+        )
+
+    def test_another_saved_config_that_cannot_run_says_why(self) -> None:
+        refused = RelayStartRefusedError(
+            "config_invalid", "Output 'rtk2go' uses NTRIP v2, which needs a username."
+        )
+        assert _start_failure_text(refused) == (
+            "Failed to start relay: Output 'rtk2go' uses NTRIP v2, "
+            "which needs a username."
+        )
+
+    def test_other_refusals_say_their_message(self) -> None:
+        refused = RelayStartRefusedError("no_destinations", "No enabled destinations.")
+        assert _start_failure_text(refused) == "No enabled destinations."
+
+    def test_a_failure_bringing_the_relay_up(self) -> None:
+        assert _start_failure_text(ConnectionRefusedError("refused")) == (
+            "Failed to start relay: refused"
+        )

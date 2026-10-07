@@ -58,6 +58,7 @@ class AutoStartStatusModel(BaseModel):
     state: Literal[
         "idle",
         "skipped_no_input",
+        "skipped_no_destinations",
         "in_progress",
         "succeeded",
         "succeeded_user",

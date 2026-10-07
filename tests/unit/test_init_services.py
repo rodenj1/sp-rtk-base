@@ -21,6 +21,7 @@ from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
+from tests.fixtures.saved_start import with_saved_start
 
 
 @pytest.fixture()
@@ -105,7 +106,10 @@ class TestInitServices:
         mock_config_svc = ConfigService(config_path=config_path)
 
         mock_relay_svc = MagicMock(spec=RelayService)
+        mock_relay_svc.is_running = False
         mock_relay_svc.start_relay = AsyncMock()
+
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -133,6 +137,8 @@ class TestInitServices:
         mock_relay_svc = MagicMock(spec=RelayService)
         mock_relay_svc.is_running = False
         mock_relay_svc.start_relay = AsyncMock()
+
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -164,7 +170,10 @@ class TestInitServices:
         mock_config_svc.save_config(config)
 
         mock_relay_svc = MagicMock(spec=RelayService)
+        mock_relay_svc.is_running = False
         mock_relay_svc.start_relay = AsyncMock()
+
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -175,6 +184,36 @@ class TestInitServices:
             mock_relay_svc.start_relay.assert_not_called()
             assert services_mod.auto_start_task is None
             assert services_mod.auto_start_status.state == "skipped_no_input"
+        finally:
+            services_mod.config_service = original_config
+            services_mod.relay_service = original_relay
+
+    @pytest.mark.asyncio()
+    async def test_init_auto_start_without_an_enabled_output_skips(
+        self,
+        tmp_path: Path,
+        reset_auto_start_status: None,
+    ) -> None:
+        """A Relay with no output isn't started at boot either (#50)."""
+        mock_config_svc = ConfigService(config_path=tmp_path / "config.yaml")
+        config = _make_auto_start_config()
+        config.destinations[0].enabled = False
+        mock_config_svc.save_config(config)
+
+        mock_relay_svc = MagicMock(spec=RelayService)
+        mock_relay_svc.is_running = False
+        mock_relay_svc.start_relay = AsyncMock()
+        with_saved_start(mock_relay_svc, mock_config_svc)
+
+        original_config = services_mod.config_service
+        original_relay = services_mod.relay_service
+        try:
+            services_mod.config_service = mock_config_svc
+            services_mod.relay_service = mock_relay_svc
+            await services_mod.init_services()
+            mock_relay_svc.start_relay.assert_not_called()
+            assert services_mod.auto_start_task is None
+            assert services_mod.auto_start_status.state == "skipped_no_destinations"
         finally:
             services_mod.config_service = original_config
             services_mod.relay_service = original_relay
@@ -205,6 +244,8 @@ class TestAutoStartRetryLoop:
                 None,
             ]
         )
+
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -240,6 +281,8 @@ class TestAutoStartRetryLoop:
             side_effect=[InputSourceError(f"err {i}") for i in range(total)]
         )
 
+        with_saved_start(mock_relay_svc, mock_config_svc)
+
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
         try:
@@ -274,6 +317,8 @@ class TestAutoStartRetryLoop:
         mock_relay_svc.start_relay = AsyncMock(
             side_effect=ConfigurationError("filter.message_ids is required")
         )
+
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -315,6 +360,7 @@ class TestAutoStartRetryLoop:
             raise InputSourceError("Host is down")
 
         mock_relay_svc.start_relay = AsyncMock(side_effect=_start_relay_impl)
+        with_saved_start(mock_relay_svc, mock_config_svc)
 
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
@@ -357,8 +403,10 @@ class TestAutoStartWithAnOutputThatCannotRun:
         )
         config_svc.save_config(config)
         relay_svc = MagicMock(spec=RelayService)
+        relay_svc.is_running = False
         relay_svc.start_relay = AsyncMock()
 
+        with_saved_start(relay_svc, config_svc)
         original_config = services_mod.config_service
         original_relay = services_mod.relay_service
         try:
@@ -405,7 +453,7 @@ class TestAutoStartWithConsoleConnected:
 
         config_svc = ConfigService(config_path=tmp_path / "config.yaml")
         config_svc.save_config(_make_auto_start_config())
-        relay = RelayService()
+        relay = RelayService(config_svc)
         device = MagicMock(spec=DeviceService)
         device.is_connected = True
 

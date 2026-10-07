@@ -15,7 +15,6 @@ from dataclasses import asdict
 from typing import Any, Literal, Protocol
 
 from sp_rtk_base_relay import (
-    EventSubscription,
     FrameSubscription,
     RelayEngine,
     RelayEvent,
@@ -23,6 +22,8 @@ from sp_rtk_base_relay import (
 )
 from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ServiceError
+
+from sp_rtk_base.services.relay_events import EventFanout, EventStream
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,10 @@ class RelayService:
         self._start_trigger: str | None = None
         self._frame_subscriber: FrameSubscriber | None = None
         self._console_connected_check: Callable[[], bool] | None = None
+        # Live event streams, replaced (not mutated) so the fan-out
+        # thread can read the current set without a lock.
+        self._event_streams: tuple[EventStream, ...] = ()
+        self._event_fanout: EventFanout | None = None
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
         """Set a callback that says whether the console is connected.
@@ -270,7 +275,13 @@ class RelayService:
             self._input_config = input_config
             logger.info("Created new RelayEngine with source=%s", input_config.source)
 
-        await asyncio.to_thread(self._engine.start, destinations)
+        # Attach before starting so open streams see the start's own events.
+        self._attach_event_fanout()
+        try:
+            await asyncio.to_thread(self._engine.start, destinations)
+        except BaseException:
+            await self._detach_event_fanout()
+            raise
         self._notify_subscriber_started(self._engine)
 
         # Record start state so stop_relay can compose the uptime/totals
@@ -318,6 +329,7 @@ class RelayService:
 
         self._notify_subscriber_stopped()
         await asyncio.to_thread(self._engine.stop)
+        await self._detach_event_fanout()
 
         # Compute uptime from start_monotonic if we recorded one.
         uptime_str = "—"
@@ -434,15 +446,42 @@ class RelayService:
     # Events
     # ------------------------------------------------------------------
 
-    def subscribe_events(self) -> EventSubscription | None:
-        """Create a new event subscription.
+    def stream_events(self) -> EventStream:
+        """Open a live stream of relay events for one client.
 
-        Returns:
-            An ``EventSubscription``, or None if engine does not exist.
+        Call from the event loop the client reads on.
+
+        The stream receives every event emitted after it was opened, from
+        whichever engine is running, across stops, starts and engine
+        replacement, until it is closed.  History is
+        :meth:`get_recent_events`.
         """
+        stream = EventStream(on_close=self._close_event_stream)
+        self._event_streams = (*self._event_streams, stream)
+        if self._engine is not None and self._engine.is_running:
+            self._attach_event_fanout()
+        return stream
+
+    def _close_event_stream(self, stream: EventStream) -> None:
+        self._event_streams = tuple(s for s in self._event_streams if s is not stream)
+        if not self._event_streams and self._event_fanout is not None:
+            self._event_fanout.abandon()
+            self._event_fanout = None
+
+    def _attach_event_fanout(self) -> None:
+        """Subscribe the open streams to the current engine, once."""
+        if self._event_fanout is not None or not self._event_streams:
+            return
         if self._engine is None:
-            return None
-        return self._engine.subscribe_events()
+            return
+        self._event_fanout = EventFanout(
+            self._engine.subscribe_events(), lambda: list(self._event_streams)
+        )
+
+    async def _detach_event_fanout(self) -> None:
+        fanout, self._event_fanout = self._event_fanout, None
+        if fanout is not None:
+            await asyncio.to_thread(fanout.stop)
 
     def get_recent_events(self, count: int = 50) -> list[dict[str, Any]]:
         """Get recent events from the ring buffer as dicts.

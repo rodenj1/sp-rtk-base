@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
+from sp_rtk_base_relay.config import InputConfig
+
+from sp_rtk_base.app import create_api_app
+from sp_rtk_base.services import get_relay_service
+from sp_rtk_base.services.relay_service import RelayService
 
 
 class TestGetRecentEvents:
@@ -63,49 +70,59 @@ class TestGetRecentEvents:
         mock_relay_service.get_recent_events.assert_called_once_with(10)
 
 
+class FakeStream:
+    """Stands in for ``RelayService.stream_events()`` at the endpoint."""
+
+    def __init__(self, *events: dict[str, Any]) -> None:
+        self._events = list(events)
+        self.closed = False
+
+    async def get(self) -> dict[str, Any]:
+        if self._events:
+            return self._events.pop(0)
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class TestWebSocketEvents:
     """Tests for WS /api/events/ws WebSocket endpoint."""
 
     def test_websocket_receives_event(
         self,
         api_client_with_services: TestClient,
-        mock_event_bridge: MagicMock,
+        mock_relay_service: MagicMock,
     ) -> None:
-        """WebSocket client receives events pushed to the bridge queue."""
-        # Create a real asyncio.Queue for the mock event bridge
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        mock_event_bridge.event_queue = queue
-
-        # Pre-load an event into the queue
-        event_data: dict[str, Any] = {
-            "event_type": "engine.started",
-            "message": "Engine started",
-            "timestamp": 100.0,
-            "payload": {},
-        }
-        queue.put_nowait(event_data)
+        """Each event on the client's stream goes out as one JSON message."""
+        mock_relay_service.stream_events.return_value = FakeStream(
+            {
+                "event_type": "engine.started",
+                "message": "Engine started",
+                "timestamp": 100.0,
+                "payload": {},
+            }
+        )
 
         with api_client_with_services.websocket_connect("/api/events/ws") as ws:
             data = ws.receive_json()
             assert data["event_type"] == "engine.started"
             assert data["message"] == "Engine started"
 
-    def test_websocket_ping_on_timeout(
+    def test_websocket_closes_its_stream_when_the_client_leaves(
         self,
         api_client_with_services: TestClient,
-        mock_event_bridge: MagicMock,
+        mock_relay_service: MagicMock,
     ) -> None:
-        """WebSocket sends ping when no events within timeout.
+        """A client that disappears releases its stream, without crashing.
 
-        Note: The timeout in the real code is 30s, which is too long
-        for tests. We test the overall connection pattern instead —
-        connect, receive one event, then disconnect.
+        v0.3.29: idle WebSocket connections produced RuntimeError
+        tracebacks when the keepalive ping fired after the client was
+        already gone; the handler checks ``WebSocketState`` and catches
+        the RuntimeError from ``send_json`` so departure is a clean exit.
         """
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        mock_event_bridge.event_queue = queue
-
-        # Put an event so we can verify the WS works
-        queue.put_nowait(
+        stream = FakeStream(
             {
                 "event_type": "test.event",
                 "message": "Test",
@@ -113,36 +130,48 @@ class TestWebSocketEvents:
                 "payload": {},
             }
         )
+        mock_relay_service.stream_events.return_value = stream
 
         with api_client_with_services.websocket_connect("/api/events/ws") as ws:
-            data = ws.receive_json()
-            assert data["event_type"] == "test.event"
-
-    def test_websocket_handles_client_abandonment_during_keepalive(
-        self,
-        api_client_with_services: TestClient,
-        mock_event_bridge: MagicMock,
-    ) -> None:
-        """v0.3.29: a client that disappears mid-keepalive must not crash.
-
-        Operator-reported bug from larson-base logs: idle WebSocket
-        connections produced RuntimeError tracebacks when the keepalive
-        ping fired after the client was already gone.  The handler now
-        checks ``WebSocketState`` and catches the RuntimeError from
-        ``send_json`` so client departure is a clean exit, not a
-        ``logger.exception()`` payload.
-
-        This test exercises a clean client-disconnect; the regression
-        fix is the explicit (WebSocketDisconnect, RuntimeError) catch
-        around the keepalive send and the WebSocketState gate before
-        each send.
-        """
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        mock_event_bridge.event_queue = queue
-
-        # Connect and immediately disconnect — exercises the path
-        # where the handler tries to interact with a torn-down socket.
-        with api_client_with_services.websocket_connect("/api/events/ws") as ws:
+            ws.receive_json()
             ws.close()
-        # No assertion needed beyond "the test didn't raise" — the
-        # handler must absorb the disconnect cleanly.
+        deadline = time.monotonic() + 5.0
+        while not stream.closed and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert stream.closed
+
+    def test_websocket_streams_a_relay_started_outside_the_api(self) -> None:
+        """Issue #49: a Dashboard-style start reaches an open Event log.
+
+        Real ``RelayService`` and ``RelayEngine``; the input is a TCP
+        input on a local listener.
+        """
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        relay = RelayService()
+        app = create_api_app()
+        app.dependency_overrides[get_relay_service] = lambda: relay
+        try:
+            with (
+                TestClient(app) as client,
+                client.websocket_connect("/api/events/ws") as ws,
+            ):
+                portal = client.portal
+                assert portal is not None
+                portal.call(
+                    relay.start_relay,
+                    InputConfig(
+                        source="tcp", config={"host": "127.0.0.1", "port": port}
+                    ),
+                    None,
+                    "ui",
+                )
+                seen: list[str] = []
+                while "engine.started" not in seen:
+                    message = ws.receive_json()
+                    seen.append(message.get("event_type", message.get("type")))
+                portal.call(relay.stop_relay, "test")
+        finally:
+            srv.close()

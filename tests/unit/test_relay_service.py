@@ -96,11 +96,6 @@ class TestRelayServiceConstruction:
         svc = RelayService()
         assert svc.get_destination_names() == []
 
-    def test_subscribe_events_when_no_engine(self) -> None:
-        """subscribe_events returns None without engine."""
-        svc = RelayService()
-        assert svc.subscribe_events() is None
-
     def test_get_recent_events_when_no_engine(self) -> None:
         """get_recent_events returns empty list without engine."""
         svc = RelayService()
@@ -420,18 +415,7 @@ class TestRelayServiceDestinations:
 
 
 class TestRelayServiceEvents:
-    """Tests for event subscription and recent events."""
-
-    def test_subscribe_events(self) -> None:
-        """subscribe_events delegates to engine."""
-        svc = RelayService()
-        mock_engine = MagicMock()
-        mock_sub = MagicMock()
-        mock_engine.subscribe_events.return_value = mock_sub
-        svc._engine = mock_engine
-
-        sub = svc.subscribe_events()
-        assert sub is mock_sub
+    """Tests for recent events."""
 
     def test_get_recent_events(self) -> None:
         """get_recent_events returns serialized events."""

@@ -15,9 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sp_rtk_base.app import create_api_app
-from sp_rtk_base.services import get_config_service, get_event_bridge, get_relay_service
+from sp_rtk_base.services import get_config_service, get_relay_service
 from sp_rtk_base.services.config_service import ConfigService
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.relay_service import RelayService
 from tests.fixtures.tcp_destination_client import TCPDestinationClient
 from tests.fixtures.tcp_source_simulator import TCPSourceSimulator
@@ -33,36 +32,33 @@ def tmp_config_dir() -> Generator[Path, None, None]:
 @pytest.fixture()
 def services(
     tmp_config_dir: Path,
-) -> Generator[tuple[RelayService, ConfigService, EventBridge], None, None]:
+) -> Generator[tuple[RelayService, ConfigService], None, None]:
     """Create fresh, real service instances backed by a temp config file."""
     relay_svc = RelayService()
     config_svc = ConfigService(config_path=tmp_config_dir / "config.yaml")
-    event_bridge = EventBridge()
 
     # Load config from the (empty) temp file — creates defaults
     config_svc.load_config()
 
-    yield relay_svc, config_svc, event_bridge
+    yield relay_svc, config_svc
 
     # Cleanup: stop relay if still running
     import asyncio
 
     if relay_svc.is_running:
         asyncio.get_event_loop().run_until_complete(relay_svc.stop_relay())
-    event_bridge.stop()
 
 
 @pytest.fixture()
 def api_client(
-    services: tuple[RelayService, ConfigService, EventBridge],
+    services: tuple[RelayService, ConfigService],
 ) -> Generator[TestClient, None, None]:
     """TestClient wired to real services (not mocks)."""
-    relay_svc, config_svc, event_bridge = services
+    relay_svc, config_svc = services
 
     app = create_api_app()
     app.dependency_overrides[get_relay_service] = lambda: relay_svc
     app.dependency_overrides[get_config_service] = lambda: config_svc
-    app.dependency_overrides[get_event_bridge] = lambda: event_bridge
 
     with TestClient(app) as client:
         yield client

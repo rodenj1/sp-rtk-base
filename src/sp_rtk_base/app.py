@@ -104,7 +104,7 @@ async def startup_services() -> None:
 
 
 async def shutdown_services() -> None:
-    """Gracefully stop the GPS device, relay engine, and event bridge.
+    """Gracefully stop the GPS device and the relay engine.
 
     Order of operations matters:
 
@@ -118,13 +118,11 @@ async def shutdown_services() -> None:
        goes away, so it is never mid-poll when the driver disconnects.
     1. **Device first** — release the serial / Bluetooth handle while
        the event loop is still healthy.  If we wait until the relay
-       and event bridge are already torn down, the relay engine may
+       is already torn down, the relay engine may
        still hold the same serial port (Bug D scenario) and the
        driver's ``disconnect()`` will race the kernel reclaiming the
        fd.
-    2. **Event bridge** — stop forwarding before the relay shuts down
-       so no events fan out into a half-stopped subscriber.
-    3. **Relay engine** — last, so any in-flight RTCM chunk finishes
+    2. **Relay engine** — last, so any in-flight RTCM chunk finishes
        being distributed to destinations before the destination
        writers are cancelled.  Bounded by
        :data:`RELAY_STOP_TIMEOUT_SECONDS` so a stuck engine teardown
@@ -138,7 +136,7 @@ async def shutdown_services() -> None:
     import asyncio
 
     from sp_rtk_base import services as services_mod
-    from sp_rtk_base.services import device_service, event_bridge, relay_service
+    from sp_rtk_base.services import device_service, relay_service
 
     logger.info("Application shutting down — stopping services…")
 
@@ -195,13 +193,7 @@ async def shutdown_services() -> None:
         except Exception:
             logger.exception("Error during device disconnect")
 
-    # 2. Event bridge.
-    try:
-        event_bridge.stop()
-    except Exception:
-        logger.exception("Error stopping event bridge")
-
-    # 3. Relay engine — bounded so a stuck destination thread can't
+    # 2. Relay engine — bounded so a stuck destination thread can't
     #    burn the rest of systemd's TimeoutStopSec window.
     try:
         await asyncio.wait_for(

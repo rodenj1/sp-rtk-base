@@ -4,8 +4,8 @@ Provides singleton service instances and initialization for the
 application's service layer:
 
 - ``ConfigService`` — YAML configuration persistence
-- ``RelayService`` — async wrapper around sp-rtk-base-relay RelayEngine
-- ``EventBridge`` — thread-to-async event forwarding
+- ``RelayService`` — async wrapper around sp-rtk-base-relay RelayEngine,
+  including its live event streams
 - ``MetricsService`` — Prometheus metrics from RelayStatus
 - ``DeviceService`` — GPS receiver connection & configuration (optional)
 - ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
@@ -31,7 +31,6 @@ from sp_rtk_base.services.correction_verification import (
 )
 from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceService
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
 from sp_rtk_base.services.profile_store import ProfileStore
@@ -118,7 +117,6 @@ def _set_auto_start_status(
 
 relay_service: RelayService = RelayService()
 config_service: ConfigService = ConfigService()
-event_bridge: EventBridge = EventBridge()
 metrics_service: MetricsService = MetricsService()
 
 
@@ -222,15 +220,6 @@ def get_config_service() -> ConfigService:
         The application's ConfigService instance.
     """
     return config_service
-
-
-def get_event_bridge() -> EventBridge:
-    """Get the singleton EventBridge instance.
-
-    Returns:
-        The application's EventBridge instance.
-    """
-    return event_bridge
 
 
 def get_metrics_service() -> MetricsService:
@@ -387,8 +376,7 @@ async def _auto_start_with_retry(
             )
             continue
 
-        # Success — bring up the event bridge and we're done.
-        event_bridge.start(relay_service)
+        # Success.
         _set_auto_start_status("succeeded", attempt)
         logger.info(
             "Auto-started relay engine on attempt %d/%d", attempt, total_attempts
@@ -418,7 +406,7 @@ async def init_services() -> None:
     :meth:`RelayService.start_relay`, so every path into the relay gets
     it rather than auto-start alone.
     """
-    global relay_service, config_service, event_bridge, device_service
+    global relay_service, config_service, device_service
     global auto_start_task
 
     # Load config from disk (creates default if missing)

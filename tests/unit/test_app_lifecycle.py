@@ -2,7 +2,7 @@
 
 These exercise the module-scope ``startup_services`` and
 ``shutdown_services`` functions in :mod:`sp_rtk_base.app` so that the
-device → event-bridge → relay teardown order is enforced and a
+device → relay teardown order is enforced and a
 stuck driver can never hold up shutdown indefinitely.
 """
 
@@ -21,23 +21,21 @@ from sp_rtk_base.app import (
     startup_services,
 )
 from sp_rtk_base.services.device_service import DeviceService
-from sp_rtk_base.services.event_bridge import EventBridge
 from sp_rtk_base.services.relay_service import RelayService
 
 # ---------------------------------------------------------------------------
-# Fixtures: replace the three singletons with mocks for the duration of a test
+# Fixtures: replace the two singletons with mocks for the duration of a test
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def patched_services() -> Iterator[tuple[MagicMock, MagicMock, MagicMock]]:
-    """Swap the device/event-bridge/relay singletons with mocks.
+def patched_services() -> Iterator[tuple[MagicMock, MagicMock]]:
+    """Swap the device/relay singletons with mocks.
 
     Yields:
-        (device_service_mock, event_bridge_mock, relay_service_mock)
+        (device_service_mock, relay_service_mock)
     """
     original_device = services_mod.device_service
-    original_eb = services_mod.event_bridge
     original_relay = services_mod.relay_service
 
     device_mock = MagicMock(spec=DeviceService)
@@ -47,19 +45,15 @@ def patched_services() -> Iterator[tuple[MagicMock, MagicMock, MagicMock]]:
     type(device_mock).is_connected = True  # type: ignore[misc]
     device_mock.disconnect = AsyncMock()
 
-    eb_mock = MagicMock(spec=EventBridge)
-
     relay_mock = MagicMock(spec=RelayService)
     relay_mock.stop_relay = AsyncMock()
 
     services_mod.device_service = device_mock
-    services_mod.event_bridge = eb_mock
     services_mod.relay_service = relay_mock
     try:
-        yield device_mock, eb_mock, relay_mock
+        yield device_mock, relay_mock
     finally:
         services_mod.device_service = original_device
-        services_mod.event_bridge = original_eb
         services_mod.relay_service = original_relay
         # Restore class-level property surrogates so they don't leak.
         try:
@@ -104,60 +98,37 @@ class TestStartupServices:
 
 
 class TestShutdownServicesOrdering:
-    """The shutdown order must be device → event-bridge → relay."""
+    """The shutdown order must be device → relay."""
 
     @pytest.mark.asyncio()
-    async def test_all_three_services_are_stopped(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    async def test_both_services_are_stopped(
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
-        """Happy path: disconnect, event_bridge.stop, relay.stop all run."""
-        device, eb, relay = patched_services
+        """Happy path: disconnect and relay.stop both run."""
+        device, relay = patched_services
         await shutdown_services()
         device.disconnect.assert_awaited_once()
-        eb.stop.assert_called_once()
         relay.stop_relay.assert_awaited_once()
 
     @pytest.mark.asyncio()
-    async def test_device_disconnects_before_event_bridge_stops(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+    async def test_device_disconnects_before_relay_stops(
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
-        """Device disconnect happens before event-bridge stop."""
-        device, eb, _relay = patched_services
+        """Device disconnect happens before relay stop."""
+        device, relay = patched_services
         order: list[str] = []
 
         async def _disconnect() -> None:
             order.append("device")
 
-        def _eb_stop() -> None:
-            order.append("eb")
-
-        device.disconnect.side_effect = _disconnect
-        eb.stop.side_effect = _eb_stop
-
-        await shutdown_services()
-        assert order.index("device") < order.index("eb")
-
-    @pytest.mark.asyncio()
-    async def test_event_bridge_stops_before_relay_stops(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
-    ) -> None:
-        """Event bridge stop happens before relay stop."""
-        _device, eb, relay = patched_services
-        order: list[str] = []
-
-        def _eb_stop() -> None:
-            order.append("eb")
-
         async def _relay_stop(*_args: object, **_kwargs: object) -> None:
-            # Accept the v0.3.30 `trigger=...` kwarg the shutdown path
-            # now passes; we only care about the call ordering.
             order.append("relay")
 
-        eb.stop.side_effect = _eb_stop
+        device.disconnect.side_effect = _disconnect
         relay.stop_relay.side_effect = _relay_stop
 
         await shutdown_services()
-        assert order.index("eb") < order.index("relay")
+        assert order.index("device") < order.index("relay")
 
 
 class TestShutdownServicesResilience:
@@ -165,43 +136,30 @@ class TestShutdownServicesResilience:
 
     @pytest.mark.asyncio()
     async def test_device_disconnect_error_does_not_block_relay_stop(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """If device.disconnect() raises, relay still shuts down."""
-        device, eb, relay = patched_services
+        device, relay = patched_services
         device.disconnect.side_effect = RuntimeError("driver explodes")
 
         await shutdown_services()  # must NOT raise
 
         device.disconnect.assert_awaited_once()
-        eb.stop.assert_called_once()
-        relay.stop_relay.assert_awaited_once()
-
-    @pytest.mark.asyncio()
-    async def test_event_bridge_stop_error_does_not_block_relay_stop(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
-    ) -> None:
-        """If event_bridge.stop() raises, relay still shuts down."""
-        _device, eb, relay = patched_services
-        eb.stop.side_effect = RuntimeError("bridge explodes")
-
-        await shutdown_services()
-
         relay.stop_relay.assert_awaited_once()
 
     @pytest.mark.asyncio()
     async def test_relay_stop_error_is_swallowed(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """If relay.stop_relay() raises, shutdown still returns cleanly."""
-        _device, _eb, relay = patched_services
+        _device, relay = patched_services
         relay.stop_relay.side_effect = RuntimeError("relay explodes")
 
         await shutdown_services()  # must NOT raise
 
     @pytest.mark.asyncio()
     async def test_device_disconnect_timeout_is_bounded(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """A driver that never returns from disconnect() must not stall shutdown.
 
@@ -211,7 +169,7 @@ class TestShutdownServicesResilience:
         down to something tiny in this test so the assertion runs fast,
         but the production budget is many seconds.
         """
-        device, eb, relay = patched_services
+        device, relay = patched_services
 
         async def _hang() -> None:
             await asyncio.sleep(10)  # would block forever in practice
@@ -228,8 +186,7 @@ class TestShutdownServicesResilience:
         finally:
             app_mod.DEVICE_DISCONNECT_TIMEOUT_SECONDS = original_budget
 
-        # Even though the device hangs, the other two services still ran.
-        eb.stop.assert_called_once()
+        # Even though the device hangs, the relay still stopped.
         relay.stop_relay.assert_awaited_once()
 
 
@@ -238,25 +195,24 @@ class TestShutdownServicesWithIdleDevice:
 
     @pytest.mark.asyncio()
     async def test_skips_disconnect_when_no_driver_registered(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """If is_available is False, disconnect() is never awaited."""
-        device, eb, relay = patched_services
+        device, relay = patched_services
         type(device).is_available = False  # type: ignore[misc]
         type(device).is_connected = False  # type: ignore[misc]
 
         await shutdown_services()
 
         device.disconnect.assert_not_called()
-        eb.stop.assert_called_once()
         relay.stop_relay.assert_awaited_once()
 
     @pytest.mark.asyncio()
     async def test_skips_disconnect_when_driver_already_disconnected(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """If is_available=True but is_connected=False, disconnect is skipped."""
-        device, _eb, _relay = patched_services
+        device, _relay = patched_services
         type(device).is_available = True  # type: ignore[misc]
         type(device).is_connected = False  # type: ignore[misc]
 
@@ -280,7 +236,7 @@ class TestShutdownCancelsAutoStartTask:
 
     @pytest.mark.asyncio()
     async def test_pending_auto_start_task_is_cancelled(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """A task in asyncio.sleep gets cancelled cleanly during shutdown."""
 
@@ -298,7 +254,7 @@ class TestShutdownCancelsAutoStartTask:
 
     @pytest.mark.asyncio()
     async def test_completed_auto_start_task_is_left_alone(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """If the task has already finished, no cancellation is attempted."""
 
@@ -316,7 +272,7 @@ class TestShutdownCancelsAutoStartTask:
 
     @pytest.mark.asyncio()
     async def test_no_auto_start_task_is_handled_gracefully(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """auto_start_task is None when auto_start is disabled / no input."""
         original_task = services_mod.auto_start_task
@@ -336,10 +292,10 @@ class TestRelayStopTimeoutBudget:
 
     @pytest.mark.asyncio()
     async def test_hanging_stop_relay_is_bounded(
-        self, patched_services: tuple[MagicMock, MagicMock, MagicMock]
+        self, patched_services: tuple[MagicMock, MagicMock]
     ) -> None:
         """A relay.stop_relay() that hangs must not stall shutdown."""
-        _device, _eb, relay = patched_services
+        _device, relay = patched_services
 
         async def _hang() -> None:
             await asyncio.sleep(60)

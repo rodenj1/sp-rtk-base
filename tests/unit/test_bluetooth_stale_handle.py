@@ -24,14 +24,11 @@ import asyncio
 import sys
 import types
 from collections.abc import Iterator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-import sp_rtk_base.services as services_mod
 from sp_rtk_base.services.bluetooth_service import release_stale_bluetooth_handle
-from sp_rtk_base.services.event_bridge import EventBridge
-from sp_rtk_base.services.relay_service import RelayService
 
 # ---------------------------------------------------------------------------
 # Helper: inject a fake BluetoothManager class so the helper finds *something*
@@ -198,27 +195,3 @@ class TestReleaseStaleBluetoothHandle:
         finally:
             if saved is not None:
                 sys.modules[mod_name] = saved
-
-
-# ---------------------------------------------------------------------------
-# init_services integration: the helper is invoked for bluetooth auto-start
-# and is *not* invoked for other input types.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def patched_relay_and_eb() -> Iterator[tuple[MagicMock, MagicMock]]:
-    """Replace relay_service / event_bridge with mocks for one test."""
-    original_relay = services_mod.relay_service
-    original_eb = services_mod.event_bridge
-    relay_mock = MagicMock(spec=RelayService)
-    relay_mock.start_relay = AsyncMock()
-    relay_mock.is_running = False
-    eb_mock = MagicMock(spec=EventBridge)
-    services_mod.relay_service = relay_mock
-    services_mod.event_bridge = eb_mock
-    try:
-        yield relay_mock, eb_mock
-    finally:
-        services_mod.relay_service = original_relay
-        services_mod.event_bridge = original_eb

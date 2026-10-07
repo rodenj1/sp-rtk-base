@@ -14,8 +14,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from sp_rtk_base.models.api_models import EventListResponse, EventResponse
-from sp_rtk_base.services import get_event_bridge, get_relay_service
-from sp_rtk_base.services.event_bridge import EventBridge
+from sp_rtk_base.services import get_relay_service
 from sp_rtk_base.services.relay_service import RelayService
 
 logger = logging.getLogger(__name__)
@@ -41,16 +40,18 @@ async def get_recent_events(
 @router.websocket("/ws")
 async def websocket_events(
     websocket: WebSocket,
-    event_bridge: EventBridge = Depends(get_event_bridge),
+    relay: RelayService = Depends(get_relay_service),
 ) -> None:
     """WebSocket endpoint for real-time event streaming.
 
-    Connects to the EventBridge queue and pushes events to the
-    client as JSON messages. The connection stays open until the
-    client disconnects or the server shuts down.
+    Opens this client's own live event stream and pushes each event to
+    it as a JSON message, with a ``{"type": "ping"}`` keepalive when the
+    Relay is quiet.  The stream follows every relay start and stop until
+    the client disconnects or the server shuts down.
     """
     await websocket.accept()
     logger.info("WebSocket client connected for event streaming")
+    stream = relay.stream_events()
 
     try:
         while True:
@@ -67,7 +68,7 @@ async def websocket_events(
 
             try:
                 event_dict: dict[str, Any] = await asyncio.wait_for(
-                    event_bridge.event_queue.get(),
+                    stream.get(),
                     timeout=5.0,
                 )
                 await websocket.send_json(event_dict)
@@ -85,6 +86,7 @@ async def websocket_events(
     except Exception:
         logger.exception("WebSocket error")
     finally:
+        stream.close()
         if websocket.client_state == WebSocketState.CONNECTED:
             try:
                 await websocket.close()

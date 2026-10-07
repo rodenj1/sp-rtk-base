@@ -27,7 +27,6 @@ from sp_rtk_base.models.config_models import DestinationProfile, InputProfile
 from sp_rtk_base.services import (
     get_config_service,
     get_device_service,
-    get_event_bridge,
     get_relay_service,
     wire_console_relay_exclusion,
 )
@@ -98,7 +97,6 @@ def client(
     app.dependency_overrides[get_device_service] = lambda: device
     app.dependency_overrides[get_relay_service] = lambda: relay
     app.dependency_overrides[get_config_service] = lambda: config
-    app.dependency_overrides[get_event_bridge] = lambda: MagicMock(is_running=True)
     with (
         patch(
             "sp_rtk_base.services.drivers.ublox.serial.Serial",

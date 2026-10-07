@@ -247,6 +247,7 @@ def dashboard_page() -> None:
                 ui.column()
                 .classes("w-full q-mt-sm")
                 .style("max-height: 300px; overflow-y: auto")
+                .props("data-testid=event-log")
             )
 
         # --- Rate-tracking state (closure-scoped, per browser session) ---

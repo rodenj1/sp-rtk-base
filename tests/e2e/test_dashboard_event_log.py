@@ -25,7 +25,7 @@ def _serve_events(*events: Mapping[str, object]) -> Callable[[WebSocketRoute], N
 
 
 def _event_log(page: Page) -> Locator:
-    return page.locator(".q-card", has_text="Recent Events").locator(".nicegui-column")
+    return page.get_by_test_id("event-log")
 
 
 @pytest.mark.e2e
@@ -75,6 +75,6 @@ def test_live_events_keep_their_badge_colours_order_and_cap(
         ("input.connected", "rgb(76, 175, 80)"),
         ("hub.tick", "rgb(96, 125, 139)"),
     ]:
-        expect(log.get_by_text(event_type, exact=True).first).to_have_css(
-            "color", colour
-        )
+        badge = log.get_by_text(event_type, exact=True).first
+        expect(badge).to_have_css("color", colour)
+        expect(badge).to_have_css("border-color", colour)

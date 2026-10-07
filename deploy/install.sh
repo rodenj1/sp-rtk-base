@@ -20,6 +20,7 @@
 #   sudo AP_PASSWORD=xxxx ./deploy/install.sh --mode appliance
 #   sudo ./deploy/install.sh --mode appliance 0.2.0        # pin to a specific version
 #   sudo MODE=appliance VERSION=0.2.0 AP_PASSWORD=xxxx ./deploy/install.sh  # same, via env vars
+#   sudo ./deploy/install.sh --mode managed-host --no-update  # Update turned off
 #
 # Or one-shot from a fresh Pi:
 #   curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
@@ -78,6 +79,8 @@ STATE_DIR="${STATE_DIR:-/var/lib/sp-rtk-base}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
+UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-update.service}"
+UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_SHARED_D="${DNSMASQ_SHARED_D:-/etc/NetworkManager/dnsmasq-shared.d}"
@@ -96,12 +99,19 @@ AP_PASSWORD="${AP_PASSWORD:-}"
 # existing config.yaml, and dies if neither is available.
 MODE="${MODE:-}"
 VERSION="${VERSION:-}"                # empty => latest from PyPI
+# --no-update turns Update (from the web UI) off on this host: the Update
+# units are laid down but sp-rtk-base-update.path stays disabled (ADR 0005).
+NO_UPDATE="${NO_UPDATE:-false}"
 
 # Positional/flag parsing: `--mode <value>` / `--mode=<value>` set MODE;
-# anything else is treated as the (optional) VERSION positional arg, same
-# as every release before --mode existed.
+# `--no-update` sets NO_UPDATE; anything else is treated as the (optional)
+# VERSION positional arg, same as every release before --mode existed.
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-update)
+            NO_UPDATE=true
+            shift
+            ;;
         --mode)
             [[ $# -ge 2 ]] || die "--mode requires a value (appliance or managed-host)"
             MODE="$2"
@@ -222,6 +232,9 @@ install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_DIR"
 # default, from the service user. Provision it up front so a fresh
 # install's first /api/profiles call doesn't need manual intervention.
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "${STATE_DIR}/profiles"
+# Update (ADR 0005): the app writes its request here, sp-rtk-base-update.path
+# watches for it, and the updater writes status.json beside it.
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "${STATE_DIR}/update"
 # Heal pre-existing installs whose CONFIG_DIR was created root:sp-rtk-base
 # (the original v0.2.x installer) — the service user needs ownership so
 # atomic-rename saves and write_text() on config.yaml both succeed.
@@ -514,6 +527,31 @@ systemctl daemon-reload
 systemctl enable sp-rtk-base.service >/dev/null
 systemctl restart sp-rtk-base.service
 ok "Service enabled and (re)started"
+
+# Update units (ADR 0005), in both modes. The app writes a request file;
+# sp-rtk-base-update.path starts sp-rtk-base-update.service, which installs
+# the Update as the service user and restarts the app through fixed root
+# lines. The service is never enabled itself: only the path unit starts it.
+# Update stays off with --no-update, and stays off on a re-run where the
+# admin has disabled the path unit.
+update_units_existed=false
+[[ -f "$UPDATE_PATH_UNIT" ]] && update_units_existed=true
+log "Installing the Update units…"
+fetch_deploy_file sp-rtk-base-update.service "$UPDATE_SYSTEMD_UNIT"
+fetch_deploy_file sp-rtk-base-update.path "$UPDATE_PATH_UNIT"
+systemctl daemon-reload
+if [[ "$NO_UPDATE" == true ]]; then
+    systemctl disable --now sp-rtk-base-update.path >/dev/null 2>&1 || true
+    ok "Update is turned off on this host (--no-update). To turn it on:
+  sudo systemctl enable --now sp-rtk-base-update.path"
+elif $update_units_existed && ! systemctl is-enabled --quiet sp-rtk-base-update.path; then
+    warn "Update stays turned off on this host (sp-rtk-base-update.path is disabled). To turn it on:
+  sudo systemctl enable --now sp-rtk-base-update.path"
+else
+    systemctl enable --now sp-rtk-base-update.path >/dev/null
+    ok "Update units installed; Update from the web UI is on"
+fi
+# End of the Update units
 
 # ---------------------------------------------------------------------------
 # Steps 8.2-8.6 — Network takeover (appliance mode only, issue #27/#29)

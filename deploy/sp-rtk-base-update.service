@@ -1,0 +1,43 @@
+[Unit]
+Description=SP-RTK-Base — install the Update the web UI asked for
+Documentation=https://github.com/rodenj1/sp-rtk-base/blob/main/docs/adr/0005-update-runs-in-its-own-unit-triggered-by-a-request-file.md
+# Started only by sp-rtk-base-update.path, when the app writes
+# /var/lib/sp-rtk-base/update/request.json. Never enabled on its own.
+# systemd starts it outside the app's sandbox, so it outlives the app's
+# restart. Progress goes to /var/lib/sp-rtk-base/update/status.json.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sp-rtk-base
+Group=sp-rtk-base
+WorkingDirectory=/var/lib/sp-rtk-base
+Environment=SP_RTK_BASE_UPDATE_DIR=/var/lib/sp-rtk-base/update
+# The service user has no home for pip's cache.
+Environment=PIP_NO_CACHE_DIR=1
+# pip on a Pi can take minutes; a oneshot has no start timeout by default.
+TimeoutStartSec=15min
+
+# Take the request, check it against the target resolved here, and pip
+# install exactly that target as sp-rtk-base. Exits non-zero on any refusal
+# or failure, which stops the unit before the restart lines below.
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update
+# The only root steps: fixed lines, never built from the request.
+ExecStart=+/usr/bin/systemctl restart sp-rtk-base.service
+ExecStart=+/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update --finish
+# Runs however the unit ended: an Update left half-way is reported failed.
+ExecStopPost=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update --stopped
+
+# --- Sandboxing / hardening ---------------------------------------------
+# Its own sandbox: writes only the venv, the state dir and the config dir.
+# The "+" lines above run outside it.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+ReadWritePaths=/opt/sp-rtk-base /var/lib/sp-rtk-base /etc/sp-rtk-base

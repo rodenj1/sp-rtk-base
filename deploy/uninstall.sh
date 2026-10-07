@@ -26,6 +26,8 @@ STATE_DIR="${STATE_DIR:-/var/lib/sp-rtk-base}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
+UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-update.service}"
+UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_WILDCARD_CONF="${DNSMASQ_WILDCARD_CONF:-/etc/NetworkManager/dnsmasq-shared.d/sp-rtk-base-wildcard.conf}"
 
@@ -98,6 +100,14 @@ ask() {
     [[ "$ans" =~ ^[Yy]$ ]]
 }
 
+# Update units (ADR 0005): the path unit first, so no request starts an
+# Update while the app is being removed.
+echo "==> Stopping + disabling the Update units…"
+systemctl disable --now sp-rtk-base-update.path 2>/dev/null || true
+systemctl stop sp-rtk-base-update.service 2>/dev/null || true
+rm -f "$UPDATE_PATH_UNIT" "$UPDATE_SYSTEMD_UNIT"
+# End of the Update units
+
 echo "==> Stopping + disabling sp-rtk-base.service…"
 systemctl stop    sp-rtk-base.service 2>/dev/null || true
 systemctl disable sp-rtk-base.service 2>/dev/null || true
@@ -105,8 +115,8 @@ systemctl disable sp-rtk-base.service 2>/dev/null || true
 if [[ -f "$SYSTEMD_UNIT" ]]; then
     echo "==> Removing systemd unit ${SYSTEMD_UNIT}"
     rm -f "$SYSTEMD_UNIT"
-    systemctl daemon-reload
 fi
+systemctl daemon-reload
 
 # Net-provision service/unit, AP connection profile, and polkit rule
 # (issue #27/#30 shared helper — same teardown install.sh runs on an

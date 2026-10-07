@@ -19,7 +19,6 @@ import logging
 import os
 from dataclasses import dataclass, replace
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
@@ -44,7 +43,7 @@ from sp_rtk_base.services.survey_service import (
     SurveyService,
 )
 from sp_rtk_base.services.update_check import UpdateCheckService
-from sp_rtk_base.update.release import Fetch, urllib_fetch
+from sp_rtk_base.update.fake_release_source import fetch_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -203,21 +202,7 @@ bluetooth_verification_service: BluetoothVerificationService = (
 )
 
 
-def _release_fetch() -> Fetch:
-    """Where the update check reads releases: PyPI, or a fake for e2e.
-
-    ``SP_RTK_BASE_FAKE_PYPI_DIR`` serves recorded PyPI documents from a
-    directory instead (see :mod:`sp_rtk_base.update.fake_release_source`).
-    """
-    fake_dir = os.environ.get("SP_RTK_BASE_FAKE_PYPI_DIR")
-    if fake_dir:
-        from sp_rtk_base.update.fake_release_source import directory_fetch
-
-        return directory_fetch(Path(fake_dir))
-    return urllib_fetch
-
-
-update_check_service: UpdateCheckService = UpdateCheckService(_release_fetch())
+update_check_service: UpdateCheckService = UpdateCheckService(fetch_from_env())
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers

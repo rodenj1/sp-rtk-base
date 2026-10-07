@@ -147,3 +147,39 @@ class TestEventStream:
         with relay.stream_events() as reopened:
             relay.engine.event_bus.emit("test.probe", "after the last stream closed")
             assert await received(reopened) == ["test.probe"]
+
+    async def test_a_stream_opened_while_the_relay_is_starting_streams(
+        self, relay: RelayService, tcp_input: Any
+    ) -> None:
+        """A Dashboard opened mid-start, with no other client, still streams."""
+        starting = asyncio.create_task(relay.start_relay(tcp_input(), [], trigger="ui"))
+        await asyncio.sleep(0)
+        assert not relay.is_running, "the start finished too soon to test this"
+        with relay.stream_events() as stream:
+            await starting
+            assert relay.engine is not None
+            relay.engine.event_bus.emit("test.probe", "after the start finished")
+            assert "test.probe" in await received(stream)
+
+    async def test_a_stop_that_fails_does_not_strand_open_streams(
+        self, relay: RelayService, tcp_input: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stop raises; the next start, on a new input, still streams."""
+        with relay.stream_events() as stream:
+            await relay.start_relay(tcp_input(), [], trigger="ui")
+            engine = relay.engine
+            assert engine is not None
+            real_stop = engine.stop
+
+            def stop_then_fail() -> None:
+                real_stop()
+                raise RuntimeError("stop failed after stopping")
+
+            monkeypatch.setattr(engine, "stop", stop_then_fail)
+            with pytest.raises(RuntimeError):
+                await relay.stop_relay(trigger="ui")
+            await received(stream)
+
+            await relay.start_relay(tcp_input(), [], trigger="ui")
+            assert relay.engine is not engine
+            assert "engine.started" in await received(stream)

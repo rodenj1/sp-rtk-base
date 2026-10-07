@@ -331,8 +331,8 @@ sp-rtk-base/
 │   ├── services/         # Business logic
 │   │   ├── config_service.py
 │   │   ├── device_service.py
-│   │   ├── event_bridge.py
 │   │   ├── metrics_service.py
+│   │   ├── relay_events.py  # live relay events, one stream per client
 │   │   ├── relay_service.py
 │   │   └── drivers/         # GPS driver layer
 │   │       ├── base.py      # GpsReceiverDriver ABC

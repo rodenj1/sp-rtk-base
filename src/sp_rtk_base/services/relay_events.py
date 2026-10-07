@@ -1,29 +1,28 @@
 """Live relay events for async consumers, one stream per client.
 
 ``RelayService.stream_events()`` hands each consumer (each Dashboard's
-``/api/events/ws`` connection) its own :class:`EventStream`.  Behind them
-an :class:`EventFanout` holds the only subscription to the running
+``/api/events/ws`` connection) its own :class:`EventStream`.
+:class:`RelayEvents` keeps the open streams and follows whichever
+``RelayEngine`` the Relay is running on: while it follows one and a stream
+is open, an :class:`EventFanout` holds the only subscription to that
 engine's event bus and copies every event to every open stream.
 
-The fan-out is attached by ``RelayService`` only while the Relay runs
-and a stream is open, so no caller starts or stops anything, a replaced
-engine is picked up on the next start, and nothing is buffered for a
-client that hasn't connected yet (issue #49).
+``RelayService`` tells it when the Relay starts and stops, so no caller
+starts or stops anything, a replaced engine is followed from its own
+start, and nothing is buffered for a client that hasn't connected yet
+(issue #49).
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 from collections.abc import Callable
 from dataclasses import asdict
 from types import TracebackType
 from typing import Any
 
-from sp_rtk_base_relay import EventSubscription
-
-logger = logging.getLogger(__name__)
+from sp_rtk_base_relay import EventSubscription, RelayEngine
 
 # Events a client may fall behind by before its oldest are dropped.
 STREAM_QUEUE_SIZE = 200
@@ -40,14 +39,10 @@ class EventStream:
     oldest events and never holds up the Relay or other clients.
     """
 
-    def __init__(
-        self,
-        on_close: Callable[[EventStream], None],
-        max_queue_size: int = STREAM_QUEUE_SIZE,
-    ) -> None:
+    def __init__(self, on_close: Callable[[EventStream], None]) -> None:
         self._loop = asyncio.get_running_loop()
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
-            maxsize=max_queue_size
+            maxsize=STREAM_QUEUE_SIZE
         )
         self._on_close = on_close
         self._closed = False
@@ -87,6 +82,62 @@ class EventStream:
         self.close()
 
 
+class RelayEvents:
+    """The open :class:`EventStream` s, fed from the engine being followed.
+
+    Call :meth:`open` on the event loop.  :meth:`follow` and
+    :meth:`unfollow` are ``RelayService``'s: follow an engine before
+    starting it, so its start events are streamed, and unfollow it once
+    it has stopped (or failed to start).
+    """
+
+    def __init__(self) -> None:
+        # Replaced, not mutated, so the fan-out thread reads the current
+        # set without a lock.
+        self._streams: tuple[EventStream, ...] = ()
+        self._engine: RelayEngine | None = None
+        self._fanout: EventFanout | None = None
+
+    def open(self) -> EventStream:
+        """Open a stream of every event emitted from now until it closes."""
+        stream = EventStream(on_close=self._close)
+        self._streams = (*self._streams, stream)
+        self._attach()
+        return stream
+
+    def follow(self, engine: RelayEngine) -> None:
+        """Stream ``engine``'s events from now on."""
+        if engine is not self._engine:
+            self._abandon()
+            self._engine = engine
+        self._attach()
+
+    def unfollow(self) -> None:
+        """Deliver what the engine has emitted, then stop following it.
+
+        Blocks while the fan-out thread exits; call it off the event loop.
+        """
+        fanout, self._fanout, self._engine = self._fanout, None, None
+        if fanout is not None:
+            fanout.stop()
+
+    def _close(self, stream: EventStream) -> None:
+        self._streams = tuple(s for s in self._streams if s is not stream)
+        if not self._streams:
+            self._abandon()
+
+    def _attach(self) -> None:
+        if self._fanout is None and self._engine is not None and self._streams:
+            self._fanout = EventFanout(
+                self._engine.subscribe_events(), lambda: list(self._streams)
+            )
+
+    def _abandon(self) -> None:
+        fanout, self._fanout = self._fanout, None
+        if fanout is not None:
+            fanout.abandon()
+
+
 class EventFanout:
     """Copies one engine's events to every open :class:`EventStream`."""
 
@@ -106,10 +157,10 @@ class EventFanout:
     def stop(self) -> None:
         """Deliver what the engine has already emitted, then unsubscribe.
 
-        Blocks for up to a poll interval while the thread exits.
+        Blocks while the thread exits, which takes up to a poll interval.
         """
         self._stopping.set()
-        self._thread.join(timeout=2 * _POLL_SECONDS + 1.0)
+        self._thread.join(timeout=_POLL_SECONDS + 1.0)
         for event in self._subscription.drain():
             self._deliver(asdict(event))
         self._subscription.close()

@@ -322,12 +322,22 @@ class SurveyService:
 
     def survey_running_as_last_seen(self) -> bool:
         """Whether a Survey-in was running when last seen here; never reads
-        the receiver (for a page's poll). A Receiver survey-in started
-        elsewhere shows only once its progress was read."""
+        the receiver (for a page's poll).
+
+        A station-averaged survey is known here. A Receiver survey-in counts
+        only while the receiver it was seen on is still the connected one
+        (otherwise :meth:`progress` would forget it); one started elsewhere
+        shows only once its progress was read.
+        """
         if self._is_running():
             return True
         last = self._progress
-        return last is not None and (last.active or last.outcome == "running")
+        return (
+            last is not None
+            and self._device.is_connected
+            and self._device.driver is self._survey_driver
+            and (last.active or last.outcome == "running")
+        )
 
     async def survey_running(self) -> bool:
         """Whether a Survey-in of either kind is running on the receiver.

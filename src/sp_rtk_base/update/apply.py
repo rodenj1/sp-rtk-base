@@ -6,7 +6,9 @@ file. See ADR 0005. The unit runs it three ways:
 
 - with no option, first: take the request, resolve the target, refuse
   unless it is the request's SP-Base and Relay, then install exactly
-  ``sp-rtk-base==X sp-rtk-base-relay==Y``. Exits non-zero on any refusal
+  ``sp-rtk-base==X sp-rtk-base-relay==Y``, once the target's Host setup
+  (``deploy/plumbing-version`` at its tag) is no newer than this host's
+  (``SP_RTK_BASE_PLUMBING`` in the unit). Exits non-zero on any refusal
   or failure, so the unit's root restart lines never run after one;
 - ``--finish``, after the unit has restarted the app: reports ``done``;
 - ``--stopped``, as ``ExecStopPost``, whatever happened: an Update left
@@ -28,6 +30,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from sp_rtk_base.update.fake_release_source import fetch_from_env
+from sp_rtk_base.update.host_setup import (
+    HOST_REQUIREMENTS_ERROR,
+    HostRequirementError,
+    host_plumbing_from_env,
+    host_setup_error,
+    required_plumbing,
+)
 from sp_rtk_base.update.release import (
     APP_PACKAGE,
     RELAY_PACKAGE,
@@ -40,6 +49,8 @@ from sp_rtk_base.update.state import (
     NEWER_RELEASE_ERROR,
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
+    REASON_HOST_REQUIREMENTS,
+    REASON_HOST_SETUP,
     REASON_INSTALL_FAILED,
     REASON_NEWER_RELEASE,
     REASON_STOPPED,
@@ -81,12 +92,16 @@ class Updater:
         python: PythonVersion,
         venv: Path,
         installed: Callable[[], Versions] = installed_versions,
+        host_plumbing: int | None = None,
     ) -> None:
         self._files = files
         self._fetch = fetch
         self._python = python
         self._venv = venv
         self._installed = installed
+        self._host_plumbing = (
+            host_plumbing if host_plumbing is not None else host_plumbing_from_env()
+        )
 
     def apply(self) -> int:
         """Take the request and install the target it names, or refuse."""
@@ -117,6 +132,10 @@ class Updater:
             )
             self._fail(REASON_NEWER_RELEASE, NEWER_RELEASE_ERROR, from_=from_, to=to)
             return EXIT_FAILED
+        host_refusal = self._host_refusal(to)
+        if host_refusal is not None:
+            self._fail(*host_refusal, from_=from_, to=to)
+            return EXIT_FAILED
 
         self._files.write_status(UpdateStatus(phase="installing", from_=from_, to=to))
         pip = subprocess.run(
@@ -144,6 +163,16 @@ class Updater:
 
         self._files.write_status(UpdateStatus(phase="restarting", from_=from_, to=to))
         return EXIT_OK
+
+    def _host_refusal(self, to: Versions) -> tuple[str, str] | None:
+        """``(reason, error)`` when this host's Host setup can't take ``to``."""
+        try:
+            required = required_plumbing(self._fetch, to.app)
+        except HostRequirementError as exc:
+            return REASON_HOST_REQUIREMENTS, f"{HOST_REQUIREMENTS_ERROR} {exc}"
+        if required > self._host_plumbing:
+            return REASON_HOST_SETUP, host_setup_error(required, self._host_plumbing)
+        return None
 
     def finish(self) -> int:
         """After the restart: the Update is done."""

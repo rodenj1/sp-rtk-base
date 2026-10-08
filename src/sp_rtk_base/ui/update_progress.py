@@ -21,6 +21,8 @@ from sp_rtk_base.update.state import (
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
     REASON_DIDNT_START,
+    REASON_HOST_REQUIREMENTS,
+    REASON_HOST_SETUP,
     REASON_NEWER_RELEASE,
     UpdateStatus,
     Versions,
@@ -187,6 +189,8 @@ FAILED_OUTCOMES: dict[str, Callable[[UpdateStatus], Outcome]] = {
     ),
     REASON_CHECK_FAILED: _not_started,
     REASON_BAD_REQUEST: _not_started,
+    REASON_HOST_SETUP: _not_started,
+    REASON_HOST_REQUIREMENTS: _not_started,
 }
 """The outcome of a failed Update, by its ``reason`` code."""
 

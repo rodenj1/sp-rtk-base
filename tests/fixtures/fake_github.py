@@ -33,6 +33,11 @@ def changelog_url(repo: str, version: str) -> str:
     return f"{RAW}/{repo}/v{version}/CHANGELOG.md"
 
 
+def plumbing_url(version: str) -> str:
+    """sp-rtk-base's ``deploy/plumbing-version`` at ``v<version>``."""
+    return f"{RAW}/sp-rtk-base/v{version}/deploy/plumbing-version"
+
+
 def release_url(repo: str, version: str) -> str:
     return f"{API}/{repo}/releases/tags/v{version}"
 
@@ -106,6 +111,10 @@ class FakeGitHub:
         doc.update(tag_name=f"v{version}", name=f"v{version}", body=body)
         doc["published_at"] = f"{published}T12:00:00Z"
         self.files[release_url(repo, version)] = json.dumps(doc).encode()
+
+    def publish_plumbing(self, version: str, plumbing: int) -> None:
+        """sp-rtk-base ``v<version>`` needs Host setup ``plumbing``."""
+        self.files[plumbing_url(version)] = f"{plumbing}\n".encode()
 
     def remove(self, url: str) -> None:
         del self.files[url]

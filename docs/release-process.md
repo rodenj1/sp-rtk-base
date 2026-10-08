@@ -74,13 +74,20 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
    (`commitizen` will keep these in sync automatically if you use
    `uv run cz bump`.)
 
-2. **Update `CHANGELOG.md`** with the user-visible changes (or let
+2. **Host setup:** if any file `deploy/install.sh` lays down (the units,
+   the polkit rule, `deploy/shared/`) changed since the last tag, raise
+   `deploy/plumbing-version` by one. Bases can't get those files through
+   Update; the higher number makes Settings ask for a one-time
+   `install.sh` re-run instead. CI's *Plumbing version guard* fails
+   without it (`python3 tools/check_plumbing_version.py` runs it locally).
+
+3. **Update `CHANGELOG.md`** with the user-visible changes (or let
    `cz bump` regenerate it from your Conventional Commits).
 
-3. **Commit and push to `main`.**  Wait for the regular `CI` workflow
+4. **Commit and push to `main`.**  Wait for the regular `CI` workflow
    to go green on the commit you intend to release.
 
-4. **Tag the commit:**
+5. **Tag the commit:**
    ```bash
    git tag v0.2.0
    git push origin v0.2.0
@@ -88,7 +95,7 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
    Tag format must be `vX.Y.Z` (matches the workflow's verifier; the
    leading `v` is stripped before comparing to `pyproject.toml`).
 
-5. **Draft a GitHub Release:**
+6. **Draft a GitHub Release:**
    - GitHub repo → **Releases → Draft a new release**.
    - Choose tag `v0.2.0`.
    - Title: `v0.2.0`.
@@ -97,7 +104,7 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
      to publish pre-releases to PyPI by design).
    - Click **Publish release**.
 
-6. **Watch the `Release` workflow run** under the **Actions** tab.
+7. **Watch the `Release` workflow run** under the **Actions** tab.
    It will:
    1. Verify the tag matches `pyproject.toml`.
    2. Run lint + the full test matrix (Python 3.10 / 3.11 / 3.12 / 3.13).
@@ -108,7 +115,7 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
 
    End-to-end ~5–8 minutes.
 
-7. **Verify:**
+8. **Verify:**
    - <https://pypi.org/project/sp-rtk-base/> shows the new version.
    - `pip install --upgrade sp-rtk-base` works.
    - The GitHub Release page now has `.tar.gz`, `.whl`, and

@@ -539,6 +539,15 @@ update_units_existed=false
 log "Installing the Update units…"
 fetch_deploy_file sp-rtk-base-update.service "$UPDATE_SYSTEMD_UNIT"
 fetch_deploy_file sp-rtk-base-update.path "$UPDATE_PATH_UNIT"
+# The Host setup this host now has: deploy/plumbing-version, written into
+# the update unit, where the app (systemctl show) and the updater (its own
+# environment) read it. Root-owned, so the app can't forge it.
+plumbing_tmp="$(mktemp)"
+fetch_deploy_file plumbing-version "$plumbing_tmp"
+plumbing="$(tr -d '[:space:]' < "$plumbing_tmp")"
+rm -f "$plumbing_tmp"
+[[ "$plumbing" =~ ^[0-9]+$ ]] || die "deploy/plumbing-version isn't a number: ${plumbing:0:40}"
+sed -i "/^\[Service\]\$/a Environment=SP_RTK_BASE_PLUMBING=${plumbing}" "$UPDATE_SYSTEMD_UNIT"
 systemctl daemon-reload
 if [[ "$NO_UPDATE" == true ]]; then
     systemctl disable --now sp-rtk-base-update.path >/dev/null 2>&1 || true

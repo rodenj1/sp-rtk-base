@@ -76,6 +76,7 @@ class TestGetUpdate:
             "## v4.2.0 (2026-10-18)\n\n- Relay.",
             on_top_of="4.1.0",
         )
+        github.publish_plumbing("0.10.0", 2)
         client.post("/api/update/check")
 
         body = client.get("/api/update").json()
@@ -124,6 +125,8 @@ class TestGetUpdate:
                     "error": None,
                 },
             },
+            "host_requirement": 2,
+            "host_requirement_error": None,
             "available": True,
         }
 

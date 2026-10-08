@@ -14,6 +14,9 @@ User=sp-rtk-base
 Group=sp-rtk-base
 WorkingDirectory=/var/lib/sp-rtk-base
 Environment=SP_RTK_BASE_UPDATE_DIR=/var/lib/sp-rtk-base/update
+# install.sh adds Environment=SP_RTK_BASE_PLUMBING=N under [Service]: this
+# host's Host setup (deploy/plumbing-version). Changing any unit here means
+# raising deploy/plumbing-version (CI checks).
 # The service user has no home for pip's cache.
 Environment=PIP_NO_CACHE_DIR=1
 # pip on a Pi can take minutes; a oneshot has no start timeout by default.

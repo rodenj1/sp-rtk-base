@@ -46,6 +46,7 @@ from sp_rtk_base.services.survey_service import (
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.services.update_service import UpdateService
 from sp_rtk_base.update.fake_release_source import fetch_from_env
+from sp_rtk_base.update.host_setup import host_setup_reader_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ bluetooth_verification_service: BluetoothVerificationService = (
 
 
 update_check_service: UpdateCheckService = UpdateCheckService(fetch_from_env())
-update_service: UpdateService = UpdateService()
+update_service: UpdateService = UpdateService(host_setup=host_setup_reader_from_env())
 
 
 def wire_update_guard(
@@ -232,6 +233,20 @@ def wire_update_guard(
 
 
 wire_update_guard(update_service, relay_service, device_service, survey_service)
+
+
+def wire_host_setup(update: UpdateService, check: UpdateCheckService) -> None:
+    """Update asks the update check which Host setup the offered release
+    needs (``None`` when it couldn't be read)."""
+
+    def _requirement() -> int | None:
+        last = check.status.last_good
+        return last.host_requirement if last is not None else None
+
+    update.set_host_requirement(_requirement)
+
+
+wire_host_setup(update_service, update_check_service)
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers

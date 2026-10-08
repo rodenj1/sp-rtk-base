@@ -18,6 +18,7 @@ from sp_rtk_base.services.update_service import (
     UpdateRefusedError,
     UpdateService,
 )
+from sp_rtk_base.update.host_setup import HostSetup
 from sp_rtk_base.update.state import (
     REASON_DIDNT_START,
     UpdateFiles,
@@ -38,12 +39,24 @@ class Clock:
         return self.now
 
 
+SET_UP = HostSetup(installed=True, enabled=True, plumbing=1)
+
+
 class Guards:
-    """What the guards report: a Survey-in running, a Console link connected."""
+    """What the guards report: a Survey-in running, a Console link connected,
+    the host's Host setup and what the offered release needs."""
 
     def __init__(self) -> None:
         self.survey = False
         self.console = False
+        self.host = SET_UP
+        self.requirement: int | None = 1
+
+    def host_setup(self) -> HostSetup:
+        return self.host
+
+    def host_requirement(self) -> int | None:
+        return self.requirement
 
     async def survey_running(self) -> bool:
         return self.survey
@@ -69,7 +82,10 @@ def guards() -> Guards:
 
 @pytest.fixture()
 def service(files: UpdateFiles, clock: Clock, guards: Guards) -> UpdateService:
-    svc = UpdateService(files, running=RUNNING, clock=clock)
+    svc = UpdateService(
+        files, running=RUNNING, clock=clock, host_setup=guards.host_setup
+    )
+    svc.set_host_requirement(guards.host_requirement)
     svc.set_survey_check(guards.survey_running)
     svc.set_console_check(guards.console_connected)
     return svc
@@ -81,6 +97,144 @@ def _host_writes(files: UpdateFiles, phase: str, at: datetime, **extra: object) 
             {"phase": phase, "from": RUNNING, "to": TARGET, "updated_at": at, **extra}
         )
     )
+
+
+INSTALL_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/"
+    "deploy/install.sh | sudo bash"
+)
+
+
+@pytest.mark.asyncio
+class TestHostSetupBlocks:
+    """Update is offered only when the Host setup fits the release
+    (sp-rtk-base#242); a block writes nothing."""
+
+    async def _refused(self, service: UpdateService, files: UpdateFiles) -> str:
+        with pytest.raises(UpdateRefusedError) as refused:
+            await service.request(TARGET)
+        assert not files.request_path.exists()
+        assert files.read_status() is None
+        return refused.value.code
+
+    async def test_unit_missing(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=False, enabled=False, plumbing=0)
+
+        assert await self._refused(service, files) == "host_setup_missing"
+        refusal = await service.refusal()
+        assert refusal is not None
+        assert refusal.message == (
+            "Update needs a one-time setup on this host. Run this on the base, "
+            "then come back:"
+        )
+
+    async def test_turned_off_on_this_host(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=True, enabled=False, plumbing=1)
+
+        assert await self._refused(service, files) == "update_turned_off"
+        refusal = await service.refusal()
+        assert refusal is not None
+        assert refusal.message == "Update is turned off on this host."
+
+    async def test_the_release_needs_newer_host_setup(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.requirement = 2
+
+        assert await self._refused(service, files) == "host_setup_outdated"
+        refusal = await service.refusal()
+        assert refusal is not None
+        assert refusal.message == (
+            "This release needs a one-time host setup step. Run this on the base, "
+            "then come back:"
+        )
+
+    async def test_the_requirement_cant_be_read(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.requirement = None
+
+        assert await self._refused(service, files) == "host_requirements_unknown"
+        refusal = await service.refusal()
+        assert refusal is not None
+        assert refusal.message == (
+            "Couldn't check this release's host requirements. Check again."
+        )
+
+    async def test_missing_comes_before_everything_else(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=False, enabled=False, plumbing=0)
+        guards.requirement = None
+        guards.console = True
+
+        refusal = await service.refusal()
+
+        assert refusal is not None
+        assert refusal.code == "host_setup_missing"
+
+    async def test_turned_off_comes_before_the_release(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=True, enabled=False, plumbing=0)
+        guards.requirement = 2
+
+        refusal = await service.refusal()
+
+        assert refusal is not None
+        assert refusal.code == "update_turned_off"
+
+    async def test_only_the_setup_blocks_carry_the_command(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        commands: dict[str, str | None] = {}
+        for host, requirement in (
+            (HostSetup(installed=False, enabled=False, plumbing=0), 1),
+            (HostSetup(installed=True, enabled=False, plumbing=1), 1),
+            (SET_UP, 2),
+            (SET_UP, None),
+        ):
+            guards.host, guards.requirement = host, requirement
+            refusal = await service.refusal()
+            assert refusal is not None
+            commands[refusal.code] = refusal.command
+
+        assert commands == {
+            "host_setup_missing": INSTALL_COMMAND,
+            "update_turned_off": None,
+            "host_setup_outdated": INSTALL_COMMAND,
+            "host_requirements_unknown": None,
+        }
+
+    async def test_a_host_with_newer_setup_than_needed_updates(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=True, enabled=True, plumbing=3)
+        guards.requirement = 2
+
+        await service.request(TARGET)
+
+        assert files.request_path.exists()
+
+    async def test_a_host_setup_read_already_is_used_as_is(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        """Settings reads the Host setup once a tick, for both the block and
+        the drift warning."""
+        guards.host = HostSetup(installed=False, enabled=False, plumbing=0)
+
+        assert await service.refusal(host=SET_UP) is None
+
+    async def test_reports_the_host_setup(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        guards.host = HostSetup(installed=True, enabled=False, plumbing=4)
+
+        assert await service.host_setup() == guards.host
 
 
 @pytest.mark.asyncio
@@ -235,7 +389,7 @@ class TestUpdating:
     async def test_requests_from_the_versions_running_here(
         self, files: UpdateFiles
     ) -> None:
-        await UpdateService(files).request(TARGET)
+        await UpdateService(files, host_setup=lambda: SET_UP).request(TARGET)
 
         status = files.read_status()
         assert status is not None

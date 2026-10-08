@@ -37,6 +37,7 @@ from sp_rtk_base.ui.update_progress import (
     KIND_COLOURS,
     RELAY_RUNNING_WARNING,
     confirm_text,
+    failed_here,
     outcome,
     progress_line,
     update_button_text,
@@ -220,6 +221,11 @@ def version_update_card() -> None:
                 )
             running = Versions(app=last.running_app, relay=last.running_relay)
             target = Versions(app=last.target.app, relay=last.target.relay)
+            caption = failed_here(status, target.app)
+            if caption is not None:
+                ui.label(caption).classes("text-caption text-orange-4").props(
+                    'data-testid="update-failed-here"'
+                )
             ui.button(
                 update_button_text(target.app),
                 icon="system_update",

@@ -7,7 +7,8 @@ decided here, in a covered module.
 
 Later Update work adds to the tables here rather than to the pages:
 :data:`FAILED_OUTCOMES` (an outcome per ``reason`` code) and
-:func:`banner` (the banner after a failed Update).
+:func:`banner` (the banner after a failed Update). #241 added the Rollback
+outcomes and banners, and :func:`failed_here`.
 """
 
 from __future__ import annotations
@@ -21,7 +22,10 @@ from sp_rtk_base.update.state import (
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
     REASON_DIDNT_START,
+    REASON_FAILED_TO_START,
     REASON_NEWER_RELEASE,
+    REASON_NO_DISK_SPACE,
+    REASON_SNAPSHOT_FAILED,
     UpdateStatus,
     Versions,
 )
@@ -90,6 +94,15 @@ def progress_line(status: UpdateStatus | None) -> ProgressLine | None:
     """ "Installing… (step 3 of 5)", or ``None`` when no Update runs."""
     if status is None or status.finished:
         return None
+    if status.phase == "rolling_back":
+        steps = len(PHASE_STEPS)
+        start = status.from_.app if status.from_ is not None else "the old version"
+        return ProgressLine(
+            text=f"Rolling back to {start}… (step {steps} of {steps})",
+            step=steps,
+            steps=steps,
+            value=(steps - 0.5) / steps,
+        )
     phases = [phase for phase, _ in PHASE_STEPS]
     if status.phase not in phases:  # pragma: no cover - every running phase is listed
         return None
@@ -125,13 +138,17 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
     """The banner for ``status``, or ``None``.
 
     While an Update runs: "Updating to X…", then "Restarting into X. This
-    page reconnects by itself.", then "Checking X started…". Once it has
-    updated: "Now on X.", until dismissed (``acknowledged``). An Update
-    that changed nothing shows on Settings only.
+    page reconnects by itself.", then "Checking X started…" (or "X failed
+    to start; rolling back to Y…"). Once it has updated: "Now on X.",
+    until dismissed (``acknowledged``); likewise "Update to X failed to
+    start; still on Y." after a Rollback, and a pointer to Settings after a
+    double failure. Any other failure changed nothing that runs and shows
+    on Settings only.
     """
     if status is None:
         return None
     target = status.to.app if status.to is not None else None
+    start = status.from_.app if status.from_ is not None else "the old version"
     if not status.finished:
         if target is None:
             return Banner("Updating…", busy=True)
@@ -139,6 +156,8 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
             text = f"Restarting into {target}. This page reconnects by itself."
         elif status.phase == "verifying":
             text = f"Checking {target} started…"
+        elif status.phase == "rolling_back":
+            text = f"{target} failed to start; rolling back to {start}…"
         else:
             text = f"Updating to {target}…"
         return Banner(text, busy=True)
@@ -146,6 +165,18 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
         return None
     if status.phase == "done" and target is not None:
         return Banner(f"Now on {target}.", kind="positive", dismissible=True)
+    if status.rollback_error is not None:
+        return Banner(
+            "Update failed and could not roll back. See Settings.",
+            kind="negative",
+            dismissible=True,
+        )
+    if status.reason == REASON_FAILED_TO_START and status.rolled_back:
+        return Banner(
+            f"{_target(status)} failed to start; still on {start}.",
+            kind="warning",
+            dismissible=True,
+        )
     return None
 
 
@@ -174,6 +205,32 @@ def _not_started(status: UpdateStatus) -> Outcome:
     )
 
 
+def _ended_at(status: UpdateStatus) -> str:
+    return format_checked_at(status.finished_at or status.updated_at)
+
+
+def _start(status: UpdateStatus) -> str:
+    return status.from_.app if status.from_ is not None else "the old version"
+
+
+def _rolled_back(status: UpdateStatus) -> Outcome:
+    return Outcome(
+        f"{_target(status)} failed to start; rolled back to {_start(status)} "
+        f"on {_ended_at(status)}.",
+        "warning",
+    )
+
+
+def _double_failure(status: UpdateStatus) -> Outcome:
+    start = _start(status)
+    return Outcome(
+        f"{_target(status)} failed and the rollback to {start} failed too. "
+        f"On the base run: sudo deploy/upgrade.sh {start}, and see "
+        "journalctl -u sp-rtk-base-update.",
+        "negative",
+    )
+
+
 FAILED_OUTCOMES: dict[str, Callable[[UpdateStatus], Outcome]] = {
     REASON_DIDNT_START: lambda status: Outcome(
         "Update didn't start: the host didn't pick up the request within 30 s. "
@@ -187,12 +244,23 @@ FAILED_OUTCOMES: dict[str, Callable[[UpdateStatus], Outcome]] = {
     ),
     REASON_CHECK_FAILED: _not_started,
     REASON_BAD_REQUEST: _not_started,
+    REASON_SNAPSHOT_FAILED: _not_started,
+    REASON_NO_DISK_SPACE: lambda status: Outcome(
+        f"{_target(status)} not started: not enough disk space. {NOTHING_CHANGED}",
+        "warning",
+    ),
+    REASON_FAILED_TO_START: _rolled_back,
 }
-"""The outcome of a failed Update, by its ``reason`` code."""
+"""The outcome of a failed Update, by its ``reason`` code. A double failure
+(``rollback_error``) says so whatever the reason."""
 
 
 def _failed(status: UpdateStatus) -> Outcome:
     error = (status.error or "").strip() or "see journalctl -u sp-rtk-base-update."
+    if status.rolled_back:
+        return Outcome(
+            f"{_target(status)} failed: {error} {NOTHING_CHANGED}", "warning"
+        )
     return Outcome(f"{_target(status)} failed: {error}", "negative")
 
 
@@ -206,4 +274,20 @@ def outcome(status: UpdateStatus | None) -> Outcome | None:
         end = status.to.app if status.to is not None else "?"
         when = format_checked_at(status.updated_at)
         return Outcome(f"Updated {start} → {end} on {when}.", "positive")
+    if status.rollback_error is not None:
+        return _double_failure(status)
     return FAILED_OUTCOMES.get(status.reason or "", _failed)(status)
+
+
+def failed_here(status: UpdateStatus | None, target_app: str) -> str | None:
+    """ "X failed to start here on …", under Update while the offered
+    release is one that failed its health check on this base."""
+    if (
+        status is None
+        or status.phase != "failed"
+        or status.reason != REASON_FAILED_TO_START
+        or status.to is None
+        or status.to.app != target_app
+    ):
+        return None
+    return f"{target_app} failed to start here on {_ended_at(status)}."

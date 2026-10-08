@@ -160,6 +160,16 @@ fetch_deploy_file() {
     fi
 }
 
+# require_release_tag
+# A piped install takes its host files from tag $RELEASE_TAG, so that tag
+# must exist. A version built from a checkout (e.g. 0.9.0+dev-<commit>) has
+# none: stop here, before any host file is fetched, rather than half-way.
+require_release_tag() {
+    [[ -z "$DEPLOY_SRC_DIR" ]] || return 0
+    curl -fsSI "${RAW_REPO_URL}/${RELEASE_TAG}/deploy/install.sh" -o /dev/null \
+        || die "sp-rtk-base ${installed_version} has no release tag ${RELEASE_TAG} to take host files from. If this base runs sp-rtk-base from a git checkout, run that checkout's deploy/install.sh instead."
+}
+
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------
@@ -173,6 +183,31 @@ log "Install prefix : ${INSTALL_PREFIX}"
 log "Service user   : ${SERVICE_USER}"
 log "Config dir     : ${CONFIG_DIR}"
 log "State dir      : ${STATE_DIR}"
+
+# A base that runs sp-rtk-base from a checkout (an editable install, as on a
+# development bench) has no release to fetch host files for. A piped
+# install stops before changing anything; the checkout's own installer
+# takes its host files from the checkout.
+if [[ -z "$DEPLOY_SRC_DIR" && -x "${VENV_DIR}/bin/python" ]]; then
+    checkout_dir="$("${VENV_DIR}/bin/python" - <<'PY' 2>/dev/null || true
+import json
+from importlib.metadata import PackageNotFoundError, distribution
+
+try:
+    direct_url = distribution("sp-rtk-base").read_text("direct_url.json")
+except PackageNotFoundError:
+    direct_url = None
+if direct_url:
+    info = json.loads(direct_url)
+    if info.get("dir_info", {}).get("editable") and info["url"].startswith("file://"):
+        print(info["url"][len("file://"):])
+PY
+)"
+    if [[ -n "$checkout_dir" ]]; then
+        die "This base runs sp-rtk-base from the checkout at ${checkout_dir}. Run its installer instead: sudo ${checkout_dir}/deploy/install.sh"
+    fi
+fi
+# End of the checkout guard
 
 # ---------------------------------------------------------------------------
 # Step 1 — OS dependencies
@@ -273,8 +308,13 @@ log "Installing ${pin} and the newest ${RELAY_NAME} it allows from PyPI…"
 installed_version="$("${VENV_DIR}/bin/python" -c 'import sp_rtk_base; print(sp_rtk_base.__version__)')"
 ok "Installed sp-rtk-base ${installed_version}"
 
+# The service user owns the whole tree, as Update's pip (run as that user)
+# needs. Done first, so nothing below can leave root-owned files behind.
+chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"
+
 # "latest" is now a concrete version: host files come from its tag.
 RELEASE_TAG="v${installed_version}"
+require_release_tag
 
 # Shared appliance network-artifact teardown (issue #27/#30), used by Step
 # 6.5. Sourced from the same file uninstall.sh uses, so "tear down the
@@ -284,9 +324,6 @@ fetch_deploy_file shared/net-provision-teardown.sh "$teardown_lib_tmp"
 # shellcheck source=shared/net-provision-teardown.sh
 source "$teardown_lib_tmp"
 rm -f "$teardown_lib_tmp"
-
-# Make sure the whole tree is readable by the service user.
-chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"
 
 # ---------------------------------------------------------------------------
 # Step 6 — Symlink console scripts into /usr/local/bin

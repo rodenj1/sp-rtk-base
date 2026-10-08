@@ -324,3 +324,169 @@ class TestClosingHint:
         assert len(hint) == 1
         assert "upgrade.sh" in hint[0]
         assert "pip install" not in step9
+
+
+# ---------------------------------------------------------------------------
+# install.sh: a piped install stops before changing a base it can't finish
+# ---------------------------------------------------------------------------
+
+
+def _fake_venv_python(tmp_path: Path, *, editable_from: str | None) -> Path:
+    """A venv whose ``bin/python`` answers the checkout question the way
+    the real one would for an editable install (or a regular one)."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin" / "python"
+    answer = f'echo "{editable_from}"' if editable_from else "true"
+    python.write_text(f"#!/bin/sh\ncat >/dev/null\n{answer}\n")
+    python.chmod(0o755)
+    return venv
+
+
+class TestPipedInstallOfACheckout:
+    """test-base, 2026-10-07: a base running sp-rtk-base editable from a
+    git checkout reports a stamped version (``0.9.0+dev-49a04a0``) that
+    has no release tag. A piped ``curl | bash`` install then failed
+    half-way, after pip, on a 404 for its first host file. It must stop
+    before changing anything and say to run the checkout's installer."""
+
+    @pytest.fixture(scope="class")
+    def guard(self, install_text: str) -> str:
+        return _between(
+            install_text,
+            "# A base that runs sp-rtk-base from a checkout",
+            "# End of the checkout guard\n",
+        )
+
+    def _run(
+        self, tmp_path: Path, guard: str, *, src_dir: str, editable_from: str | None
+    ) -> subprocess.CompletedProcess[str]:
+        venv = _fake_venv_python(tmp_path, editable_from=editable_from)
+        script = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE $*" >&2; exit 1; }\n'
+            f'VENV_DIR="{venv}"\n'
+            f'DEPLOY_SRC_DIR="{src_dir}"\n'
+            f"{guard}\n"
+            "echo CONTINUED\n"
+        )
+        return subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+
+    def test_piped_install_over_a_checkout_stops_and_names_its_installer(
+        self, tmp_path: Path, guard: str
+    ) -> None:
+        result = self._run(
+            tmp_path, guard, src_dir="", editable_from="/opt/sp-rtk-base-src"
+        )
+        assert result.returncode != 0
+        assert "CONTINUED" not in result.stdout
+        assert "sudo /opt/sp-rtk-base-src/deploy/install.sh" in result.stderr
+
+    def test_the_checkouts_own_installer_goes_on(
+        self, tmp_path: Path, guard: str
+    ) -> None:
+        result = self._run(
+            tmp_path,
+            guard,
+            src_dir="/opt/sp-rtk-base-src/deploy",
+            editable_from="/opt/sp-rtk-base-src",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "CONTINUED" in result.stdout
+
+    def test_a_regular_install_goes_on(self, tmp_path: Path, guard: str) -> None:
+        result = self._run(tmp_path, guard, src_dir="", editable_from=None)
+        assert result.returncode == 0, result.stderr
+        assert "CONTINUED" in result.stdout
+
+    def test_a_fresh_host_without_a_venv_goes_on(
+        self, tmp_path: Path, guard: str
+    ) -> None:
+        script = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE $*" >&2; exit 1; }\n'
+            f'VENV_DIR="{tmp_path / "missing"}"\n'
+            'DEPLOY_SRC_DIR=""\n'
+            f"{guard}\n"
+            "echo CONTINUED\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        assert "CONTINUED" in result.stdout
+
+    def test_the_guard_runs_before_any_change(self, install_text: str) -> None:
+        guard_idx = install_text.index("# A base that runs sp-rtk-base from a checkout")
+        assert guard_idx < install_text.index("# Step 1 — OS dependencies")
+
+
+class TestRequireReleaseTag:
+    """After pip, a piped install checks the installed version's tag exists
+    before it fetches anything, so a version without one stops with a
+    clear message instead of a bare curl 404."""
+
+    @pytest.fixture(scope="class")
+    def helper(self, install_text: str) -> str:
+        return _function(install_text, "require_release_tag")
+
+    def _run(
+        self, tmp_path: Path, helper: str, *, src_dir: str, tag_exists: bool
+    ) -> subprocess.CompletedProcess[str]:
+        calls = tmp_path / "calls"
+        status = 0 if tag_exists else 22
+        script = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE $*" >&2; exit 1; }\n'
+            f'curl() {{ echo "curl $*" >> "{calls}"; return {status}; }}\n'
+            f'RAW_REPO_URL="{RAW_BASE}"\n'
+            f'DEPLOY_SRC_DIR="{src_dir}"\n'
+            'RELEASE_TAG="v0.9.0+dev-49a04a0"\n'
+            'installed_version="0.9.0+dev-49a04a0"\n'
+            f"{helper}\n"
+            "require_release_tag\n"
+            "echo CONTINUED\n"
+        )
+        return subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+
+    def test_a_version_without_a_tag_stops_with_a_clear_message(
+        self, tmp_path: Path, helper: str
+    ) -> None:
+        result = self._run(tmp_path, helper, src_dir="", tag_exists=False)
+        assert result.returncode != 0
+        assert "CONTINUED" not in result.stdout
+        assert "0.9.0+dev-49a04a0" in result.stderr
+        assert "checkout" in result.stderr
+
+    def test_a_tagged_release_goes_on(self, tmp_path: Path, helper: str) -> None:
+        result = self._run(tmp_path, helper, src_dir="", tag_exists=True)
+        assert result.returncode == 0, result.stderr
+        assert "CONTINUED" in result.stdout
+        calls = (tmp_path / "calls").read_text()
+        assert f"{RAW_BASE}/v0.9.0+dev-49a04a0/deploy/" in calls
+
+    def test_a_checkout_needs_no_tag(self, tmp_path: Path, helper: str) -> None:
+        result = self._run(tmp_path, helper, src_dir="/src/deploy", tag_exists=False)
+        assert result.returncode == 0, result.stderr
+        assert not (tmp_path / "calls").exists()
+
+    def test_it_runs_before_the_first_fetch(self, install_text: str) -> None:
+        check = re.search(r"^require_release_tag$", install_text, re.MULTILINE)
+        first_fetch = re.search(r"^\s*fetch_deploy_file ", install_text, re.MULTILINE)
+        assert check and first_fetch
+        assert check.start() < first_fetch.start()
+
+
+class TestVenvOwnershipRightAfterPip:
+    def test_chown_comes_before_anything_that_can_fail(self, install_text: str) -> None:
+        installed_idx = install_text.index("installed_version=")
+        chown_idx = install_text.index(
+            'chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"'
+        )
+        tag_check = re.search(r"^require_release_tag$", install_text, re.MULTILINE)
+        assert tag_check
+        assert installed_idx < chown_idx < tag_check.start()

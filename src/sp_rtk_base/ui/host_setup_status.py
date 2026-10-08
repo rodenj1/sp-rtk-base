@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sp_rtk_base.services.update_service import REFUSAL_MESSAGES
+from sp_rtk_base.services.update_service import REFUSAL_MESSAGES, UpdateRefusal
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND, PLUMBING_VERSION, HostSetup
 
 DRIFT_TEXT = (
@@ -26,8 +26,12 @@ DRIFT_TEXT = (
     "may not work until you run:"
 )
 
-_HOST_BLOCKS = frozenset({"host_setup_missing", "update_turned_off"})
-_COMMAND_SHOWN = frozenset({"host_setup_missing", "host_setup_outdated"})
+_HOST_BLOCKS: frozenset[UpdateRefusal] = frozenset(
+    {"host_setup_missing", "update_turned_off"}
+)
+_COMMAND_SHOWN: frozenset[UpdateRefusal] = frozenset(
+    {"host_setup_missing", "host_setup_outdated"}
+)
 
 
 @dataclass(frozen=True)
@@ -42,7 +46,7 @@ class HostSetupNotice:
 def host_setup_notice(
     host: HostSetup,
     *,
-    refusal: str | None = None,
+    refusal: UpdateRefusal | None = None,
     running_requires: int = PLUMBING_VERSION,
 ) -> HostSetupNotice | None:
     """The notice for ``host``, or ``None``.

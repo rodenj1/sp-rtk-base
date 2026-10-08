@@ -10,11 +10,11 @@ A failed check shows on Settings only, as "Couldn't check (last checked
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import markdown2  # type: ignore[import-untyped]
 
 from sp_rtk_base.services.update_check import UpdateCheckStatus
+from sp_rtk_base.ui.formatting import format_checked_at
 from sp_rtk_base.update.release_notes import PackageNotes, ReleaseNote
 
 UP_TO_DATE_TEXT = "Up to date."
@@ -39,12 +39,6 @@ class VersionRow:
     label: str
     current: str
     target: str | None
-
-
-def format_checked_at(when: datetime) -> str:
-    """``7 Oct 09:12``, in the base's local time."""
-    local = when.astimezone()
-    return f"{local.day} {local:%b %H:%M}"
 
 
 def check_line(status: UpdateCheckStatus) -> CheckLine:

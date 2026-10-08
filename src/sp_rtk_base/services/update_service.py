@@ -57,7 +57,9 @@ START_TIMEOUT_S: float = 30.0
 """How long the host has to answer ``requested`` before the Update counts
 as not started."""
 
-DIDNT_START_ERROR = "The host didn't pick up the request within 30 s."
+DIDNT_PICK_UP = f"the host didn't pick up the request within {START_TIMEOUT_S:g} s"
+"""Why an Update didn't start, as the error and the outcome both say it."""
+DIDNT_START_ERROR = f"{DIDNT_PICK_UP[0].upper()}{DIDNT_PICK_UP[1:]}."
 
 UpdateRefusal = Literal[
     "survey_running",

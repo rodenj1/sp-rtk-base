@@ -199,6 +199,11 @@ class UpdateStatus(BaseModel):
         return value if value is None or value in get_args(Reason) else None
 
     @property
+    def from_app(self) -> str:
+        """The SP-Base the Update started from, or "the old version"."""
+        return self.from_.app if self.from_ is not None else "the old version"
+
+    @property
     def finished(self) -> bool:
         """The Update has ended, one way or the other."""
         return self.phase in FINISHED_PHASES

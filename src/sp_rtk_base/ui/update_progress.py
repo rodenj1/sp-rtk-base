@@ -17,7 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from sp_rtk_base.ui.update_status import format_checked_at
+from sp_rtk_base.services.update_service import DIDNT_PICK_UP
+from sp_rtk_base.ui.formatting import format_checked_at
 from sp_rtk_base.update.state import (
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
@@ -30,6 +31,7 @@ from sp_rtk_base.update.state import (
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
+    Phase,
     Reason,
     UpdateStatus,
     Versions,
@@ -52,14 +54,33 @@ RELAY_RUNNING_WARNING = (
     "The Relay is running. Corrections stop for about a minute and resume on their own."
 )
 
-PHASE_STEPS: list[tuple[str, str]] = [
-    ("requested", "Waiting for the host"),
-    ("resolving", "Checking the release"),
-    ("installing", "Installing"),
-    ("restarting", "Restarting"),
-    ("verifying", "Checking it started"),
+
+@dataclass(frozen=True)
+class PhaseWords:
+    """What the bar and the banner call a running phase."""
+
+    step: str
+    """The bar's "<step>… (step n of 5)"."""
+    banner: str
+    """The banner, with ``{target}`` for the SP-Base being installed."""
+
+
+PHASE_WORDS: dict[Phase, PhaseWords] = {
+    "requested": PhaseWords("Waiting for the host", "Updating to {target}…"),
+    "resolving": PhaseWords("Checking the release", "Updating to {target}…"),
+    "installing": PhaseWords("Installing", "Updating to {target}…"),
+    "restarting": PhaseWords(
+        "Restarting", "Restarting into {target}. This page reconnects by itself."
+    ),
+    "verifying": PhaseWords("Checking it started", "Checking {target} started…"),
+}
+"""The phases the bar shows, in order, with what the bar and the banner
+say during each. ``rolling_back`` is the last step, worded by its reason."""
+
+PHASE_STEPS: list[tuple[Phase, str]] = [
+    (phase, words.step) for phase, words in PHASE_WORDS.items()
 ]
-"""The phases the bar shows, in order, with what it calls each."""
+"""The bar's steps, in order."""
 
 
 def update_button_text(target_app: str) -> str:
@@ -100,11 +121,10 @@ def progress_line(status: UpdateStatus | None) -> ProgressLine | None:
     """ "Installing… (step 3 of 5)", or ``None`` when no Update runs."""
     if status is None or status.finished:
         return None
+    steps = len(PHASE_STEPS)
     if status.phase == "rolling_back":
-        steps = len(PHASE_STEPS)
-        start = status.from_.app if status.from_ is not None else "the old version"
         return ProgressLine(
-            text=f"Rolling back to {start}… (step {steps} of {steps})",
+            text=f"Rolling back to {status.from_app}… (step {steps} of {steps})",
             step=steps,
             steps=steps,
             value=(steps - 0.5) / steps,
@@ -113,10 +133,8 @@ def progress_line(status: UpdateStatus | None) -> ProgressLine | None:
     if status.phase not in phases:  # pragma: no cover - every running phase is listed
         return None
     index = phases.index(status.phase)
-    steps = len(PHASE_STEPS)
-    name = PHASE_STEPS[index][1]
     return ProgressLine(
-        text=f"{name}… (step {index + 1} of {steps})",
+        text=f"{PHASE_WORDS[status.phase].step}… (step {index + 1} of {steps})",
         step=index + 1,
         steps=steps,
         value=(index + 0.5) / steps,
@@ -154,20 +172,17 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
     if status is None:
         return None
     target = status.to.app if status.to is not None else None
-    start = status.from_.app if status.from_ is not None else "the old version"
+    start = status.from_app
     if not status.finished:
         if target is None:
             return Banner("Updating…", busy=True)
-        if status.phase == "restarting":
-            text = f"Restarting into {target}. This page reconnects by itself."
-        elif status.phase == "verifying":
-            text = f"Checking {target} started…"
-        elif status.phase == "rolling_back" and status.reason == REASON_STOPPED:
+        if status.phase == "rolling_back" and status.reason == REASON_STOPPED:
             text = f"Update to {target} stopped part-way; rolling back to {start}…"
         elif status.phase == "rolling_back":
             text = f"{target} failed to start; rolling back to {start}…"
         else:
-            text = f"Updating to {target}…"
+            words = PHASE_WORDS.get(status.phase, PHASE_WORDS["installing"])
+            text = words.banner.format(target=target)
         return Banner(text, busy=True)
     if acknowledged:
         return None
@@ -181,19 +196,19 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
         )
     if status.reason == REASON_INTERRUPTED:
         return Banner(
-            f"{_target(status)} was interrupted. See Settings.",
+            f"{_update_label(status)} was interrupted. See Settings.",
             kind="negative",
             dismissible=True,
         )
     if status.reason == REASON_FAILED_TO_START and status.rolled_back:
         return Banner(
-            f"{_target(status)} failed to start; still on {start}.",
+            f"{_update_label(status)} failed to start; still on {start}.",
             kind="warning",
             dismissible=True,
         )
     if status.reason == REASON_STOPPED and status.rolled_back:
         return Banner(
-            f"{_target(status)} stopped part-way; still on {start}.",
+            f"{_update_label(status)} stopped part-way; still on {start}.",
             kind="warning",
             dismissible=True,
         )
@@ -213,7 +228,8 @@ class Outcome:
     kind: Kind
 
 
-def _target(status: UpdateStatus) -> str:
+def _update_label(status: UpdateStatus) -> str:
+    """ "Update to X", or "Update" before the target is known."""
     return f"Update to {status.to.app}" if status.to is not None else "Update"
 
 
@@ -221,7 +237,7 @@ def _not_started(status: UpdateStatus) -> Outcome:
     error = (status.error or "").strip()
     reason = f": {error}" if error else ""
     return Outcome(
-        f"{_target(status)} not started{reason} {NOTHING_CHANGED}", "warning"
+        f"{_update_label(status)} not started{reason} {NOTHING_CHANGED}", "warning"
     )
 
 
@@ -229,22 +245,18 @@ def _ended_at(status: UpdateStatus) -> str:
     return format_checked_at(status.finished_at or status.updated_at)
 
 
-def _start(status: UpdateStatus) -> str:
-    return status.from_.app if status.from_ is not None else "the old version"
-
-
 def _rolled_back(status: UpdateStatus) -> Outcome:
     return Outcome(
-        f"{_target(status)} failed to start; rolled back to {_start(status)} "
+        f"{_update_label(status)} failed to start; rolled back to {status.from_app} "
         f"on {_ended_at(status)}.",
         "warning",
     )
 
 
 def _double_failure(status: UpdateStatus) -> Outcome:
-    start = _start(status)
+    start = status.from_app
     return Outcome(
-        f"{_target(status)} failed and the Rollback to {start} failed too. "
+        f"{_update_label(status)} failed and the Rollback to {start} failed too. "
         + recovery_text(start),
         "negative",
     )
@@ -252,9 +264,7 @@ def _double_failure(status: UpdateStatus) -> Outcome:
 
 FAILED_OUTCOMES: dict[Reason, Callable[[UpdateStatus], Outcome]] = {
     REASON_DIDNT_START: lambda status: Outcome(
-        "Update didn't start: the host didn't pick up the request within 30 s. "
-        + NOTHING_CHANGED,
-        "warning",
+        f"Update didn't start: {DIDNT_PICK_UP}. {NOTHING_CHANGED}", "warning"
     ),
     REASON_NEWER_RELEASE: lambda status: Outcome(
         "Update not started: a newer release appeared since you checked. "
@@ -267,12 +277,12 @@ FAILED_OUTCOMES: dict[Reason, Callable[[UpdateStatus], Outcome]] = {
     REASON_HOST_REQUIREMENTS: _not_started,
     REASON_SNAPSHOT_FAILED: _not_started,
     REASON_NO_DISK_SPACE: lambda status: Outcome(
-        f"{_target(status)} not started: not enough disk space. {NOTHING_CHANGED}",
+        f"{_update_label(status)} not started: not enough disk space. {NOTHING_CHANGED}",
         "warning",
     ),
     REASON_FAILED_TO_START: _rolled_back,
     REASON_INTERRUPTED: lambda status: Outcome(
-        f"{_target(status)} was interrupted: {(status.error or '').strip()}",
+        f"{_update_label(status)} was interrupted: {(status.error or '').strip()}",
         "negative",
     ),
 }
@@ -284,9 +294,9 @@ def _failed(status: UpdateStatus) -> Outcome:
     error = (status.error or "").strip() or "see journalctl -u sp-rtk-base-update."
     if status.rolled_back:
         return Outcome(
-            f"{_target(status)} failed: {error} {NOTHING_CHANGED}", "warning"
+            f"{_update_label(status)} failed: {error} {NOTHING_CHANGED}", "warning"
         )
-    return Outcome(f"{_target(status)} failed: {error}", "negative")
+    return Outcome(f"{_update_label(status)} failed: {error}", "negative")
 
 
 def outcome(status: UpdateStatus | None) -> Outcome | None:
@@ -295,7 +305,7 @@ def outcome(status: UpdateStatus | None) -> Outcome | None:
     if status is None or not status.finished:
         return None
     if status.phase == "done":
-        start = status.from_.app if status.from_ is not None else "?"
+        start = status.from_app
         end = status.to.app if status.to is not None else "?"
         when = format_checked_at(status.updated_at)
         return Outcome(f"Updated {start} → {end} on {when}.", "positive")

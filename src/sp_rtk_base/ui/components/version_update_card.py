@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import platform
 import sys
+from dataclasses import dataclass
 
 from nicegui import ui
 
@@ -37,8 +38,8 @@ from sp_rtk_base.services import (
     get_update_service,
 )
 from sp_rtk_base.services.update_check import UpdateCheckStatus, running_relay_version
-from sp_rtk_base.services.update_service import UpdateRefusedError
-from sp_rtk_base.ui.host_setup_status import host_setup_notice
+from sp_rtk_base.services.update_service import UpdateRefusal, UpdateRefusedError
+from sp_rtk_base.ui.host_setup_status import HostSetupNotice, host_setup_notice
 from sp_rtk_base.ui.update_progress import (
     KIND_COLOURS,
     RELAY_RUNNING_WARNING,
@@ -68,6 +69,16 @@ from what was last seen (no ``systemctl``, no receiver read)."""
 _LABEL_WIDTH = "min-width: 140px"
 
 
+@dataclass(frozen=True)
+class _UpdateShown:
+    """What the Update part of the card last drew; redrawn when it changes."""
+
+    check: UpdateCheckStatus
+    status: UpdateStatus | None
+    refusal: UpdateRefusal | None
+    notice: HostSetupNotice | None
+
+
 def version_update_card() -> None:
     """Render the card; it follows the update check while the page is open."""
     service = get_update_check_service()
@@ -78,7 +89,7 @@ def version_update_card() -> None:
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
     shown: list[UpdateCheckStatus | None] = [None]
-    shown_update: list[object] = [None]
+    shown_update: list[_UpdateShown | None] = [None]
 
     async def _check_now() -> None:
         if update.updating():
@@ -215,7 +226,9 @@ def version_update_card() -> None:
         notice = host_setup_notice(
             host, refusal=refusal.code if refusal is not None else None
         )
-        key = (check, status, refusal.code if refusal is not None else None, notice)
+        key = _UpdateShown(
+            check, status, refusal.code if refusal is not None else None, notice
+        )
         if key == shown_update[0]:
             return
         shown_update[0] = key

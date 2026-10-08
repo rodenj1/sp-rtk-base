@@ -19,7 +19,9 @@ file. See ADR 0005. The unit runs it three ways:
   the snapshot is restored, the rollback marker written and the exit is
   non-zero, so the unit's root ``ExecStopPost`` line restarts the old
   version;
-- ``--stopped``, as ``ExecStopPost``, whatever happened: after a Rollback
+- ``--stopped``, as ``ExecStopPost``, whatever happened, also run from
+  ``venv.prev`` when there is one (so a broken release can't stop its own
+  reporting or cleanup; removing ``venv.prev`` is its last step): after a Rollback
   it gives the old version the same health check; it removes the snapshot
   once the running version is healthy; and an Update left half-way (a
   timeout, a crash) is reported ``failed``. A Rollback gets one attempt:
@@ -294,7 +296,7 @@ class Updater:
         if status.phase == "rolling_back" and marked:
             self._rolled_back(status)
         elif status.phase == "done":
-            self._snapshot.remove()
+            self._snapshot.remove()  # last: this may run from venv.prev
         elif not status.finished and status.phase != "requested":
             self._stopped_half_way(status, service_result)
         return EXIT_OK
@@ -309,7 +311,6 @@ class Updater:
         if problem is not None:
             self._double_failure(error, problem, status)
             return
-        self._snapshot.remove()
         self._report(
             status.model_copy(
                 update={
@@ -320,6 +321,7 @@ class Updater:
                 }
             )
         )
+        self._snapshot.remove()  # last: this may run from venv.prev
 
     def _stopped_half_way(self, status: UpdateStatus, service_result: str) -> None:
         error = f"The update stopped while {status.phase} ({service_result})."

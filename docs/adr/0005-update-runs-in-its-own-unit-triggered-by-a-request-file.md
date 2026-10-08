@@ -34,8 +34,8 @@ app can write that file.
 A new version that fails its health check is rolled back automatically.
 Before pip runs, the updater copies the venv to `venv.prev` and
 `/etc/sp-rtk-base/` to a snapshot, so the unit also needs write access to
-`/etc/sp-rtk-base`. The verify step runs from `venv.prev`, the old version's
-code, because a release broken badly enough to fail on import could not
+`/etc/sp-rtk-base`. The verify step, and the reporting and cleanup after
+the unit stops, run from `venv.prev`, the old version's code, because a release broken badly enough to fail on import could not
 judge or undo itself. On failure it restores the snapshot, writes a rollback
 marker in `/var/lib/sp-rtk-base/update/` and exits non-zero. A fixed
 `ExecStopPost=+` line then restarts the app, but only when the marker

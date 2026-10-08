@@ -47,8 +47,10 @@ ExecStart=/opt/sp-rtk-base/venv.prev/bin/python -I -m sp_rtk_base.update.apply -
 ExecStopPost=-+/bin/sh -c 'if [ -e /var/lib/sp-rtk-base/update/rollback ]; then /usr/bin/systemctl restart sp-rtk-base.service; /usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; fi'
 # Then: health-checks the old version after a Rollback (one attempt only),
 # removes the snapshot once the running version is healthy, and reports an
-# Update left half-way as failed.
-ExecStopPost=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update --stopped
+# Update left half-way as failed. Run from venv.prev with -I, like --verify,
+# so a broken release can't stop its own reporting or cleanup; from the
+# venv when there is no snapshot (nothing was installed).
+ExecStopPost=/bin/sh -c '[ -x /opt/sp-rtk-base/venv.prev/bin/python ] && exec /opt/sp-rtk-base/venv.prev/bin/python -I -m sp_rtk_base.update.apply --stopped; exec /opt/sp-rtk-base/venv/bin/python -I -m sp_rtk_base.update.apply --stopped'
 
 # --- Sandboxing / hardening ---------------------------------------------
 # Its own sandbox: writes only the venv, the state dir and the config dir.

@@ -165,9 +165,16 @@ class Host:
         self.systemctl = root / "systemctl"
         self.systemctl_fails(False)
 
-    def pip(self, *, fails: bool, rewrites_config: bool = False) -> None:
+    def pip(
+        self,
+        *,
+        fails: bool,
+        rewrites_config: bool = False,
+        breaks_updater: bool = False,
+    ) -> None:
         """The fake pip installs into the venv on disk (and, as a release
-        that migrates the config would, rewrites ``config.yaml``)."""
+        that migrates the config would, rewrites ``config.yaml``; as one
+        whose code fails on import would, breaks the venv's updater)."""
         pip = self.venv / "bin" / "pip"
         pip.write_text(
             "#!/usr/bin/env bash\n"
@@ -180,6 +187,12 @@ class Host:
             + (
                 f'echo "migrated: true" >> "{self.config_dir}/config.yaml"\n'
                 if rewrites_config
+                else ""
+            )
+            + (
+                f'printf "#!/bin/sh\\nexit 1\\n" | tee "{self.venv}/bin/python" '
+                f'"{self.venv}/bin/sp-rtk-base-apply-update" > /dev/null\n'
+                if breaks_updater
                 else ""
             )
             + ('echo "ERROR: No matching distribution" >&2\nexit 1\n' if fails else "")
@@ -1036,6 +1049,18 @@ class TestTheUnit:
         assert not host.files.request_path.exists()
         assert not host.venv_prev.exists()
 
+    def test_a_release_that_breaks_the_updater_is_still_cleaned_up(
+        self, host: Host
+    ) -> None:
+        """Reporting and removing the snapshot run from the old code too."""
+        host.request()
+        host.pip(fails=False, breaks_updater=True)
+
+        self._systemd(host)
+
+        assert host.status().phase == "done"
+        assert not host.venv_prev.exists()
+
     def test_a_refusal_restarts_nothing(self, host: Host) -> None:
         host.request(app="0.10.0")
 
@@ -1154,6 +1179,16 @@ class TestTheUnit:
         assert verify == (
             "/opt/sp-rtk-base/venv.prev/bin/python -I -m sp_rtk_base.update.apply "
             "--verify"
+        )
+
+    def test_stopped_runs_the_old_code_from_the_snapshot(self) -> None:
+        (stopped,) = [
+            line for line in _unit_lines("ExecStopPost") if "--stopped" in line
+        ]
+        assert (
+            "[ -x /opt/sp-rtk-base/venv.prev/bin/python ] && exec "
+            "/opt/sp-rtk-base/venv.prev/bin/python -I -m sp_rtk_base.update.apply "
+            "--stopped;" in stopped
         )
 
     def test_only_the_restarts_run_as_root(self) -> None:

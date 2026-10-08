@@ -330,6 +330,15 @@ class SurveyService:
         """Whether a Corrected survey-in is running."""
         return self.correction_source_in_use() is not None
 
+    def survey_running_as_last_seen(self) -> bool:
+        """Whether a Survey-in was running when last seen here; never reads
+        the receiver (for a page's poll). A Receiver survey-in started
+        elsewhere shows only once its progress was read."""
+        if self._is_running():
+            return True
+        last = self._progress
+        return last is not None and (last.active or last.outcome == "running")
+
     async def survey_running(self) -> bool:
         """Whether a Survey-in of either kind is running on the receiver.
 

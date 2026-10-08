@@ -806,6 +806,17 @@ class TestProtection:
         assert response.status_code == 409
         assert client.get(f"{SOURCES}/local").status_code == 200
 
+    def test_update_sees_the_survey_without_asking_the_receiver(
+        self, client: TestClient, caster: FakeCaster, rover: RecordingRover
+    ) -> None:
+        """Settings' poll asks this every second (sp-rtk-base#235)."""
+        survey: SurveyService = client.app.dependency_overrides[get_survey_service]()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+        assert not survey.survey_running_as_last_seen()
+
+        self._running(client, caster, rover)
+
+        assert survey.survey_running_as_last_seen()
+
     def test_a_verification_is_refused_while_the_survey_runs(
         self, client: TestClient, caster: FakeCaster, rover: RecordingRover
     ) -> None:

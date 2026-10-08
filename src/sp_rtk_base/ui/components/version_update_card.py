@@ -61,7 +61,9 @@ from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 from sp_rtk_base.update.state import UpdateStatus, Versions
 
 _POLL_S = 1.0
-"""How often the card looks for a new check result (an in-memory read)."""
+"""How often the card looks for a new check result and Update status: an
+in-memory read, a ``stat`` of ``status.json``, and the refusal worked out
+from what was last seen (no ``systemctl``, no receiver read)."""
 
 _LABEL_WIDTH = "min-width: 140px"
 
@@ -83,6 +85,7 @@ def version_update_card() -> None:
             return
         check_button.disable()
         render()
+        await update.refresh_host_setup()
         await service.check_now()
         render()
 
@@ -202,8 +205,12 @@ def version_update_card() -> None:
         status = update.status()
         updating = status is not None and not status.finished
         available = last is not None and last.available
-        host = await update.host_setup()
-        refusal = await update.refusal(host) if available and not updating else None
+        host = await update.host_setup()  # as last read: no systemctl per tick
+        refusal = (
+            await update.refusal(updating=updating)
+            if available and not updating
+            else None
+        )
         command = refusal.command if refusal is not None else None
         notice = host_setup_notice(
             host, refusal=refusal.code if refusal is not None else None
@@ -258,8 +265,13 @@ def version_update_card() -> None:
         render()
         await render_update()
 
+    async def first_render() -> None:
+        # The Host setup is read when Settings opens, then only on Check now.
+        await update.refresh_host_setup()
+        await render_update()
+
     render()
-    ui.timer(0.1, render_update, once=True)
+    ui.timer(0.1, first_render, once=True)
     ui.timer(_POLL_S, refresh)
 
 

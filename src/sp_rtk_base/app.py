@@ -100,8 +100,10 @@ async def startup_services() -> None:
 
     await services_mod.init_services()
 
-    # An Update a power cut left unfinished is failed, not left Updating.
+    # An Update a power cut left unfinished is failed, not left Updating;
+    # the Host setup is read once here (and again on Check now), not per poll.
     await services_mod.update_service.recover_interrupted()
+    await services_mod.update_service.refresh_host_setup()
 
     # Signal Quality polls the receiver in the background while it is
     # connected, so pages (and metrics) see it whether or not one is open.

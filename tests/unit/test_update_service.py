@@ -55,6 +55,10 @@ class Guards:
         self.update_unit: str | None = "inactive"
         """``ActiveState`` of the update unit; ``None``: unreadable."""
         self.snapshot = False
+        self.host_reads = 0
+        self.receiver_reads = 0
+        """How often the receiver was asked whether a Survey-in runs."""
+        self.survey_last_seen = False
 
     def update_unit_state(self) -> str | None:
         return self.update_unit
@@ -63,13 +67,18 @@ class Guards:
         return self.snapshot
 
     def host_setup(self) -> HostSetup:
+        self.host_reads += 1
         return self.host
 
     def host_requirement(self) -> int | None:
         return self.requirement
 
     async def survey_running(self) -> bool:
+        self.receiver_reads += 1
         return self.survey
+
+    def survey_running_as_last_seen(self) -> bool:
+        return self.survey_last_seen
 
     def console_connected(self) -> bool:
         return self.console
@@ -101,7 +110,7 @@ def service(files: UpdateFiles, clock: Clock, guards: Guards) -> UpdateService:
         snapshot_kept=guards.snapshot_kept,
     )
     svc.set_host_requirement(guards.host_requirement)
-    svc.set_survey_check(guards.survey_running)
+    svc.set_survey_check(guards.survey_running, guards.survey_running_as_last_seen)
     svc.set_console_check(guards.console_connected)
     return svc
 
@@ -214,7 +223,7 @@ class TestHostSetupBlocks:
             (SET_UP, None),
         ):
             guards.host, guards.requirement = host, requirement
-            refusal = await service.refusal()
+            refusal = await service.refusal(live=True)
             assert refusal is not None
             commands[refusal.code] = refusal.command
 
@@ -235,21 +244,138 @@ class TestHostSetupBlocks:
 
         assert files.request_path.exists()
 
-    async def test_a_host_setup_read_already_is_used_as_is(
-        self, service: UpdateService, guards: Guards
-    ) -> None:
-        """Settings reads the Host setup once a tick, for both the block and
-        the drift warning."""
-        guards.host = HostSetup(installed=False, enabled=False, plumbing=0)
-
-        assert await service.refusal(host=SET_UP) is None
-
     async def test_reports_the_host_setup(
         self, service: UpdateService, guards: Guards
     ) -> None:
         guards.host = HostSetup(installed=True, enabled=False, plumbing=4)
 
         assert await service.host_setup() == guards.host
+
+
+@pytest.mark.asyncio
+class TestPollingIsCheap:
+    """Settings works out the refusal every second while open: that must not
+    run systemctl or ask the receiver (only Update itself does)."""
+
+    async def test_host_setup_is_read_once_until_refreshed(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        for _ in range(3):
+            await service.refusal()
+            await service.host_setup()
+        assert guards.host_reads == 1
+
+        guards.host = HostSetup(installed=True, enabled=False, plumbing=1)
+        assert await service.refresh_host_setup() == guards.host
+        refusal = await service.refusal()
+
+        assert guards.host_reads == 2
+        assert refusal is not None
+        assert refusal.code == "update_turned_off"
+
+    async def test_update_itself_reads_the_host_afresh(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        await service.refusal()
+        guards.host = HostSetup(installed=False, enabled=False, plumbing=0)
+
+        with pytest.raises(UpdateRefusedError) as refused:
+            await service.request(TARGET)
+
+        assert refused.value.code == "host_setup_missing"
+        assert not files.request_path.exists()
+
+    async def test_the_poll_never_asks_the_receiver(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        guards.survey = True  # on the receiver, not yet seen here
+
+        for _ in range(3):
+            assert await service.refusal() is None
+
+        assert guards.receiver_reads == 0
+
+    async def test_the_poll_uses_the_survey_as_last_seen(
+        self, service: UpdateService, guards: Guards
+    ) -> None:
+        guards.survey_last_seen = True
+
+        refusal = await service.refusal()
+
+        assert refusal is not None
+        assert refusal.code == "survey_running"
+
+    async def test_update_itself_asks_the_receiver(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.survey = True
+
+        with pytest.raises(UpdateRefusedError) as refused:
+            await service.request(TARGET)
+
+        assert refused.value.code == "survey_running"
+        assert guards.receiver_reads == 1
+
+    async def test_an_updating_state_read_already_is_used_as_is(
+        self, service: UpdateService, files: UpdateFiles
+    ) -> None:
+        _host_writes(files, "installing", T0)
+
+        assert await service.refusal(updating=False) is None
+        refusal = await service.refusal()
+        assert refusal is not None
+        assert refusal.code == "updating"
+
+    async def test_status_json_is_parsed_only_when_it_changes(
+        self, files: UpdateFiles, clock: Clock, guards: Guards
+    ) -> None:
+        counting = CountingFiles(files.directory)
+        service = UpdateService(
+            counting, running=RUNNING, clock=clock, host_setup=guards.host_setup
+        )
+        _host_writes(files, "installing", T0)
+
+        for _ in range(3):
+            assert service.updating()
+        assert counting.reads == 1
+
+        _host_writes(files, "done", T0)
+
+        assert not service.updating()
+        assert counting.reads == 2
+
+    async def test_the_dismissal_is_read_once_per_outcome(
+        self, files: UpdateFiles, clock: Clock, guards: Guards
+    ) -> None:
+        counting = CountingFiles(files.directory)
+        service = UpdateService(
+            counting, running=RUNNING, clock=clock, host_setup=guards.host_setup
+        )
+        _host_writes(files, "done", T0)
+        status = service.status()
+        assert status is not None
+
+        for _ in range(3):
+            assert not service.acknowledged(status)
+        service.acknowledge(status)
+        assert service.acknowledged(status)
+
+        assert counting.acknowledged_reads == 1
+
+
+class CountingFiles(UpdateFiles):
+    def __init__(self, directory: Path) -> None:
+        super().__init__(directory)
+        self.reads = 0
+        self.acknowledged_reads = 0
+
+    def read_status(self) -> UpdateStatus | None:
+        self.reads += 1
+        return super().read_status()
+
+    def acknowledged(self, status: UpdateStatus) -> bool:
+        self.acknowledged_reads += 1
+        return super().acknowledged(status)
 
 
 @pytest.mark.asyncio
@@ -333,7 +459,7 @@ class TestRequest:
         async def _unreadable() -> bool:
             raise RuntimeError("Device not connected")
 
-        service.set_survey_check(_unreadable)
+        service.set_survey_check(_unreadable, lambda: False)
 
         await service.request(TARGET)
 

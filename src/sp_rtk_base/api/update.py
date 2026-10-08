@@ -63,12 +63,14 @@ async def check_for_update(
     service: UpdateCheckService = Depends(get_update_check_service),
     update: UpdateService = Depends(get_update_service),
 ) -> UpdateCheckStatus | JSONResponse:
-    """Check now. A failed check still answers 200, with ``last_check_failed``.
+    """Check now, which also reads this host's Host setup again. A failed
+    check still answers 200, with ``last_check_failed``.
 
     409 with ``code: updating`` while an Update runs.
     """
     if update.updating():
         return _refused("updating", UPDATING_MESSAGE)
+    await update.refresh_host_setup()
     return await service.check_now()
 
 

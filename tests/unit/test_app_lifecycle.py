@@ -96,11 +96,17 @@ class TestStartupServices:
         async def _recover() -> None:
             called.append("interrupted")
 
+        async def _host_setup() -> None:
+            called.append("host setup")
+
         monkeypatch.setattr(
             services_mod.update_service, "recover_interrupted", _recover
         )
+        monkeypatch.setattr(
+            services_mod.update_service, "refresh_host_setup", _host_setup
+        )
         await startup_services()
-        assert called == ["init", "interrupted", "sq", "update"]
+        assert called == ["init", "interrupted", "host setup", "sq", "update"]
 
 
 # ---------------------------------------------------------------------------

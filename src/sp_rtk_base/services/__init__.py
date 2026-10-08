@@ -231,7 +231,7 @@ def wire_update_guard(
     async def _survey_running() -> bool:
         return await survey.survey_running()
 
-    update.set_survey_check(_survey_running)
+    update.set_survey_check(_survey_running, survey.survey_running_as_last_seen)
     update.set_console_check(lambda: device.is_connected)
     relay.set_update_check(update.updating)
     device.set_update_check(update.updating)

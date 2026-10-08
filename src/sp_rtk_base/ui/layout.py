@@ -23,8 +23,8 @@ from sp_rtk_base.update.state import UpdateStatus
 
 _UPDATE_POLL_S = 1.0
 """How often the header badge and the page-wide banner look for a new check
-result or Update status (an in-memory read and a small file read)."""
-
+result or Update status (an in-memory read and a ``stat`` of ``status.json``,
+which is parsed again only when it changed)."""
 
 # Navigation structure: list of (section_header | None, label, path, icon)
 # A None section_header means "no header before this item".

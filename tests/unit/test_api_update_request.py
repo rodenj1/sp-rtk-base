@@ -6,6 +6,7 @@ Update through ``status.json``, which the tests write as the host would.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -243,3 +244,17 @@ class TestProgress:
         assert body["status"]["phase"] == "installing"
         assert body["status"]["from"] == {"app": "0.9.0", "relay": "4.1.0"}
         assert body["status"]["to"] == {"app": "0.10.1", "relay": "4.2.0"}
+
+
+class TestCheckNowReadsTheHostAgain:
+    """Settings shows the Host setup as last read; Check now reads it again
+    (after the operator re-ran install.sh, say)."""
+
+    def test_check_now(self, client: TestClient, host: Host) -> None:
+        update: UpdateService = client.app.dependency_overrides[get_update_service]()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+        assert asyncio.run(update.host_setup()) == host.setup
+        host.setup = HostSetup(installed=True, enabled=False, plumbing=1)
+
+        client.post("/api/update/check")
+
+        assert asyncio.run(update.host_setup()) == host.setup

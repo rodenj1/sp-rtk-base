@@ -136,8 +136,16 @@ class UpdateService:
         self._clock = clock
         self._start_timeout = timedelta(seconds=start_timeout_s)
         self._survey_running: Callable[[], Awaitable[bool]] = _no_survey
+        self._survey_as_last_seen: Callable[[], bool] = lambda: False
         self._console_connected: Callable[[], bool] = lambda: False
         self._host_setup = host_setup
+        self._host: HostSetup | None = None
+        """The Host setup as last read: at startup and on Check now."""
+        self._status_key: tuple[int, int, int] | None = None
+        self._status: UpdateStatus | None = None
+        """``status.json`` as last parsed, and the file it was parsed from."""
+        self._acknowledged: tuple[datetime, bool] | None = None
+        """Whether the outcome of that ``updated_at`` was dismissed."""
         self._update_unit_state = update_unit_state
         self._snapshot_kept = snapshot_kept
         self._host_requirement: Callable[[], int | None] = lambda: 0
@@ -147,9 +155,16 @@ class UpdateService:
     # Guards
     # ------------------------------------------------------------------
 
-    def set_survey_check(self, check: Callable[[], Awaitable[bool]]) -> None:
-        """Set what says whether a Survey-in is running."""
+    def set_survey_check(
+        self,
+        check: Callable[[], Awaitable[bool]],
+        as_last_seen: Callable[[], bool],
+    ) -> None:
+        """Set what says whether a Survey-in is running: ``check`` asks the
+        receiver (for Update itself); ``as_last_seen`` doesn't (for the
+        page's poll)."""
         self._survey_running = check
+        self._survey_as_last_seen = as_last_seen
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
         """Set what says whether a Console link is connected."""
@@ -161,29 +176,49 @@ class UpdateService:
         self._host_requirement = requirement
 
     async def host_setup(self) -> HostSetup:
-        """This host's Host setup, as systemd reports it."""
-        return await asyncio.to_thread(self._host_setup)
+        """This host's Host setup as last read (read now if never)."""
+        if self._host is None:
+            return await self.refresh_host_setup()
+        return self._host
 
-    async def refusal(self, host: HostSetup | None = None) -> UpdateRefusedError | None:
+    async def refresh_host_setup(self) -> HostSetup:
+        """Read this host's Host setup from systemd again: at startup and on
+        Check now."""
+        self._host = await asyncio.to_thread(self._host_setup)
+        return self._host
+
+    async def refusal(
+        self, *, live: bool = False, updating: bool | None = None
+    ) -> UpdateRefusedError | None:
         """Why Update would be refused now, or ``None``. Writes nothing.
 
-        ``host``: the Host setup, when the caller has just read it.
+        ``live``: read the Host setup and ask the receiver about a
+        Survey-in now (Update itself); otherwise use what was last seen,
+        which costs nothing (the page's poll). ``updating``: the Updating
+        state, when the caller has just read it.
         """
-        if self.updating():
+        if updating is None:
+            updating = self.updating()
+        if updating:
             return UpdateRefusedError("updating")
-        host_refusal = self._host_refusal(host or await self.host_setup())
+        host = await self.refresh_host_setup() if live else await self.host_setup()
+        host_refusal = self._host_refusal(host)
         if host_refusal is not None:
             return UpdateRefusedError(host_refusal)
-        try:
-            survey = await self._survey_running()
-        except Exception as exc:  # the receiver can't be read: no survey here
-            logger.debug("Survey-in state unreadable for the update guard: %s", exc)
-            survey = False
-        if survey:
+        if await self._survey(live=live):
             return UpdateRefusedError("survey_running")
         if self._console_connected():
             return UpdateRefusedError("console_connected")
         return None
+
+    async def _survey(self, *, live: bool) -> bool:
+        if not live:
+            return self._survey_as_last_seen()
+        try:
+            return await self._survey_running()
+        except Exception as exc:  # the receiver can't be read: no survey here
+            logger.debug("Survey-in state unreadable for the update guard: %s", exc)
+            return False
 
     def _host_refusal(self, host: HostSetup) -> UpdateRefusal | None:
         if not host.installed:
@@ -210,7 +245,7 @@ class UpdateService:
         Raises:
             UpdateRefusedError: a guard refused; nothing was written.
         """
-        refused = await self.refusal()
+        refused = await self.refusal(live=True)
         if refused is not None:
             raise refused
         status = UpdateStatus(
@@ -243,7 +278,7 @@ class UpdateService:
         A ``requested`` the host left unanswered for too long becomes a
         ``failed`` with :data:`REASON_DIDNT_START`.
         """
-        status = self.files.read_status()
+        status = self._read_status()
         if status is None:
             return None
         if (
@@ -255,6 +290,19 @@ class UpdateService:
             # The host names the target once it has resolved it.
             status = status.model_copy(update={"to": self._requested})
         return status
+
+    def _read_status(self) -> UpdateStatus | None:
+        """``status.json``, parsed again only when the file changed (every
+        write replaces it): pages ask several times a second."""
+        try:
+            info = self.files.status_path.stat()
+        except OSError:
+            self._status_key, self._status = None, None
+            return None
+        key = (info.st_ino, info.st_mtime_ns, info.st_size)
+        if key != self._status_key:
+            self._status_key, self._status = key, self.files.read_status()
+        return self._status
 
     def updating(self) -> bool:
         """Whether an Update is running: the Updating state."""
@@ -282,7 +330,7 @@ class UpdateService:
         never finish, because its unit isn't running (a power cut, a
         reboot). ``requested`` is left to the path unit and the 30 s rule;
         an unreadable unit state leaves the status alone."""
-        status = self.files.read_status()
+        status = self._read_status()
         if status is None or status.finished or status.phase == "requested":
             return
         state = await asyncio.to_thread(self._update_unit_state)
@@ -314,7 +362,11 @@ class UpdateService:
     def acknowledge(self, status: UpdateStatus) -> None:
         """The operator dismissed ``status``'s outcome banner."""
         self.files.acknowledge(status)
+        self._acknowledged = (status.updated_at, True)
 
     def acknowledged(self, status: UpdateStatus) -> bool:
-        """Whether the operator has dismissed ``status``'s outcome banner."""
-        return self.files.acknowledged(status)
+        """Whether the operator has dismissed ``status``'s outcome banner
+        (read from disk once per outcome)."""
+        if self._acknowledged is None or self._acknowledged[0] != status.updated_at:
+            self._acknowledged = (status.updated_at, self.files.acknowledged(status))
+        return self._acknowledged[1]

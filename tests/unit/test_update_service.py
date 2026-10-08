@@ -21,6 +21,7 @@ from sp_rtk_base.services.update_service import (
 from sp_rtk_base.update.host_setup import HostSetup
 from sp_rtk_base.update.state import (
     REASON_DIDNT_START,
+    REASON_INTERRUPTED,
     UpdateFiles,
     UpdateStatus,
     Versions,
@@ -51,6 +52,15 @@ class Guards:
         self.console = False
         self.host = SET_UP
         self.requirement: int | None = 1
+        self.update_unit: str | None = "inactive"
+        """``ActiveState`` of the update unit; ``None``: unreadable."""
+        self.snapshot = False
+
+    def update_unit_state(self) -> str | None:
+        return self.update_unit
+
+    def snapshot_kept(self) -> bool:
+        return self.snapshot
 
     def host_setup(self) -> HostSetup:
         return self.host
@@ -83,7 +93,12 @@ def guards() -> Guards:
 @pytest.fixture()
 def service(files: UpdateFiles, clock: Clock, guards: Guards) -> UpdateService:
     svc = UpdateService(
-        files, running=RUNNING, clock=clock, host_setup=guards.host_setup
+        files,
+        running=RUNNING,
+        clock=clock,
+        host_setup=guards.host_setup,
+        update_unit_state=guards.update_unit_state,
+        snapshot_kept=guards.snapshot_kept,
     )
     svc.set_host_requirement(guards.host_requirement)
     svc.set_survey_check(guards.survey_running)
@@ -453,6 +468,108 @@ class TestDidntStart:
 
         assert status is not None
         assert status.phase == "requested"
+
+
+@pytest.mark.asyncio
+class TestInterrupted:
+    """A power cut (or a reboot) mid-Update: the updater never finished, and
+    nothing will. At startup the app fails it rather than stay Updating."""
+
+    def _left(self, files: UpdateFiles, phase: str) -> None:
+        files.write_status(
+            UpdateStatus.model_validate(
+                {"phase": phase, "from": RUNNING, "to": TARGET, "updated_at": T0}
+            )
+        )
+
+    @pytest.mark.parametrize(
+        "phase", ["resolving", "installing", "restarting", "verifying", "rolling_back"]
+    )
+    async def test_an_update_left_unfinished_is_failed(
+        self, service: UpdateService, files: UpdateFiles, phase: str
+    ) -> None:
+        self._left(files, phase)
+
+        await service.recover_interrupted()
+
+        status = service.status()
+        assert status is not None
+        assert status.phase == "failed"
+        assert status.reason == REASON_INTERRUPTED
+        assert status.error is not None
+        assert phase.replace("_", " ") in status.error
+        assert status.finished_at == T0
+        assert status.from_ == RUNNING
+        assert status.to == TARGET
+        assert not service.updating()
+
+    async def test_a_kept_snapshot_points_at_the_recovery_command(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.snapshot = True
+        self._left(files, "installing")
+
+        await service.recover_interrupted()
+
+        status = service.status()
+        assert status is not None
+        assert status.error is not None
+        assert "sudo deploy/upgrade.sh 0.9.0" in status.error
+
+    async def test_without_a_snapshot_there_is_nothing_to_recover(
+        self, service: UpdateService, files: UpdateFiles
+    ) -> None:
+        self._left(files, "resolving")
+
+        await service.recover_interrupted()
+
+        status = service.status()
+        assert status is not None
+        assert status.error is not None
+        assert "upgrade.sh" not in status.error
+
+    @pytest.mark.parametrize("state", ["active", "activating", "deactivating"])
+    async def test_left_alone_while_the_update_unit_runs(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards, state: str
+    ) -> None:
+        """The app restarts during every Update: that is no power cut."""
+        guards.update_unit = state
+        self._left(files, "restarting")
+
+        await service.recover_interrupted()
+
+        assert service.updating()
+
+    async def test_left_alone_when_the_unit_cant_be_read(
+        self, service: UpdateService, files: UpdateFiles, guards: Guards
+    ) -> None:
+        guards.update_unit = None
+        self._left(files, "installing")
+
+        await service.recover_interrupted()
+
+        assert service.updating()
+
+    @pytest.mark.parametrize("phase", ["requested", "done", "failed"])
+    async def test_other_phases_are_left_alone(
+        self, service: UpdateService, files: UpdateFiles, phase: str
+    ) -> None:
+        """``requested``: the path unit picks the request up at boot, and
+        the 30 s rule covers it if it doesn't."""
+        self._left(files, phase)
+
+        await service.recover_interrupted()
+
+        status = service.status()
+        assert status is not None
+        assert status.phase == phase
+
+    async def test_no_update_at_all(
+        self, service: UpdateService, files: UpdateFiles
+    ) -> None:
+        await service.recover_interrupted()
+
+        assert files.read_status() is None
 
 
 class TestAcknowledge:

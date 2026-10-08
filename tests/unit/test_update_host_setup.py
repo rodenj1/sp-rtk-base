@@ -22,7 +22,10 @@ from sp_rtk_base.update.host_setup import (
     host_plumbing_from_env,
     host_setup_reader_from_env,
     read_host_setup,
+    read_update_unit_state,
     required_plumbing,
+    update_unit_idle,
+    update_unit_state_reader_from_env,
 )
 from tests.fixtures.fake_github import FakeGitHub, http_error
 
@@ -245,3 +248,60 @@ class TestTheFakeHost:
         path.write_text(json.dumps({"enabled": False, "plumbing": 1}))
 
         assert read() == HostSetup(installed=True, enabled=False, plumbing=1)
+
+
+class TestTheUpdateUnitsState:
+    """Whether the update unit runs: an Update it left unfinished while it
+    doesn't was cut off (a power cut, a reboot)."""
+
+    def test_reads_active_state(self) -> None:
+        asked: list[list[str]] = []
+
+        def systemctl(args: Sequence[str]) -> str:
+            asked.append(list(args))
+            return "deactivating\n"
+
+        assert read_update_unit_state(systemctl) == "deactivating"
+        assert asked == [
+            ["show", "sp-rtk-base-update.service", "-p", "ActiveState", "--value"]
+        ]
+
+    def test_systemctl_failing_cant_tell(self) -> None:
+        def broken(args: Sequence[str]) -> str:
+            raise subprocess.CalledProcessError(1, "systemctl")
+
+        assert read_update_unit_state(broken) is None
+
+    @pytest.mark.parametrize(
+        ("state", "idle"),
+        [
+            ("inactive", True),
+            ("failed", True),
+            ("active", False),
+            ("activating", False),
+            ("deactivating", False),
+            (None, False),
+        ],
+    )
+    def test_idle_only_when_known_to_run_nothing(
+        self, state: str | None, idle: bool
+    ) -> None:
+        assert update_unit_idle(state) is idle
+
+    def test_no_env_reads_systemctl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(FAKE_HOST_SETUP_ENV, raising=False)
+
+        assert update_unit_state_reader_from_env() is read_update_unit_state
+
+    def test_the_fake_host_says_inactive_unless_told(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "host.json"
+        monkeypatch.setenv(FAKE_HOST_SETUP_ENV, str(path))
+        read = update_unit_state_reader_from_env()
+
+        assert read() == "inactive"
+
+        path.write_text(json.dumps({"update_unit": "activating"}))
+
+        assert read() == "activating"

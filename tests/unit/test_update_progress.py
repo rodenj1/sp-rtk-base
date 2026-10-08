@@ -25,6 +25,7 @@ from sp_rtk_base.update.state import (
     REASON_DIDNT_START,
     REASON_FAILED_TO_START,
     REASON_INSTALL_FAILED,
+    REASON_INTERRUPTED,
     REASON_NEWER_RELEASE,
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
@@ -62,6 +63,14 @@ def _double_failure(reason: str = REASON_FAILED_TO_START) -> UpdateStatus:
         error="SP-Base 0.10.1 didn't start within 90 s.",
         rollback_error="SP-Base 0.9.0 didn't start within 90 s.",
         finished=FINISHED,
+    )
+
+
+def _interrupted() -> UpdateStatus:
+    return _status(
+        "failed",
+        reason=REASON_INTERRUPTED,
+        error="The base restarted while the Update was installing, before it finished.",
     )
 
 
@@ -220,6 +229,14 @@ class TestBanner:
         assert shown.kind == "negative"
         assert shown.dismissible
 
+    def test_an_interrupted_update_points_to_settings(self) -> None:
+        shown = banner(_interrupted(), acknowledged=False)
+
+        assert shown is not None
+        assert shown.text == "Update to 0.10.1 was interrupted. See Settings."
+        assert shown.kind == "negative"
+        assert shown.dismissible
+
     def test_a_pip_failure_that_was_rolled_back_shows_on_settings_only(self) -> None:
         failed = _status(
             "failed", reason=REASON_INSTALL_FAILED, error="pip", rolled_back=True
@@ -344,6 +361,16 @@ class TestOutcome:
         assert shown is not None
         assert shown.text == "Update to 0.10.1 failed: pip exited 1. Nothing changed."
         assert shown.kind == "warning"
+
+    def test_interrupted(self) -> None:
+        shown = outcome(_interrupted())
+
+        assert shown is not None
+        assert shown.text == (
+            "Update to 0.10.1 was interrupted: The base restarted while the "
+            "Update was installing, before it finished."
+        )
+        assert shown.kind == "negative"
 
     @pytest.mark.parametrize("phase", ["requested", "installing", "rolling_back"])
     def test_none_while_updating(self, phase: str) -> None:

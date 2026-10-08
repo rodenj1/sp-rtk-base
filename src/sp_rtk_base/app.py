@@ -100,6 +100,9 @@ async def startup_services() -> None:
 
     await services_mod.init_services()
 
+    # An Update a power cut left unfinished is failed, not left Updating.
+    await services_mod.update_service.recover_interrupted()
+
     # Signal Quality polls the receiver in the background while it is
     # connected, so pages (and metrics) see it whether or not one is open.
     services_mod.signal_quality_service.start()

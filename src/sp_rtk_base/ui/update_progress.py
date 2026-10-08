@@ -25,12 +25,14 @@ from sp_rtk_base.update.state import (
     REASON_FAILED_TO_START,
     REASON_HOST_REQUIREMENTS,
     REASON_HOST_SETUP,
+    REASON_INTERRUPTED,
     REASON_NEWER_RELEASE,
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
     UpdateStatus,
     Versions,
+    recovery_text,
 )
 
 Kind = Literal["info", "positive", "warning", "negative"]
@@ -176,6 +178,12 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
             kind="negative",
             dismissible=True,
         )
+    if status.reason == REASON_INTERRUPTED:
+        return Banner(
+            f"{_target(status)} was interrupted. See Settings.",
+            kind="negative",
+            dismissible=True,
+        )
     if status.reason == REASON_FAILED_TO_START and status.rolled_back:
         return Banner(
             f"{_target(status)} failed to start; still on {start}.",
@@ -236,8 +244,7 @@ def _double_failure(status: UpdateStatus) -> Outcome:
     start = _start(status)
     return Outcome(
         f"{_target(status)} failed and the rollback to {start} failed too. "
-        f"On the base run: sudo deploy/upgrade.sh {start}, and see "
-        "journalctl -u sp-rtk-base-update.",
+        + recovery_text(start),
         "negative",
     )
 
@@ -263,6 +270,10 @@ FAILED_OUTCOMES: dict[str, Callable[[UpdateStatus], Outcome]] = {
         "warning",
     ),
     REASON_FAILED_TO_START: _rolled_back,
+    REASON_INTERRUPTED: lambda status: Outcome(
+        f"{_target(status)} was interrupted: {(status.error or '').strip()}",
+        "negative",
+    ),
 }
 """The outcome of a failed Update, by its ``reason`` code. A double failure
 (``rollback_error``) says so whatever the reason."""

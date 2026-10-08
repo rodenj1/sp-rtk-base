@@ -46,7 +46,10 @@ from sp_rtk_base.services.survey_service import (
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.services.update_service import UpdateService
 from sp_rtk_base.update.fake_release_source import fetch_from_env
-from sp_rtk_base.update.host_setup import host_setup_reader_from_env
+from sp_rtk_base.update.host_setup import (
+    host_setup_reader_from_env,
+    update_unit_state_reader_from_env,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +209,10 @@ bluetooth_verification_service: BluetoothVerificationService = (
 
 
 update_check_service: UpdateCheckService = UpdateCheckService(fetch_from_env())
-update_service: UpdateService = UpdateService(host_setup=host_setup_reader_from_env())
+update_service: UpdateService = UpdateService(
+    host_setup=host_setup_reader_from_env(),
+    update_unit_state=update_unit_state_reader_from_env(),
+)
 
 
 def wire_update_guard(

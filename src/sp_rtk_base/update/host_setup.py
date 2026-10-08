@@ -108,6 +108,29 @@ def read_host_setup(systemctl: Systemctl = run_systemctl) -> HostSetup:
     )
 
 
+UpdateUnitState = Callable[[], "str | None"]
+"""Reads the update unit's ``ActiveState`` (``None``: it can't be read)."""
+
+_UNIT_IDLE_STATES = frozenset({"inactive", "failed"})
+
+
+def read_update_unit_state(systemctl: Systemctl = run_systemctl) -> str | None:
+    """``sp-rtk-base-update.service``'s ``ActiveState``, or ``None`` when
+    systemd can't be asked."""
+    try:
+        out = systemctl(["show", UPDATE_SERVICE, "-p", "ActiveState", "--value"])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.strip() or None
+
+
+def update_unit_idle(state: str | None) -> bool:
+    """Whether the update unit is known to run nothing (an Update it left
+    unfinished will stay so). ``activating`` and ``deactivating`` (its
+    ``ExecStopPost`` lines) are running."""
+    return state in _UNIT_IDLE_STATES
+
+
 def host_plumbing_from_env(environ: Mapping[str, str] | None = None) -> int:
     """The updater's view: the plumbing version its unit sets, else 0."""
     env = os.environ if environ is None else environ
@@ -141,6 +164,16 @@ def host_setup_error(required: int, host: int) -> str:
         f"This release needs a one-time host setup step (Host setup {required}; "
         f"this host has {host}). Run this on the base: {INSTALL_COMMAND}"
     )
+
+
+def update_unit_state_reader_from_env() -> UpdateUnitState:
+    """How the app reads the update unit's state: systemd, or the fake e2e
+    host's ``"update_unit"`` (default ``"inactive"``) when
+    ``SP_RTK_BASE_FAKE_HOST_SETUP`` names a file."""
+    fake = os.environ.get(FAKE_HOST_SETUP_ENV)
+    if fake:
+        return _file_update_unit_state(Path(fake))
+    return read_update_unit_state
 
 
 def host_setup_reader_from_env() -> Callable[[], HostSetup]:
@@ -210,5 +243,17 @@ def _file_host_setup(path: Path) -> Callable[[], HostSetup]:
         except FileNotFoundError:
             data = {}
         return HostSetup.model_validate({**set_up, **cast("dict[str, object]", data)})
+
+    return read
+
+
+def _file_update_unit_state(path: Path) -> UpdateUnitState:
+    def read() -> str | None:
+        try:
+            data: object = json.loads(path.read_text())
+        except FileNotFoundError:
+            data = {}
+        state = cast("dict[str, object]", data).get("update_unit", "inactive")
+        return state if isinstance(state, str) else None
 
     return read

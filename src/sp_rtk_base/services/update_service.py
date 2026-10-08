@@ -13,25 +13,41 @@ Survey-in and Console connect ask before they run.
 If no phase follows ``requested`` within :data:`START_TIMEOUT_S`, the app
 takes the request back and records that the Update didn't start, so a
 path unit enabled later never starts a stale request.
+
+An Update a power cut (or a reboot) cut off is never finished by the
+updater; at startup the app fails it (:meth:`UpdateService.recover_interrupted`)
+rather than stay Updating.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 from sp_rtk_base import __version__ as app_version
 from sp_rtk_base.services.update_check import running_relay_version
-from sp_rtk_base.update.host_setup import INSTALL_COMMAND, HostSetup, read_host_setup
+from sp_rtk_base.update.host_setup import (
+    INSTALL_COMMAND,
+    HostSetup,
+    UpdateUnitState,
+    read_host_setup,
+    read_update_unit_state,
+    update_unit_idle,
+)
+from sp_rtk_base.update.snapshot import DEFAULT_CONFIG_DIR, Snapshot
 from sp_rtk_base.update.state import (
     REASON_DIDNT_START,
+    REASON_INTERRUPTED,
     UpdateFiles,
     UpdateRequest,
     UpdateStatus,
     Versions,
+    recovery_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +112,11 @@ async def _no_survey() -> bool:
     return False
 
 
+def _snapshot_kept() -> bool:
+    """Whether the updater's snapshot is still beside this venv."""
+    return Snapshot(Path(sys.prefix), DEFAULT_CONFIG_DIR).exists
+
+
 class UpdateService:
     """Requests an Update and reports where it is."""
 
@@ -107,6 +128,8 @@ class UpdateService:
         clock: Callable[[], datetime] = _utc_now,
         start_timeout_s: float = START_TIMEOUT_S,
         host_setup: Callable[[], HostSetup] = read_host_setup,
+        update_unit_state: UpdateUnitState = read_update_unit_state,
+        snapshot_kept: Callable[[], bool] = _snapshot_kept,
     ) -> None:
         self.files = files if files is not None else UpdateFiles()
         self._running = running
@@ -115,6 +138,8 @@ class UpdateService:
         self._survey_running: Callable[[], Awaitable[bool]] = _no_survey
         self._console_connected: Callable[[], bool] = lambda: False
         self._host_setup = host_setup
+        self._update_unit_state = update_unit_state
+        self._snapshot_kept = snapshot_kept
         self._host_requirement: Callable[[], int | None] = lambda: 0
         self._requested: Versions | None = None
 
@@ -251,6 +276,36 @@ class UpdateService:
         self.files.write_status(failed)
         logger.warning("Update didn't start: %s", DIDNT_START_ERROR)
         return failed
+
+    async def recover_interrupted(self) -> None:
+        """At startup: fail an Update the updater left unfinished and will
+        never finish, because its unit isn't running (a power cut, a
+        reboot). ``requested`` is left to the path unit and the 30 s rule;
+        an unreadable unit state leaves the status alone."""
+        status = self.files.read_status()
+        if status is None or status.finished or status.phase == "requested":
+            return
+        state = await asyncio.to_thread(self._update_unit_state)
+        if not update_unit_idle(state):
+            return
+        error = (
+            f"The base restarted while the Update was "
+            f"{status.phase.replace('_', ' ')}, before it finished."
+        )
+        if status.from_ is not None and await asyncio.to_thread(self._snapshot_kept):
+            error += f" {recovery_text(status.from_.app)}"
+        self.files.write_status(
+            UpdateStatus(
+                phase="failed",
+                from_=status.from_,
+                to=status.to,
+                error=error,
+                reason=REASON_INTERRUPTED,
+                finished_at=self._clock(),
+                updated_at=self._clock(),
+            )
+        )
+        logger.warning("Update interrupted: %s", error)
 
     # ------------------------------------------------------------------
     # The outcome banner

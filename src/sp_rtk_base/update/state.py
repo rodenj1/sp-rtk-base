@@ -86,11 +86,25 @@ REASON_FAILED_TO_START = "failed_to_start"
 """The new version failed its health check after the restart; see
 ``rolled_back``."""
 
+REASON_INTERRUPTED = "interrupted"
+"""Written by the app at startup: an Update was left unfinished and the
+update unit isn't running (a power cut, a reboot). See ``error``."""
+
 REASON_DIDNT_START = "didnt_start"
 """Written by the app: no phase followed ``requested`` in time, so it took
 the request back. Nothing changed."""
 
 NEWER_RELEASE_ERROR = "A newer release appeared; check again."
+
+
+def recovery_text(start: str) -> str:
+    """What to run on the base when an Update left it neither on the old
+    version nor the new one (a double failure, an interrupted Update)."""
+    return (
+        f"On the base run: sudo deploy/upgrade.sh {start}, and see "
+        "journalctl -u sp-rtk-base-update."
+    )
+
 
 UPDATING_MESSAGE = "An Update is running. Try again once it has finished."
 """Why Start, Survey-in, Console connect and Check now are refused while

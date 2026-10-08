@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CI guard: host files changed since the last tag need a plumbing-version bump.
+"""CI guard: host files changed since the last stable tag need a plumbing-version bump.
 
 Update never rewrites the host's unit files (ADR 0005); a release that
 needs changed ones raises ``deploy/plumbing-version``, so bases are asked
@@ -8,7 +8,7 @@ leave code and host files apart.
 
 The host files are those ``deploy/install.sh`` lays down with
 ``fetch_deploy_file`` (at the last tag or now, so a removed one counts).
-If any changed between the last ``v*`` tag and ``HEAD``, ``HEAD``'s
+If any changed between the last stable ``v*`` tag and ``HEAD``, ``HEAD``'s
 plumbing version must be higher than the tag's (a tag without the file
 has 0). Needs the full history and tags: a shallow clone is an error.
 
@@ -66,8 +66,22 @@ def _plumbing(repo: Path, ref: str) -> int:
 
 
 def last_tag(repo: Path) -> str | None:
-    """The newest ``v*`` tag reachable from ``HEAD``, or ``None``."""
-    done = _git(repo, "describe", "--tags", "--abbrev=0", "--match", "v*", check=False)
+    """The newest stable ``v*`` tag reachable from ``HEAD``, or ``None``.
+
+    Pre-release tags (``v1.2.0-beta.1``) don't count: bases only run
+    stable releases, so a bump is measured against the last one.
+    """
+    done = _git(
+        repo,
+        "describe",
+        "--tags",
+        "--abbrev=0",
+        "--match",
+        "v*",
+        "--exclude",
+        "*-*",
+        check=False,
+    )
     return done.stdout.strip() if done.returncode == 0 else None
 
 

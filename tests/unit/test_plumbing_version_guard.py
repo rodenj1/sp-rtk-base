@@ -124,6 +124,21 @@ class TestTheGuard:
 
         assert repo.guard().returncode == 0
 
+    def test_pre_release_tags_dont_count(self, repo: Repo) -> None:
+        """Bases only run stable releases: a host-file change since the last
+        stable tag needs one bump, however many betas came between."""
+        repo.write("deploy/sp-rtk-base.service", "changed\n")
+        repo.write("deploy/plumbing-version", "1\n")
+        repo.commit()
+        repo.git("tag", "v1.1.0-beta.1")
+        repo.write("deploy/sp-rtk-base-update.service", "changed again\n")
+        repo.commit()
+
+        result = repo.guard()
+
+        assert result.returncode == 0, result.stderr
+        assert "v1.0.0" in result.stdout
+
     def test_removing_a_host_file_counts(self, repo: Repo) -> None:
         (repo.root / "deploy/polkit/10-net.rules").unlink()
         repo.write("deploy/install.sh", INSTALL_SH.replace("polkit", "#"))

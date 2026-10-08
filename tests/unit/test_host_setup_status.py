@@ -56,7 +56,7 @@ class TestDrift:
 
         assert notice is not None
         assert notice.text == (
-            "This version needs a newer host setup than the host has. Some "
+            "This version needs newer Host setup than the host has. Some "
             "features may not work until you run:"
         )
         assert notice.text == DRIFT_TEXT

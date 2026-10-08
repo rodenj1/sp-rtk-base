@@ -344,7 +344,7 @@ class TestOutcome:
 
         assert shown is not None
         assert shown.text == (
-            "Update to 0.10.1 failed and the rollback to 0.9.0 failed too. "
+            "Update to 0.10.1 failed and the Rollback to 0.9.0 failed too. "
             "On the base run: sudo deploy/upgrade.sh 0.9.0, and see "
             "journalctl -u sp-rtk-base-update."
         )

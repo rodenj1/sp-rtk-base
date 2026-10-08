@@ -58,7 +58,7 @@ Phase = Literal[
     "failed",
 ]
 """Where an Update is. ``done`` and ``failed`` end it. ``rolling_back``:
-the new version failed its health check (or the unit stopped part-way),
+the target failed its health check (or the unit stopped part-way),
 the snapshot is restored and the old version is restarting."""
 FINISHED_PHASES: frozenset[str] = frozenset({"done", "failed"})
 
@@ -83,7 +83,7 @@ REASON_NO_DISK_SPACE = "no_disk_space"
 REASON_SNAPSHOT_FAILED = "snapshot_failed"
 """The snapshot couldn't be taken. Nothing changed."""
 REASON_FAILED_TO_START = "failed_to_start"
-"""The new version failed its health check after the restart; see
+"""The target failed its health check after the restart; see
 ``rolled_back``."""
 
 REASON_INTERRUPTED = "interrupted"

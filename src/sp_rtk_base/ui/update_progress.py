@@ -243,7 +243,7 @@ def _rolled_back(status: UpdateStatus) -> Outcome:
 def _double_failure(status: UpdateStatus) -> Outcome:
     start = _start(status)
     return Outcome(
-        f"{_target(status)} failed and the rollback to {start} failed too. "
+        f"{_target(status)} failed and the Rollback to {start} failed too. "
         + recovery_text(start),
         "negative",
     )

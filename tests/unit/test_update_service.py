@@ -173,8 +173,8 @@ class TestHostSetupBlocks:
         refusal = await service.refusal()
         assert refusal is not None
         assert refusal.message == (
-            "This release needs a one-time host setup step. Run this on the base, "
-            "then come back:"
+            "This release needs newer Host setup, a one-time step. Run this on the "
+            "base, then come back:"
         )
 
     async def test_the_requirement_cant_be_read(

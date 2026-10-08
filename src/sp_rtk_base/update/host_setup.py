@@ -50,6 +50,12 @@ INSTALL_COMMAND = (
 """The one-time step that brings a host's Host setup up to date: a bare
 ``install.sh`` re-run, which keeps the mode (and a turned-off Update off)."""
 
+NEEDS_NEWER_HOST_SETUP = (
+    "This release needs newer Host setup, a one-time step. Run this on the base"
+)
+"""How the app's block and the updater's refusal both say it; each adds
+how it ends (the command, or "then come back:" above it)."""
+
 HOST_REQUIREMENTS_ERROR = "Couldn't check this release's host requirements."
 
 FAKE_HOST_SETUP_ENV = "SP_RTK_BASE_FAKE_HOST_SETUP"
@@ -161,8 +167,8 @@ def required_plumbing(fetch: Fetch, app_version: str) -> int:
 def host_setup_error(required: int, host: int) -> str:
     """Why the updater refused a target needing newer Host setup."""
     return (
-        f"This release needs a one-time host setup step (Host setup {required}; "
-        f"this host has {host}). Run this on the base: {INSTALL_COMMAND}"
+        f"{NEEDS_NEWER_HOST_SETUP}: {INSTALL_COMMAND} "
+        f"(it needs Host setup {required}; this host has {host})."
     )
 
 

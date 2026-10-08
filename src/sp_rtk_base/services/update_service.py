@@ -33,6 +33,7 @@ from sp_rtk_base import __version__ as app_version
 from sp_rtk_base.services.update_check import running_relay_version
 from sp_rtk_base.update.host_setup import (
     INSTALL_COMMAND,
+    NEEDS_NEWER_HOST_SETUP,
     HostSetup,
     UpdateUnitState,
     read_host_setup,
@@ -78,10 +79,7 @@ REFUSAL_MESSAGES: dict[UpdateRefusal, str] = {
         "then come back:"
     ),
     "update_turned_off": "Update is turned off on this host.",
-    "host_setup_outdated": (
-        "This release needs a one-time host setup step. Run this on the base, "
-        "then come back:"
-    ),
+    "host_setup_outdated": f"{NEEDS_NEWER_HOST_SETUP}, then come back:",
     "host_requirements_unknown": (
         "Couldn't check this release's host requirements. Check again."
     ),

@@ -76,7 +76,7 @@ class TestRollbackOutcomes:
             "Update failed and could not roll back. See Settings.", timeout=10_000
         )
         expect(card.get_by_test_id("update-outcome")).to_have_text(
-            f"Update to {E2E_UPDATE_APP} failed and the rollback to {running_app} "
+            f"Update to {E2E_UPDATE_APP} failed and the Rollback to {running_app} "
             f"failed too. On the base run: sudo deploy/upgrade.sh {running_app}, "
             "and see journalctl -u sp-rtk-base-update.",
             timeout=10_000,

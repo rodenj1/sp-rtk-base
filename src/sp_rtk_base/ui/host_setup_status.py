@@ -22,7 +22,7 @@ from sp_rtk_base.services.update_service import REFUSAL_MESSAGES
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND, PLUMBING_VERSION, HostSetup
 
 DRIFT_TEXT = (
-    "This version needs a newer host setup than the host has. Some features "
+    "This version needs newer Host setup than the host has. Some features "
     "may not work until you run:"
 )
 

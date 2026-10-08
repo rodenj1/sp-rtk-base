@@ -464,7 +464,10 @@ class TestHostSetup:
         status = host.status()
         assert host.phases == ["resolving", "failed"]
         assert status.reason == "host_setup"
-        assert INSTALL_COMMAND in (status.error or "")
+        assert status.error == (
+            "This release needs newer Host setup, a one-time step. Run this on "
+            f"the base: {INSTALL_COMMAND} (it needs Host setup 2; this host has 1)."
+        )
         assert status.to == Versions(app="0.10.1", relay="4.2.0")
         assert not host.files.request_path.exists()
 

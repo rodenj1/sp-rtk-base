@@ -347,7 +347,7 @@ class Updater:
 
     def _rolled_back(self, status: UpdateStatus) -> None:
         """The old version is back and restarted: it gets the same check."""
-        error = status.error or "The new version failed to start."
+        error = status.error or f"{_app(status.to, 'The target')} failed to start."
         if status.from_ is None:  # pragma: no cover - the updater always records it
             self._double_failure(error, "The old version isn't known.", status)
             return
@@ -460,8 +460,8 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _app(versions: Versions | None) -> str:
-    return f"SP-Base {versions.app}" if versions is not None else "the old version"
+def _app(versions: Versions | None, unknown: str = "the old version") -> str:
+    return f"SP-Base {versions.app}" if versions is not None else unknown
 
 
 def default_venv() -> Path:

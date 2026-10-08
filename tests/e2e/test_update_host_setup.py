@@ -31,12 +31,12 @@ MISSING_TEXT = (
 )
 TURNED_OFF_TEXT = "Update is turned off on this host."
 OUTDATED_TEXT = (
-    "This release needs a one-time host setup step. Run this on the base, "
+    "This release needs newer Host setup, a one-time step. Run this on the base, "
     "then come back:"
 )
 UNKNOWN_TEXT = "Couldn't check this release's host requirements. Check again."
 DRIFT_TEXT = (
-    "This version needs a newer host setup than the host has. Some features "
+    "This version needs newer Host setup than the host has. Some features "
     "may not work until you run:"
 )
 

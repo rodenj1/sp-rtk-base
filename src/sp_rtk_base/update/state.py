@@ -36,15 +36,27 @@ DEFAULT_UPDATE_DIR = Path("/var/lib/sp-rtk-base/update")
 REQUEST_FILENAME = "request.json"
 """The name ``sp-rtk-base-update.path`` watches for."""
 STATUS_FILENAME = "status.json"
+ROLLBACK_MARKER_FILENAME = "rollback"
+"""Written by the updater after it restored the snapshot; the update unit's
+root ``ExecStopPost`` line restarts the app only while it exists."""
 ACKNOWLEDGED_FILENAME = "acknowledged.json"
 """The app's own note of the last outcome the operator dismissed."""
 FORMAT = 1
 """The format version both files are written in."""
 
 Phase = Literal[
-    "requested", "resolving", "installing", "restarting", "verifying", "done", "failed"
+    "requested",
+    "resolving",
+    "installing",
+    "restarting",
+    "verifying",
+    "rolling_back",
+    "done",
+    "failed",
 ]
-"""Where an Update is. ``done`` and ``failed`` end it."""
+"""Where an Update is. ``done`` and ``failed`` end it. ``rolling_back``:
+the new version failed its health check, the snapshot is restored and the
+old version is restarting."""
 FINISHED_PHASES: frozenset[str] = frozenset({"done", "failed"})
 
 # Why an Update failed, so the page can say whether anything changed.
@@ -59,6 +71,13 @@ REASON_INSTALL_FAILED = "install_failed"
 REASON_STOPPED = "stopped"
 """The update unit stopped before the Update finished (a timeout, a failed
 restart, a crash)."""
+REASON_NO_DISK_SPACE = "no_disk_space"
+"""Too little disk space for the snapshot. Nothing changed."""
+REASON_SNAPSHOT_FAILED = "snapshot_failed"
+"""The snapshot couldn't be taken. Nothing changed."""
+REASON_FAILED_TO_START = "failed_to_start"
+"""The new version failed its health check after the restart; see
+``rolled_back``."""
 
 REASON_DIDNT_START = "didnt_start"
 """Written by the app: no phase followed ``requested`` in time, so it took
@@ -116,6 +135,17 @@ class UpdateStatus(BaseModel):
     """Why it failed, in words for the operator."""
     reason: str | None = None
     """Why it failed, as one of the ``REASON_*`` codes."""
+    rolled_back: bool = False
+    """A failed Update restored the snapshot: the base is on ``from`` again."""
+    rollback_error: str | None = None
+    """Why the Rollback failed too (a double failure); ``error`` says why
+    the Update failed."""
+    finished_at: datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices("finished", "finished_at"),
+        serialization_alias="finished",
+    )
+    """When the Update ended (``finished`` on disk)."""
     updated_at: datetime = Field(default_factory=_now)
 
     @property
@@ -189,6 +219,22 @@ class UpdateFiles:
             return UpdateStatus.model_validate_json(text)
         except (OSError, ValidationError):
             return None
+
+    @property
+    def rollback_marker_path(self) -> Path:
+        return self.directory / ROLLBACK_MARKER_FILENAME
+
+    def mark_rollback(self) -> None:
+        """Ask the unit's root ``ExecStopPost`` line to restart the app."""
+        self._write(self.rollback_marker_path, "")
+
+    def take_rollback_marker(self) -> bool:
+        """Delete the rollback marker; whether there was one."""
+        try:
+            self.rollback_marker_path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
     @property
     def acknowledged_path(self) -> Path:

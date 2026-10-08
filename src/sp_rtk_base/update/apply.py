@@ -5,12 +5,24 @@ outside the app's sandbox, when ``sp-rtk-base-update.path`` sees a request
 file. See ADR 0005. The unit runs it three ways:
 
 - with no option, first: take the request, resolve the target, refuse
-  unless it is the request's SP-Base and Relay, then install exactly
-  ``sp-rtk-base==X sp-rtk-base-relay==Y``. Exits non-zero on any refusal
-  or failure, so the unit's root restart lines never run after one;
-- ``--finish``, after the unit has restarted the app: reports ``done``;
-- ``--stopped``, as ``ExecStopPost``, whatever happened: an Update left
-  half-way (a timeout, a failed restart, a crash) is reported ``failed``.
+  unless it is the request's SP-Base and Relay, check there is room for
+  the snapshot, take it (the venv to ``venv.prev``, the config dir to
+  ``config.prev``), then install exactly ``sp-rtk-base==X
+  sp-rtk-base-relay==Y``. A pip failure restores the snapshot. Exits
+  non-zero on any refusal or failure, so the unit's root restart lines
+  never run after one;
+- ``--verify``, after the unit has restarted the app, run from
+  ``venv.prev`` (the old version's code, so a release that fails on import
+  can't stop its own Rollback): the new version is healthy (``done``), or
+  the snapshot is restored, the rollback marker written and the exit is
+  non-zero, so the unit's root ``ExecStopPost`` line restarts the old
+  version;
+- ``--stopped``, as ``ExecStopPost``, whatever happened: after a Rollback
+  it gives the old version the same health check; it removes the snapshot
+  once the running version is healthy; and an Update left half-way (a
+  timeout, a crash) is reported ``failed``. A Rollback gets one attempt:
+  if the old version fails too, the snapshot is kept and both errors are
+  reported.
 
 Every phase is written to ``status.json``. Nothing from the request file
 ever reaches pip: pip only sees the versions resolved here.
@@ -25,9 +37,17 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sp_rtk_base.update.fake_release_source import fetch_from_env
+from sp_rtk_base.update.health import (
+    HEALTH_HOLD_S,
+    HEALTH_TIMEOUT_S,
+    HEALTH_URL,
+    HealthCheck,
+    systemd_restarts,
+)
 from sp_rtk_base.update.release import (
     APP_PACKAGE,
     RELAY_PACKAGE,
@@ -36,14 +56,23 @@ from sp_rtk_base.update.release import (
     ReleaseCheckError,
     resolve_release,
 )
+from sp_rtk_base.update.snapshot import (
+    DEFAULT_CONFIG_DIR,
+    NotEnoughDiskSpaceError,
+    Snapshot,
+)
 from sp_rtk_base.update.state import (
     NEWER_RELEASE_ERROR,
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
+    REASON_FAILED_TO_START,
     REASON_INSTALL_FAILED,
     REASON_NEWER_RELEASE,
+    REASON_NO_DISK_SPACE,
+    REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
     UpdateFiles,
+    UpdateRequest,
     UpdateStatus,
     Versions,
 )
@@ -52,6 +81,14 @@ logger = logging.getLogger(__name__)
 
 VENV_ENV = "SP_RTK_BASE_UPDATE_VENV"
 """Overrides the venv pip installs into (tests); defaults to this one."""
+CONFIG_DIR_ENV = "SP_RTK_BASE_UPDATE_CONFIG_DIR"
+"""Overrides the config dir the snapshot covers (tests)."""
+HEALTH_URL_ENV = "SP_RTK_BASE_UPDATE_HEALTH_URL"
+HEALTH_TIMEOUT_ENV = "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S"
+HEALTH_HOLD_ENV = "SP_RTK_BASE_UPDATE_HEALTH_HOLD_S"
+SYSTEMCTL_ENV = "SP_RTK_BASE_UPDATE_SYSTEMCTL"
+"""Override the health check's endpoint, its 90 s and 30 s, and the
+``systemctl`` it reads ``NRestarts`` with (tests)."""
 
 _PIP_ERROR_LINES = 5
 """How much of pip's stderr goes into ``error``."""
@@ -80,13 +117,19 @@ class Updater:
         fetch: Fetch,
         python: PythonVersion,
         venv: Path,
+        config_dir: Path = DEFAULT_CONFIG_DIR,
         installed: Callable[[], Versions] = installed_versions,
+        health: Callable[[Versions], str | None] | None = None,
     ) -> None:
         self._files = files
         self._fetch = fetch
         self._python = python
         self._venv = venv
         self._installed = installed
+        self._snapshot = Snapshot(venv, config_dir)
+        self._health = health if health is not None else HealthCheck()
+        self._current: UpdateStatus | None = None
+        """What this run last reported."""
 
     def apply(self) -> int:
         """Take the request and install the target it names, or refuse."""
@@ -98,9 +141,17 @@ class Updater:
         if request is None:
             logger.info("No update request; nothing to do")
             return EXIT_NOTHING_TO_DO
+        try:
+            return self._install(request)
+        except Exception as exc:
+            logger.exception("The updater crashed")
+            status = self._current or UpdateStatus(phase="resolving")
+            self._stopped_half_way(status, f"crashed: {exc!r}")
+            return EXIT_FAILED
 
+    def _install(self, request: UpdateRequest) -> int:
         from_ = self._installed()
-        self._files.write_status(UpdateStatus(phase="resolving", from_=from_))
+        self._report(UpdateStatus(phase="resolving", from_=from_))
         try:
             target = resolve_release(self._fetch, self._python)
         except ReleaseCheckError as exc:
@@ -118,7 +169,23 @@ class Updater:
             self._fail(REASON_NEWER_RELEASE, NEWER_RELEASE_ERROR, from_=from_, to=to)
             return EXIT_FAILED
 
-        self._files.write_status(UpdateStatus(phase="installing", from_=from_, to=to))
+        try:
+            self._snapshot.check_space()
+        except NotEnoughDiskSpaceError as exc:
+            self._fail(REASON_NO_DISK_SPACE, str(exc), from_=from_, to=to)
+            return EXIT_FAILED
+        try:
+            self._snapshot.take()
+        except OSError as exc:
+            self._fail(
+                REASON_SNAPSHOT_FAILED,
+                f"Couldn't save the current version before updating: {exc}",
+                from_=from_,
+                to=to,
+            )
+            return EXIT_FAILED
+
+        self._report(UpdateStatus(phase="installing", from_=from_, to=to))
         pip = subprocess.run(
             [
                 str(self._venv / "bin" / "pip"),
@@ -134,7 +201,8 @@ class Updater:
         )
         if pip.returncode != 0:
             tail = "\n".join(pip.stderr.strip().splitlines()[-_PIP_ERROR_LINES:])
-            self._fail(
+            # Nothing restarted: the old app still runs, on restored files.
+            self._restore_and_fail(
                 REASON_INSTALL_FAILED,
                 f"pip failed (exit {pip.returncode}): {tail}",
                 from_=from_,
@@ -142,36 +210,138 @@ class Updater:
             )
             return EXIT_FAILED
 
-        self._files.write_status(UpdateStatus(phase="restarting", from_=from_, to=to))
+        self._report(UpdateStatus(phase="restarting", from_=from_, to=to))
         return EXIT_OK
 
-    def finish(self) -> int:
-        """After the restart: the Update is done."""
+    def verify(self) -> int:
+        """After the restart: ``done`` if the new version is healthy, else
+        restore the snapshot and leave the marker for the unit's root
+        ``ExecStopPost`` line, which restarts the old version."""
         status = self._files.read_status()
-        if status is None or status.phase != "restarting":
-            logger.warning("No restarted Update to finish")
+        if status is None or status.phase != "restarting" or status.to is None:
+            logger.warning("No restarted Update to verify")
+            return EXIT_FAILED
+        from_, to = status.from_, status.to
+        self._files.write_status(UpdateStatus(phase="verifying", from_=from_, to=to))
+        problem = self._check(to)
+        if problem is None:
+            self._files.write_status(
+                UpdateStatus(phase="done", from_=from_, to=to, finished_at=_now())
+            )
+            return EXIT_OK
+        logger.error("Rolling back: %s", problem)
+        try:
+            self._snapshot.restore()
+        except OSError as exc:
+            self._double_failure(problem, f"Restoring {_app(from_)} failed: {exc}")
             return EXIT_FAILED
         self._files.write_status(
-            UpdateStatus(phase="done", from_=status.from_, to=status.to)
+            UpdateStatus(
+                phase="rolling_back",
+                from_=from_,
+                to=to,
+                error=problem,
+                reason=REASON_FAILED_TO_START,
+            )
         )
-        return EXIT_OK
+        self._files.mark_rollback()
+        return EXIT_FAILED
 
     def stopped(self, service_result: str) -> int:
-        """The unit has stopped: an Update it left half-way has failed."""
+        """The unit has stopped. After a Rollback, check the old version;
+        once the running version is healthy, remove the snapshot; and fail
+        an Update left half-way."""
+        marked = self._files.take_rollback_marker()
         status = self._files.read_status()
-        if status is None or status.phase not in (
-            "resolving",
-            "installing",
-            "restarting",
-        ):
+        if status is None:
             return EXIT_OK
-        self._fail(
-            REASON_STOPPED,
-            f"The update stopped while {status.phase} ({service_result}).",
-            from_=status.from_,
-            to=status.to,
-        )
+        if status.phase == "rolling_back" and marked:
+            self._rolled_back(status)
+        elif status.phase == "done":
+            self._snapshot.remove()
+        elif not status.finished and status.phase != "requested":
+            self._stopped_half_way(status, service_result)
         return EXIT_OK
+
+    def _rolled_back(self, status: UpdateStatus) -> None:
+        """The old version is back and restarted: it gets the same check."""
+        error = status.error or "The new version failed to start."
+        if status.from_ is None:  # pragma: no cover - the updater always records it
+            self._double_failure(error, "The old version isn't known.", status)
+            return
+        problem = self._check(status.from_)
+        if problem is not None:
+            self._double_failure(error, problem, status)
+            return
+        self._snapshot.remove()
+        self._files.write_status(
+            status.model_copy(
+                update={
+                    "phase": "failed",
+                    "rolled_back": True,
+                    "finished_at": _now(),
+                    "updated_at": _now(),
+                }
+            )
+        )
+
+    def _stopped_half_way(self, status: UpdateStatus, service_result: str) -> None:
+        error = f"The update stopped while {status.phase} ({service_result})."
+        if status.phase == "installing" and self._snapshot.exists:
+            self._restore_and_fail(
+                REASON_STOPPED, error, from_=status.from_, to=status.to
+            )
+            return
+        self._fail(REASON_STOPPED, error, from_=status.from_, to=status.to)
+
+    def _report(self, status: UpdateStatus) -> None:
+        self._current = status
+        self._files.write_status(status)
+
+    def _check(self, expected: Versions) -> str | None:
+        """The health check; a crash in it counts as unhealthy."""
+        try:
+            return self._health(expected)
+        except Exception as exc:
+            logger.exception("The health check crashed")
+            return f"The health check failed: {exc!r}"
+
+    def _restore_and_fail(
+        self,
+        reason: str,
+        error: str,
+        *,
+        from_: Versions | None,
+        to: Versions | None,
+    ) -> None:
+        """Put the snapshot back before the app restarted, then report."""
+        try:
+            self._snapshot.restore()
+        except OSError as exc:
+            self._fail(
+                reason,
+                error,
+                from_=from_,
+                to=to,
+                rollback_error=f"Restoring {_app(from_)} failed: {exc}",
+            )
+            return
+        self._snapshot.remove()
+        self._fail(reason, error, from_=from_, to=to, rolled_back=True)
+
+    def _double_failure(
+        self, error: str, rollback_error: str, status: UpdateStatus | None = None
+    ) -> None:
+        """The Rollback failed too: one attempt only; the snapshot stays."""
+        if status is None:
+            status = self._files.read_status()
+        self._fail(
+            REASON_FAILED_TO_START,
+            error,
+            from_=status.from_ if status is not None else None,
+            to=status.to if status is not None else None,
+            rollback_error=rollback_error,
+        )
 
     def _fail(
         self,
@@ -180,33 +350,86 @@ class Updater:
         *,
         from_: Versions | None = None,
         to: Versions | None = None,
+        rolled_back: bool = False,
+        rollback_error: str | None = None,
     ) -> None:
         logger.error("Update failed: %s", error)
+        if rollback_error is not None:
+            logger.error("Rollback failed: %s", rollback_error)
         self._files.write_status(
-            UpdateStatus(phase="failed", from_=from_, to=to, error=error, reason=reason)
+            UpdateStatus(
+                phase="failed",
+                from_=from_,
+                to=to,
+                error=error,
+                reason=reason,
+                rolled_back=rolled_back,
+                rollback_error=rollback_error,
+                finished_at=_now(),
+            )
         )
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _app(versions: Versions | None) -> str:
+    return f"SP-Base {versions.app}" if versions is not None else "the old version"
+
+
+def default_venv() -> Path:
+    """The venv this runs from; the live one when that is ``venv.prev``
+    (the unit's verify line)."""
+    prefix = Path(sys.prefix)
+    if prefix.name.endswith(".prev"):
+        return prefix.with_name(prefix.name[: -len(".prev")])
+    return prefix
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return float(value) if value else default
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one step of the updater; return the exit code."""
     parser = argparse.ArgumentParser(prog="sp-rtk-base-apply-update")
     step = parser.add_mutually_exclusive_group()
-    step.add_argument("--finish", action="store_true", help="report the Update done")
     step.add_argument(
-        "--stopped", action="store_true", help="fail an Update the unit left half-way"
+        "--verify",
+        action="store_true",
+        help="after the restart: check the new version, or roll back",
+    )
+    step.add_argument(
+        "--stopped",
+        action="store_true",
+        help="after the unit: check a rolled-back version, clean up, fail a "
+        "half-way Update",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     venv = os.environ.get(VENV_ENV)
+    config_dir = os.environ.get(CONFIG_DIR_ENV)
+    health = HealthCheck(
+        url=os.environ.get(HEALTH_URL_ENV) or HEALTH_URL,
+        timeout_s=_float_env(HEALTH_TIMEOUT_ENV, HEALTH_TIMEOUT_S),
+        hold_s=_float_env(HEALTH_HOLD_ENV, HEALTH_HOLD_S),
+        restarts=systemd_restarts(
+            os.environ.get(SYSTEMCTL_ENV) or "/usr/bin/systemctl"
+        ),
+    )
     updater = Updater(
         UpdateFiles(),
         fetch=fetch_from_env(),
         python=tuple(sys.version_info[:3]),
-        venv=Path(venv) if venv else Path(sys.prefix),
+        venv=Path(venv) if venv else default_venv(),
+        config_dir=Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR,
+        health=health,
     )
-    if args.finish:
-        return updater.finish()
+    if args.verify:
+        return updater.verify()
     if args.stopped:
         return updater.stopped(os.environ.get("SERVICE_RESULT", "unknown"))
     return updater.apply()

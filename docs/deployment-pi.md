@@ -257,12 +257,45 @@ web UI without giving the app any privilege (see
   `/var/lib/sp-rtk-base` and `/etc/sp-rtk-base`.
 - The unit runs `sp-rtk-base-apply-update` as `sp-rtk-base`. It deletes the
   request, resolves the newest release itself, refuses unless that is what
-  the request named ("A newer release appeared; check again."), and installs
-  exactly `sp-rtk-base==X sp-rtk-base-relay==Y`.
-- Its only root steps are two fixed lines that restart `sp-rtk-base` and
-  (if present) `sp-rtk-base-net-provision`.
+  the request named ("A newer release appeared; check again."), checks there
+  is room for a snapshot ("not enough disk space" otherwise), copies the
+  venv to `/opt/sp-rtk-base/venv.prev` and `/etc/sp-rtk-base` to
+  `/opt/sp-rtk-base/config.prev`, and installs exactly
+  `sp-rtk-base==X sp-rtk-base-relay==Y`. If pip fails, the snapshot is put
+  back and nothing restarts.
+- Its only root steps are fixed lines that restart `sp-rtk-base` and
+  (if present) `sp-rtk-base-net-provision`: once after pip, and once more
+  only if the rollback marker `/var/lib/sp-rtk-base/update/rollback` exists.
+- **Health check and Rollback.** After the restart, the old version's code
+  (run from `venv.prev`) checks the new one: within 90 s
+  `http://127.0.0.1:8080/api/health` must report the new SP-Base and Relay,
+  still answer 30 s later, and `NRestarts` must not have gone up. If not,
+  it restores the snapshot, writes the marker, and the unit restarts the
+  old version, which gets the same check. The snapshot is deleted once the
+  running version is healthy. If the old version fails too, there is no
+  second attempt: the snapshot is kept, Settings says so, and recovery is
+  `sudo deploy/upgrade.sh <previous version>`.
 - Progress and outcome go to `/var/lib/sp-rtk-base/update/status.json`; the
   unit's log is `sudo journalctl -u sp-rtk-base-update`.
+
+**Checking Rollback on a real Pi** (once per release that touches the
+Update mechanism; the tests fake systemd):
+
+1. From Settings, update to a good release. Expect "Now on X." and no
+   `/opt/sp-rtk-base/venv.prev` afterwards.
+2. Offer a broken release: build a wheel of a newer version whose
+   `sp_rtk_base/__init__.py` raises on import, put it in a directory, and
+   add `systemctl edit` drop-ins: `SP_RTK_BASE_FAKE_PYPI_DIR=<a fake index
+   naming it>` on both `sp-rtk-base` and `sp-rtk-base-update`, plus
+   `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=<the wheel dir>` on
+   `sp-rtk-base-update`. Check now, then update to it. Remove the drop-ins
+   afterwards.
+3. Expect, within about two minutes: the banner "Update to X failed to
+   start; still on Y.", the Settings outcome "… rolled back to Y on …",
+   X still offered with "X failed to start here on …", `systemctl status
+   sp-rtk-base` active on Y, no `update/rollback` marker and no `venv.prev`.
+4. `sudo journalctl -u sp-rtk-base-update` shows both restarts and the
+   health-check errors.
 
 **Turning Update off.** Install with `--no-update`, or disable the path
 unit; the web app cannot turn it back on, and a later `install.sh` re-run

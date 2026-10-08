@@ -16,18 +16,35 @@ WorkingDirectory=/var/lib/sp-rtk-base
 Environment=SP_RTK_BASE_UPDATE_DIR=/var/lib/sp-rtk-base/update
 # The service user has no home for pip's cache.
 Environment=PIP_NO_CACHE_DIR=1
-# pip on a Pi can take minutes; a oneshot has no start timeout by default.
+# pip on a Pi can take minutes, the health check up to two more; a oneshot
+# has no start timeout by default.
 TimeoutStartSec=15min
+# ExecStopPost health-checks the old version after a Rollback: up to two
+# minutes, more than the default 90 s stop timeout.
+TimeoutStopSec=5min
 
-# Take the request, check it against the target resolved here, and pip
-# install exactly that target as sp-rtk-base. Exits non-zero on any refusal
-# or failure, which stops the unit before the restart lines below.
+# Take the request, check it against the target resolved here, check there
+# is room for the snapshot, take it (venv -> venv.prev, /etc/sp-rtk-base ->
+# config.prev) and pip install exactly that target as sp-rtk-base. A pip
+# failure restores the snapshot. Exits non-zero on any refusal or failure,
+# which stops the unit before the restart lines below.
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update
-# The only root steps: fixed lines, never built from the request.
-ExecStart=+/usr/bin/systemctl restart sp-rtk-base.service
-ExecStart=+/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service
-ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update --finish
-# Runs however the unit ended: an Update left half-way is reported failed.
+# The only root steps: fixed lines, never built from the request. "-": a
+# failed restart is judged by the health check below, not here.
+ExecStart=-+/usr/bin/systemctl restart sp-rtk-base.service
+ExecStart=-+/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service
+# The health check, run from venv.prev: the old version's code, so a release
+# that fails on import can't stop its own Rollback. -I keeps the state dir
+# (the working directory, which the app can write) off sys.path. Unhealthy:
+# restores the snapshot, writes update/rollback and exits non-zero.
+ExecStart=/opt/sp-rtk-base/venv.prev/bin/python -I -m sp_rtk_base.update.apply --verify
+# Runs however the unit ended. Restarts the restored old version, only when
+# the rollback marker exists: a compromised app that plants it gains only a
+# restart of itself.
+ExecStopPost=-+/bin/sh -c 'if [ -e /var/lib/sp-rtk-base/update/rollback ]; then /usr/bin/systemctl restart sp-rtk-base.service; /usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; fi'
+# Then: health-checks the old version after a Rollback (one attempt only),
+# removes the snapshot once the running version is healthy, and reports an
+# Update left half-way as failed.
 ExecStopPost=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update --stopped
 
 # --- Sandboxing / hardening ---------------------------------------------

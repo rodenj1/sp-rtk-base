@@ -16,6 +16,7 @@ import pytest
 
 from sp_rtk_base.update.state import (
     UPDATE_DIR_ENV,
+    ProgressRecord,
     UpdateFiles,
     UpdateRequest,
     UpdateStatus,
@@ -231,3 +232,29 @@ class TestDirectory:
         files.write_request(UpdateRequest(app="0.10.1", relay="4.2.0"))
 
         assert files.request_path.exists()
+
+
+class TestProgressRecord:
+    """The updater's own copy of what it reported, out of the app's reach."""
+
+    def test_reads_back_what_was_written(self, tmp_path: Path) -> None:
+        record = ProgressRecord(tmp_path / "update-progress.json")
+        status = UpdateStatus(
+            phase="installing",
+            from_=Versions(app="0.9.0", relay="4.1.0"),
+            to=Versions(app="0.10.1", relay="4.2.0"),
+        )
+
+        record.write(status)
+
+        assert record.read() == status
+
+    @pytest.mark.parametrize("text", [None, "not json", '{"phase": "nope"}'])
+    def test_none_when_missing_or_unreadable(
+        self, tmp_path: Path, text: str | None
+    ) -> None:
+        path = tmp_path / "update-progress.json"
+        if text is not None:
+            path.write_text(text)
+
+        assert ProgressRecord(path).read() is None

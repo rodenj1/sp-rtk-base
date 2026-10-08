@@ -39,6 +39,9 @@ STATUS_FILENAME = "status.json"
 ROLLBACK_MARKER_FILENAME = "rollback"
 """Written by the updater after it restored the snapshot; the update unit's
 root ``ExecStopPost`` line restarts the app only while it exists."""
+PROGRESS_FILENAME = "update-progress.json"
+"""The updater's own record of the phase, beside the venv and the snapshot
+(``/opt/sp-rtk-base``), where the app can't write; see :class:`ProgressRecord`."""
 ACKNOWLEDGED_FILENAME = "acknowledged.json"
 """The app's own note of the last outcome the operator dismissed."""
 FORMAT = 1
@@ -261,17 +264,48 @@ class UpdateFiles:
         return seen.updated_at == status.updated_at
 
     def _write(self, path: Path, text: str) -> None:
-        """Write ``path`` atomically: a temp file beside it, then a rename."""
         self.directory.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.unlink(missing_ok=True)  # a leftover from a crash
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+        _write_atomically(path, text)
+
+
+class ProgressRecord:
+    """The updater's own record of where the Update is.
+
+    ``status.json`` is the report to the app, which can write it too, so
+    a compromised app could forge a phase. Whether to verify, restore the
+    snapshot or roll back is decided from this record instead: it lives
+    beside the snapshot (``/opt/sp-rtk-base``), which only the update unit
+    can write. It holds the same :class:`UpdateStatus` the updater last
+    reported.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def write(self, status: UpdateStatus) -> None:
+        _write_atomically(self.path, status.model_dump_json(by_alias=True))
+
+    def read(self) -> UpdateStatus | None:
+        """What the updater last reported, or ``None`` if it never has (or
+        the record can't be read)."""
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        os.replace(tmp, path)
+            text = self.path.read_text(encoding="utf-8")
+            return UpdateStatus.model_validate_json(text)
+        except (OSError, ValidationError):
+            return None
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Write ``path`` atomically: a temp file beside it, then a rename."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.unlink(missing_ok=True)  # a leftover from a crash
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, path)

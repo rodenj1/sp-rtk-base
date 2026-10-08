@@ -26,8 +26,11 @@ file. See ADR 0005. The unit runs it three ways:
   if the old version fails too, the snapshot is kept and both errors are
   reported.
 
-Every phase is written to ``status.json``. Nothing from the request file
-ever reaches pip: pip only sees the versions resolved here.
+Every phase is written to the updater's own record beside the venv
+(``update-progress.json``, out of the app's reach), which decides what the
+updater does, and reported to the app in ``status.json``, which never
+does. Nothing from the request file ever reaches pip: pip only sees the
+versions resolved here.
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ from sp_rtk_base.update.snapshot import (
 )
 from sp_rtk_base.update.state import (
     NEWER_RELEASE_ERROR,
+    PROGRESS_FILENAME,
     REASON_BAD_REQUEST,
     REASON_CHECK_FAILED,
     REASON_FAILED_TO_START,
@@ -82,6 +86,7 @@ from sp_rtk_base.update.state import (
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
+    ProgressRecord,
     UpdateFiles,
     UpdateRequest,
     UpdateStatus,
@@ -143,6 +148,7 @@ class Updater:
             host_plumbing if host_plumbing is not None else host_plumbing_from_env()
         )
         self._snapshot = Snapshot(venv, config_dir)
+        self._progress = ProgressRecord(venv.with_name(PROGRESS_FILENAME))
         self._health = health if health is not None else HealthCheck()
         self._current: UpdateStatus | None = None
         """What this run last reported."""
@@ -247,15 +253,15 @@ class Updater:
         """After the restart: ``done`` if the new version is healthy, else
         restore the snapshot and leave the marker for the unit's root
         ``ExecStopPost`` line, which restarts the old version."""
-        status = self._files.read_status()
+        status = self._progress.read()
         if status is None or status.phase != "restarting" or status.to is None:
             logger.warning("No restarted Update to verify")
             return EXIT_FAILED
         from_, to = status.from_, status.to
-        self._files.write_status(UpdateStatus(phase="verifying", from_=from_, to=to))
+        self._report(UpdateStatus(phase="verifying", from_=from_, to=to))
         problem = self._check(to)
         if problem is None:
-            self._files.write_status(
+            self._report(
                 UpdateStatus(phase="done", from_=from_, to=to, finished_at=_now())
             )
             return EXIT_OK
@@ -265,7 +271,7 @@ class Updater:
         except OSError as exc:
             self._double_failure(problem, f"Restoring {_app(from_)} failed: {exc}")
             return EXIT_FAILED
-        self._files.write_status(
+        self._report(
             UpdateStatus(
                 phase="rolling_back",
                 from_=from_,
@@ -282,7 +288,7 @@ class Updater:
         once the running version is healthy, remove the snapshot; and fail
         an Update left half-way."""
         marked = self._files.take_rollback_marker()
-        status = self._files.read_status()
+        status = self._progress.read()
         if status is None:
             return EXIT_OK
         if status.phase == "rolling_back" and marked:
@@ -304,7 +310,7 @@ class Updater:
             self._double_failure(error, problem, status)
             return
         self._snapshot.remove()
-        self._files.write_status(
+        self._report(
             status.model_copy(
                 update={
                     "phase": "failed",
@@ -325,7 +331,14 @@ class Updater:
         self._fail(REASON_STOPPED, error, from_=status.from_, to=status.to)
 
     def _report(self, status: UpdateStatus) -> None:
+        """Record ``status`` in the updater's own record, then report it to
+        the app in ``status.json``. The report goes out even when the
+        record can't be written (``/opt`` read-only or full)."""
         self._current = status
+        try:
+            self._progress.write(status)
+        except OSError:
+            logger.exception("Couldn't record the phase %s", status.phase)
         self._files.write_status(status)
 
     def _check(self, expected: Versions) -> str | None:
@@ -364,7 +377,7 @@ class Updater:
     ) -> None:
         """The Rollback failed too: one attempt only; the snapshot stays."""
         if status is None:
-            status = self._files.read_status()
+            status = self._progress.read()
         self._fail(
             REASON_FAILED_TO_START,
             error,
@@ -386,7 +399,7 @@ class Updater:
         logger.error("Update failed: %s", error)
         if rollback_error is not None:
             logger.error("Rollback failed: %s", rollback_error)
-        self._files.write_status(
+        self._report(
             UpdateStatus(
                 phase="failed",
                 from_=from_,

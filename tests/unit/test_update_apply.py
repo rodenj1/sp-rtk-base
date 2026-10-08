@@ -30,7 +30,13 @@ import pytest
 
 from sp_rtk_base.update.apply import main
 from sp_rtk_base.update.health import app_health_url, systemd_health_url
-from sp_rtk_base.update.state import UpdateFiles, UpdateRequest, UpdateStatus, Versions
+from sp_rtk_base.update.state import (
+    ProgressRecord,
+    UpdateFiles,
+    UpdateRequest,
+    UpdateStatus,
+    Versions,
+)
 from tests.fixtures.fake_pypi import FakePyPI
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -134,6 +140,8 @@ class Host:
         prints."""
         self.app_environment.write_text("SP_RTK_BASE_CONFIG=/etc/x\n")
         self.files = UpdateFiles(self.update_dir)
+        self.progress = ProgressRecord(root / "update-progress.json")
+        """The updater's own record, beside the venv: out of the app's reach."""
         self.phases: list[str] = []
         """Every phase written to status.json, in order."""
         self.pypi = FakePyPI()
@@ -239,11 +247,22 @@ class Host:
         return status
 
     def write_status(self, phase: str, **fields: object) -> None:
-        self.files.write_status(
-            UpdateStatus.model_validate(
-                {"phase": phase, "from": RUNNING.model_dump(), **fields}
-            )
-        )
+        """``status.json`` alone: what the app (or a compromised one) can
+        write."""
+        self.files.write_status(_status(phase, **fields))
+
+    def updater_wrote(self, phase: str, **fields: object) -> None:
+        """As the updater would have reported ``phase``: its own record
+        beside the snapshot, and ``status.json``."""
+        status = _status(phase, **fields)
+        self.progress.write(status)
+        self.files.write_status(status)
+
+
+def _status(phase: str, **fields: object) -> UpdateStatus:
+    return UpdateStatus.model_validate(
+        {"phase": phase, "from": RUNNING.model_dump(), **fields}
+    )
 
 
 @pytest.fixture()
@@ -667,7 +686,7 @@ class TestVerify:
     def test_only_verifies_an_update_that_restarted(
         self, host: Host, monkeypatch: pytest.MonkeyPatch, phase: str
     ) -> None:
-        host.write_status(phase)
+        host.updater_wrote(phase)
 
         assert run(host, monkeypatch, "--verify") != 0
 
@@ -758,7 +777,7 @@ class TestStopped:
     def test_an_unfinished_update_is_failed(
         self, host: Host, monkeypatch: pytest.MonkeyPatch, phase: str
     ) -> None:
-        host.write_status(phase, to=None)
+        host.updater_wrote(phase, to=None)
         monkeypatch.setenv("SERVICE_RESULT", "timeout")
 
         assert run(host, monkeypatch, "--stopped") == 0
@@ -836,7 +855,7 @@ class TestStopped:
         host.pip(fails=False, rewrites_config=True)
         run(host, monkeypatch)
         # As if pip had timed out half-way.
-        host.write_status("installing", to=TARGET.model_dump())
+        host.updater_wrote("installing", to=TARGET.model_dump())
         monkeypatch.setenv("SERVICE_RESULT", "timeout")
 
         assert run(host, monkeypatch, "--stopped") == 0
@@ -853,7 +872,7 @@ class TestStopped:
     def test_leaves_other_phases_alone(
         self, host: Host, monkeypatch: pytest.MonkeyPatch, phase: str
     ) -> None:
-        host.write_status(phase, error="kept")
+        host.updater_wrote(phase, error="kept")
 
         run(host, monkeypatch, "--stopped")
 
@@ -869,13 +888,53 @@ class TestStopped:
     def test_a_planted_marker_without_a_rollback_changes_nothing(
         self, host: Host, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        host.write_status("done", to=TARGET.model_dump())
+        host.updater_wrote("done", to=TARGET.model_dump())
         host.files.mark_rollback()
 
         assert run(host, monkeypatch, "--stopped") == 0
 
         assert host.status().phase == "done"
         assert not host.files.rollback_marker_path.exists()
+
+
+class TestAForgedStatus:
+    """The app can write ``status.json``; a compromised one could forge it.
+    The updater decides from its own record, which the app can't write."""
+
+    def test_never_restores_a_kept_snapshot(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.request()
+        assert run(host, monkeypatch) == 0
+        assert run(host, monkeypatch, "--verify") == 0  # done; snapshot kept
+        host.write_status("installing", to=TARGET.model_dump())
+
+        assert run(host, monkeypatch, "--stopped") == 0
+
+        assert host.installed == TARGET
+        assert not host.venv_prev.exists()
+
+    def test_never_verifies_an_update_the_updater_didnt_restart(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.write_status("restarting", to=TARGET.model_dump())
+        host.phases.clear()
+
+        assert run(host, monkeypatch, "--verify") != 0
+
+        assert host.phases == []
+        assert not host.files.rollback_marker_path.exists()
+
+    def test_the_record_is_beside_the_snapshot(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.request()
+        assert run(host, monkeypatch) == 0
+
+        record = host.progress.read()
+        assert record is not None
+        assert record.phase == "restarting"
+        assert record.to == TARGET
 
 
 def test_the_updater_can_run_without_the_web_app() -> None:
@@ -1079,7 +1138,7 @@ class TestTheUnit:
         assert host.status().phase == "done"
 
     def test_a_planted_marker_gains_only_a_restart(self, host: Host) -> None:
-        host.write_status("done", to=TARGET.model_dump())
+        host.updater_wrote("done", to=TARGET.model_dump())
         host.files.mark_rollback()
 
         calls = self._systemd(host)

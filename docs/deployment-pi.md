@@ -1222,9 +1222,9 @@ cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/upgrade.sh "$R"
 systemctl list-unit-files 'sp-rtk-base-update*'    # expect: 0 unit files listed.
 ```
 
-- [ ] **Web UI:** Settings has the **Version & Update** card. It warns
-  "This version needs a newer host setup than the host has. Some features
-  may not work until you run:", above a code block holding
+- [ ] **Web UI:** Settings has the **Version & Update** card. With no
+  update offered yet it says "Update needs a one-time setup on this host.
+  Run this on the base, then come back:", above a code block holding
   `curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh | sudo bash`.
 - [ ] Offer `G`:
 
@@ -1234,8 +1234,7 @@ make_index && offer_test_releases
 
   The badge reads **Update <G>**. The card shows "Update needs a one-time
   setup on this host. Run this on the base, then come back:", with the
-  same command block, and **Update to <G>** is disabled. The drift warning
-  isn't shown a second time.
+  same command block, once, and **Update to <G>** is disabled.
 
 #### B4. Bootstrap: one `install.sh` re-run
 

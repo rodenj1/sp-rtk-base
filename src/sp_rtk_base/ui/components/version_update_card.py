@@ -6,8 +6,11 @@ checked …)") and Check now; the SP-Base and Relay rows read
 release that needs a newer Python. For an Available update, the Release
 notes follow in a collapsed expander with SP-Base / Relay tabs, then
 **Update to X** (sp-rtk-base#240): disabled with the reason in amber while
-it's refused, and while an Update runs, a thin bar with its phase. The last
-Update's outcome is a stripe at the top. Python and Platform rows follow.
+it's refused (a Host setup block adds the one-time ``install.sh``
+command to copy), and while an Update runs, a thin bar with its phase. The last
+Update's outcome is a stripe at the top. When the running version needs
+newer Host setup than the host has, a warning shows with the same command.
+Python and Platform rows follow.
 
 What it says is decided in ``ui/update_status`` (a covered module). Later
 Update work (Release notes, the Update button, Host setup) extends
@@ -33,6 +36,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.update_check import UpdateCheckStatus, running_relay_version
 from sp_rtk_base.services.update_service import UpdateRefusedError
+from sp_rtk_base.ui.host_setup_status import drift_warning
 from sp_rtk_base.ui.update_progress import (
     KIND_COLOURS,
     RELAY_RUNNING_WARNING,
@@ -50,6 +54,7 @@ from sp_rtk_base.ui.update_status import (
     up_to_date,
     version_rows,
 )
+from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 from sp_rtk_base.update.state import UpdateStatus, Versions
 
 _POLL_S = 1.0
@@ -194,8 +199,11 @@ def version_update_card() -> None:
         status = update.status()
         updating = status is not None and not status.finished
         available = last is not None and last.available
-        refusal = await update.refusal() if available and not updating else None
-        key = (check, status, refusal.code if refusal is not None else None)
+        host = await update.host_setup()
+        refusal = await update.refusal(host) if available and not updating else None
+        command = refusal.command if refusal is not None else None
+        drift = drift_warning(host, command_shown=command is not None)
+        key = (check, status, refusal.code if refusal is not None else None, drift)
         if key == shown_update[0]:
             return
         shown_update[0] = key
@@ -212,12 +220,19 @@ def version_update_card() -> None:
                 ui.label(line.text).classes("text-grey-4 text-caption").props(
                     'data-testid="update-progress"'
                 )
+            if drift is not None:
+                ui.label(drift).classes("text-warning text-caption").props(
+                    'data-testid="update-drift"'
+                )
+                _install_command("update-drift-command")
             if last is None or not available:
                 return
             if refusal is not None and refusal.code != "updating":
                 ui.label(refusal.message).classes("text-warning text-caption").props(
                     'data-testid="update-refusal"'
                 )
+                if command is not None:
+                    _install_command("update-refusal-command")
             running = Versions(app=last.running_app, relay=last.running_relay)
             target = Versions(app=last.target.app, relay=last.target.relay)
             ui.button(
@@ -235,6 +250,13 @@ def version_update_card() -> None:
     render()
     ui.timer(0.1, render_update, once=True)
     ui.timer(_POLL_S, refresh)
+
+
+def _install_command(test_id: str) -> None:
+    """The one-time ``install.sh`` re-run, in a block with a copy button."""
+    ui.code(INSTALL_COMMAND, language="bash").classes("w-full q-my-xs").props(
+        f'data-testid="{test_id}"'
+    )
 
 
 def _outcome_stripe(area: ui.column, status: UpdateStatus | None) -> None:

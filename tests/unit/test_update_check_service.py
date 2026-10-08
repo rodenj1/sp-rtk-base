@@ -10,7 +10,7 @@ import pytest
 
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.update.release import NewerNeedsPython
-from tests.fixtures.fake_github import FakeGitHub, Web, changelog_url
+from tests.fixtures.fake_github import FakeGitHub, Web, changelog_url, plumbing_url
 from tests.fixtures.fake_pypi import APP_INDEX, FakePyPI
 
 pytestmark = pytest.mark.asyncio
@@ -166,6 +166,49 @@ class TestReleaseNotes:
         assert notes is not None
         assert not notes.app.loaded
         assert not notes.relay.loaded
+
+
+class TestHostRequirement:
+    """An Available update brings the Host setup it needs (sp-rtk-base#242)."""
+
+    async def test_reads_the_targets_plumbing_version(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        github = FakeGitHub()
+        github.publish_plumbing("0.10.0", 2)
+        pypi.publish_app("0.10.0")
+
+        status = await _service(Web(pypi, github), clock).check_now()
+
+        assert status.last_good is not None
+        assert status.last_good.host_requirement == 2
+        assert status.last_good.host_requirement_error is None
+        assert plumbing_url("0.10.0") in github.fetched
+
+    async def test_a_requirement_that_cant_be_read_is_not_a_failed_check(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        github = FakeGitHub()
+        pypi.publish_app("0.10.0")
+
+        status = await _service(Web(pypi, github), clock).check_now()
+
+        assert not status.last_check_failed
+        assert status.last_good is not None
+        assert status.last_good.available
+        assert status.last_good.host_requirement is None
+        assert status.last_good.host_requirement_error
+
+    async def test_up_to_date_reads_no_requirement(
+        self, pypi: FakePyPI, clock: Clock
+    ) -> None:
+        github = FakeGitHub()
+
+        status = await _service(Web(pypi, github), clock).check_now()
+
+        assert status.last_good is not None
+        assert status.last_good.host_requirement is None
+        assert status.last_good.host_requirement_error is None
 
 
 class TestFailedCheck:

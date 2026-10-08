@@ -31,6 +31,13 @@ TARGET_RELAY = "4.2.0"
 # What runs in this test environment: the dev install.
 RUNNING = Versions(app="0.9.0", relay="4.1.0")
 NEWER_RELEASE = "A newer release appeared; check again."
+PLUMBING_FILE = (
+    "raw.githubusercontent.com/rodenj1/sp-rtk-base/v0.10.1/deploy/plumbing-version"
+)
+INSTALL_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/"
+    "deploy/install.sh | sudo bash"
+)
 
 
 class Host:
@@ -48,6 +55,10 @@ class Host:
         self.pypi = FakePyPI()
         self.pypi.publish_app(TARGET_APP)
         self.pypi.publish_relay(TARGET_RELAY)
+        self.required_plumbing: int | None = 1
+        """The target tag's ``deploy/plumbing-version``; ``None``: no file."""
+        self.host_plumbing = "1"
+        """``SP_RTK_BASE_PLUMBING`` in the unit (``install.sh`` writes it)."""
         (self.venv / "bin").mkdir(parents=True)
         self.pip_fails(False)
 
@@ -68,7 +79,14 @@ class Host:
 
     def env(self) -> dict[str, str]:
         self.pypi.write_to(self.pypi_dir)
+        plumbing = self.pypi_dir / PLUMBING_FILE
+        plumbing.parent.mkdir(parents=True, exist_ok=True)
+        if self.required_plumbing is None:
+            plumbing.unlink(missing_ok=True)
+        else:
+            plumbing.write_text(f"{self.required_plumbing}\n")
         return {
+            "SP_RTK_BASE_PLUMBING": self.host_plumbing,
             "SP_RTK_BASE_UPDATE_DIR": str(self.update_dir),
             "SP_RTK_BASE_UPDATE_VENV": str(self.venv),
             "SP_RTK_BASE_FAKE_PYPI_DIR": str(self.pypi_dir),
@@ -235,6 +253,66 @@ class TestRefusals:
 
         assert host.pip_calls == []
         assert host.files.read_status() is None
+
+
+class TestHostSetup:
+    """The updater checks the target's Host setup itself, so a stale page
+    can't get past it (sp-rtk-base#242)."""
+
+    def test_a_target_needing_newer_host_setup_is_refused(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.required_plumbing = 2
+        host.request()
+
+        assert run(host, monkeypatch) != 0
+
+        assert host.pip_calls == []
+        status = host.status()
+        assert host.phases == ["resolving", "failed"]
+        assert status.reason == "host_setup"
+        assert INSTALL_COMMAND in (status.error or "")
+        assert status.to == Versions(app="0.10.1", relay="4.2.0")
+        assert not host.files.request_path.exists()
+
+    def test_a_host_without_the_plumbing_line_has_0(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.host_plumbing = ""
+        host.request()
+
+        assert run(host, monkeypatch) != 0
+
+        assert host.pip_calls == []
+        assert host.status().reason == "host_setup"
+
+    def test_a_requirement_that_cant_be_read_is_refused(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.required_plumbing = None
+        host.request()
+
+        assert run(host, monkeypatch) != 0
+
+        assert host.pip_calls == []
+        status = host.status()
+        assert status.reason == "host_requirements"
+        assert status.error is not None
+        assert status.error.startswith(
+            "Couldn't check this release's host requirements"
+        )
+
+    @pytest.mark.parametrize(("required", "has"), [(1, "1"), (0, "1"), (2, "3")])
+    def test_a_host_with_enough_setup_installs(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch, required: int, has: str
+    ) -> None:
+        host.required_plumbing = required
+        host.host_plumbing = has
+        host.request()
+
+        assert run(host, monkeypatch) == 0
+
+        assert len(host.pip_calls) == 1
 
 
 class TestPipFailing:
@@ -410,6 +488,16 @@ class TestTheUnit:
         assert host.pip_calls == []
         assert host.status().phase == "failed"
         assert host.status().error == NEWER_RELEASE
+
+    def test_a_host_setup_refusal_restarts_nothing(self, host: Host) -> None:
+        host.required_plumbing = 2
+        host.request()
+
+        calls = self._systemd(host)
+
+        assert calls == []
+        assert host.pip_calls == []
+        assert host.status().reason == "host_setup"
 
     def test_a_failed_restart_ends_in_failed(self, host: Host) -> None:
         host.request()

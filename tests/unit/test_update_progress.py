@@ -202,3 +202,30 @@ class TestOutcome:
 
     def test_none_without_an_update(self) -> None:
         assert outcome(None) is None
+
+
+class TestHostSetupOutcomes:
+    """The updater refused because of Host setup (sp-rtk-base#242): nothing
+    changed, and the stripe says why."""
+
+    def test_the_release_needs_newer_host_setup(self) -> None:
+        shown = outcome(
+            _status("failed", reason="host_setup", error="Run install.sh once.")
+        )
+
+        assert shown is not None
+        assert shown.text == (
+            "Update to 0.10.1 not started: Run install.sh once. Nothing changed."
+        )
+        assert shown.kind == "warning"
+
+    def test_the_requirement_couldnt_be_read(self) -> None:
+        shown = outcome(
+            _status("failed", reason="host_requirements", error="Couldn't check.")
+        )
+
+        assert shown is not None
+        assert shown.text == (
+            "Update to 0.10.1 not started: Couldn't check. Nothing changed."
+        )
+        assert shown.kind == "warning"

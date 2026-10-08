@@ -29,6 +29,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from sp_rtk_base.update.host_setup import PLUMBING_VERSION
 from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.fake_pypi import FakePyPI
 
@@ -107,6 +108,8 @@ def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     github.publish_changelog(
         "sp-rtk-base", E2E_UPDATE_APP, E2E_CHANGELOG, on_top_of="0.9.0"
     )
+    # The Available update needs the Host setup the e2e host has.
+    github.publish_plumbing(E2E_UPDATE_APP, PLUMBING_VERSION)
     github.publish_release(
         "sp-rtk-base",
         E2E_RELEASE_BODY_APP,
@@ -129,6 +132,23 @@ def update_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("update")
 
 
+@pytest.fixture(scope="session")
+def host_setup_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The e2e server's Host setup, instead of systemd: ``{"installed",
+    "enabled", "plumbing"}``, read on every look. No file is a host set up
+    for the running version."""
+    return tmp_path_factory.mktemp("host-setup") / "host-setup.json"
+
+
+@pytest.fixture()
+def host_setup(host_setup_file: Path) -> Iterator[Path]:
+    """The test plays the host by writing ``host_setup_file``; a host set up
+    for this version before and after."""
+    host_setup_file.unlink(missing_ok=True)
+    yield host_setup_file
+    host_setup_file.unlink(missing_ok=True)
+
+
 @pytest.fixture()
 def clean_update(update_dir: Path) -> Iterator[Path]:
     """No Update before or after the test: an Update left running would
@@ -145,7 +165,10 @@ def clean_update(update_dir: Path) -> Iterator[Path]:
 
 @pytest.fixture(scope="session")
 def sp_rtk_base_server(
-    tmp_path_factory: pytest.TempPathFactory, fake_pypi_dir: Path, update_dir: Path
+    tmp_path_factory: pytest.TempPathFactory,
+    fake_pypi_dir: Path,
+    update_dir: Path,
+    host_setup_file: Path,
 ) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
@@ -184,6 +207,8 @@ def sp_rtk_base_server(
     env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
     # The fake update backend: the request file and status.json land here.
     env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
+    # The fake Host setup: the units' state comes from this file, not systemd.
+    env["SP_RTK_BASE_FAKE_HOST_SETUP"] = str(host_setup_file)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

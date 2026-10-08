@@ -13,6 +13,7 @@ Debian-based host) as a systemd-managed service running under a dedicated
 | [`sp-rtk-base-net-provision.service`](sp-rtk-base-net-provision.service) | Independent systemd unit for the headless network-provisioning supervisor (issue #9) |
 | [`sp-rtk-base-update.service`](sp-rtk-base-update.service) | Oneshot unit that installs an Update the web UI asked for (ADR 0005) |
 | [`sp-rtk-base-update.path`](sp-rtk-base-update.path) | Starts the Update unit when the app writes its request file; disabled by `install.sh --no-update` |
+| [`plumbing-version`](plumbing-version) | The Host setup these files make up, as an integer. `install.sh` writes it into the Update unit; raise it whenever a file `install.sh` lays down changes (CI checks) |
 | [`polkit/10-sp-rtk-base-net-provision.rules`](polkit/10-sp-rtk-base-net-provision.rules) | Grants the service account NetworkManager control (no session to authenticate against otherwise) |
 
 See **[`docs/deployment-pi.md`](../docs/deployment-pi.md)** for the full

@@ -15,9 +15,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sp_rtk_base.app import create_api_app
-from sp_rtk_base.services import get_update_check_service, get_update_service
+from sp_rtk_base.services import (
+    get_update_check_service,
+    get_update_service,
+    wire_host_setup,
+)
 from sp_rtk_base.services.update_check import UpdateCheckService
 from sp_rtk_base.services.update_service import UpdateService
+from sp_rtk_base.update.host_setup import HostSetup
 from sp_rtk_base.update.state import UpdateFiles, UpdateStatus, Versions
 from tests.fixtures.fake_github import FakeGitHub, Web
 from tests.fixtures.fake_pypi import FakePyPI
@@ -27,6 +32,18 @@ CHECKED_AT = datetime(2026, 10, 7, 9, 12, tzinfo=timezone.utc)
 
 class Console:
     connected = False
+
+
+class Host:
+    """The host's Host setup, as systemd would report it."""
+
+    setup = HostSetup(installed=True, enabled=True, plumbing=1)
+
+
+INSTALL_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/"
+    "deploy/install.sh | sudo bash"
+)
 
 
 @pytest.fixture()
@@ -45,18 +62,39 @@ def console() -> Console:
 
 
 @pytest.fixture()
+def host() -> Host:
+    return Host()
+
+
+@pytest.fixture()
+def github() -> FakeGitHub:
+    github = FakeGitHub()
+    github.publish_plumbing("0.10.1", 1)
+    return github
+
+
+@pytest.fixture()
 def client(
-    pypi: FakePyPI, files: UpdateFiles, console: Console
+    pypi: FakePyPI,
+    github: FakeGitHub,
+    files: UpdateFiles,
+    console: Console,
+    host: Host,
 ) -> Iterator[TestClient]:
     checker = UpdateCheckService(
-        Web(pypi, FakeGitHub()),
+        Web(pypi, github),
         running_app="0.9.0",
         running_relay="4.1.0",
         python=(3, 11),
         clock=lambda: CHECKED_AT,
     )
-    update = UpdateService(files, running=Versions(app="0.9.0", relay="4.1.0"))
+    update = UpdateService(
+        files,
+        running=Versions(app="0.9.0", relay="4.1.0"),
+        host_setup=lambda: host.setup,
+    )
     update.set_console_check(lambda: console.connected)
+    wire_host_setup(update, checker)
     app = create_api_app()
     app.dependency_overrides[get_update_check_service] = lambda: checker
     app.dependency_overrides[get_update_service] = lambda: update
@@ -113,6 +151,74 @@ class TestRequestAnUpdate:
         assert response.status_code == 409
         assert response.json()["code"] == "not_available"
         assert not files.request_path.exists()
+
+
+class TestHostSetup:
+    """Update needs Host setup that fits the release (sp-rtk-base#242)."""
+
+    def test_refused_with_the_command_on_a_host_without_the_setup(
+        self, client: TestClient, pypi: FakePyPI, files: UpdateFiles, host: Host
+    ) -> None:
+        target = _available(client, pypi)
+        host.setup = HostSetup(installed=False, enabled=False, plumbing=0)
+
+        response = client.post("/api/update", json=target)
+
+        assert response.status_code == 409
+        assert response.json() == {
+            "status": "error",
+            "code": "host_setup_missing",
+            "message": "Update needs a one-time setup on this host. Run this on "
+            "the base, then come back:",
+            "command": INSTALL_COMMAND,
+        }
+        assert not files.request_path.exists()
+
+    def test_refused_when_the_release_needs_newer_setup(
+        self,
+        client: TestClient,
+        pypi: FakePyPI,
+        github: FakeGitHub,
+        files: UpdateFiles,
+    ) -> None:
+        github.publish_plumbing("0.10.1", 2)
+        target = _available(client, pypi)
+
+        response = client.post("/api/update", json=target)
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "host_setup_outdated"
+        assert response.json()["command"] == INSTALL_COMMAND
+        assert not files.request_path.exists()
+
+    def test_refused_when_the_requirement_cant_be_read(
+        self,
+        client: TestClient,
+        pypi: FakePyPI,
+        github: FakeGitHub,
+        files: UpdateFiles,
+    ) -> None:
+        github.fail(
+            "https://raw.githubusercontent.com/rodenj1/sp-rtk-base/v0.10.1/deploy/plumbing-version"
+        )
+        target = _available(client, pypi)
+
+        response = client.post("/api/update", json=target)
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "host_requirements_unknown"
+        assert "command" not in response.json()
+
+    def test_refused_when_turned_off_on_this_host(
+        self, client: TestClient, pypi: FakePyPI, host: Host
+    ) -> None:
+        target = _available(client, pypi)
+        host.setup = HostSetup(installed=True, enabled=False, plumbing=1)
+
+        response = client.post("/api/update", json=target)
+
+        assert response.status_code == 409
+        assert response.json()["message"] == "Update is turned off on this host."
 
 
 class TestProgress:

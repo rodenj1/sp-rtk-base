@@ -1,7 +1,8 @@
 """Starting an Update, and following it through ``status.json`` (ADR 0005).
 
-The app's side of the request file: after its guards pass (no Survey-in
-running, no Console link connected, no Update already running), it writes
+The app's side of the request file: after its guards pass (no Update
+already running, Host setup that fits the release, no Survey-in running,
+no Console link connected), it writes
 the ``requested`` status, then the request file, into the update
 directory. The updater, in its own unit, answers in ``status.json``.
 
@@ -16,6 +17,7 @@ path unit enabled later never starts a stale request.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -23,6 +25,7 @@ from typing import Literal
 
 from sp_rtk_base import __version__ as app_version
 from sp_rtk_base.services.update_check import running_relay_version
+from sp_rtk_base.update.host_setup import INSTALL_COMMAND, HostSetup, read_host_setup
 from sp_rtk_base.update.state import (
     REASON_DIDNT_START,
     UpdateFiles,
@@ -39,13 +42,40 @@ as not started."""
 
 DIDNT_START_ERROR = "The host didn't pick up the request within 30 s."
 
-UpdateRefusal = Literal["survey_running", "console_connected", "updating"]
+UpdateRefusal = Literal[
+    "survey_running",
+    "console_connected",
+    "updating",
+    "host_setup_missing",
+    "update_turned_off",
+    "host_setup_outdated",
+    "host_requirements_unknown",
+]
 
 REFUSAL_MESSAGES: dict[UpdateRefusal, str] = {
     "survey_running": "A Survey-in is running. Update once it has finished.",
     "console_connected": "A Console link is connected. Disconnect it to update.",
     "updating": "An Update is already running.",
+    # Host setup (sp-rtk-base#242), in this order of precedence.
+    "host_setup_missing": (
+        "Update needs a one-time setup on this host. Run this on the base, "
+        "then come back:"
+    ),
+    "update_turned_off": "Update is turned off on this host.",
+    "host_setup_outdated": (
+        "This release needs a one-time host setup step. Run this on the base, "
+        "then come back:"
+    ),
+    "host_requirements_unknown": (
+        "Couldn't check this release's host requirements. Check again."
+    ),
 }
+
+REFUSAL_COMMANDS: dict[UpdateRefusal, str] = {
+    "host_setup_missing": INSTALL_COMMAND,
+    "host_setup_outdated": INSTALL_COMMAND,
+}
+"""The command a refusal asks the operator to run on the base, if any."""
 
 
 class UpdateRefusedError(Exception):
@@ -54,6 +84,7 @@ class UpdateRefusedError(Exception):
     def __init__(self, code: UpdateRefusal) -> None:
         self.code: UpdateRefusal = code
         self.message = REFUSAL_MESSAGES[code]
+        self.command: str | None = REFUSAL_COMMANDS.get(code)
         super().__init__(self.message)
 
 
@@ -75,6 +106,7 @@ class UpdateService:
         running: Versions | None = None,
         clock: Callable[[], datetime] = _utc_now,
         start_timeout_s: float = START_TIMEOUT_S,
+        host_setup: Callable[[], HostSetup] = read_host_setup,
     ) -> None:
         self.files = files if files is not None else UpdateFiles()
         self._running = running
@@ -82,6 +114,8 @@ class UpdateService:
         self._start_timeout = timedelta(seconds=start_timeout_s)
         self._survey_running: Callable[[], Awaitable[bool]] = _no_survey
         self._console_connected: Callable[[], bool] = lambda: False
+        self._host_setup = host_setup
+        self._host_requirement: Callable[[], int | None] = lambda: 0
         self._requested: Versions | None = None
 
     # ------------------------------------------------------------------
@@ -96,10 +130,25 @@ class UpdateService:
         """Set what says whether a Console link is connected."""
         self._console_connected = check
 
-    async def refusal(self) -> UpdateRefusedError | None:
-        """Why Update would be refused now, or ``None``. Writes nothing."""
+    def set_host_requirement(self, requirement: Callable[[], int | None]) -> None:
+        """Set what says which Host setup the offered release needs
+        (``None``: it couldn't be read)."""
+        self._host_requirement = requirement
+
+    async def host_setup(self) -> HostSetup:
+        """This host's Host setup, as systemd reports it."""
+        return await asyncio.to_thread(self._host_setup)
+
+    async def refusal(self, host: HostSetup | None = None) -> UpdateRefusedError | None:
+        """Why Update would be refused now, or ``None``. Writes nothing.
+
+        ``host``: the Host setup, when the caller has just read it.
+        """
         if self.updating():
             return UpdateRefusedError("updating")
+        host_refusal = self._host_refusal(host or await self.host_setup())
+        if host_refusal is not None:
+            return UpdateRefusedError(host_refusal)
         try:
             survey = await self._survey_running()
         except Exception as exc:  # the receiver can't be read: no survey here
@@ -109,6 +158,18 @@ class UpdateService:
             return UpdateRefusedError("survey_running")
         if self._console_connected():
             return UpdateRefusedError("console_connected")
+        return None
+
+    def _host_refusal(self, host: HostSetup) -> UpdateRefusal | None:
+        if not host.installed:
+            return "host_setup_missing"
+        if not host.enabled:
+            return "update_turned_off"
+        required = self._host_requirement()
+        if required is None:
+            return "host_requirements_unknown"
+        if required > host.plumbing:
+            return "host_setup_outdated"
         return None
 
     # ------------------------------------------------------------------

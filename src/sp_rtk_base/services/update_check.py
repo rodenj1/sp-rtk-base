@@ -19,6 +19,7 @@ from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, computed_field
 
 from sp_rtk_base import __version__ as app_version
+from sp_rtk_base.update.host_setup import HostRequirementError, required_plumbing
 from sp_rtk_base.update.release import (
     Fetch,
     PythonVersion,
@@ -60,6 +61,11 @@ class UpdateCheck(BaseModel):
     checked_at: datetime
     notes: ReleaseNotes | None = None
     """The Release notes up to the target; only for an Available update."""
+    host_requirement: int | None = None
+    """The Host setup (plumbing version) the target needs; only for an
+    Available update, and ``None`` when it couldn't be read."""
+    host_requirement_error: str | None = None
+    """Why ``host_requirement`` couldn't be read."""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -146,7 +152,7 @@ class UpdateCheckService:
         """Resolve the target; for an Available update, load its notes too.
 
         Only resolution can fail the check: the notes report a GitHub
-        failure themselves.
+        failure themselves, and so does the Host setup requirement.
         """
         target = resolve_release(self._fetch, self._python)
         check = UpdateCheck(
@@ -161,7 +167,16 @@ class UpdateCheckService:
         notes = release_notes(
             self._fetch, self._running_app, self._running_relay, target
         )
-        return check.model_copy(update={"notes": notes})
+        try:
+            requirement = required_plumbing(self._fetch, target.app)
+        except HostRequirementError as exc:
+            logger.warning("Host setup requirement unreadable: %s", exc)
+            return check.model_copy(
+                update={"notes": notes, "host_requirement_error": str(exc)}
+            )
+        return check.model_copy(
+            update={"notes": notes, "host_requirement": requirement}
+        )
 
     # ------------------------------------------------------------------
     # Background schedule

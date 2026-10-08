@@ -33,11 +33,11 @@ class UpdateProgress(BaseModel):
     updating: bool
 
 
-def _refused(code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=409,
-        content={"status": "error", "code": code, "message": message},
-    )
+def _refused(code: str, message: str, command: str | None = None) -> JSONResponse:
+    content = {"status": "error", "code": code, "message": message}
+    if command is not None:
+        content["command"] = command
+    return JSONResponse(status_code=409, content=content)
 
 
 def _progress(update: UpdateService) -> UpdateProgress:
@@ -84,8 +84,11 @@ async def request_update(
 
     The host resolves the target itself and refuses if it differs. 409
     with a ``code`` when refused: ``not_available`` (no Available update
-    is known), ``survey_running``, ``console_connected`` or ``updating``;
-    nothing is written then.
+    is known), ``survey_running``, ``console_connected``, ``updating``, or a
+    Host setup block (``host_setup_missing``, ``update_turned_off``,
+    ``host_setup_outdated``, ``host_requirements_unknown``); nothing is
+    written then. The two setup blocks add ``command``, the one-time
+    ``install.sh`` re-run.
     """
     last = service.status.last_good
     if last is None or not last.available:
@@ -93,7 +96,7 @@ async def request_update(
     try:
         await update.request(target)
     except UpdateRefusedError as exc:
-        return _refused(exc.code, exc.message)
+        return _refused(exc.code, exc.message, exc.command)
     return _progress(update)
 
 

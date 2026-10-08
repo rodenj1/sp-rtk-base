@@ -18,6 +18,7 @@ from sp_rtk_base.services.update_check import UpdateCheckStatus
 from sp_rtk_base.update.release_notes import PackageNotes, ReleaseNote
 
 UP_TO_DATE_TEXT = "Up to date."
+UPDATING_BADGE_TEXT = "Updating…"
 NO_NOTES_TEXT = "No notes for this release."
 NOTE_NOT_LOADED_TEXT = "Notes for this release couldn't be loaded."
 
@@ -85,8 +86,11 @@ def up_to_date(status: UpdateCheckStatus) -> bool:
     return status.last_good is not None and not status.last_good.available
 
 
-def badge_text(status: UpdateCheckStatus) -> str | None:
-    """The header badge, "Update X", or ``None``. Never a failed check."""
+def badge_text(status: UpdateCheckStatus, *, updating: bool = False) -> str | None:
+    """The header badge: "Updating…" while an Update runs, else "Update X",
+    or ``None``. Never a failed check."""
+    if updating:
+        return UPDATING_BADGE_TEXT
     last = status.last_good
     if last is None or not last.available:
         return None

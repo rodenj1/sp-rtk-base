@@ -114,6 +114,11 @@ class TestBadge:
         assert badge_text(UpdateCheckStatus(last_check_failed=True)) is None
         assert badge_text(FAILED_AFTER_GOOD) == "Update 0.10.1"
 
+    def test_reads_updating_while_an_update_runs(self) -> None:
+        assert badge_text(AVAILABLE, updating=True) == "Updating…"
+        # Even before any check has worked, e.g. right after the restart.
+        assert badge_text(UpdateCheckStatus(), updating=True) == "Updating…"
+
 
 class TestPythonNote:
     def test_names_the_newer_release_and_both_pythons(self) -> None:

@@ -10,6 +10,7 @@ application's service layer:
 - ``DeviceService`` — GPS receiver connection & configuration (optional)
 - ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
 - ``UpdateCheckService`` — checks PyPI for an Available update
+- ``UpdateService`` — requests an Update and follows it (ADR 0005)
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from sp_rtk_base.services.survey_service import (
     SurveyService,
 )
 from sp_rtk_base.services.update_check import UpdateCheckService
+from sp_rtk_base.services.update_service import UpdateService
 from sp_rtk_base.update.fake_release_source import fetch_from_env
 
 logger = logging.getLogger(__name__)
@@ -203,6 +205,33 @@ bluetooth_verification_service: BluetoothVerificationService = (
 
 
 update_check_service: UpdateCheckService = UpdateCheckService(fetch_from_env())
+update_service: UpdateService = UpdateService()
+
+
+def wire_update_guard(
+    update: UpdateService,
+    relay: RelayService,
+    device: DeviceService,
+    survey: SurveyService,
+) -> None:
+    """Update and the rest of the base exclude each other.
+
+    Update is refused while a Survey-in runs or a Console link is
+    connected; while an Update runs, Start, Survey-in and Console connect
+    are refused.
+    """
+
+    async def _survey_running() -> bool:
+        return await survey.survey_running()
+
+    update.set_survey_check(_survey_running)
+    update.set_console_check(lambda: device.is_connected)
+    relay.set_update_check(update.updating)
+    device.set_update_check(update.updating)
+    survey.set_update_check(update.updating)
+
+
+wire_update_guard(update_service, relay_service, device_service, survey_service)
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers
@@ -302,6 +331,14 @@ def get_update_check_service() -> UpdateCheckService:
     return update_check_service
 
 
+def get_update_service() -> UpdateService:
+    """Get the singleton UpdateService instance.
+
+    A singleton because the Updating state guards every service.
+    """
+    return update_service
+
+
 def get_profile_store() -> ProfileStore:
     """Get the singleton ProfileStore instance.
 
@@ -338,8 +375,9 @@ def _report_auto_start_refusal(exc: RelayStartRefusedError, attempt: int) -> Non
         case "already_running":
             _set_auto_start_status("succeeded_user", attempt)
             logger.info("Auto-start aborted: the relay is already running")
-        case "config_invalid" | "console_connected":
-            # Auto-start never refuses for the console; reported if it did.
+        case "config_invalid" | "console_connected" | "updating":
+            # Auto-start never refuses for the console or an Update;
+            # reported if it did.
             _set_auto_start_status("failed_config", attempt, exc.message)
             logger.error(
                 "Auto-start skipped: the saved configuration can't run: %s", exc
@@ -387,6 +425,8 @@ async def _auto_start_with_retry() -> None:
             await relay_service.start_saved(
                 trigger=f"auto-start (attempt {attempt})",
                 refuse_while_console_connected=False,
+                # How the Relay resumes after an Update's restart.
+                refuse_while_updating=False,
             )
         except RelayStartRefusedError as exc:
             # The saved config changed during the backoff window.

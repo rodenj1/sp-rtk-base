@@ -36,10 +36,14 @@ DEFAULT_UPDATE_DIR = Path("/var/lib/sp-rtk-base/update")
 REQUEST_FILENAME = "request.json"
 """The name ``sp-rtk-base-update.path`` watches for."""
 STATUS_FILENAME = "status.json"
+ACKNOWLEDGED_FILENAME = "acknowledged.json"
+"""The app's own note of the last outcome the operator dismissed."""
 FORMAT = 1
 """The format version both files are written in."""
 
-Phase = Literal["requested", "resolving", "installing", "restarting", "done", "failed"]
+Phase = Literal[
+    "requested", "resolving", "installing", "restarting", "verifying", "done", "failed"
+]
 """Where an Update is. ``done`` and ``failed`` end it."""
 FINISHED_PHASES: frozenset[str] = frozenset({"done", "failed"})
 
@@ -56,7 +60,15 @@ REASON_STOPPED = "stopped"
 """The update unit stopped before the Update finished (a timeout, a failed
 restart, a crash)."""
 
+REASON_DIDNT_START = "didnt_start"
+"""Written by the app: no phase followed ``requested`` in time, so it took
+the request back. Nothing changed."""
+
 NEWER_RELEASE_ERROR = "A newer release appeared; check again."
+
+UPDATING_MESSAGE = "An Update is running. Try again once it has finished."
+"""Why Start, Survey-in, Console connect and Check now are refused while
+an Update runs."""
 
 
 def _now() -> datetime:
@@ -110,6 +122,14 @@ class UpdateStatus(BaseModel):
     def finished(self) -> bool:
         """The Update has ended, one way or the other."""
         return self.phase in FINISHED_PHASES
+
+
+class Acknowledged(BaseModel):
+    """The outcome the operator dismissed, named by its ``updated_at``."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    updated_at: datetime
 
 
 class UpdateFiles:
@@ -169,6 +189,26 @@ class UpdateFiles:
             return UpdateStatus.model_validate_json(text)
         except (OSError, ValidationError):
             return None
+
+    @property
+    def acknowledged_path(self) -> Path:
+        return self.directory / ACKNOWLEDGED_FILENAME
+
+    def acknowledge(self, status: UpdateStatus) -> None:
+        """Note that the operator dismissed ``status``'s outcome."""
+        self._write(
+            self.acknowledged_path,
+            Acknowledged(updated_at=status.updated_at).model_dump_json(),
+        )
+
+    def acknowledged(self, status: UpdateStatus) -> bool:
+        """Whether the operator dismissed ``status``'s outcome."""
+        try:
+            text = self.acknowledged_path.read_text(encoding="utf-8")
+            seen = Acknowledged.model_validate_json(text)
+        except (OSError, ValidationError):
+            return False
+        return seen.updated_at == status.updated_at
 
     def _write(self, path: Path, text: str) -> None:
         """Write ``path`` atomically: a temp file beside it, then a rename."""

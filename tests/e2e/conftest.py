@@ -120,8 +120,32 @@ def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def update_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The e2e server's update directory: the fake update backend.
+
+    Nothing watches it, so a test plays the host: it reads the request
+    file the app writes and drives the Update by writing ``status.json``.
+    """
+    return tmp_path_factory.mktemp("update")
+
+
+@pytest.fixture()
+def clean_update(update_dir: Path) -> Iterator[Path]:
+    """No Update before or after the test: an Update left running would
+    refuse Start, Survey-in and Console connect for every test after it."""
+
+    def _wipe() -> None:
+        for path in update_dir.iterdir():
+            path.unlink()
+
+    _wipe()
+    yield update_dir
+    _wipe()
+
+
+@pytest.fixture(scope="session")
 def sp_rtk_base_server(
-    tmp_path_factory: pytest.TempPathFactory, fake_pypi_dir: Path
+    tmp_path_factory: pytest.TempPathFactory, fake_pypi_dir: Path, update_dir: Path
 ) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
@@ -158,6 +182,8 @@ def sp_rtk_base_server(
     # The update check reads PyPI and GitHub from this directory, never the
     # network.
     env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
+    # The fake update backend: the request file and status.json land here.
+    env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

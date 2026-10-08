@@ -81,6 +81,7 @@ from sp_rtk_base.services.drivers.bluetooth_link import (
     bluetooth_config_from,
 )
 from sp_rtk_base.services.drivers.console_link import LinkOpener
+from sp_rtk_base.update.state import UPDATING_MESSAGE
 
 if TYPE_CHECKING:
     from sp_rtk_base_relay.core.input_sources.bluetooth_input import (
@@ -275,6 +276,7 @@ class DeviceService:
         self._last_error: str | None = None
         self._connected_at: datetime | None = None
         self._relay_running_check: _RelayRunningCheck | None = None
+        self._update_check: Callable[[], bool] | None = None
         # Awaited before the receiver is disconnected, while it still answers.
         self._before_disconnect: list[Callable[[], Awaitable[None]]] = []
         # A lost link's teardown, while it runs (see _notice_lost_link).
@@ -348,6 +350,13 @@ class DeviceService:
         self._driver = driver
         logger.info("Device driver loaded: %s", driver.vendor_name)
 
+    def set_update_check(self, check: Callable[[], bool]) -> None:
+        """Set a callback that says whether an Update is running.
+
+        While one runs, Connect is refused.
+        """
+        self._update_check = check
+
     def set_relay_check(self, check: _RelayRunningCheck) -> None:
         """Set a callback to check if the relay is running.
 
@@ -408,6 +417,11 @@ class DeviceService:
             self._last_error = (
                 "Cannot connect to device while relay is running — stop relay first"
             )
+            raise RuntimeError(self._last_error)
+
+        if self._update_check is not None and self._update_check():
+            self._state = DeviceConnectionState.ERROR
+            self._last_error = UPDATING_MESSAGE
             raise RuntimeError(self._last_error)
 
         await self._lost_link_torn_down()

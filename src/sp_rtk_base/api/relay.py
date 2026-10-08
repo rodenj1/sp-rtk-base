@@ -76,6 +76,7 @@ START_REFUSAL_STATUS: dict[StartRefusal, int] = {
     "no_input": 400,
     "no_destinations": 400,
     "config_invalid": 422,
+    "updating": 409,
 }
 
 

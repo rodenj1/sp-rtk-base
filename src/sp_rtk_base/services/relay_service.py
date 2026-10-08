@@ -26,6 +26,7 @@ from sp_rtk_base_relay.exceptions import ConfigurationError, ServiceError
 
 from sp_rtk_base.models.config_models import AppConfig, InputProfile
 from sp_rtk_base.services.relay_events import EventStream, RelayEvents
+from sp_rtk_base.update.state import UPDATING_MESSAGE
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ StartRefusal = Literal[
     "no_input",
     "no_destinations",
     "config_invalid",
+    "updating",
 ]
 
 
@@ -210,6 +212,7 @@ class RelayService:
         self._start_trigger: str | None = None
         self._frame_subscriber: FrameSubscriber | None = None
         self._console_connected_check: Callable[[], bool] | None = None
+        self._update_check: Callable[[], bool] | None = None
         self._events = RelayEvents()
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
@@ -220,6 +223,18 @@ class RelayService:
         console is connected, for every Console link kind.
         """
         self._console_connected_check = check
+
+    def set_update_check(self, check: Callable[[], bool]) -> None:
+        """Set a callback that says whether an Update is running.
+
+        While one runs, Start is refused: nothing new starts on code
+        that's about to be replaced.
+        """
+        self._update_check = check
+
+    def _refuse_while_updating(self, refuse: bool) -> None:
+        if refuse and self._update_check is not None and self._update_check():
+            raise RelayStartRefusedError("updating", UPDATING_MESSAGE)
 
     def set_frame_subscriber(self, subscriber: FrameSubscriber) -> None:
         """Register the Frame subscriber told about every relay start and stop.
@@ -276,6 +291,7 @@ class RelayService:
         trigger: str = "unknown",
         *,
         refuse_while_console_connected: bool = True,
+        refuse_while_updating: bool = True,
     ) -> None:
         """Start the relay engine.
 
@@ -291,10 +307,14 @@ class RelayService:
                 operators can tell apart who/what kicked off the run.
             refuse_while_console_connected: Refuse while the console is
                 connected.  Only auto-start at boot passes ``False``.
+            refuse_while_updating: Refuse while an Update runs.  Only
+                auto-start at boot passes ``False``: it is how the Relay
+                resumes after the Update's restart.
 
         Raises:
             RelayStartRefusedError: ``console_connected`` while the
-                console is connected.  Nothing was touched.
+                console is connected, ``updating`` while an Update
+                runs.  Nothing was touched.
             ServiceError: If the engine is already running.
             ConfigurationError: If the configuration is invalid.
         """
@@ -310,6 +330,7 @@ class RelayService:
             and self._console_connected_check()
         ):
             raise RelayStartRefusedError("console_connected", CONSOLE_CONNECTED_MESSAGE)
+        self._refuse_while_updating(refuse_while_updating)
 
         # Best-effort stale-handle release, on *every* path into the
         # relay.  This used to live in ``init_services`` behind the
@@ -379,7 +400,11 @@ class RelayService:
         return check_start(self._saved_config(), input_profile, running=self.is_running)
 
     async def start_saved(
-        self, trigger: str = "unknown", *, refuse_while_console_connected: bool = True
+        self,
+        trigger: str = "unknown",
+        *,
+        refuse_while_console_connected: bool = True,
+        refuse_while_updating: bool = True,
     ) -> None:
         """Start the Relay from the saved Input profile and enabled outputs.
 
@@ -388,18 +413,23 @@ class RelayService:
         Args:
             trigger: Who started it, for the log (see :data:`RelayTrigger`).
             refuse_while_console_connected: As for :meth:`start_relay`.
+            refuse_while_updating: As for :meth:`start_relay`.
 
         Raises:
             RelayStartRefusedError: As for :meth:`check_saved`, or
                 ``console_connected``.  Nothing was touched.
             Exception: Whatever bringing the Relay up raised.
         """
+        # Before the saved config's checks: while an Update runs, the
+        # answer is "wait", whatever the config.
+        self._refuse_while_updating(refuse_while_updating)
         saved = self.check_saved()
         await self.start_relay(
             saved.input,
             saved.destinations,
             trigger,
             refuse_while_console_connected=refuse_while_console_connected,
+            refuse_while_updating=refuse_while_updating,
         )
 
     async def stop_relay(self, trigger: str = "unknown") -> None:

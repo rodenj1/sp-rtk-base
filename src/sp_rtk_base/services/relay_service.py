@@ -26,7 +26,7 @@ from sp_rtk_base_relay.exceptions import ConfigurationError, ServiceError
 
 from sp_rtk_base.models.config_models import AppConfig, InputProfile
 from sp_rtk_base.services.relay_events import EventStream, RelayEvents
-from sp_rtk_base.update.state import UPDATING_MESSAGE
+from sp_rtk_base.services.update_guard import UpdateGuard
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,9 @@ class RelayService:
         self._start_trigger: str | None = None
         self._frame_subscriber: FrameSubscriber | None = None
         self._console_connected_check: Callable[[], bool] | None = None
-        self._update_check: Callable[[], bool] | None = None
+        self.update_guard = UpdateGuard()
+        """While an Update runs, Start is refused: nothing new starts on
+        code that's about to be replaced."""
         self._events = RelayEvents()
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
@@ -224,17 +226,11 @@ class RelayService:
         """
         self._console_connected_check = check
 
-    def set_update_check(self, check: Callable[[], bool]) -> None:
-        """Set a callback that says whether an Update is running.
-
-        While one runs, Start is refused: nothing new starts on code
-        that's about to be replaced.
-        """
-        self._update_check = check
-
     def _refuse_while_updating(self, refuse: bool) -> None:
-        if refuse and self._update_check is not None and self._update_check():
-            raise RelayStartRefusedError("updating", UPDATING_MESSAGE)
+        if refuse:
+            self.update_guard.refuse(
+                lambda message: RelayStartRefusedError("updating", message)
+            )
 
     def set_frame_subscriber(self, subscriber: FrameSubscriber) -> None:
         """Register the Frame subscriber told about every relay start and stop.

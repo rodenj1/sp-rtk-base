@@ -233,9 +233,8 @@ def wire_update_guard(
 
     update.set_survey_check(_survey_running, survey.survey_running_as_last_seen)
     update.set_console_check(lambda: device.is_connected)
-    relay.set_update_check(update.updating)
-    device.set_update_check(update.updating)
-    survey.set_update_check(update.updating)
+    for guarded in (relay, device, survey):
+        guarded.update_guard.wire(update.updating)
 
 
 wire_update_guard(update_service, relay_service, device_service, survey_service)

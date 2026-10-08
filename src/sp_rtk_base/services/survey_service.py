@@ -43,7 +43,7 @@ from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh
 from sp_rtk_base.services.link_diagnostics import Sampler
-from sp_rtk_base.update.state import UPDATING_MESSAGE
+from sp_rtk_base.services.update_guard import UpdateGuard
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,8 @@ class SurveyService:
         self._position_read_s = Sampler()
         self._receiver_counts_at = 0.0
         device.add_before_disconnect(self._before_disconnect)
-        self._update_check: Callable[[], bool] | None = None
+        self.update_guard = UpdateGuard()
+        """While an Update runs, a Survey-in is refused."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -239,7 +240,7 @@ class SurveyService:
             RuntimeError: If the device isn't connected, the relay runs,
                 or an Update runs.
         """
-        self._refuse_while_updating()
+        self.update_guard.refuse()
         async with self._lock:
             await self._forget_if_receiver_changed()
             if self._is_running():
@@ -265,7 +266,7 @@ class SurveyService:
             RuntimeError: If the device isn't connected, the relay runs,
                 or an Update runs.
         """
-        self._refuse_while_updating()
+        self.update_guard.refuse()
         async with self._lock:
             await self._forget_if_receiver_changed()
             if self._is_running():
@@ -305,17 +306,6 @@ class SurveyService:
             )
             self._task = asyncio.create_task(self._run_application_survey(limits))
             logger.info("Corrected survey-in started against %s", source.name)
-
-    def set_update_check(self, check: Callable[[], bool]) -> None:
-        """Set a callback that says whether an Update is running.
-
-        While one runs, a Survey-in is refused.
-        """
-        self._update_check = check
-
-    def _refuse_while_updating(self) -> None:
-        if self._update_check is not None and self._update_check():
-            raise RuntimeError(UPDATING_MESSAGE)
 
     def correction_source_in_use(self) -> str | None:
         """The Correction source a Corrected survey-in pulls (or is

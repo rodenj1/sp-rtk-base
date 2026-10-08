@@ -46,8 +46,11 @@ PATH_UNIT = REPO_ROOT / "deploy" / "sp-rtk-base-update.path"
 TARGET_APP = "0.10.1"
 TARGET_RELAY = "4.2.0"
 TARGET = Versions(app=TARGET_APP, relay=TARGET_RELAY)
-# What runs in this test environment: the dev install.
-RUNNING = Versions(app="0.9.0", relay="4.1.0")
+# What runs in this test environment: the dev install, whatever its version.
+RUNNING = Versions(
+    app=importlib.metadata.version("sp-rtk-base"),
+    relay=importlib.metadata.version("sp-rtk-base-relay"),
+)
 NEWER_RELEASE = "A newer release appeared; check again."
 PLUMBING_FILE = (
     "raw.githubusercontent.com/rodenj1/sp-rtk-base/v0.10.1/deploy/plumbing-version"

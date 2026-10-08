@@ -9,6 +9,85 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## v0.10.0 (2026-10-08)
+
+### Update from the web UI
+
+The base can now **Update** itself from Settings (spec #235, ADR 0005).
+It checks PyPI for an **Available update** at startup, every 24 h and on
+**Check now**, shows the **Release notes** for SP-Base and the Relay, and
+installs both with one press. If the new version doesn't start, it is
+rolled back automatically.
+
+- **Settings.** The Version Information card is now **Version & Update**:
+  `current → target` for SP-Base and the Relay, the last check, Check
+  now, Release notes (SP-Base / Relay tabs, newest first; pre-release
+  sections fold under their stable release), the last outcome, and
+  **Update to X**. A badge next to "SP-Base" in the header shows an
+  Available update on every page.
+- **Only stable releases.** Pre-releases and yanked releases are never
+  offered. When the newest release needs a newer Python, the newest one
+  that runs on the base is offered, with a note.
+- **Guards.** Update is refused while a Survey-in runs or a Console link
+  is connected. With the Relay running, the confirm dialog warns that
+  corrections stop for about a minute; the Relay resumes by itself.
+  While an Update runs, Start, Survey-in and Console connect are refused
+  and a banner shows on every page.
+- **Mechanism.** The app writes a request file; a separate oneshot unit,
+  `sp-rtk-base-update.service`, fired by `sp-rtk-base-update.path`,
+  re-resolves the target, refuses if it differs from what the operator
+  read, snapshots the venv and `/etc/sp-rtk-base`, installs exactly
+  `sp-rtk-base==X sp-rtk-base-relay==Y`, restarts the app and checks its
+  health. Nothing from the request file reaches pip, and the only root
+  steps are fixed `systemctl` lines.
+- **Rollback.** If the new version doesn't report X and Y on
+  `/api/health` within 90 s and stay up 30 s more, the snapshot is
+  restored and the old version restarted and checked, once. A unit
+  stopped mid-check rolls back too; an Update cut short by a power loss
+  is reported on the next start.
+- **Host setup.** Update needs host files only the installer lays down.
+  A base installed before this release shows "Update needs a one-time
+  setup on this host" with the command to run. A later release that
+  needs newer Host setup asks for the same re-run instead of offering the
+  button.
+- **Off switch.** `install.sh --no-update`, or disabling
+  `sp-rtk-base-update.path`, turns Update off on a host; the check and
+  Release notes stay.
+
+### Breaking (deploy)
+
+- **One-time `install.sh` re-run.** A base gets Update only by re-running
+  the installer once: `curl -fsSL
+  https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
+  | sudo bash`. A bare re-run keeps the deployment mode.
+- **`install.sh` takes host files from the installed version's tag**, not
+  `main`. A base running sp-rtk-base from a git checkout must run that
+  checkout's `deploy/install.sh`; a piped install stops before changing
+  anything and says so.
+
+### Fixed
+
+- `upgrade.sh` hands the venv back to the service user after pip, and both
+  `upgrade.sh` and `install.sh` move the Relay to the newest version the
+  app allows.
+- Hand off saves a serial Input profile the Relay can start (it saved
+  `usb_serial`, which the Relay refused, at boot too).
+- Every Dashboard Event log gets its own live relay event stream; it no
+  longer goes silent after a start from the Dashboard, Input page or Hand
+  off.
+- Live Event log text shows as text, not markup.
+- "No events yet" goes when the first live event arrives.
+- u-blox NMEA sentences are read through the deadline stream instead of
+  being dropped.
+
+### Changed
+
+- **One way to start from saved config.** The API, Dashboard, Input page,
+  Hand off and auto-start all start the Relay through `start_saved()`,
+  with the same checks and wording.
+- **Integration tests run in CI.**
+
+
 ## v0.9.0 (2026-10-07)
 
 ### Bluetooth console link: survey and configure over Bluetooth

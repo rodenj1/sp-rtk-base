@@ -8,8 +8,10 @@ notes follow in a collapsed expander with SP-Base / Relay tabs, then
 **Update to X** (sp-rtk-base#240): disabled with the reason in amber while
 it's refused (a Host setup block adds the one-time ``install.sh``
 command to copy), and while an Update runs, a thin bar with its phase. The last
-Update's outcome is a stripe at the top. When the running version needs
-newer Host setup than the host has, a warning shows with the same command.
+Update's outcome is a stripe at the top. Whether or not an update is
+available, a host without the Update units is asked for the one-time
+setup, one with Update turned off says so, and when the running version
+needs newer Host setup than the host has, a warning shows with the command.
 Python and Platform rows follow.
 
 What it says is decided in ``ui/update_status`` (a covered module). Later
@@ -36,7 +38,7 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.update_check import UpdateCheckStatus, running_relay_version
 from sp_rtk_base.services.update_service import UpdateRefusedError
-from sp_rtk_base.ui.host_setup_status import drift_warning
+from sp_rtk_base.ui.host_setup_status import host_setup_notice
 from sp_rtk_base.ui.update_progress import (
     KIND_COLOURS,
     RELAY_RUNNING_WARNING,
@@ -203,8 +205,10 @@ def version_update_card() -> None:
         host = await update.host_setup()
         refusal = await update.refusal(host) if available and not updating else None
         command = refusal.command if refusal is not None else None
-        drift = drift_warning(host, command_shown=command is not None)
-        key = (check, status, refusal.code if refusal is not None else None, drift)
+        notice = host_setup_notice(
+            host, refusal=refusal.code if refusal is not None else None
+        )
+        key = (check, status, refusal.code if refusal is not None else None, notice)
         if key == shown_update[0]:
             return
         shown_update[0] = key
@@ -221,11 +225,12 @@ def version_update_card() -> None:
                 ui.label(line.text).classes("text-grey-4 text-caption").props(
                     'data-testid="update-progress"'
                 )
-            if drift is not None:
-                ui.label(drift).classes("text-warning text-caption").props(
-                    'data-testid="update-drift"'
+            if notice is not None:
+                ui.label(notice.text).classes("text-warning text-caption").props(
+                    f'data-testid="{notice.test_id}"'
                 )
-                _install_command("update-drift-command")
+                if notice.command is not None:
+                    _install_command(f"{notice.test_id}-command")
             if last is None or not available:
                 return
             if refusal is not None and refusal.code != "updating":

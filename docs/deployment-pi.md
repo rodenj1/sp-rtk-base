@@ -278,24 +278,9 @@ web UI without giving the app any privilege (see
 - Progress and outcome go to `/var/lib/sp-rtk-base/update/status.json`; the
   unit's log is `sudo journalctl -u sp-rtk-base-update`.
 
-**Checking Rollback on a real Pi** (once per release that touches the
-Update mechanism; the tests fake systemd):
-
-1. From Settings, update to a good release. Expect "Now on X." and no
-   `/opt/sp-rtk-base/venv.prev` afterwards.
-2. Offer a broken release: build a wheel of a newer version whose
-   `sp_rtk_base/__init__.py` raises on import, put it in a directory, and
-   add `systemctl edit` drop-ins: `SP_RTK_BASE_FAKE_PYPI_DIR=<a fake index
-   naming it>` on both `sp-rtk-base` and `sp-rtk-base-update`, plus
-   `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=<the wheel dir>` on
-   `sp-rtk-base-update`. Check now, then update to it. Remove the drop-ins
-   afterwards.
-3. Expect, within about two minutes: the banner "Update to X failed to
-   start; still on Y.", the Settings outcome "… rolled back to Y on …",
-   X still offered with "X failed to start here on …", `systemctl status
-   sp-rtk-base` active on Y, no `update/rollback` marker and no `venv.prev`.
-4. `sudo journalctl -u sp-rtk-base-update` shows both restarts and the
-   health-check errors.
+**Checking it on a real Pi.** The tests fake systemd. Before each release
+that touches the Update mechanism, run
+[Acceptance checklist: Update on a real Pi](#acceptance-checklist-update-on-a-real-pi).
 
 **Turning Update off.** Install with `--no-update`, or disable the path
 unit; the web app cannot turn it back on, and a later `install.sh` re-run
@@ -764,6 +749,552 @@ sudo -u sp-rtk-base sp-rtk-base-gps-audit --port /dev/ttyUSB0
 
 (Running as the same user avoids permission edge cases on the serial
 device.)
+
+---
+
+## Acceptance checklist: Update on a real Pi
+
+Update from the web UI depends on real systemd: the path unit, the update
+unit's sandbox, its root restart lines and `NRestarts`. The tests fake all
+of these, so a real Raspberry Pi is the only place to prove them. Run this
+checklist once per release that touches the Update mechanism (the updater,
+the Update units, the health check, `status.json`, Host setup), then paste
+the [results template](#results) into the release's acceptance ticket.
+
+It takes about an hour per mode. Do the steps in order; each one starts
+from the state the previous one left.
+
+### What you need
+
+- A Raspberry Pi on Raspberry Pi OS Bookworm with network access. You need
+  two clean installs, one per deployment mode: re-flash the SD card between
+  [Part A](#part-a-appliance) and [Part B](#part-b-managed-host), or use
+  two cards.
+- A u-blox receiver on the Console link, plus an Input and a Destination
+  you can configure, so the Relay can run and a Survey-in can start.
+- A browser on the same LAN, open at `http://<pi-ip>:8080`, and two SSH
+  sessions to the Pi: one to run commands, one to follow the update log.
+
+Three versions are used:
+
+| Name | What it is |
+|------|------------|
+| `R` | The release under test: the `version` in `pyproject.toml` at its commit. It may already be on PyPI, or not yet: run this before tagging, from the version-bump commit. |
+| `G` | `R.post1`: a good test release, the same code as `R`. |
+| `B` | `R.post2`: a broken test release that raises on import, so it fails its health check. |
+
+`G` and `B` are built on the Pi and offered only to this Pi, by a **fake
+release source**: the PyPI JSON documents and GitHub files that release
+resolution reads, served from a directory that `SP_RTK_BASE_FAKE_PYPI_DIR`
+names. The updater's pip finds the wheels through `PIP_FIND_LINKS`. Both
+reach the units through `systemctl` drop-ins. Nothing is uploaded
+anywhere. The kit lives in `/srv/sp-rtk-base-test`, because the units'
+sandboxes (`ProtectHome`, `PrivateTmp`) can't see `/home` or `/tmp`.
+
+### Part A: appliance
+
+#### A1. A pre-Update base shows nothing new
+
+- [ ] Install 0.9.0, the last release without Update, from its own tag:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone --branch v0.9.0 https://github.com/rodenj1/sp-rtk-base.git ~/sp-rtk-base-0.9.0
+cd ~/sp-rtk-base-0.9.0
+sudo AP_PASSWORD='your-sticker-password' ./deploy/install.sh --mode appliance 0.9.0
+```
+
+- [ ] Check that no Update units are installed and that 0.9.0 is running:
+
+```bash
+systemctl list-unit-files 'sp-rtk-base-update*'    # expect: 0 unit files listed.
+curl -s http://127.0.0.1:8080/api/health; echo     # expect: "version":"0.9.0"
+```
+
+- [ ] **Web UI:** Settings has the old **Version Information** card and no
+  **Version & Update** card. The header shows no badge next to "SP-Base".
+- [ ] Set the base up as it would be in the field. Configure an Input and a
+  Destination. On Settings, turn on **Auto-start relay on application
+  launch** and press **Save Settings**. On the Dashboard, press **Start**,
+  then check that the Relay runs and corrections reach the Destination.
+
+#### A2. Build the test kit
+
+- [ ] Clone the release under test and check its version:
+
+```bash
+git clone https://github.com/rodenj1/sp-rtk-base.git ~/sp-rtk-base
+git -C ~/sp-rtk-base checkout <R's tag or commit>
+grep '^version' ~/sp-rtk-base/pyproject.toml       # this is R
+sudo install -d -o "$USER" -g "$USER" /srv/sp-rtk-base-test
+python3 -m venv /srv/sp-rtk-base-test/buildenv
+```
+
+- [ ] Write the helpers. Set `R` on the first line to the version above:
+
+```bash
+cat > /srv/sp-rtk-base-test/env.sh <<'EOF'
+export R=0.10.0                  # <- the release under test
+export G=$R.post1 B=$R.post2
+export T=/srv/sp-rtk-base-test SRC=$HOME/sp-rtk-base
+
+# make_release VERSION [broken]: a wheel of $SRC's HEAD as VERSION, into $T/wheels.
+make_release() {
+    rm -rf "$T/build" && mkdir -p "$T/build" "$T/wheels"
+    git -C "$SRC" archive HEAD | tar -x -C "$T/build"
+    sed -i "s/^version = \".*\"/version = \"$1\"/" "$T/build/pyproject.toml"
+    sed -i "s/^__version__ = \".*\"/__version__ = \"$1\"/" "$T/build/src/sp_rtk_base/__init__.py"
+    if [ "${2:-}" = broken ]; then
+        echo 'raise RuntimeError("deliberately broken test release")' \
+            >> "$T/build/src/sp_rtk_base/__init__.py"
+    fi
+    "$T/buildenv/bin/pip" wheel --quiet --no-deps -w "$T/wheels" "$T/build"
+}
+
+# make_index: the fake release source in $T/index, offering every wheel in $T/wheels.
+make_index() { sudo T="$T" /opt/sp-rtk-base/venv/bin/python "$T/make-index.py"; }
+
+# offer_test_releases / stop_offering: point the app and the update unit at it, or back at PyPI.
+offer_test_releases() {
+    sudo mkdir -p /etc/systemd/system/sp-rtk-base.service.d /etc/systemd/system/sp-rtk-base-update.service.d
+    printf '[Service]\nEnvironment=SP_RTK_BASE_FAKE_PYPI_DIR=%s/index\n' "$T" \
+        | sudo tee /etc/systemd/system/sp-rtk-base.service.d/acceptance.conf >/dev/null
+    printf '[Service]\nEnvironment=SP_RTK_BASE_FAKE_PYPI_DIR=%s/index\nEnvironment=PIP_FIND_LINKS=%s/wheels\n' "$T" "$T" \
+        | sudo tee /etc/systemd/system/sp-rtk-base-update.service.d/acceptance.conf >/dev/null
+    sudo systemctl daemon-reload && sudo systemctl restart sp-rtk-base
+}
+stop_offering() {
+    sudo rm -f /etc/systemd/system/sp-rtk-base.service.d/acceptance.conf \
+        /etc/systemd/system/sp-rtk-base-update.service.d/acceptance.conf
+    sudo systemctl daemon-reload && sudo systemctl restart sp-rtk-base
+}
+
+health() { curl -s http://127.0.0.1:8080/api/health; echo; }
+update_status() { sudo cat /var/lib/sp-rtk-base/update/status.json | python3 -m json.tool; }
+snapshot_gone() { ls /opt/sp-rtk-base; sudo ls -A /var/lib/sp-rtk-base/update; }
+EOF
+```
+
+- [ ] Write the fake release source generator:
+
+```bash
+cat > /srv/sp-rtk-base-test/make-index.py <<'EOF'
+"""The fake release source for SP_RTK_BASE_FAKE_PYPI_DIR, from the wheels
+in $T/wheels: each one is an SP-Base release with its Relay pin, its Host
+setup and a changelog section. The Relay is offered at the version
+installed now, so pip needs nothing new for it."""
+import datetime, email, json, os, re, shutil, zipfile
+from importlib.metadata import version
+from pathlib import Path
+
+T = Path(os.environ["T"])
+index = T / "index"
+shutil.rmtree(index, ignore_errors=True)
+raw = index / "raw.githubusercontent.com/rodenj1/sp-rtk-base"
+relay = version("sp-rtk-base-relay")
+apps, notes = {}, []
+for wheel in sorted((T / "wheels").glob("sp_rtk_base-*.whl")):
+    with zipfile.ZipFile(wheel) as z:
+        name = next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))
+        meta = email.message_from_bytes(z.read(name))
+        host = z.read("sp_rtk_base/update/host_setup.py").decode()
+    v = meta["Version"]
+    plumbing = re.search(r"^PLUMBING_VERSION = (\d+)", host, re.M)[1]
+    apps[v] = {"requires_python": meta["Requires-Python"],
+               "requires_dist": meta.get_all("Requires-Dist")}
+    (raw / f"v{v}/deploy").mkdir(parents=True)
+    (raw / f"v{v}/deploy/plumbing-version").write_text(plumbing + "\n")
+    notes.append(f"## v{v} ({datetime.date.today()})\n\n"
+                 f"- Acceptance test build {wheel.name}.\n")
+    print(f"offering sp-rtk-base {v} (Host setup {plumbing}) with Relay {relay}")
+for v, info in apps.items():
+    (index / f"sp-rtk-base-{v}.json").write_text(
+        json.dumps({"info": {"version": v, **info}}))
+    (raw / f"v{v}/CHANGELOG.md").write_text(
+        "# Changelog\n\n" + "\n".join(reversed(notes)))
+
+def releases(found):
+    return json.dumps({"releases": {
+        v: [{"filename": "test.whl", "requires_python": rp, "yanked": False}]
+        for v, rp in found.items()}})
+
+(index / "sp-rtk-base.json").write_text(
+    releases({v: i["requires_python"] for v, i in apps.items()}))
+(index / "sp-rtk-base-relay.json").write_text(releases({relay: None}))
+EOF
+```
+
+- [ ] Load the helpers, then build the wheels. Run `source` again in every
+  new SSH session:
+
+```bash
+source /srv/sp-rtk-base-test/env.sh
+make_release "$R"     # only if R is not on PyPI yet
+make_release "$G"
+ls "$T/wheels"        # expect: sp_rtk_base-<R>-py3-none-any.whl (if built) and sp_rtk_base-<G>-py3-none-any.whl
+```
+
+  The first build takes a minute or two: pip downloads the `uv_build`
+  backend. Don't build `B` yet. The fake release source offers the newest
+  wheel in `$T/wheels`, so `B` would be offered in place of `G`.
+
+#### A3. Bootstrap: one `install.sh` re-run
+
+- [ ] Re-run the installer once, from the release under test. A bare
+  re-run keeps the mode. `PIP_FIND_LINKS` lets pip find `R` when it isn't
+  on PyPI yet, and is harmless when it is:
+
+```bash
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/install.sh "$R"
+```
+
+  Expect `Installed sp-rtk-base <R>` and `Update units installed; Update
+  from the web UI is on`.
+- [ ] Check the Host setup. Then follow the update log in your second SSH
+  session, and leave it running:
+
+```bash
+systemctl show sp-rtk-base-update.service -p LoadState -p Environment
+#   expect: LoadState=loaded; Environment includes SP_RTK_BASE_PLUMBING=<deploy/plumbing-version>
+systemctl show sp-rtk-base-update.path -p UnitFileState -p ActiveState
+#   expect: UnitFileState=enabled, ActiveState=active
+systemctl is-active sp-rtk-base sp-rtk-base-net-provision    # expect: active, active
+health                                                       # expect: "version":"<R>"
+```
+
+```bash
+sudo journalctl -u sp-rtk-base-update -f        # second SSH session
+```
+
+- [ ] **Web UI:** Settings now has the **Version & Update** card. It shows
+  "Last checked <d Mon HH:MM>", the SP-Base row on R, the SP-Base Relay row,
+  "Up to date.", and the Python and Platform rows. It shows no Host setup
+  warning. The footer reads "SP-Base v<R>". Your Input, Destination and
+  auto-start setting are unchanged.
+
+#### A4. Happy path
+
+- [ ] Offer `G` to this Pi:
+
+```bash
+make_index              # expect: offering sp-rtk-base <G> (Host setup 1) with Relay <relay>
+offer_test_releases
+```
+
+- [ ] Check that the Relay is running. On the Dashboard, the Relay shows as
+  running (press **Start** if not), and its counters move:
+
+```bash
+curl -s http://127.0.0.1:8080/api/relay/status | python3 -m json.tool | grep -E '"running"|chunks_distributed'
+```
+
+- [ ] **Badge:** the header shows a teal **Update <G>** badge, which links
+  to Settings. If it doesn't, press **Check now** on the card.
+- [ ] **Notes:** the card shows SP-Base "R → G" and the Relay row without
+  an arrow. Under **Release notes**, the SP-Base tab shows "SP-Base <G> ·
+  <today>" with "Acceptance test build sp_rtk_base-<G>-py3-none-any.whl.",
+  and the Relay tab says "The Relay stays on <relay>."
+- [ ] Press **Update to <G>**. The dialog is titled "Update to <G>?" and
+  says "SP-Base <R> → <G>, Relay <relay> (unchanged). The base restarts;
+  this page reconnects by itself." Because the Relay is running, it also
+  shows the amber line "The Relay is running. Corrections stop for about a
+  minute and resume on their own." Press **Update**.
+- [ ] **Phases:** the badge turns orange and reads "Updating…". The bar
+  under the versions moves through "Waiting for the host… (step 1 of 5)",
+  "Checking the release… (step 2 of 5)", "Installing… (step 3 of 5)",
+  "Restarting… (step 4 of 5)" and "Checking it started… (step 5 of 5)".
+  The banner on every page reads "Updating to <G>…", then "Restarting into
+  <G>. This page reconnects by itself.", then "Checking <G> started…".
+  The early phases can pass in under a second. pip takes a few minutes on
+  a Pi, and the health check holds for 30 s after the new version answers.
+- [ ] **Restart:** the page reconnects by itself, without a manual reload.
+- [ ] **"Now on X":** the banner reads "Now on <G>." with a close button.
+  The card's outcome stripe reads "Updated <R> → <G> on <d Mon HH:MM>.",
+  the card says "Up to date.", the badge is gone, and the footer reads
+  "SP-Base v<G>".
+- [ ] Check the host side:
+
+```bash
+health            # expect: "version":"<G>", "relay_version":"<relay>"
+update_status     # expect: "phase": "done", "from" R, "to" G, "error": null, "rolled_back": false
+snapshot_gone     # expect: no venv.prev, no config.prev; no request.json, no rollback
+systemctl show sp-rtk-base-update.service -p Result     # expect: Result=success
+systemctl show sp-rtk-base-net-provision -p ActiveState -p ActiveEnterTimestamp
+#   expect: active, entered at the time of the Update (the unit's try-restart line)
+```
+
+  In the second session, the update log has no `ERROR` lines and the run
+  ends with systemd's `Finished sp-rtk-base-update.service`.
+- [ ] **Corrections resume through auto-start:** without pressing
+  **Start**, the Dashboard shows the Relay running within about a minute of
+  the restart, and corrections reach the Destination again:
+
+```bash
+sudo journalctl -u sp-rtk-base --since '10 min ago' | grep 'Auto-started relay engine'
+curl -s http://127.0.0.1:8080/api/relay/status | python3 -m json.tool | grep -E '"running"|chunks_distributed'
+```
+
+- [ ] Dismiss the banner, then reload the page. The banner stays dismissed.
+
+#### A5. Rollback: a broken release
+
+- [ ] Build `B` and offer it. Its `__init__.py` raises on import, so it
+  can't answer `/api/health`:
+
+```bash
+make_release "$B" broken
+make_index              # expect: offering ... <B> (Host setup 1) ...
+```
+
+- [ ] On Settings, press **Check now**. The badge reads **Update <B>**.
+  Check that the Relay is running, then press **Update to <B>**, then
+  **Update**.
+- [ ] Watch for up to about 5 minutes: the install, a 90 s wait for `B`, then
+  the old version's own health check. The banner reads "Restarting into
+  <B>. This page reconnects by itself.", then "Checking <B> started…".
+  While `B` fails, the page can't reach the base and shows it is
+  disconnected. Once `G` is back, the page reconnects. While `G` passes its
+  own health check, it may show "<B> failed to start; rolling back to
+  <G>…" with the bar "Rolling back to <G>… (step 5 of 5)".
+- [ ] **Outcome:** the banner reads "Update to <B> failed to start; still
+  on <G>.". The outcome stripe reads "Update to <B> failed to start;
+  rolled back to <G> on <d Mon HH:MM>.". **Update to <B>** is still
+  offered, with "<B> failed to start here on <d Mon HH:MM>." above it. The
+  footer reads "SP-Base v<G>".
+- [ ] Check the host side:
+
+```bash
+health            # expect: "version":"<G>"
+update_status     # expect: "phase": "failed", "reason": "failed_to_start", "rolled_back": true,
+                  #   "rollback_error": null, "from" G, "to" B,
+                  #   "error": "SP-Base <B> didn't start within 90 s: no answer from http://127.0.0.1:8080/api/health ..."
+snapshot_gone     # expect: no venv.prev, no config.prev; no rollback marker
+systemctl show sp-rtk-base-update.service -p Result     # expect: Result=exit-code
+systemctl is-active sp-rtk-base                         # expect: active
+sudo journalctl -u sp-rtk-base --since '10 min ago' | grep 'deliberately broken test release'   # B's crash
+```
+
+  In the second session, the update log shows `ERROR Rolling back: SP-Base
+  <B> didn't start within 90 s: …`, then the unit failing with result
+  'exit-code' after its stop-post lines restarted `G`.
+- [ ] The Relay auto-starts on `G` again, as in A4.
+
+#### A6. Turned off: disabling the path unit
+
+`B` stays offered for A6 to A8. Never press **Update** in these steps.
+
+- [ ] Turn Update off:
+
+```bash
+sudo systemctl disable --now sp-rtk-base-update.path
+systemctl show sp-rtk-base-update.path -p UnitFileState -p ActiveState   # expect: disabled, inactive
+```
+
+- [ ] **Web UI:** within a few seconds, Settings shows "Update is turned off
+  on this host." in amber, and **Update to <B>** is disabled.
+- [ ] **A planted request does nothing.** Write a request as the service
+  user, the way the app would. If anything picked it up, the updater would
+  refuse it, and `status.json` would change:
+
+```bash
+sudo stat -c '%y' /var/lib/sp-rtk-base/update/status.json
+echo '{"format": 1, "app": "0.0.0", "relay": "0.0.0"}' \
+    | sudo -u sp-rtk-base tee /var/lib/sp-rtk-base/update/request.json >/dev/null
+sleep 60
+sudo ls /var/lib/sp-rtk-base/update                    # expect: request.json still there
+sudo stat -c '%y' /var/lib/sp-rtk-base/update/status.json   # expect: same time as before
+sudo journalctl -u sp-rtk-base-update --since '2 min ago' # expect: -- No entries --
+```
+
+- [ ] Remove the request **before** turning Update back on. Otherwise the
+  path unit fires on it at once:
+
+```bash
+sudo rm /var/lib/sp-rtk-base/update/request.json
+sudo systemctl enable --now sp-rtk-base-update.path
+```
+
+  The amber line goes away, and **Update to <B>** is enabled again.
+
+#### A7. Turned off: `--no-update`
+
+- [ ] Re-run the installer with `--no-update`. The pin keeps the base on
+  `G`:
+
+```bash
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/install.sh --no-update "$G"
+```
+
+  Expect `Update is turned off on this host (--no-update). To turn it on:`.
+  `systemctl show sp-rtk-base-update.path -p UnitFileState` reports
+  `disabled`.
+- [ ] **Web UI:** "Update is turned off on this host." again.
+- [ ] Repeat the planted-request check from A6, including removing the
+  request afterwards. Expect the same result.
+- [ ] A bare re-run keeps Update off:
+
+```bash
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/install.sh "$G"
+```
+
+  Expect the warning `Update stays turned off on this host
+  (sp-rtk-base-update.path is disabled). To turn it on:`, and the web UI
+  still says it's turned off.
+- [ ] Turn it back on with `sudo systemctl enable --now
+  sp-rtk-base-update.path`. The amber line goes away.
+
+#### A8. Refusals
+
+Keep Settings open in one browser tab and Survey in another.
+
+- [ ] On Survey, **Connect** the Console link. Settings shows "A Console
+  link is connected. Disconnect it to update.", and **Update to <B>** is
+  disabled.
+- [ ] Press **Start Survey-In**. Settings shows "A Survey-in is running.
+  Update once it has finished.", and **Update to <B>** is disabled.
+- [ ] The API refuses too. Run this only while one of the two refusals
+  above is showing. A 202 answer would start an Update to `B`, which would
+  roll back:
+
+```bash
+RELAY=$(health | python3 -c 'import json,sys; print(json.load(sys.stdin)["relay_version"])')
+curl -s -w ' HTTP %{http_code}\n' -X POST -H 'Content-Type: application/json' \
+    -d "{\"app\": \"$B\", \"relay\": \"$RELAY\"}" http://127.0.0.1:8080/api/update
+#   expect: {"code":"survey_running",...} HTTP 409 (or "console_connected" once the survey is cancelled)
+```
+
+- [ ] Press **Cancel Survey**. The Console link message returns. Press
+  **Disconnect**. The message goes away, and **Update to <B>** is enabled.
+
+#### A9. Clean up
+
+- [ ] Stop offering the test releases, and put the base back on a real
+  release. Drop `PIP_FIND_LINKS` if `R` is on PyPI:
+
+```bash
+stop_offering
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/upgrade.sh "$R"
+health            # expect: "version":"<R>"
+```
+
+### Part B: managed-host
+
+Start from a clean Pi OS install. Part B checks a bootstrap in this mode,
+the Host-setup-missing block on a base upgraded by hand, and one happy
+path without the network-provisioning unit.
+
+#### B1. A pre-Update base shows nothing new
+
+- [ ] As in A1, but in this mode:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone --branch v0.9.0 https://github.com/rodenj1/sp-rtk-base.git ~/sp-rtk-base-0.9.0
+cd ~/sp-rtk-base-0.9.0 && sudo ./deploy/install.sh --mode managed-host 0.9.0
+systemctl list-unit-files 'sp-rtk-base*'   # expect: sp-rtk-base.service only
+```
+
+- [ ] **Web UI:** there's no **Version & Update** card and no badge. Set up
+  the Input, the Destination and auto-start, and start the Relay, as in A1.
+
+#### B2. Build the test kit
+
+- [ ] Repeat A2 exactly: clone, `env.sh`, `make-index.py`,
+  `source /srv/sp-rtk-base-test/env.sh`, then build `R` (if it isn't on
+  PyPI) and `G`. Don't build `B`.
+
+#### B3. Host setup missing
+
+- [ ] Upgrade to `R` with pip only, the way a base updated by hand gets
+  there. This lays down no Update units:
+
+```bash
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/upgrade.sh "$R"
+systemctl list-unit-files 'sp-rtk-base-update*'    # expect: 0 unit files listed.
+```
+
+- [ ] **Web UI:** Settings has the **Version & Update** card. It warns
+  "This version needs a newer host setup than the host has. Some features
+  may not work until you run:", above a code block holding
+  `curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh | sudo bash`.
+- [ ] Offer `G`:
+
+```bash
+make_index && offer_test_releases
+```
+
+  The badge reads **Update <G>**. The card shows "Update needs a one-time
+  setup on this host. Run this on the base, then come back:", with the
+  same command block, and **Update to <G>** is disabled. The drift warning
+  isn't shown a second time.
+
+#### B4. Bootstrap: one `install.sh` re-run
+
+- [ ] Run the one-time command. If `R` is on PyPI and tagged, copy it from
+  the card and run it as shown. If not, run the same re-run from the
+  checkout:
+
+```bash
+cd "$SRC" && sudo PIP_FIND_LINKS="$T/wheels" ./deploy/install.sh "$R"
+```
+
+  Expect `Update units installed; Update from the web UI is on`.
+- [ ] Check the same `systemctl show` lines as in A3: `LoadState=loaded`,
+  `SP_RTK_BASE_PLUMBING=<n>`, the path unit enabled and active.
+  `systemctl list-unit-files 'sp-rtk-base*'` lists no
+  `sp-rtk-base-net-provision`.
+- [ ] **Web UI:** within a few seconds, the refusal and its command go
+  away, and **Update to <G>** is enabled.
+
+#### B5. Happy path
+
+- [ ] Follow the update log in the second session
+  (`sudo journalctl -u sp-rtk-base-update -f`). With the Relay running,
+  update to `G` as in A4. Expect the same badge, phases and restart, then
+  "Now on <G>.".
+- [ ] Check the host side: `health` reports `G`, `update_status` reports
+  `"phase": "done"`, and `snapshot_gone` shows no `venv.prev`. The update
+  log has no `ERROR` lines (the `try-restart` of the absent
+  network-provisioning unit is a no-op). The Relay auto-starts and
+  corrections resume.
+
+#### B6. Clean up
+
+- [ ] Run `stop_offering`, then the `upgrade.sh "$R"` line from A9.
+
+### Results
+
+Paste this into the acceptance ticket, filled in. Mark anything that
+didn't match with `[ ]`, and say what you saw instead.
+
+```markdown
+## Hardware acceptance: Update on a real Pi
+
+- Date:
+- Pi model / OS: (e.g. Pi 4B 4 GB, Raspberry Pi OS Bookworm 64-bit, `uname -a`)
+- R (release under test): , Relay:
+- R was: [ ] on PyPI  [ ] built from commit `<sha>`
+- Test releases: G = , B =
+
+### appliance (Part A)
+- [ ] Bootstrap: 0.9.0 showed nothing new; one install.sh re-run gave Host setup (SP_RTK_BASE_PLUMBING=__) and the Version & Update card
+- [ ] Happy path: badge, notes, Update with the Relay running, phases, restart, "Now on G.", Relay auto-started and corrections resumed
+  - Time from pressing Update to "Now on G.": __ min
+- [ ] Rollback: B failed its health check and was rolled back; banner, outcome stripe and "failed to start here" shown; no snapshot or marker left
+  - Time from pressing Update to "still on G": __ min
+  - status.json `error`:
+- [ ] Turned off (path unit disabled): "Update is turned off on this host."; planted request did nothing
+- [ ] Turned off (--no-update): same; a bare re-run kept it off
+- [ ] Refusals: Console link connected; Survey-in running (UI and API 409)
+
+### managed-host (Part B)
+- [ ] Bootstrap: 0.9.0 showed nothing new; one install.sh re-run gave Host setup and the Version & Update card
+- [ ] Host setup missing (after a pip-only upgrade): warning and refusal showed the one-time command
+- [ ] Happy path without the network-provisioning unit: "Now on G.", corrections resumed
+
+### Notes
+(anything unexpected; paste the relevant `journalctl -u sp-rtk-base-update` lines)
+```
 
 ---
 

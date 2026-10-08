@@ -123,6 +123,23 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
 
 ---
 
+## Every release stays readable by the previous one
+
+An Update that fails its health check is rolled back automatically: the
+updater restores the previous venv and the `/etc/sp-rtk-base` it saved
+before pip ran, and restarts the previous version (ADR 0005). Anything the
+new version wrote elsewhere stays. So:
+
+- **No release writes config or profiles the previous release can't
+  read.** Add fields with defaults; never rename, remove or change the
+  meaning of one in the same release that starts writing it. Otherwise a
+  Rollback brings back a version that can't start.
+- The same holds for the update request and `status.json`: the old
+  version's updater installs the new version (see
+  `src/sp_rtk_base/update/state.py`).
+
+---
+
 ## Troubleshooting
 
 ### "Tag 'v0.2.0' (version '0.2.0') does not match pyproject.toml version '0.1.0'"

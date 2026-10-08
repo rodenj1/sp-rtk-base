@@ -9,6 +9,7 @@ request and writes ``status.json``. Both go through
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,42 @@ class TestFormat:
         assert on_disk["error"] == "pip exploded"
         assert "updated_at" in on_disk
 
+    def test_rollback_fields_on_disk(self, tmp_path: Path) -> None:
+        """#241: ``rolled_back``, ``finished`` (a timestamp) and the second
+        error of a double failure."""
+        files = UpdateFiles(tmp_path)
+        files.write_status(
+            UpdateStatus(
+                phase="failed",
+                error="0.10.1 didn't answer",
+                rolled_back=False,
+                rollback_error="0.9.0 didn't answer either",
+                finished_at=datetime(2026, 10, 7, 14, 4, tzinfo=timezone.utc),
+            )
+        )
+
+        on_disk = json.loads(files.status_path.read_text())
+        status = files.read_status()
+
+        assert on_disk["rolled_back"] is False
+        assert on_disk["finished"].startswith("2026-10-07T14:04:00")
+        assert on_disk["rollback_error"] == "0.9.0 didn't answer either"
+        assert status is not None
+        assert status.finished_at == datetime(2026, 10, 7, 14, 4, tzinfo=timezone.utc)
+        assert status.finished
+
+    def test_a_status_from_before_rollback_reads(self, tmp_path: Path) -> None:
+        """The #239 updater writes none of the rollback fields."""
+        files = UpdateFiles(tmp_path)
+        files.status_path.write_text(json.dumps({"format": 1, "phase": "done"}))
+
+        status = files.read_status()
+
+        assert status is not None
+        assert status.rolled_back is False
+        assert status.finished_at is None
+        assert status.rollback_error is None
+
     def test_fields_a_newer_release_adds_are_ignored(self, tmp_path: Path) -> None:
         files = UpdateFiles(tmp_path)
         files.status_path.write_text(
@@ -155,6 +192,17 @@ class TestStatus:
         assert UpdateStatus(phase="failed").finished
         assert not UpdateStatus(phase="requested").finished
         assert not UpdateStatus(phase="restarting").finished
+
+
+class TestRollbackMarker:
+    def test_taking_the_marker_consumes_it(self, tmp_path: Path) -> None:
+        files = UpdateFiles(tmp_path)
+        files.mark_rollback()
+
+        assert files.rollback_marker_path == tmp_path / "rollback"
+        assert files.take_rollback_marker()
+        assert not files.rollback_marker_path.exists()
+        assert not files.take_rollback_marker()
 
 
 class TestDirectory:

@@ -245,6 +245,7 @@ class UpdateService:
             to=status.to,
             error=DIDNT_START_ERROR,
             reason=REASON_DIDNT_START,
+            finished_at=self._clock(),
             updated_at=self._clock(),
         )
         self.files.write_status(failed)

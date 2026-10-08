@@ -417,6 +417,7 @@ class TestDidntStart:
         on_disk = files.read_status()
         assert on_disk is not None
         assert on_disk.reason == REASON_DIDNT_START
+        assert on_disk.finished_at == T0 + timedelta(seconds=31)
 
     async def test_still_waiting_at_29_s(
         self, service: UpdateService, files: UpdateFiles, clock: Clock

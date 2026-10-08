@@ -94,6 +94,7 @@ from sp_rtk_base.update.state import (
     REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
     ProgressRecord,
+    Reason,
     UpdateFiles,
     UpdateRequest,
     UpdateStatus,
@@ -256,7 +257,7 @@ class Updater:
         self._report(UpdateStatus(phase="restarting", from_=from_, to=to))
         return EXIT_OK
 
-    def _host_refusal(self, to: Versions) -> tuple[str, str] | None:
+    def _host_refusal(self, to: Versions) -> tuple[Reason, str] | None:
         """``(reason, error)`` when this host's Host setup can't take ``to``."""
         try:
             required = required_plumbing(self._fetch, to.app)
@@ -305,7 +306,7 @@ class Updater:
             self._roll_back(status, REASON_STOPPED, error)
         return EXIT_OK
 
-    def _roll_back(self, status: UpdateStatus, reason: str, error: str) -> None:
+    def _roll_back(self, status: UpdateStatus, reason: Reason, error: str) -> None:
         """Restore the snapshot and leave the marker, so the unit's root
         ``ExecStopPost`` line restarts the old version; one attempt only."""
         try:
@@ -392,7 +393,7 @@ class Updater:
 
     def _restore_and_fail(
         self,
-        reason: str,
+        reason: Reason,
         error: str,
         *,
         from_: Versions | None,
@@ -418,7 +419,7 @@ class Updater:
         error: str,
         rollback_error: str,
         status: UpdateStatus,
-        reason: str | None = None,
+        reason: Reason | None = None,
     ) -> None:
         """The Rollback failed too: one attempt only; the snapshot stays."""
         self._fail(
@@ -431,7 +432,7 @@ class Updater:
 
     def _fail(
         self,
-        reason: str,
+        reason: Reason,
         error: str,
         *,
         from_: Versions | None = None,

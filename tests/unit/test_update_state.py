@@ -258,3 +258,21 @@ class TestProgressRecord:
             path.write_text(text)
 
         assert ProgressRecord(path).read() is None
+
+
+class TestReason:
+    def test_a_reason_a_newer_version_added_reads_as_none(self) -> None:
+        """The status stays readable; only the code is dropped."""
+        status = UpdateStatus.model_validate_json(
+            '{"phase": "failed", "reason": "from_the_future", "error": "kept"}'
+        )
+
+        assert status.reason is None
+        assert status.error == "kept"
+
+    def test_a_known_reason_is_kept(self) -> None:
+        status = UpdateStatus.model_validate_json(
+            '{"phase": "failed", "reason": "failed_to_start"}'
+        )
+
+        assert status.reason == "failed_to_start"

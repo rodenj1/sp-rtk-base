@@ -26,9 +26,16 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 UPDATE_DIR_ENV = "SP_RTK_BASE_UPDATE_DIR"
 """Overrides :data:`DEFAULT_UPDATE_DIR` (tests, e2e)."""
@@ -63,36 +70,53 @@ the snapshot is restored and the old version is restarting."""
 FINISHED_PHASES: frozenset[str] = frozenset({"done", "failed"})
 
 # Why an Update failed, so the page can say whether anything changed.
-REASON_BAD_REQUEST = "bad_request"
+REASON_BAD_REQUEST: Final = "bad_request"
 """The request file couldn't be read. Nothing changed."""
-REASON_CHECK_FAILED = "check_failed"
+REASON_CHECK_FAILED: Final = "check_failed"
 """The updater couldn't resolve the target. Nothing changed."""
-REASON_NEWER_RELEASE = "newer_release"
+REASON_NEWER_RELEASE: Final = "newer_release"
 """The target differs from the request. Nothing changed."""
-REASON_HOST_SETUP = "host_setup"
+REASON_HOST_SETUP: Final = "host_setup"
 """The target needs newer Host setup than the host has. Nothing changed."""
-REASON_HOST_REQUIREMENTS = "host_requirements"
+REASON_HOST_REQUIREMENTS: Final = "host_requirements"
 """The target's Host setup requirement couldn't be read. Nothing changed."""
-REASON_INSTALL_FAILED = "install_failed"
+REASON_INSTALL_FAILED: Final = "install_failed"
 """pip failed."""
-REASON_STOPPED = "stopped"
+REASON_STOPPED: Final = "stopped"
 """The update unit stopped before the Update finished (a timeout, a crash);
 see ``rolled_back``."""
-REASON_NO_DISK_SPACE = "no_disk_space"
+REASON_NO_DISK_SPACE: Final = "no_disk_space"
 """Too little disk space for the snapshot. Nothing changed."""
-REASON_SNAPSHOT_FAILED = "snapshot_failed"
+REASON_SNAPSHOT_FAILED: Final = "snapshot_failed"
 """The snapshot couldn't be taken. Nothing changed."""
-REASON_FAILED_TO_START = "failed_to_start"
+REASON_FAILED_TO_START: Final = "failed_to_start"
 """The target failed its health check after the restart; see
 ``rolled_back``."""
 
-REASON_INTERRUPTED = "interrupted"
+REASON_INTERRUPTED: Final = "interrupted"
 """Written by the app at startup: an Update was left unfinished and the
 update unit isn't running (a power cut, a reboot). See ``error``."""
 
-REASON_DIDNT_START = "didnt_start"
+REASON_DIDNT_START: Final = "didnt_start"
 """Written by the app: no phase followed ``requested`` in time, so it took
 the request back. Nothing changed."""
+
+Reason = Literal[
+    "bad_request",
+    "check_failed",
+    "newer_release",
+    "host_setup",
+    "host_requirements",
+    "install_failed",
+    "stopped",
+    "no_disk_space",
+    "snapshot_failed",
+    "failed_to_start",
+    "interrupted",
+    "didnt_start",
+]
+"""Every ``REASON_*`` code. A reason this version doesn't know (written by
+a newer one) reads as ``None``."""
 
 NEWER_RELEASE_ERROR = "A newer release appeared; check again."
 
@@ -154,7 +178,7 @@ class UpdateStatus(BaseModel):
     """What the Update installs."""
     error: str | None = None
     """Why it failed, in words for the operator."""
-    reason: str | None = None
+    reason: Reason | None = None
     """Why it failed, as one of the ``REASON_*`` codes."""
     rolled_back: bool = False
     """A failed Update restored the snapshot: the base is on ``from`` again."""
@@ -168,6 +192,11 @@ class UpdateStatus(BaseModel):
     )
     """When the Update ended (``finished`` on disk)."""
     updated_at: datetime = Field(default_factory=_now)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _unknown_reason_is_none(cls, value: object) -> object:
+        return value if value is None or value in get_args(Reason) else None
 
     @property
     def finished(self) -> bool:

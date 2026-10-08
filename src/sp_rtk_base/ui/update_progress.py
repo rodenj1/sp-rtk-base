@@ -30,6 +30,7 @@ from sp_rtk_base.update.state import (
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
     REASON_STOPPED,
+    Reason,
     UpdateStatus,
     Versions,
     recovery_text,
@@ -249,7 +250,7 @@ def _double_failure(status: UpdateStatus) -> Outcome:
     )
 
 
-FAILED_OUTCOMES: dict[str, Callable[[UpdateStatus], Outcome]] = {
+FAILED_OUTCOMES: dict[Reason, Callable[[UpdateStatus], Outcome]] = {
     REASON_DIDNT_START: lambda status: Outcome(
         "Update didn't start: the host didn't pick up the request within 30 s. "
         + NOTHING_CHANGED,
@@ -300,7 +301,8 @@ def outcome(status: UpdateStatus | None) -> Outcome | None:
         return Outcome(f"Updated {start} → {end} on {when}.", "positive")
     if status.rollback_error is not None:
         return _double_failure(status)
-    return FAILED_OUTCOMES.get(status.reason or "", _failed)(status)
+    shown = FAILED_OUTCOMES.get(status.reason) if status.reason is not None else None
+    return (shown or _failed)(status)
 
 
 def failed_here(status: UpdateStatus | None, target_app: str) -> str | None:

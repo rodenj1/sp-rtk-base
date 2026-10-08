@@ -20,10 +20,18 @@
 #   sudo AP_PASSWORD=xxxx ./deploy/install.sh --mode appliance
 #   sudo ./deploy/install.sh --mode appliance 0.2.0        # pin to a specific version
 #   sudo MODE=appliance VERSION=0.2.0 AP_PASSWORD=xxxx ./deploy/install.sh  # same, via env vars
+#   sudo ./deploy/install.sh --mode managed-host --no-update  # Update turned off
 #
 # Or one-shot from a fresh Pi:
 #   curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
 #       | sudo bash -s -- --mode managed-host
+#
+# Whatever version gets installed, the host files it needs (systemd units,
+# polkit rule, shared scripts) come from that version's release tag
+# v<version>, never from main, so a pinned install gets *its* unit files:
+#   curl -fsSL https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh \
+#       | sudo bash -s -- --mode managed-host 0.9.0
+# Run from a checkout (sudo ./deploy/install.sh), it uses the checkout's files.
 #
 # A bare re-run with no --mode/$MODE preserves whatever deployment.mode is
 # already recorded in /etc/sp-rtk-base/config.yaml, so version-bump re-runs
@@ -62,6 +70,7 @@ die()  { echo "${C_RED}✗${C_RESET} $*" >&2; exit 1; }
 # Configuration knobs (override via environment variables before invoking)
 # ---------------------------------------------------------------------------
 APP_NAME="sp-rtk-base"
+RELAY_NAME="sp-rtk-base-relay"
 SERVICE_USER="${SERVICE_USER:-sp-rtk-base}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/opt/sp-rtk-base}"
 VENV_DIR="${INSTALL_PREFIX}/venv"
@@ -70,6 +79,8 @@ STATE_DIR="${STATE_DIR:-/var/lib/sp-rtk-base}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
+UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-update.service}"
+UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_SHARED_D="${DNSMASQ_SHARED_D:-/etc/NetworkManager/dnsmasq-shared.d}"
@@ -88,12 +99,19 @@ AP_PASSWORD="${AP_PASSWORD:-}"
 # existing config.yaml, and dies if neither is available.
 MODE="${MODE:-}"
 VERSION="${VERSION:-}"                # empty => latest from PyPI
+# --no-update turns Update (from the web UI) off on this host: the Update
+# units are laid down but sp-rtk-base-update.path stays disabled (ADR 0005).
+NO_UPDATE="${NO_UPDATE:-false}"
 
 # Positional/flag parsing: `--mode <value>` / `--mode=<value>` set MODE;
-# anything else is treated as the (optional) VERSION positional arg, same
-# as every release before --mode existed.
+# `--no-update` sets NO_UPDATE; anything else is treated as the (optional)
+# VERSION positional arg, same as every release before --mode existed.
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-update)
+            NO_UPDATE=true
+            shift
+            ;;
         --mode)
             [[ $# -ge 2 ]] || die "--mode requires a value (appliance or managed-host)"
             MODE="$2"
@@ -110,26 +128,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-REPO_RAW_BASE="https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main"
+# ---------------------------------------------------------------------------
+# Host files from the repo: local checkout, else the release tag
+# ---------------------------------------------------------------------------
+RAW_REPO_URL="https://raw.githubusercontent.com/rodenj1/sp-rtk-base"
 
-# ---------------------------------------------------------------------------
-# Shared appliance network-artifact teardown (issue #27/#30)
-# ---------------------------------------------------------------------------
-# Sourced from the same file uninstall.sh uses, so "tear down the appliance
-# network takeover" has exactly one definition. Local-file-first-else-curl,
-# same fallback used below for the systemd units and polkit rule, since the
-# one-shot `curl | bash` installer has no local checkout to source from.
-teardown_lib_src="$(dirname "$0")/shared/net-provision-teardown.sh"
-if [[ -f "$teardown_lib_src" ]]; then
-    # shellcheck source=shared/net-provision-teardown.sh
-    source "$teardown_lib_src"
-else
-    teardown_lib_tmp="$(mktemp)"
-    curl -fsSL "${REPO_RAW_BASE}/deploy/shared/net-provision-teardown.sh" -o "$teardown_lib_tmp"
-    # shellcheck source=/dev/null
-    source "$teardown_lib_tmp"
-    rm -f "$teardown_lib_tmp"
+# The deploy/ dir of the checkout this script runs from. Empty for a piped
+# `curl | bash` install (no script file, so BASH_SOURCE is empty), whatever
+# the current directory happens to hold.
+DEPLOY_SRC_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    DEPLOY_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
+
+# The tag host files are downloaded from: v<installed version>, set in
+# Step 5 once pip has resolved "latest" to a concrete version.
+RELEASE_TAG=""
+
+# fetch_deploy_file <path under deploy/> <dest>
+# Lays down one file from the repo as root-owned 0644: the checkout's copy
+# when run from a checkout, else the copy at tag $RELEASE_TAG. Never main:
+# a host file must match the code that was installed.
+fetch_deploy_file() {
+    local rel="$1" dest="$2"
+    if [[ -n "$DEPLOY_SRC_DIR" && -f "${DEPLOY_SRC_DIR}/${rel}" ]]; then
+        install -m 0644 -o root -g root "${DEPLOY_SRC_DIR}/${rel}" "$dest"
+    else
+        [[ -n "$RELEASE_TAG" ]] || die "No release tag to fetch deploy/${rel} from"
+        curl -fsSL "${RAW_REPO_URL}/${RELEASE_TAG}/deploy/${rel}" -o "$dest"
+        chmod 0644 "$dest"
+    fi
+}
 
 # ---------------------------------------------------------------------------
 # Preflight
@@ -203,6 +232,9 @@ install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_DIR"
 # default, from the service user. Provision it up front so a fresh
 # install's first /api/profiles call doesn't need manual intervention.
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "${STATE_DIR}/profiles"
+# Update (ADR 0005): the app writes its request here, sp-rtk-base-update.path
+# watches for it, and the updater writes status.json beside it.
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "${STATE_DIR}/update"
 # Heal pre-existing installs whose CONFIG_DIR was created root:sp-rtk-base
 # (the original v0.2.x installer) — the service user needs ownership so
 # atomic-rename saves and write_text() on config.yaml both succeed.
@@ -233,10 +265,25 @@ else
     pin="${APP_NAME}"
 fi
 
-log "Installing ${pin} from PyPI…"
-"${VENV_DIR}/bin/pip" install --quiet --upgrade "$pin"
+# The Relay is named without a version, so pip moves it to the newest one
+# the app's own requirement allows. Otherwise an older Relay that still
+# satisfies that requirement stays put.
+log "Installing ${pin} and the newest ${RELAY_NAME} it allows from PyPI…"
+"${VENV_DIR}/bin/pip" install --quiet --upgrade "$pin" "$RELAY_NAME"
 installed_version="$("${VENV_DIR}/bin/python" -c 'import sp_rtk_base; print(sp_rtk_base.__version__)')"
 ok "Installed sp-rtk-base ${installed_version}"
+
+# "latest" is now a concrete version: host files come from its tag.
+RELEASE_TAG="v${installed_version}"
+
+# Shared appliance network-artifact teardown (issue #27/#30), used by Step
+# 6.5. Sourced from the same file uninstall.sh uses, so "tear down the
+# appliance network takeover" has exactly one definition.
+teardown_lib_tmp="$(mktemp)"
+fetch_deploy_file shared/net-provision-teardown.sh "$teardown_lib_tmp"
+# shellcheck source=shared/net-provision-teardown.sh
+source "$teardown_lib_tmp"
+rm -f "$teardown_lib_tmp"
 
 # Make sure the whole tree is readable by the service user.
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"
@@ -471,16 +518,8 @@ ok "Bluetooth rfkill cleared (idempotent)"
 # ---------------------------------------------------------------------------
 # Step 8 — systemd unit
 # ---------------------------------------------------------------------------
-unit_src=""
-if [[ -f "$(dirname "$0")/sp-rtk-base.service" ]]; then
-    unit_src="$(dirname "$0")/sp-rtk-base.service"
-    log "Installing systemd unit from ${unit_src}…"
-    install -m 0644 -o root -g root "$unit_src" "$SYSTEMD_UNIT"
-else
-    log "Downloading systemd unit from GitHub…"
-    curl -fsSL "${REPO_RAW_BASE}/deploy/sp-rtk-base.service" -o "$SYSTEMD_UNIT"
-    chmod 0644 "$SYSTEMD_UNIT"
-fi
+log "Installing systemd unit…"
+fetch_deploy_file sp-rtk-base.service "$SYSTEMD_UNIT"
 ok "systemd unit installed at ${SYSTEMD_UNIT}"
 
 log "Reloading systemd and enabling sp-rtk-base.service…"
@@ -488,6 +527,40 @@ systemctl daemon-reload
 systemctl enable sp-rtk-base.service >/dev/null
 systemctl restart sp-rtk-base.service
 ok "Service enabled and (re)started"
+
+# Update units (ADR 0005), in both modes. The app writes a request file;
+# sp-rtk-base-update.path starts sp-rtk-base-update.service, which installs
+# the Update as the service user and restarts the app through fixed root
+# lines. The service is never enabled itself: only the path unit starts it.
+# Update stays off with --no-update, and stays off on a re-run where the
+# admin has disabled the path unit.
+update_units_existed=false
+[[ -f "$UPDATE_PATH_UNIT" ]] && update_units_existed=true
+log "Installing the Update units…"
+fetch_deploy_file sp-rtk-base-update.service "$UPDATE_SYSTEMD_UNIT"
+fetch_deploy_file sp-rtk-base-update.path "$UPDATE_PATH_UNIT"
+# The Host setup this host now has: deploy/plumbing-version, written into
+# the update unit, where the app (systemctl show) and the updater (its own
+# environment) read it. Root-owned, so the app can't forge it.
+plumbing_tmp="$(mktemp)"
+fetch_deploy_file plumbing-version "$plumbing_tmp"
+plumbing="$(tr -d '[:space:]' < "$plumbing_tmp")"
+rm -f "$plumbing_tmp"
+[[ "$plumbing" =~ ^[0-9]+$ ]] || die "deploy/plumbing-version isn't a number: ${plumbing:0:40}"
+sed -i "/^\[Service\]\$/a Environment=SP_RTK_BASE_PLUMBING=${plumbing}" "$UPDATE_SYSTEMD_UNIT"
+systemctl daemon-reload
+if [[ "$NO_UPDATE" == true ]]; then
+    systemctl disable --now sp-rtk-base-update.path >/dev/null 2>&1 || true
+    ok "Update is turned off on this host (--no-update). To turn it on:
+  sudo systemctl enable --now sp-rtk-base-update.path"
+elif $update_units_existed && ! systemctl is-enabled --quiet sp-rtk-base-update.path; then
+    warn "Update stays turned off on this host (sp-rtk-base-update.path is disabled). To turn it on:
+  sudo systemctl enable --now sp-rtk-base-update.path"
+else
+    systemctl enable --now sp-rtk-base-update.path >/dev/null
+    ok "Update units installed; Update from the web UI is on"
+fi
+# End of the Update units
 
 # ---------------------------------------------------------------------------
 # Steps 8.2-8.6 — Network takeover (appliance mode only, issue #27/#29)
@@ -672,16 +745,9 @@ ok "Wildcard DNS drop-in installed at ${DNSMASQ_WILDCARD_CONF}"
 # from sp-rtk-base-net-provision.service would otherwise be silently
 # refused.  This rule grants the service user unconditional control.
 if [[ -d /etc/polkit-1 ]]; then
-    polkit_rule_src="$(dirname "$0")/polkit/10-sp-rtk-base-net-provision.rules"
     log "Installing polkit rule for ${SERVICE_USER} → NetworkManager control…"
     install -d -m 0755 -o root -g root "$POLKIT_RULES_DIR"
-    if [[ -f "$polkit_rule_src" ]]; then
-        install -m 0644 -o root -g root "$polkit_rule_src" "$POLKIT_RULE_DEST"
-    else
-        curl -fsSL "${REPO_RAW_BASE}/deploy/polkit/10-sp-rtk-base-net-provision.rules" \
-            -o "$POLKIT_RULE_DEST"
-        chmod 0644 "$POLKIT_RULE_DEST"
-    fi
+    fetch_deploy_file polkit/10-sp-rtk-base-net-provision.rules "$POLKIT_RULE_DEST"
     # polkit picks up rules.d changes automatically, but restart it
     # (best-effort — package name varies by distro) so the new rule is
     # live before the net-provision service starts below.
@@ -701,17 +767,8 @@ fi
 # dependency between the two units either direction. net_provision.yaml
 # and its AP connection profile were written above (issue #11), so this
 # should come up clean on a fresh install rather than fail-and-restart.
-net_provision_unit_src=""
-if [[ -f "$(dirname "$0")/sp-rtk-base-net-provision.service" ]]; then
-    net_provision_unit_src="$(dirname "$0")/sp-rtk-base-net-provision.service"
-    log "Installing systemd unit from ${net_provision_unit_src}…"
-    install -m 0644 -o root -g root "$net_provision_unit_src" "$NET_PROVISION_SYSTEMD_UNIT"
-else
-    log "Downloading network-provisioning systemd unit from GitHub…"
-    curl -fsSL "${REPO_RAW_BASE}/deploy/sp-rtk-base-net-provision.service" \
-        -o "$NET_PROVISION_SYSTEMD_UNIT"
-    chmod 0644 "$NET_PROVISION_SYSTEMD_UNIT"
-fi
+log "Installing network-provisioning systemd unit…"
+fetch_deploy_file sp-rtk-base-net-provision.service "$NET_PROVISION_SYSTEMD_UNIT"
 ok "systemd unit installed at ${NET_PROVISION_SYSTEMD_UNIT}"
 
 log "Reloading systemd and enabling sp-rtk-base-net-provision.service…"
@@ -747,8 +804,9 @@ if systemctl is-active --quiet sp-rtk-base.service; then
     echo "  Logs:     sudo journalctl -u sp-rtk-base -f"
     echo "  Status:   systemctl status sp-rtk-base"
     echo "  Stop:     sudo systemctl stop sp-rtk-base"
-    echo "  Upgrade:  sudo ${INSTALL_PREFIX}/venv/bin/pip install -U sp-rtk-base && \\"
-    echo "            sudo systemctl restart sp-rtk-base"
+    echo "  Upgrade:  curl -fsSL ${RAW_REPO_URL}/main/deploy/upgrade.sh | sudo bash"
+    echo "            (append  -s -- <version>  to pick a version, or run"
+    echo "            sudo deploy/upgrade.sh [version] from a checkout)"
     echo
     echo "  Deployment mode: ${MODE}"
     if [[ "$MODE" == "appliance" ]]; then

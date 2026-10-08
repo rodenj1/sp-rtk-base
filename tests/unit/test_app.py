@@ -46,6 +46,14 @@ class TestHealthEndpoint:
         data = response.json()
         assert data["version"] == __version__
 
+    def test_health_returns_the_relay_version(self, api_client: TestClient) -> None:
+        """The updater's health check reads the Relay version here (#241)."""
+        import importlib.metadata
+
+        response = api_client.get("/api/health")
+        data = response.json()
+        assert data["relay_version"] == importlib.metadata.version("sp-rtk-base-relay")
+
 
 class TestInitApp:
     """Tests for the init_app function."""

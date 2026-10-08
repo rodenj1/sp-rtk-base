@@ -501,6 +501,56 @@ class TestReceiverSurveyIn:
         assert "save_to_flash" not in receiver_fake.calls
 
 
+class TestUpdateSeesTheSurveyWithoutAskingTheReceiver:
+    """Settings' poll asks every second whether a Survey-in runs, without a
+    receiver read (sp-rtk-base#235): what was last seen, on the receiver
+    still connected."""
+
+    def _running(self, client: TestClient, fake: ScriptedReceiverFake) -> None:
+        fake.statuses = [SurveyInProgress(active=True, duration_seconds=0)]
+        response = client.post(
+            START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 50000}
+        )
+        assert response.status_code == 200, response.text
+
+    def _survey(self, client: TestClient) -> SurveyService:
+        return client.app.dependency_overrides[get_survey_service]()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+
+    def test_a_receiver_survey_seen_running(
+        self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
+    ) -> None:
+        survey = self._survey(receiver_client)
+        assert not survey.survey_running_as_last_seen()
+
+        self._running(receiver_client, receiver_fake)
+
+        assert survey.survey_running_as_last_seen()
+
+    def test_not_once_the_receiver_is_disconnected(
+        self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
+    ) -> None:
+        self._running(receiver_client, receiver_fake)
+        device = receiver_client.app.dependency_overrides[get_device_service]()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+
+        device._state = DeviceConnectionState.DISCONNECTED  # pyright: ignore[reportUnknownMemberType]
+
+        assert not self._survey(receiver_client).survey_running_as_last_seen()
+
+    def test_not_on_another_receiver(
+        self, receiver_client: TestClient, receiver_fake: ScriptedReceiverFake
+    ) -> None:
+        self._running(receiver_client, receiver_fake)
+        device = receiver_client.app.dependency_overrides[get_device_service]()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+        other = RecordingFake()
+        other.connect(FAKE_NO_SURVEY_IN_PORT)
+
+        device._state = DeviceConnectionState.DISCONNECTED  # pyright: ignore[reportUnknownMemberType]
+        device.set_driver(other)  # pyright: ignore[reportUnknownMemberType]
+        device._state = DeviceConnectionState.CONNECTED  # pyright: ignore[reportUnknownMemberType]
+
+        assert not self._survey(receiver_client).survey_running_as_last_seen()
+
+
 class TestSurveyBelongsToItsReceiver:
     def test_a_finished_survey_is_forgotten_when_another_receiver_connects(
         self, fake: RecordingFake, clock: FakeClock

@@ -29,6 +29,10 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from sp_rtk_base.update.host_setup import PLUMBING_VERSION
+from tests.fixtures.fake_github import FakeGitHub
+from tests.fixtures.fake_pypi import FakePyPI
+
 
 def _find_free_port() -> int:
     """Return an OS-assigned free TCP port on localhost.
@@ -67,8 +71,105 @@ def _wait_for_http(url: str, timeout: float = 30.0) -> None:
     )
 
 
+#: The Available update the e2e server finds: far above any real version,
+#: so the tests hold however the running version moves.
+E2E_UPDATE_APP = "99.0.0"
+#: A newer release still, that needs a Python no base runs.
+E2E_NEEDS_PYTHON_APP = "100.0.0"
+#: Releases between the running one and the Available update: one whose
+#: notes are only in its GitHub Release, one with no notes anywhere.
+E2E_RELEASE_BODY_APP = "97.0.0"
+E2E_NO_NOTES_APP = "98.0.0"
+#: ``CHANGELOG.md`` at the Available update's tag adds these sections.
+E2E_CHANGELOG = (
+    "## v99.0.0 (2026-10-20)\n\n"
+    "### Added\n\n"
+    "- **Release notes** before you Update.\n"
+    "- Markup shows as text: <b>not bold</b> "
+    '<img src=x onerror="window.__notesInjected = true">\n\n'
+    "## v99.0.0-beta.1 (2026-10-10)\n\n"
+    "- Notes written up in a beta.\n"
+)
+
+
 @pytest.fixture(scope="session")
-def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """PyPI and GitHub as recorded, plus an Available update and its Release
+    notes, for the e2e server.
+
+    Session-scoped like the server: a test that breaks it (to fail a
+    check) must put it back.
+    """
+    pypi = FakePyPI()
+    for version in (E2E_RELEASE_BODY_APP, E2E_NO_NOTES_APP, E2E_UPDATE_APP):
+        pypi.publish_app(version)
+    pypi.publish_app(E2E_NEEDS_PYTHON_APP, requires_python=">=3.99")
+    github = FakeGitHub()
+    github.publish_changelog(
+        "sp-rtk-base", E2E_UPDATE_APP, E2E_CHANGELOG, on_top_of="0.9.0"
+    )
+    # The Available update needs the Host setup the e2e host has.
+    github.publish_plumbing(E2E_UPDATE_APP, PLUMBING_VERSION)
+    github.publish_release(
+        "sp-rtk-base",
+        E2E_RELEASE_BODY_APP,
+        "Notes from the GitHub Release.",
+        published="2026-10-15",
+    )
+    directory = tmp_path_factory.mktemp("fake-pypi")
+    pypi.write_to(directory)
+    github.write_to(directory)
+    return directory
+
+
+@pytest.fixture(scope="session")
+def update_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The e2e server's update directory: the fake update backend.
+
+    Nothing watches it, so a test plays the host: it reads the request
+    file the app writes and drives the Update by writing ``status.json``.
+    """
+    return tmp_path_factory.mktemp("update")
+
+
+@pytest.fixture(scope="session")
+def host_setup_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The e2e server's Host setup, instead of systemd: ``{"installed",
+    "enabled", "plumbing"}``, read on every look. No file is a host set up
+    for the running version."""
+    return tmp_path_factory.mktemp("host-setup") / "host-setup.json"
+
+
+@pytest.fixture()
+def host_setup(host_setup_file: Path) -> Iterator[Path]:
+    """The test plays the host by writing ``host_setup_file``; a host set up
+    for this version before and after."""
+    host_setup_file.unlink(missing_ok=True)
+    yield host_setup_file
+    host_setup_file.unlink(missing_ok=True)
+
+
+@pytest.fixture()
+def clean_update(update_dir: Path) -> Iterator[Path]:
+    """No Update before or after the test: an Update left running would
+    refuse Start, Survey-in and Console connect for every test after it."""
+
+    def _wipe() -> None:
+        for path in update_dir.iterdir():
+            path.unlink()
+
+    _wipe()
+    yield update_dir
+    _wipe()
+
+
+@pytest.fixture(scope="session")
+def sp_rtk_base_server(
+    tmp_path_factory: pytest.TempPathFactory,
+    fake_pypi_dir: Path,
+    update_dir: Path,
+    host_setup_file: Path,
+) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
     Yields:
@@ -101,6 +202,13 @@ def sp_rtk_base_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
     env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
+    # The update check reads PyPI and GitHub from this directory, never the
+    # network.
+    env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
+    # The fake update backend: the request file and status.json land here.
+    env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
+    # The fake Host setup: the units' state comes from this file, not systemd.
+    env["SP_RTK_BASE_FAKE_HOST_SETUP"] = str(host_setup_file)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

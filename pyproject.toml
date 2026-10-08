@@ -24,7 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.135.3",
+    "markdown2>=2.5",
     "nicegui>=3.9.0",
+    "packaging>=24",
     "pydantic>=2.12.5",
     "pyrtcm>=1.1.12",
     "pyserial>=3.5",
@@ -38,6 +40,7 @@ dependencies = [
 sp-rtk-base = "sp_rtk_base.main:main"
 sp-rtk-base-gps-audit = "sp_rtk_base.cli.config_audit:main"
 sp-rtk-base-net-provision = "sp_rtk_base.cli.net_provision:main"
+sp-rtk-base-apply-update = "sp_rtk_base.update.apply:run"
 
 [project.urls]
 Homepage = "https://github.com/rodenj1/sp-rtk-base"

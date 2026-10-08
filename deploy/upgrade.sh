@@ -5,6 +5,12 @@
 #
 # Upgrades the venv at /opt/sp-rtk-base/venv/ to the latest sp-rtk-base
 # (or a pinned version) from PyPI, then restarts the systemd service.
+# The Relay moves with it, to the newest version that app allows, and the
+# venv is handed back to the service user so the web UI's Update (which
+# runs pip as that user) can work on it afterwards.
+#
+# Pip-only: this never touches the systemd units or other host files. To
+# change those, re-run deploy/install.sh.
 #
 # Usage:
 #   sudo ./deploy/upgrade.sh                  # upgrade to latest on PyPI
@@ -15,6 +21,8 @@ set -euo pipefail
 
 INSTALL_PREFIX="${INSTALL_PREFIX:-/opt/sp-rtk-base}"
 VENV_DIR="${INSTALL_PREFIX}/venv"
+SERVICE_USER="${SERVICE_USER:-sp-rtk-base}"
+RELAY_NAME="sp-rtk-base-relay"
 VERSION="${1:-}"
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo $0" >&2; exit 1; }
@@ -33,9 +41,21 @@ else
 fi
 
 echo "==> Currently installed: sp-rtk-base ${old_ver}"
-echo "==> Upgrading to: ${target}"
+echo "==> Upgrading to: ${target} (with the newest ${RELAY_NAME} it allows)"
 
-"${VENV_DIR}/bin/pip" install --quiet --upgrade "$target"
+# Pip runs as root here, so whatever it writes is root-owned. Hand the
+# whole prefix back to the service user afterwards, even if pip fails
+# partway, or the next Update from the web UI fails on root-owned files.
+give_back_to_service_user() {
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_PREFIX"
+}
+trap give_back_to_service_user EXIT
+# The Relay is named without a version, so pip moves it to the newest one
+# the target app's own requirement allows. Otherwise an older Relay that
+# still satisfies that requirement stays put.
+"${VENV_DIR}/bin/pip" install --quiet --upgrade "$target" "$RELAY_NAME"
+give_back_to_service_user
+trap - EXIT
 new_ver="$("${VENV_DIR}/bin/python" -c 'import sp_rtk_base; print(sp_rtk_base.__version__)')"
 
 echo "==> Restarting sp-rtk-base.service…"

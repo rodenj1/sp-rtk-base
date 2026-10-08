@@ -2714,7 +2714,9 @@ version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "markdown2" },
     { name = "nicegui" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyrtcm" },
     { name = "pyserial" },
@@ -2744,7 +2746,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.135.3" },
+    { name = "markdown2", specifier = ">=2.5" },
     { name = "nicegui", specifier = ">=3.9.0" },
+    { name = "packaging", specifier = ">=24" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyrtcm", specifier = ">=1.1.12" },
     { name = "pyserial", specifier = ">=3.5" },

@@ -9,6 +9,8 @@ application's service layer:
 - ``MetricsService`` — Prometheus metrics from RelayStatus
 - ``DeviceService`` — GPS receiver connection & configuration (optional)
 - ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
+- ``UpdateCheckService`` — checks PyPI for an Available update
+- ``UpdateService`` — requests an Update and follows it (ADR 0005)
 """
 
 from __future__ import annotations
@@ -40,6 +42,13 @@ from sp_rtk_base.services.survey_service import (
     STALL_ABORT_S,
     STALL_WARNING_S,
     SurveyService,
+)
+from sp_rtk_base.services.update_check import UpdateCheckService
+from sp_rtk_base.services.update_service import UpdateService
+from sp_rtk_base.update.fake_release_source import fetch_from_env
+from sp_rtk_base.update.host_setup import (
+    host_setup_reader_from_env,
+    update_unit_state_reader_from_env,
 )
 
 logger = logging.getLogger(__name__)
@@ -199,6 +208,51 @@ bluetooth_verification_service: BluetoothVerificationService = (
 )
 
 
+update_check_service: UpdateCheckService = UpdateCheckService(fetch_from_env())
+update_service: UpdateService = UpdateService(
+    host_setup=host_setup_reader_from_env(),
+    update_unit_state=update_unit_state_reader_from_env(),
+)
+
+
+def wire_update_guard(
+    update: UpdateService,
+    relay: RelayService,
+    device: DeviceService,
+    survey: SurveyService,
+) -> None:
+    """Update and the rest of the base exclude each other.
+
+    Update is refused while a Survey-in runs or a Console link is
+    connected; while an Update runs, Start, Survey-in and Console connect
+    are refused.
+    """
+
+    async def _survey_running() -> bool:
+        return await survey.survey_running()
+
+    update.set_survey_check(_survey_running, survey.survey_running_as_last_seen)
+    update.set_console_check(lambda: device.is_connected)
+    for guarded in (relay, device, survey):
+        guarded.update_guard.wire(update.updating)
+
+
+wire_update_guard(update_service, relay_service, device_service, survey_service)
+
+
+def wire_host_setup(update: UpdateService, check: UpdateCheckService) -> None:
+    """Update asks the update check which Host setup the offered release
+    needs (``None`` when it couldn't be read)."""
+
+    def _requirement() -> int | None:
+        last = check.status.last_good
+        return last.host_requirement if last is not None else None
+
+    update.set_host_requirement(_requirement)
+
+
+wire_host_setup(update_service, update_check_service)
+
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers
 # ---------------------------------------------------------------------------
@@ -289,6 +343,22 @@ def get_bluetooth_verification_service() -> BluetoothVerificationService:
     return bluetooth_verification_service
 
 
+def get_update_check_service() -> UpdateCheckService:
+    """Get the singleton UpdateCheckService instance.
+
+    A singleton because it holds the last good check for every page.
+    """
+    return update_check_service
+
+
+def get_update_service() -> UpdateService:
+    """Get the singleton UpdateService instance.
+
+    A singleton because the Updating state guards every service.
+    """
+    return update_service
+
+
 def get_profile_store() -> ProfileStore:
     """Get the singleton ProfileStore instance.
 
@@ -325,8 +395,9 @@ def _report_auto_start_refusal(exc: RelayStartRefusedError, attempt: int) -> Non
         case "already_running":
             _set_auto_start_status("succeeded_user", attempt)
             logger.info("Auto-start aborted: the relay is already running")
-        case "config_invalid" | "console_connected":
-            # Auto-start never refuses for the console; reported if it did.
+        case "config_invalid" | "console_connected" | "updating":
+            # Auto-start never refuses for the console or an Update;
+            # reported if it did.
             _set_auto_start_status("failed_config", attempt, exc.message)
             logger.error(
                 "Auto-start skipped: the saved configuration can't run: %s", exc
@@ -374,6 +445,8 @@ async def _auto_start_with_retry() -> None:
             await relay_service.start_saved(
                 trigger=f"auto-start (attempt {attempt})",
                 refuse_while_console_connected=False,
+                # How the Relay resumes after an Update's restart.
+                refuse_while_updating=False,
             )
         except RelayStartRefusedError as exc:
             # The saved config changed during the backoff window.

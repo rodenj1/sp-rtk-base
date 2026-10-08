@@ -1,0 +1,756 @@
+{
+ "info": {
+  "name": "sp-rtk-base",
+  "requires_dist": [
+   "fastapi>=0.135.3",
+   "nicegui>=3.9.0",
+   "pydantic>=2.12.5",
+   "pyrtcm>=1.1.12",
+   "pyserial>=3.5",
+   "pyubx2>=1.2.43",
+   "pyyaml>=6.0.3",
+   "sp-rtk-base-relay<5,>=4.1.0",
+   "uvicorn>=0.42.0"
+  ],
+  "requires_python": ">=3.10",
+  "version": "0.9.0"
+ },
+ "releases": {
+  "0.2.0": [
+   {
+    "filename": "sp_rtk_base-0.2.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.2.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.2.1": [
+   {
+    "filename": "sp_rtk_base-0.2.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.2.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.2.2": [
+   {
+    "filename": "sp_rtk_base-0.2.2-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.2.2.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.0": [
+   {
+    "filename": "sp_rtk_base-0.3.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.1": [
+   {
+    "filename": "sp_rtk_base-0.3.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.10": [
+   {
+    "filename": "sp_rtk_base-0.3.10-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.10.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.11": [
+   {
+    "filename": "sp_rtk_base-0.3.11-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.11.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.12": [
+   {
+    "filename": "sp_rtk_base-0.3.12-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.12.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.13": [
+   {
+    "filename": "sp_rtk_base-0.3.13-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.13.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.14": [
+   {
+    "filename": "sp_rtk_base-0.3.14-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.14.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.15": [
+   {
+    "filename": "sp_rtk_base-0.3.15-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.15.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.16": [
+   {
+    "filename": "sp_rtk_base-0.3.16-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.16.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.17": [
+   {
+    "filename": "sp_rtk_base-0.3.17-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.17.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.19": [
+   {
+    "filename": "sp_rtk_base-0.3.19-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.19.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.2": [
+   {
+    "filename": "sp_rtk_base-0.3.2-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.2.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.20": [
+   {
+    "filename": "sp_rtk_base-0.3.20-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.20.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.21": [
+   {
+    "filename": "sp_rtk_base-0.3.21-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.21.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.22": [
+   {
+    "filename": "sp_rtk_base-0.3.22-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.22.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.23": [
+   {
+    "filename": "sp_rtk_base-0.3.23-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.23.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.24": [
+   {
+    "filename": "sp_rtk_base-0.3.24-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.24.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.25": [
+   {
+    "filename": "sp_rtk_base-0.3.25-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.25.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.26": [
+   {
+    "filename": "sp_rtk_base-0.3.26-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.26.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.27": [
+   {
+    "filename": "sp_rtk_base-0.3.27-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.27.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.28": [
+   {
+    "filename": "sp_rtk_base-0.3.28-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.28.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.29": [
+   {
+    "filename": "sp_rtk_base-0.3.29-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.29.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.3": [
+   {
+    "filename": "sp_rtk_base-0.3.3-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.3.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.30": [
+   {
+    "filename": "sp_rtk_base-0.3.30-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.30.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.4": [
+   {
+    "filename": "sp_rtk_base-0.3.4-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.4.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.5": [
+   {
+    "filename": "sp_rtk_base-0.3.5-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.5.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.6": [
+   {
+    "filename": "sp_rtk_base-0.3.6-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.6.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.7": [
+   {
+    "filename": "sp_rtk_base-0.3.7-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.7.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.8": [
+   {
+    "filename": "sp_rtk_base-0.3.8-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.8.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.3.9": [
+   {
+    "filename": "sp_rtk_base-0.3.9-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.3.9.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.4.0": [
+   {
+    "filename": "sp_rtk_base-0.4.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.4.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.4.1": [
+   {
+    "filename": "sp_rtk_base-0.4.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.4.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.4.2": [
+   {
+    "filename": "sp_rtk_base-0.4.2-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.4.2.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.5.0": [
+   {
+    "filename": "sp_rtk_base-0.5.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.5.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.5.1": [
+   {
+    "filename": "sp_rtk_base-0.5.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.5.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.5.2": [
+   {
+    "filename": "sp_rtk_base-0.5.2-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.5.2.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.6.0": [
+   {
+    "filename": "sp_rtk_base-0.6.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.6.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.6.1": [
+   {
+    "filename": "sp_rtk_base-0.6.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.6.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.6.2": [
+   {
+    "filename": "sp_rtk_base-0.6.2-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.6.2.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.7.0": [
+   {
+    "filename": "sp_rtk_base-0.7.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.7.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.8.0": [
+   {
+    "filename": "sp_rtk_base-0.8.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.8.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.8.1": [
+   {
+    "filename": "sp_rtk_base-0.8.1-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.8.1.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "0.9.0": [
+   {
+    "filename": "sp_rtk_base-0.9.0-py3-none-any.whl",
+    "packagetype": "bdist_wheel",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "filename": "sp_rtk_base-0.9.0.tar.gz",
+    "packagetype": "sdist",
+    "requires_python": ">=3.10",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ]
+ }
+}

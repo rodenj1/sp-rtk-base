@@ -285,6 +285,21 @@ suite without any timing dependence on real receiver convergence.
   a planned extension to `FakeGpsDriver` — open a TODO before
   adding tests that depend on them.
 
+## The update check's fake release source
+
+The server never reaches PyPI during e2e. `conftest.py` sets
+`SP_RTK_BASE_FAKE_PYPI_DIR` to a session directory (`fake_pypi_dir`) laid
+out by `tests/fixtures/fake_pypi.py`: the PyPI responses recorded in
+`tests/fixtures/pypi/`, plus an Available update (`E2E_UPDATE_APP`,
+99.0.0) and a newer release that needs Python 3.99. The server reads
+`https://pypi.org/pypi/<package>[/<version>]/json` from
+`<dir>/<package>[-<version>].json`
+(`src/sp_rtk_base/update/fake_release_source.py`).
+
+The directory is shared by the whole session. A test that fails a check
+by removing a file (see `pypi_down` in `test_update_check.py`) puts it
+back and runs a good check before it ends.
+
 ## Roadmap
 
 Things the current suite intentionally does **not** do yet, in

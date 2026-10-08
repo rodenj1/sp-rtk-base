@@ -12,7 +12,19 @@ from contextlib import contextmanager
 from nicegui import ui
 
 from sp_rtk_base import __version__ as app_version
-from sp_rtk_base.services import get_config_service
+from sp_rtk_base.services import (
+    get_config_service,
+    get_update_check_service,
+    get_update_service,
+)
+from sp_rtk_base.ui.update_progress import KIND_COLOURS, Banner, banner
+from sp_rtk_base.ui.update_status import badge_text
+from sp_rtk_base.update.state import UpdateStatus
+
+_UPDATE_POLL_S = 1.0
+"""How often the header badge and the page-wide banner look for a new check
+result or Update status (an in-memory read and a ``stat`` of ``status.json``,
+which is parsed again only when it changed)."""
 
 # Navigation structure: list of (section_header | None, label, path, icon)
 # A None section_header means "no header before this item".
@@ -99,6 +111,7 @@ def page_layout(title: str) -> Iterator[None]:
             "flat color=white round"
         )
         ui.label("SP-Base").classes("text-h6 text-white q-ml-sm")
+        _update_badge()
         ui.space()
         ui.label(title).classes("text-subtitle1 text-white")
 
@@ -129,6 +142,7 @@ def page_layout(title: str) -> Iterator[None]:
                 _nav_link(label, path, icon, left_drawer)
 
     with ui.column().classes("w-full q-pa-md"):
+        _update_banner()
         yield
 
     # Footer with version
@@ -138,6 +152,81 @@ def page_layout(title: str) -> Iterator[None]:
         .style("background-color: #0f0f1e; height: 32px;")
     ):
         ui.label(f"SP-Base v{app_version}").classes("text-caption text-grey-6")
+
+
+def _update_badge() -> None:
+    """Show "Update X" next to "SP-Base" when there is an Available update,
+    and "Updating…" while an Update runs.
+
+    Links to Settings. A failed check never shows here, only on Settings.
+    """
+    checker = get_update_check_service()
+    update = get_update_service()
+    holder = ui.row().classes("items-center")
+    shown: list[str | None] = [None]
+
+    def render() -> None:
+        updating = update.updating()
+        text = badge_text(checker.status, updating=updating)
+        if text == shown[0]:
+            return
+        shown[0] = text
+        holder.clear()
+        if text is None:
+            return
+        colour = "orange" if updating else "teal"
+        with holder, ui.link(target="/settings").classes("no-underline q-ml-sm"):
+            ui.badge(text, color=colour).props('rounded data-testid="update-badge"')
+
+    render()
+    ui.timer(_UPDATE_POLL_S, render)
+
+
+def _update_banner() -> None:
+    """The page-wide Update banner: while an Update runs, and its outcome
+    until dismissed (the dismissal is kept with the update state, so it
+    holds across reloads and restarts)."""
+    update = get_update_service()
+    holder = ui.column().classes("w-full q-gutter-none")
+    shown: list[tuple[UpdateStatus | None, Banner | None]] = [(None, None)]
+
+    def dismiss(status: UpdateStatus) -> None:
+        update.acknowledge(status)
+        render()
+
+    def render() -> None:
+        status = update.status()
+        current = (
+            None
+            if status is None
+            else banner(status, acknowledged=update.acknowledged(status))
+        )
+        if (status, current) == shown[0]:
+            return
+        shown[0] = (status, current)
+        holder.clear()
+        if status is None or current is None:
+            return
+        with (
+            holder,
+            ui.row()
+            .classes("w-full items-center q-pa-sm rounded-borders no-wrap")
+            .style(f"background: {KIND_COLOURS[current.kind]}")
+            .props('data-testid="update-banner"'),
+        ):
+            if current.busy:
+                ui.spinner(size="sm", color="white")
+            ui.label(current.text).classes("text-white").props(
+                'data-testid="update-banner-text"'
+            )
+            ui.space()
+            if current.dismissible:
+                ui.button(icon="close", on_click=lambda: dismiss(status)).props(
+                    'flat round dense color=white data-testid="update-banner-dismiss"'
+                )
+
+    render()
+    ui.timer(_UPDATE_POLL_S, render)
 
 
 def _nav_link(label: str, path: str, icon: str, drawer: ui.left_drawer) -> None:

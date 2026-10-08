@@ -43,6 +43,7 @@ from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.geodesy import ecef_to_llh
 from sp_rtk_base.services.link_diagnostics import Sampler
+from sp_rtk_base.services.update_guard import UpdateGuard
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,8 @@ class SurveyService:
         self._position_read_s = Sampler()
         self._receiver_counts_at = 0.0
         device.add_before_disconnect(self._before_disconnect)
+        self.update_guard = UpdateGuard()
+        """While an Update runs, a Survey-in is refused."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -234,8 +237,10 @@ class SurveyService:
 
         Raises:
             SurveyBusyError: If a survey is already running.
-            RuntimeError: If the device isn't connected or the relay runs.
+            RuntimeError: If the device isn't connected, the relay runs,
+                or an Update runs.
         """
+        self.update_guard.refuse()
         async with self._lock:
             await self._forget_if_receiver_changed()
             if self._is_running():
@@ -258,8 +263,10 @@ class SurveyService:
             SurveyBusyError: If a survey is already running.
             CorrectionSourceUnreachableError: If it can't connect;
                 the receiver's input settings are restored.
-            RuntimeError: If the device isn't connected or the relay runs.
+            RuntimeError: If the device isn't connected, the relay runs,
+                or an Update runs.
         """
+        self.update_guard.refuse()
         async with self._lock:
             await self._forget_if_receiver_changed()
             if self._is_running():
@@ -312,6 +319,25 @@ class SurveyService:
     def corrected_survey_running(self) -> bool:
         """Whether a Corrected survey-in is running."""
         return self.correction_source_in_use() is not None
+
+    def survey_running_as_last_seen(self) -> bool:
+        """Whether a Survey-in was running when last seen here; never reads
+        the receiver (for a page's poll).
+
+        A station-averaged survey is known here. A Receiver survey-in counts
+        only while the receiver it was seen on is still the connected one
+        (otherwise :meth:`progress` would forget it); one started elsewhere
+        shows only once its progress was read.
+        """
+        if self._is_running():
+            return True
+        last = self._progress
+        return (
+            last is not None
+            and self._device.is_connected
+            and self._device.driver is self._survey_driver
+            and (last.active or last.outcome == "running")
+        )
 
     async def survey_running(self) -> bool:
         """Whether a Survey-in of either kind is running on the receiver.

@@ -34,15 +34,19 @@ app can write that file.
 A new version that fails its health check is rolled back automatically.
 Before pip runs, the updater copies the venv to `venv.prev` and
 `/etc/sp-rtk-base/` to a snapshot, so the unit also needs write access to
-`/etc/sp-rtk-base`. The verify step runs from `venv.prev`, the old version's
-code, because a release broken badly enough to fail on import could not
+`/etc/sp-rtk-base`. The verify step, and the reporting and cleanup after
+the unit stops, run from `venv.prev`, the old version's code, because a release broken badly enough to fail on import could not
 judge or undo itself. On failure it restores the snapshot, writes a rollback
 marker in `/var/lib/sp-rtk-base/update/` and exits non-zero. A fixed
 `ExecStopPost=+` line then restarts the app, but only when the marker
 exists. The app can write that directory, so the most a compromised app
 gains by planting the marker is a restart of itself. A failure before the
-restart (a pip error) restores the snapshot without restarting. A rollback
-gets one attempt, never a loop.
+restart (a pip error) restores the snapshot without restarting. An Update
+the unit stops part-way once pip has started (a timeout, a crash) is rolled
+back like a failed health check, so an unchecked version never keeps
+running. The updater decides all this from its own record beside the
+snapshot, which the app can't write; `status.json` only reports to the app.
+A rollback gets one attempt, never a loop.
 
 Update never rewrites unit files, because that would make the updater a
 root step. A release that needs changed host files instead raises an integer

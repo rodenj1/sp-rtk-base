@@ -486,15 +486,16 @@ class TestSharedTeardownHelper:
         assert "nmcli connection delete id" not in uninstall_script_text
         assert 'rm -f "$POLKIT_RULE_DEST"' not in uninstall_script_text
 
-    def test_install_sources_shared_helper_with_curl_fallback(
+    def test_install_sources_shared_helper_from_checkout_or_release_tag(
         self, install_script_text: str
     ) -> None:
-        assert "teardown_lib_src=" in install_script_text
-        assert 'source "$teardown_lib_src"' in install_script_text
+        # fetch_deploy_file: the checkout's copy, else the release tag's
+        # (see test_deploy_release_install.py).
         assert (
-            "${REPO_RAW_BASE}/deploy/shared/net-provision-teardown.sh"
+            'fetch_deploy_file shared/net-provision-teardown.sh "$teardown_lib_tmp"'
             in install_script_text
         )
+        assert 'source "$teardown_lib_tmp"' in install_script_text
 
     def test_install_does_not_duplicate_teardown_steps_either(
         self, install_script_text: str

@@ -1,0 +1,34 @@
+{
+ "info": {
+  "name": "sp-rtk-base",
+  "requires_dist": [
+   "fastapi>=0.135.3",
+   "nicegui>=3.9.0",
+   "pydantic>=2.12.5",
+   "pyrtcm>=1.1.12",
+   "pyserial>=3.5",
+   "pyubx2>=1.2.43",
+   "pyyaml>=6.0.3",
+   "sp-rtk-base-relay<5,>=4.1.0",
+   "uvicorn>=0.42.0"
+  ],
+  "requires_python": ">=3.10",
+  "version": "0.9.0"
+ },
+ "urls": [
+  {
+   "filename": "sp_rtk_base-0.9.0-py3-none-any.whl",
+   "packagetype": "bdist_wheel",
+   "requires_python": ">=3.10",
+   "yanked": false,
+   "yanked_reason": null
+  },
+  {
+   "filename": "sp_rtk_base-0.9.0.tar.gz",
+   "packagetype": "sdist",
+   "requires_python": ">=3.10",
+   "yanked": false,
+   "yanked_reason": null
+  }
+ ]
+}

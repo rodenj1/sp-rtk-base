@@ -167,16 +167,23 @@ def _show(systemctl: Systemctl, unit: str) -> dict[str, str]:
     return found
 
 
-def _plumbing_in(environment: str) -> int:
+def unit_environment(environment: str) -> dict[str, str]:
+    """The variables in a unit's ``Environment`` property, as ``systemctl
+    show`` prints it (space-separated, shell-quoted); none if unparseable."""
     try:
         words = shlex.split(environment)
     except ValueError:
-        return 0
+        return {}
+    found: dict[str, str] = {}
     for word in words:
-        key, _, value = word.partition("=")
-        if key == PLUMBING_ENV:
-            return _as_plumbing(value)
-    return 0
+        key, sep, value = word.partition("=")
+        if sep:
+            found[key] = value
+    return found
+
+
+def _plumbing_in(environment: str) -> int:
+    return _as_plumbing(unit_environment(environment).get(PLUMBING_ENV, "0"))
 
 
 def _as_plumbing(value: str) -> int:

@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.update.apply import main
+from sp_rtk_base.update.health import app_health_url, systemd_health_url
 from sp_rtk_base.update.state import UpdateFiles, UpdateRequest, UpdateStatus, Versions
 from tests.fixtures.fake_pypi import FakePyPI
 
@@ -128,6 +129,10 @@ class Host:
         self.systemctl_log = root / "systemctl-calls"
         self.nrestarts = root / "nrestarts"
         self.nrestarts.write_text("0")
+        self.app_environment = root / "app-environment"
+        """What ``systemctl show --value -p Environment sp-rtk-base.service``
+        prints."""
+        self.app_environment.write_text("SP_RTK_BASE_CONFIG=/etc/x\n")
         self.files = UpdateFiles(self.update_dir)
         self.phases: list[str] = []
         """Every phase written to status.json, in order."""
@@ -176,8 +181,10 @@ class Host:
     def systemctl_fails(self, fail: bool) -> None:
         self.systemctl.write_text(
             "#!/usr/bin/env bash\n"
-            'if [ "$1" = show ]; then '
-            f'cat "{self.nrestarts}"; exit 0; fi\n'
+            'if [ "$1" = show ]; then case "$*" in\n'
+            f'  *Environment*) cat "{self.app_environment}";;\n'
+            f'  *) cat "{self.nrestarts}";;\n'
+            "esac; exit 0; fi\n"
             f'echo "$*" >> "{self.systemctl_log}"\n' + ("exit 1\n" if fail else "")
         )
         self.systemctl.chmod(0o755)
@@ -671,6 +678,75 @@ class TestVerify:
     ) -> None:
         assert run(host, monkeypatch, "--verify") != 0
         assert host.files.read_status() is None
+
+
+class TestTheHealthCheckFindsTheApp:
+    """The health check asks the app where systemd started it: a drop-in
+    can move it off port 8080 (docs/deployment-pi.md)."""
+
+    def _restarted_at(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch, environment: str
+    ) -> None:
+        host.request()
+        assert run(host, monkeypatch) == 0
+        host.app_environment.write_text(f"{environment}\n")
+        monkeypatch.delenv("SP_RTK_BASE_UPDATE_HEALTH_URL", raising=False)
+
+    def _verify(self, host: Host, monkeypatch: pytest.MonkeyPatch) -> int:
+        env = host.env()
+        del env["SP_RTK_BASE_UPDATE_HEALTH_URL"]
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return main(["--verify"])
+
+    def test_on_the_port_its_unit_sets(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        port = host.health.server.server_address[1]
+        self._restarted_at(
+            host,
+            monkeypatch,
+            f"SP_RTK_BASE_CONFIG=/etc/x SP_RTK_BASE_PORT={port}",
+        )
+
+        assert self._verify(host, monkeypatch) == 0
+
+        assert host.status().phase == "done"
+
+    def test_on_the_address_its_unit_binds(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        port = host.health.server.server_address[1]
+        self._restarted_at(
+            host,
+            monkeypatch,
+            f"SP_RTK_BASE_HOST=127.0.0.1 SP_RTK_BASE_PORT={port}",
+        )
+
+        assert self._verify(host, monkeypatch) == 0
+
+    @pytest.mark.parametrize(
+        ("environment", "url"),
+        [
+            ({}, "http://127.0.0.1:8080/api/health"),
+            ({"SP_RTK_BASE_PORT": "9090"}, "http://127.0.0.1:9090/api/health"),
+            ({"SP_RTK_BASE_PORT": "nine"}, "http://127.0.0.1:8080/api/health"),
+            ({"SP_RTK_BASE_HOST": "0.0.0.0"}, "http://127.0.0.1:8080/api/health"),
+            ({"SP_RTK_BASE_HOST": "::"}, "http://[::1]:8080/api/health"),
+            (
+                {"SP_RTK_BASE_HOST": "192.168.4.1", "SP_RTK_BASE_PORT": "81"},
+                "http://192.168.4.1:81/api/health",
+            ),
+        ],
+    )
+    def test_where_the_app_listens(self, environment: dict[str, str], url: str) -> None:
+        assert app_health_url(environment) == url
+
+    def test_systemd_unreadable_means_the_default(self, tmp_path: Path) -> None:
+        assert (
+            systemd_health_url(str(tmp_path / "no-systemctl"))
+            == "http://127.0.0.1:8080/api/health"
+        )
 
 
 class TestStopped:

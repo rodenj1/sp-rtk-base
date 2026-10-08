@@ -7,6 +7,11 @@ on localhost answers with SP-Base X **and** Relay Y; it still answers
 corrections flow is not checked: a slow Bluetooth reconnect isn't the
 release's fault.
 
+The app listens where ``sp-rtk-base.service`` tells it to
+(``SP_RTK_BASE_HOST`` and ``SP_RTK_BASE_PORT``, which a drop-in can set):
+:func:`app_health_url` reads them from systemd, as ``main`` does from its
+environment.
+
 Run by the updater, from the old version's code, for the new version and,
 after a Rollback, for the old one. Importable without the web app.
 """
@@ -17,13 +22,20 @@ import json
 import subprocess
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from sp_rtk_base.update.host_setup import unit_environment
 from sp_rtk_base.update.release import Fetch
 from sp_rtk_base.update.state import Versions
 
-HEALTH_URL = "http://127.0.0.1:8080/api/health"
+HOST_ENV = "SP_RTK_BASE_HOST"
+PORT_ENV = "SP_RTK_BASE_PORT"
+DEFAULT_PORT = 8080
+"""The app's defaults, as in ``sp_rtk_base.main``: all addresses, 8080."""
+HEALTH_URL = f"http://127.0.0.1:{DEFAULT_PORT}/api/health"
+_LOOPBACK_FOR = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}
+"""Where to reach an app bound to every address."""
 HEALTH_TIMEOUT_S = 90.0
 """How long the restarted version has to answer with the right versions."""
 HEALTH_HOLD_S = 30.0
@@ -60,6 +72,39 @@ def systemd_restarts(systemctl: str = "/usr/bin/systemctl") -> Callable[[], int 
 
 
 _SYSTEMD_RESTARTS = systemd_restarts()
+
+
+def app_health_url(environment: Mapping[str, str]) -> str:
+    """``/api/health`` where an app started with ``environment`` listens.
+
+    Mirrors ``sp_rtk_base.main``: a missing or unreadable port is 8080;
+    an app bound to every address is reached on loopback.
+    """
+    try:
+        port = int(environment.get(PORT_ENV, str(DEFAULT_PORT)))
+    except ValueError:
+        port = DEFAULT_PORT
+    host = environment.get(HOST_ENV, "").strip()
+    host = _LOOPBACK_FOR.get(host, host)
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}/api/health"
+
+
+def systemd_health_url(systemctl: str = "/usr/bin/systemctl") -> str:
+    """:func:`app_health_url` for ``sp-rtk-base.service``'s environment as
+    systemd has it (drop-ins included); the default when it can't be read."""
+    try:
+        shown = subprocess.run(
+            [systemctl, "show", "--property=Environment", "--value", APP_UNIT],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_REQUEST_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return HEALTH_URL
+    return app_health_url(unit_environment(shown.stdout.strip()))
 
 
 @dataclass(frozen=True)

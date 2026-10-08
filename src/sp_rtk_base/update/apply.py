@@ -46,8 +46,8 @@ from sp_rtk_base.update.fake_release_source import fetch_from_env
 from sp_rtk_base.update.health import (
     HEALTH_HOLD_S,
     HEALTH_TIMEOUT_S,
-    HEALTH_URL,
     HealthCheck,
+    systemd_health_url,
     systemd_restarts,
 )
 from sp_rtk_base.update.host_setup import (
@@ -98,8 +98,9 @@ HEALTH_URL_ENV = "SP_RTK_BASE_UPDATE_HEALTH_URL"
 HEALTH_TIMEOUT_ENV = "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S"
 HEALTH_HOLD_ENV = "SP_RTK_BASE_UPDATE_HEALTH_HOLD_S"
 SYSTEMCTL_ENV = "SP_RTK_BASE_UPDATE_SYSTEMCTL"
-"""Override the health check's endpoint, its 90 s and 30 s, and the
-``systemctl`` it reads ``NRestarts`` with (tests)."""
+"""Override the health check's endpoint (else read from the app's unit),
+its 90 s and 30 s, and the ``systemctl`` it reads the app's environment
+and ``NRestarts`` with (tests)."""
 
 _PIP_ERROR_LINES = 5
 """How much of pip's stderr goes into ``error``."""
@@ -441,13 +442,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     venv = os.environ.get(VENV_ENV)
     config_dir = os.environ.get(CONFIG_DIR_ENV)
+    systemctl = os.environ.get(SYSTEMCTL_ENV) or "/usr/bin/systemctl"
     health = HealthCheck(
-        url=os.environ.get(HEALTH_URL_ENV) or HEALTH_URL,
+        url=os.environ.get(HEALTH_URL_ENV) or systemd_health_url(systemctl),
         timeout_s=_float_env(HEALTH_TIMEOUT_ENV, HEALTH_TIMEOUT_S),
         hold_s=_float_env(HEALTH_HOLD_ENV, HEALTH_HOLD_S),
-        restarts=systemd_restarts(
-            os.environ.get(SYSTEMCTL_ENV) or "/usr/bin/systemctl"
-        ),
+        restarts=systemd_restarts(systemctl),
     )
     updater = Updater(
         UpdateFiles(),

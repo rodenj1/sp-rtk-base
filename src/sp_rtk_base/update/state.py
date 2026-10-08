@@ -58,8 +58,8 @@ Phase = Literal[
     "failed",
 ]
 """Where an Update is. ``done`` and ``failed`` end it. ``rolling_back``:
-the new version failed its health check, the snapshot is restored and the
-old version is restarting."""
+the new version failed its health check (or the unit stopped part-way),
+the snapshot is restored and the old version is restarting."""
 FINISHED_PHASES: frozenset[str] = frozenset({"done", "failed"})
 
 # Why an Update failed, so the page can say whether anything changed.
@@ -76,8 +76,8 @@ REASON_HOST_REQUIREMENTS = "host_requirements"
 REASON_INSTALL_FAILED = "install_failed"
 """pip failed."""
 REASON_STOPPED = "stopped"
-"""The update unit stopped before the Update finished (a timeout, a failed
-restart, a crash)."""
+"""The update unit stopped before the Update finished (a timeout, a crash);
+see ``rolled_back``."""
 REASON_NO_DISK_SPACE = "no_disk_space"
 """Too little disk space for the snapshot. Nothing changed."""
 REASON_SNAPSHOT_FAILED = "snapshot_failed"

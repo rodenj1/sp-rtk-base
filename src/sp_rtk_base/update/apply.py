@@ -2,7 +2,7 @@
 
 Run by ``sp-rtk-base-update.service`` (``deploy/``) as the service user,
 outside the app's sandbox, when ``sp-rtk-base-update.path`` sees a request
-file. See ADR 0005. The unit runs it three ways:
+file. See ADR 0005. The unit runs it four ways:
 
 - with no option, first: take the request, resolve the target, refuse
   unless it is the request's SP-Base and Relay, refuse unless the target's
@@ -13,20 +13,25 @@ file. See ADR 0005. The unit runs it three ways:
   sp-rtk-base-relay==Y``. A pip failure restores the snapshot. Exits
   non-zero on any refusal or failure, so the unit's root restart lines
   never run after one;
-- ``--verify``, after the unit has restarted the app, run from
-  ``venv.prev`` (the old version's code, so a release that fails on import
-  can't stop its own Rollback): the new version is healthy (``done``), or
-  the snapshot is restored, the rollback marker written and the exit is
-  non-zero, so the unit's root ``ExecStopPost`` line restarts the old
-  version;
-- ``--stopped``, as ``ExecStopPost``, whatever happened, also run from
-  ``venv.prev`` when there is one (so a broken release can't stop its own
-  reporting or cleanup; removing ``venv.prev`` is its last step): after a Rollback
-  it gives the old version the same health check; it removes the snapshot
-  once the running version is healthy; and an Update left half-way (a
-  timeout, a crash) is reported ``failed``. A Rollback gets one attempt:
-  if the old version fails too, the snapshot is kept and both errors are
-  reported.
+- ``--verify``, after the unit has restarted the app: the new version is
+  healthy (``done``), or the snapshot is restored, the rollback marker
+  written and the exit is non-zero, so the unit's root ``ExecStopPost``
+  line restarts the old version;
+- ``--roll-back-if-stopped``, the first ``ExecStopPost`` line, whatever
+  happened: an Update the unit stopped part-way (a timeout, a crash) once
+  pip had started is rolled back as a failed health check is (restore,
+  marker), so the root line restarts the old version;
+- ``--stopped``, the last ``ExecStopPost`` line, whatever happened: after
+  a Rollback it gives the old version the same health check; it removes
+  the snapshot once the running version is healthy; and an Update left
+  half-way before pip started is reported ``failed``. A Rollback gets one
+  attempt: if the old version fails too, the snapshot is kept and both
+  errors are reported.
+
+The last three run from ``venv.prev`` when there is one: the old
+version's code, so a release that fails on import can't stop its own
+Rollback, reporting or cleanup. Removing ``venv.prev`` is always the last
+thing a run does.
 
 Every phase is written to the updater's own record beside the venv
 (``update-progress.json``, out of the app's reach), which decides what the
@@ -112,6 +117,9 @@ and ``NRestarts`` with (tests)."""
 _PIP_ERROR_LINES = 5
 """How much of pip's stderr goes into ``error``."""
 
+_ROLL_BACK_PHASES = frozenset({"installing", "restarting", "verifying"})
+"""Phases a stopped Update is rolled back from: pip may have run."""
+
 # Exit codes. Any non-zero one stops the unit before its restart lines.
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -170,7 +178,14 @@ class Updater:
         except Exception as exc:
             logger.exception("The updater crashed")
             status = self._current or UpdateStatus(phase="resolving")
-            self._stopped_half_way(status, f"crashed: {exc!r}")
+            error = f"The Update stopped while {status.phase} (crashed: {exc!r})."
+            if status.phase == "installing" and self._snapshot.exists:
+                # Nothing restarted yet: put the files back under the old app.
+                self._restore_and_fail(
+                    REASON_STOPPED, error, from_=status.from_, to=status.to
+                )
+            else:
+                self._fail(REASON_STOPPED, error, from_=status.from_, to=status.to)
             return EXIT_FAILED
 
     def _install(self, request: UpdateRequest) -> int:
@@ -268,22 +283,51 @@ class Updater:
             )
             return EXIT_OK
         logger.error("Rolling back: %s", problem)
+        self._roll_back(status, REASON_FAILED_TO_START, problem)
+        return EXIT_FAILED
+
+    def roll_back_if_stopped(self, service_result: str) -> int:
+        """The unit has stopped, before its root restart line. An Update it
+        stopped at or after ``installing`` (a timeout, a crash) is rolled
+        back as a failed health check is, so an unchecked new version
+        never keeps running: the snapshot is restored and the marker
+        written, for the root line to restart the old version and
+        ``--stopped`` to check it."""
+        status = self._progress.read()
+        if status is None or status.finished:
+            return EXIT_OK
+        if status.phase == "rolling_back":
+            # Restored already; --verify may have been stopped before the marker.
+            self._files.mark_rollback()
+        elif status.phase in _ROLL_BACK_PHASES and self._snapshot.exists:
+            error = f"The Update stopped while {status.phase} ({service_result})."
+            logger.error("Rolling back: %s", error)
+            self._roll_back(status, REASON_STOPPED, error)
+        return EXIT_OK
+
+    def _roll_back(self, status: UpdateStatus, reason: str, error: str) -> None:
+        """Restore the snapshot and leave the marker, so the unit's root
+        ``ExecStopPost`` line restarts the old version; one attempt only."""
         try:
             self._snapshot.restore()
         except OSError as exc:
-            self._double_failure(problem, f"Restoring {_app(from_)} failed: {exc}")
-            return EXIT_FAILED
+            self._double_failure(
+                error,
+                f"Restoring {_app(status.from_)} failed: {exc}",
+                status,
+                reason,
+            )
+            return
         self._report(
             UpdateStatus(
                 phase="rolling_back",
-                from_=from_,
-                to=to,
-                error=problem,
-                reason=REASON_FAILED_TO_START,
+                from_=status.from_,
+                to=status.to,
+                error=error,
+                reason=reason,
             )
         )
         self._files.mark_rollback()
-        return EXIT_FAILED
 
     def stopped(self, service_result: str) -> int:
         """The unit has stopped. After a Rollback, check the old version;
@@ -324,12 +368,7 @@ class Updater:
         self._snapshot.remove()  # last: this may run from venv.prev
 
     def _stopped_half_way(self, status: UpdateStatus, service_result: str) -> None:
-        error = f"The update stopped while {status.phase} ({service_result})."
-        if status.phase == "installing" and self._snapshot.exists:
-            self._restore_and_fail(
-                REASON_STOPPED, error, from_=status.from_, to=status.to
-            )
-            return
+        error = f"The Update stopped while {status.phase} ({service_result})."
         self._fail(REASON_STOPPED, error, from_=status.from_, to=status.to)
 
     def _report(self, status: UpdateStatus) -> None:
@@ -375,16 +414,18 @@ class Updater:
         self._fail(reason, error, from_=from_, to=to, rolled_back=True)
 
     def _double_failure(
-        self, error: str, rollback_error: str, status: UpdateStatus | None = None
+        self,
+        error: str,
+        rollback_error: str,
+        status: UpdateStatus,
+        reason: str | None = None,
     ) -> None:
         """The Rollback failed too: one attempt only; the snapshot stays."""
-        if status is None:
-            status = self._progress.read()
         self._fail(
-            REASON_FAILED_TO_START,
+            reason or status.reason or REASON_FAILED_TO_START,
             error,
-            from_=status.from_ if status is not None else None,
-            to=status.to if status is not None else None,
+            from_=status.from_,
+            to=status.to,
             rollback_error=rollback_error,
         )
 
@@ -447,6 +488,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="after the restart: check the new version, or roll back",
     )
     step.add_argument(
+        "--roll-back-if-stopped",
+        action="store_true",
+        help="after the unit, before its restart line: roll back an Update "
+        "it stopped part-way",
+    )
+    step.add_argument(
         "--stopped",
         action="store_true",
         help="after the unit: check a rolled-back version, clean up, fail a "
@@ -474,8 +521,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if args.verify:
         return updater.verify()
+    service_result = os.environ.get("SERVICE_RESULT", "unknown")
+    if args.roll_back_if_stopped:
+        return updater.roll_back_if_stopped(service_result)
     if args.stopped:
-        return updater.stopped(os.environ.get("SERVICE_RESULT", "unknown"))
+        return updater.stopped(service_result)
     return updater.apply()
 
 

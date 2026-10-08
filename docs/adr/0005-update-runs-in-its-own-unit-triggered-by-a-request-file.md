@@ -41,8 +41,12 @@ marker in `/var/lib/sp-rtk-base/update/` and exits non-zero. A fixed
 `ExecStopPost=+` line then restarts the app, but only when the marker
 exists. The app can write that directory, so the most a compromised app
 gains by planting the marker is a restart of itself. A failure before the
-restart (a pip error) restores the snapshot without restarting. A rollback
-gets one attempt, never a loop.
+restart (a pip error) restores the snapshot without restarting. An Update
+the unit stops part-way once pip has started (a timeout, a crash) is rolled
+back like a failed health check, so an unchecked version never keeps
+running. The updater decides all this from its own record beside the
+snapshot, which the app can't write; `status.json` only reports to the app.
+A rollback gets one attempt, never a loop.
 
 Update never rewrites unit files, because that would make the updater a
 root step. A release that needs changed host files instead raises an integer

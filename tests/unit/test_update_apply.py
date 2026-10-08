@@ -861,15 +861,31 @@ class TestStopped:
         assert status.reason == "stopped"
         assert host.health.answered.get(RUNNING.app, 0) == 0
 
-    def test_stopped_while_installing_restores_the_snapshot(
-        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("phase", ["installing", "restarting", "verifying"])
+    def test_stopped_part_way_is_rolled_back(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch, phase: str
     ) -> None:
+        """A timeout or a crash after pip started: the unchecked new version
+        must not keep running. Restored, restarted, and the old version
+        checked, as after a failed health check."""
         host.request()
         host.pip(fails=False, rewrites_config=True)
         run(host, monkeypatch)
-        # As if pip had timed out half-way.
-        host.updater_wrote("installing", to=TARGET.model_dump())
+        # As if the unit had been stopped (TimeoutStartSec) during ``phase``.
+        host.updater_wrote(phase, to=TARGET.model_dump())
         monkeypatch.setenv("SERVICE_RESULT", "timeout")
+
+        assert run(host, monkeypatch, "--roll-back-if-stopped") == 0
+
+        status = host.status()
+        assert status.phase == "rolling_back"
+        assert status.reason == "stopped"
+        assert status.error is not None
+        assert phase in status.error
+        assert "timeout" in status.error
+        assert host.installed == RUNNING
+        assert host.config == CONFIG
+        assert host.files.rollback_marker_path.exists()
 
         assert run(host, monkeypatch, "--stopped") == 0
 
@@ -877,9 +893,67 @@ class TestStopped:
         assert status.phase == "failed"
         assert status.reason == "stopped"
         assert status.rolled_back
-        assert host.installed == RUNNING
-        assert host.config == CONFIG
+        assert status.rollback_error is None
+        assert host.health.answered.get(RUNNING.app, 0) >= 2
         assert not host.venv_prev.exists()
+
+    def test_stopped_part_way_without_a_snapshot_is_failed(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.updater_wrote("restarting", to=TARGET.model_dump())
+
+        assert run(host, monkeypatch, "--roll-back-if-stopped") == 0
+        assert run(host, monkeypatch, "--stopped") == 0
+
+        status = host.status()
+        assert status.phase == "failed"
+        assert status.reason == "stopped"
+        assert not status.rolled_back
+
+    def test_stopped_part_way_and_the_restore_fails(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.request()
+        run(host, monkeypatch)
+        host.updater_wrote("verifying", to=TARGET.model_dump())
+        shutil.rmtree(host.root / "config.prev")
+
+        assert run(host, monkeypatch, "--roll-back-if-stopped") == 0
+
+        status = host.status()
+        assert status.phase == "failed"
+        assert status.reason == "stopped"
+        assert status.rollback_error is not None
+        assert not host.files.rollback_marker_path.exists()
+        assert host.venv_prev.exists()
+
+    def test_a_rollback_the_check_started_gets_its_restart(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--verify restored the snapshot but was stopped before it wrote
+        the marker: the old version is restarted all the same."""
+        self._rolled_back(host, monkeypatch)
+        host.files.take_rollback_marker()
+
+        assert run(host, monkeypatch, "--roll-back-if-stopped") == 0
+
+        assert host.files.rollback_marker_path.exists()
+        assert host.status().phase == "rolling_back"
+
+    @pytest.mark.parametrize("phase", ["requested", "resolving", "done", "failed"])
+    def test_roll_back_if_stopped_leaves_other_phases_alone(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch, phase: str
+    ) -> None:
+        host.request()
+        run(host, monkeypatch)
+        host.updater_wrote(phase, error="kept")
+        host.phases.clear()
+
+        assert run(host, monkeypatch, "--roll-back-if-stopped") == 0
+
+        assert host.phases == []
+        assert host.installed == TARGET
+        assert not host.files.rollback_marker_path.exists()
 
     @pytest.mark.parametrize("phase", ["requested", "done", "failed"])
     def test_leaves_other_phases_alone(
@@ -990,9 +1064,10 @@ class TestTheUnit:
     ``ExecStopPost`` line), with the venv, the config dir, ``systemctl``,
     the health endpoint and the update directory faked."""
 
-    def _systemd(self, host: Host) -> list[str]:
+    def _systemd(self, host: Host, *, stop_during: str | None = None) -> list[str]:
         """Run the unit; return the systemctl calls made (other than
-        ``show``)."""
+        ``show``). ``stop_during``: the ``ExecStart`` line containing it is
+        killed part-way, as ``TimeoutStartSec`` would."""
         shim = host.venv / "bin" / "sp-rtk-base-apply-update"
         shim.write_text(
             f'#!/usr/bin/env bash\nexec "{sys.executable}" -m '
@@ -1014,6 +1089,12 @@ class TestTheUnit:
         result = "success"
         for line in _unit_lines("ExecStart"):
             prefixes, command = _prefixes(line)
+            if stop_during is not None and stop_during in command:
+                try:
+                    subprocess.run(to_command(command), env=env, timeout=0.7)
+                except subprocess.TimeoutExpired:
+                    result = "timeout"
+                    break
             done = subprocess.run(to_command(command), env=env, check=False)
             if done.returncode != 0 and "-" not in prefixes:
                 result = "exit-code"
@@ -1116,6 +1197,26 @@ class TestTheUnit:
         assert host.config == CONFIG
         # The old version was health-checked too.
         assert host.health.answered.get(RUNNING.app, 0) >= 2
+        assert not host.files.rollback_marker_path.exists()
+        assert not host.venv_prev.exists()
+
+    def test_a_stop_mid_check_is_rolled_back(self, host: Host) -> None:
+        host.request()
+        host.pip(fails=False, rewrites_config=True)
+        host.health.broken.add(TARGET_APP)  # still checking when the unit stops
+
+        calls = self._systemd(host, stop_during="--verify")
+
+        assert calls == self.RESTARTS + self.RESTARTS
+        status = host.status()
+        assert status.phase == "failed"
+        assert status.reason == "stopped"
+        assert status.rolled_back
+        assert status.error is not None
+        assert "verifying" in status.error
+        assert "timeout" in status.error
+        assert host.installed == RUNNING
+        assert host.config == CONFIG
         assert not host.files.rollback_marker_path.exists()
         assert not host.venv_prev.exists()
 

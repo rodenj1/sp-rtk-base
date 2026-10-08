@@ -28,6 +28,7 @@ from sp_rtk_base.update.state import (
     REASON_NEWER_RELEASE,
     REASON_NO_DISK_SPACE,
     REASON_SNAPSHOT_FAILED,
+    REASON_STOPPED,
     UpdateStatus,
     Versions,
 )
@@ -158,6 +159,8 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
             text = f"Restarting into {target}. This page reconnects by itself."
         elif status.phase == "verifying":
             text = f"Checking {target} started…"
+        elif status.phase == "rolling_back" and status.reason == REASON_STOPPED:
+            text = f"Update to {target} stopped part-way; rolling back to {start}…"
         elif status.phase == "rolling_back":
             text = f"{target} failed to start; rolling back to {start}…"
         else:
@@ -176,6 +179,12 @@ def banner(status: UpdateStatus | None, *, acknowledged: bool) -> Banner | None:
     if status.reason == REASON_FAILED_TO_START and status.rolled_back:
         return Banner(
             f"{_target(status)} failed to start; still on {start}.",
+            kind="warning",
+            dismissible=True,
+        )
+    if status.reason == REASON_STOPPED and status.rolled_back:
+        return Banner(
+            f"{_target(status)} stopped part-way; still on {start}.",
             kind="warning",
             dismissible=True,
         )

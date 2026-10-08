@@ -178,6 +178,30 @@ class TestBanner:
         assert shown.text == "0.10.1 failed to start; rolling back to 0.9.0…"
         assert shown.busy
 
+    def test_rolling_back_an_update_the_host_stopped(self) -> None:
+        shown = banner(
+            _status("rolling_back", reason=REASON_STOPPED), acknowledged=False
+        )
+
+        assert shown is not None
+        assert shown.text == "Update to 0.10.1 stopped part-way; rolling back to 0.9.0…"
+        assert shown.busy
+
+    def test_stopped_and_rolled_back_once_until_dismissed(self) -> None:
+        stopped = _status(
+            "failed",
+            reason=REASON_STOPPED,
+            error="The Update stopped while verifying (timeout).",
+            rolled_back=True,
+        )
+
+        shown = banner(stopped, acknowledged=False)
+
+        assert shown is not None
+        assert shown.text == "Update to 0.10.1 stopped part-way; still on 0.9.0."
+        assert shown.kind == "warning"
+        assert shown.dismissible
+
     def test_failed_to_start_once_until_dismissed(self) -> None:
         shown = banner(_rolled_back(), acknowledged=False)
 

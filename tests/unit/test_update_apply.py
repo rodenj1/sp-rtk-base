@@ -634,6 +634,21 @@ class TestACrash:
         assert "sp-rtk-base" in status.error
         assert not host.files.request_path.exists()
 
+    def test_a_crash_while_installing_restores_the_snapshot(
+        self, host: Host, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host.request()
+        (host.venv / "bin" / "pip").chmod(0o644)  # pip can't even start
+
+        assert run(host, monkeypatch) != 0
+
+        status = host.status()
+        assert status.phase == "failed"
+        assert status.reason == "stopped"
+        assert status.rolled_back
+        assert host.installed == RUNNING
+        assert not host.venv_prev.exists()
+
 
 class TestVerify:
     """``--verify``, after the unit restarted the app: the new version is

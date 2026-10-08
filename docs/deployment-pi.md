@@ -267,16 +267,25 @@ web UI without giving the app any privilege (see
   (if present) `sp-rtk-base-net-provision`: once after pip, and once more
   only if the rollback marker `/var/lib/sp-rtk-base/update/rollback` exists.
 - **Health check and Rollback.** After the restart, the old version's code
-  (run from `venv.prev`) checks the new one: within 90 s
-  `http://127.0.0.1:8080/api/health` must report the new SP-Base and Relay,
-  still answer 30 s later, and `NRestarts` must not have gone up. If not,
-  it restores the snapshot, writes the marker, and the unit restarts the
-  old version, which gets the same check. The snapshot is deleted once the
-  running version is healthy. If the old version fails too, there is no
-  second attempt: the snapshot is kept, Settings says so, and recovery is
-  `sudo deploy/upgrade.sh <previous version>`.
-- Progress and outcome go to `/var/lib/sp-rtk-base/update/status.json`; the
-  unit's log is `sudo journalctl -u sp-rtk-base-update`.
+  (run from `venv.prev`) checks the new one: within 90 s `/api/health`
+  (on the host and port `sp-rtk-base.service` sets, 8080 by default, so a
+  `SP_RTK_BASE_PORT` drop-in is followed) must report the new SP-Base and
+  Relay, still answer 30 s later, and `NRestarts` must not have gone up. If
+  not, it restores the snapshot, writes the marker, and the unit restarts
+  the old version, which gets the same check. A unit stopped part-way once
+  pip has started (its 15 min timeout, a crash) is rolled back the same
+  way. The snapshot is deleted once the running version is healthy. If the
+  old version fails too, there is no second attempt: the snapshot is kept,
+  Settings says so, and recovery is `sudo deploy/upgrade.sh <previous
+  version>`.
+- The updater decides from its own record,
+  `/opt/sp-rtk-base/update-progress.json`, which the app can't write.
+  Progress and outcome are reported to the app in
+  `/var/lib/sp-rtk-base/update/status.json`; the unit's log is
+  `sudo journalctl -u sp-rtk-base-update`.
+- **A power cut mid-Update.** Nothing finishes it; at the next start the
+  app marks it failed ("… was interrupted"), with the recovery command if
+  the snapshot was kept.
 
 **Checking Rollback on a real Pi** (once per release that touches the
 Update mechanism; the tests fake systemd):

@@ -1,0 +1,725 @@
+{
+ "port": "/dev/ttyACM0",
+ "started_utc": "2026-10-12T19:44:45Z",
+ "passive": {
+  "seconds": 60.0,
+  "frames": 600,
+  "by_identity": {
+   "GNRMC": 60,
+   "GNVTG": 60,
+   "GNGGA": 60,
+   "GNGSA": 180,
+   "GPGSV": 60,
+   "GAGSV": 60,
+   "GBGSV": 60,
+   "GNGLL": 60
+  }
+ },
+ "polls": {
+  "MON-VER": {
+   "answered": true,
+   "parsed": "<UBX(MON-VER, swVersion=b'EXT HPG 2.02 (43e74c)\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', hwVersion=b'000B0000\\x00\\x00', extension_01=b'ROM BASE 0x00A9D329\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_02=b'FWVER=HPG 2.02\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_03=b'PROTVER=50.10\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_04=b'MOD=ZED-X20P\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_05=b'GPS;GAL;BDS\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_06=b'SBAS;QZSS\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00', extension_07=b'NAVIC\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')>",
+   "hex": "b5620a04fa004558542048504720322e303220283433653734632900000000000000000030303042303030300000524f4d20424153452030783030413944333239000000000000000000000046575645523d48504720322e30320000000000000000000000000000000050524f545645523d35302e313000000000000000000000000000000000004d4f443d5a45442d583230500000000000000000000000000000000000004750533b47414c3b42445300000000000000000000000000000000000000534241533b515a53530000000000000000000000000000000000000000004e415649430000000000000000000000000000000000000000000000000079f3"
+  },
+  "MON-COMMS": {
+   "answered": true,
+   "parsed": "<UBX(MON-COMMS, version=0, nPorts=2, mem=0, alloc=0, outputPort=4, reserved0=0, protIds_01=0, protIds_02=1, protIds_03=5, protIds_04=6, portId_01=256, txPending_01=0, txBytes_01=179462600, txUsage_01=3, txPeakUsage_01=3, rxPending_01=0, rxBytes_01=0, rxUsage_01=0, rxPeakUsage_01=0, overrunErrs_01=0, msgs_01_01=0, msgs_01_02=0, msgs_01_03=0, msgs_01_04=0, reserved1_01=0, skipped_01=0, portId_02=768, txPending_02=0, txBytes_02=23814, txUsage_02=2, txPeakUsage_02=8, rxPending_02=0, rxBytes_02=34, rxUsage_02=0, rxPeakUsage_02=0, overrunErrs_02=0, msgs_02_01=2, msgs_02_02=0, msgs_02_03=0, msgs_02_04=0, reserved1_02=0, skipped_02=18)>",
+   "hex": "b5620a365800000210000001050600010000c861b20a030300000000000000000000000000000000000000000000000000000000000000030000065d000002080000220000000000000002000000000000000000000000000000120000004814"
+  },
+  "NAV-PVT": {
+   "answered": true,
+   "parsed": "<UBX(NAV-PVT, iTOW=14:46:26, year=2025, month=6, day=19, hour=14, min=46, second=44, validDate=0, validTime=0, fullyResolved=0, validMag=0, tAcc=4294967295, nano=0, fixType=0, gnssFixOk=0, diffSoln=0, psmState=0, headVehValid=0, carrSoln=0, confirmedAvai=1, confirmedDate=0, confirmedTime=0, numSV=0, lon=0.0, lat=0.0, height=0, hMSL=-17000, hAcc=4294967295, vAcc=4294967295, velN=0, velE=0, velD=0, gSpeed=0, headMot=0.0, sAcc=20000, headAcc=180.0, pDOP=99.99, invalidLlh=0, lastCorrectionAge=0, authTime=0, nmaFixStatus=0, reserved0=677891736, headVeh=0.0, magDec=0.0, magAcc=0.0)>",
+   "hex": "b56201075c002044c517e90706130e2e2cf0ffffffff000000000000240000000000000000000000000098bdffffffffffffffffffff0000000000000000000000000000000000000000204e000080a812010f27000098ce6728000000000000000044fe"
+  },
+  "NAV-SAT": {
+   "answered": true,
+   "parsed": "<UBX(NAV-SAT, iTOW=14:46:27, version=1, numSvs=0, reserved0=0)>",
+   "hex": "b562013508000848c517010000006bf0"
+  },
+  "NAV-SIG": {
+   "answered": true,
+   "parsed": "<UBX(NAV-SIG, iTOW=14:46:28, version=0, numSigs=0, reserved0=0)>",
+   "hex": "b56201430800f04bc5170000000063db"
+  }
+ },
+ "valget_ram": {
+  "CFG_MSGOUT_RTCM_3X_TYPE1005_I2C": {
+   "id": "0x209102bd",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1005_SPI": {
+   "id": "0x209102c1",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1005_UART1": {
+   "id": "0x209102be",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1005_UART2": {
+   "id": "0x209102bf",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1005_USB": {
+   "id": "0x209102c0",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1074_I2C": {
+   "id": "0x2091035e",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1074_SPI": {
+   "id": "0x20910362",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1074_UART1": {
+   "id": "0x2091035f",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1074_UART2": {
+   "id": "0x20910360",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1074_USB": {
+   "id": "0x20910361",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1077_I2C": {
+   "id": "0x209102cc",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1077_SPI": {
+   "id": "0x209102d0",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1077_UART1": {
+   "id": "0x209102cd",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1077_UART2": {
+   "id": "0x209102ce",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1077_USB": {
+   "id": "0x209102cf",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1084_I2C": {
+   "id": "0x20910363",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1084_SPI": {
+   "id": "0x20910367",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1084_UART1": {
+   "id": "0x20910364",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1084_UART2": {
+   "id": "0x20910365",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1084_USB": {
+   "id": "0x20910366",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1087_I2C": {
+   "id": "0x209102d1",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1087_SPI": {
+   "id": "0x209102d5",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1087_UART1": {
+   "id": "0x209102d2",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1087_UART2": {
+   "id": "0x209102d3",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1087_USB": {
+   "id": "0x209102d4",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1094_I2C": {
+   "id": "0x20910368",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1094_SPI": {
+   "id": "0x2091036c",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1094_UART1": {
+   "id": "0x20910369",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1094_UART2": {
+   "id": "0x2091036a",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1094_USB": {
+   "id": "0x2091036b",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1097_I2C": {
+   "id": "0x20910318",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1097_SPI": {
+   "id": "0x2091031c",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1097_UART1": {
+   "id": "0x20910319",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1097_UART2": {
+   "id": "0x2091031a",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1097_USB": {
+   "id": "0x2091031b",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1124_I2C": {
+   "id": "0x2091036d",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1124_SPI": {
+   "id": "0x20910371",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1124_UART1": {
+   "id": "0x2091036e",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1124_UART2": {
+   "id": "0x2091036f",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1124_USB": {
+   "id": "0x20910370",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1127_I2C": {
+   "id": "0x209102d6",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1127_SPI": {
+   "id": "0x209102da",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1127_UART1": {
+   "id": "0x209102d7",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1127_UART2": {
+   "id": "0x209102d8",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1127_USB": {
+   "id": "0x209102d9",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1230_I2C": {
+   "id": "0x20910303",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1230_SPI": {
+   "id": "0x20910307",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1230_UART1": {
+   "id": "0x20910304",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1230_UART2": {
+   "id": "0x20910305",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1230_USB": {
+   "id": "0x20910306",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_0_I2C": {
+   "id": "0x209102fe",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_0_SPI": {
+   "id": "0x20910302",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_0_UART1": {
+   "id": "0x209102ff",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_0_UART2": {
+   "id": "0x20910300",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_0_USB": {
+   "id": "0x20910301",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_1_I2C": {
+   "id": "0x20910381",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_1_SPI": {
+   "id": "0x20910385",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_1_UART1": {
+   "id": "0x20910382",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_1_UART2": {
+   "id": "0x20910383",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE4072_1_USB": {
+   "id": "0x20910384",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_UBX_RXM_RTCM_UART1": {
+   "id": "0x20910269",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_UBX_RXM_RTCM_UART2": {
+   "id": "0x2091026a",
+   "status": "nak"
+  },
+  "CFG_MSGOUT_UBX_RXM_RTCM_USB": {
+   "id": "0x2091026b",
+   "status": "nak"
+  },
+  "CFG_NAVSPG_DYNMODEL": {
+   "id": "0x20110021",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_NAVSPG_INFIL_MINELEV": {
+   "id": "0x201100a4",
+   "status": "ack",
+   "value": 10
+  },
+  "CFG_RATE_MEAS": {
+   "id": "0x30210001",
+   "status": "ack",
+   "value": 1000
+  },
+  "CFG_RATE_NAV": {
+   "id": "0x30210002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_BDS_B2_ENA": {
+   "id": "0x1031000e",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_SIGNAL_BDS_ENA": {
+   "id": "0x10310022",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_GAL_ENA": {
+   "id": "0x10310021",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_GLO_ENA": {
+   "id": "0x10310025",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_SIGNAL_GPS_ENA": {
+   "id": "0x1031001f",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_QZSS_ENA": {
+   "id": "0x10310024",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_SIGNAL_SBAS_ENA": {
+   "id": "0x10310020",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SPI_ENABLED": {
+   "id": "0x10640006",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_X": {
+   "id": "0x40030003",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_X_HP": {
+   "id": "0x20030006",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_Y": {
+   "id": "0x40030004",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_Y_HP": {
+   "id": "0x20030007",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_Z": {
+   "id": "0x40030005",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_ECEF_Z_HP": {
+   "id": "0x20030008",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_FIXED_POS_ACC": {
+   "id": "0x4003000f",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_HEIGHT": {
+   "id": "0x4003000b",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_HEIGHT_HP": {
+   "id": "0x2003000e",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_LAT": {
+   "id": "0x40030009",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_LAT_HP": {
+   "id": "0x2003000c",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_LON": {
+   "id": "0x4003000a",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_LON_HP": {
+   "id": "0x2003000d",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_MODE": {
+   "id": "0x20030001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_TMODE_POS_TYPE": {
+   "id": "0x20030002",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_TMODE_SVIN_ACC_LIMIT": {
+   "id": "0x40030011",
+   "status": "ack",
+   "value": 50
+  },
+  "CFG_TMODE_SVIN_MIN_DUR": {
+   "id": "0x40030010",
+   "status": "ack",
+   "value": 3600
+  },
+  "CFG_UART1INPROT_NMEA": {
+   "id": "0x10730002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1INPROT_RTCM3X": {
+   "id": "0x10730004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1INPROT_UBX": {
+   "id": "0x10730001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1OUTPROT_NMEA": {
+   "id": "0x10740002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1OUTPROT_RTCM3X": {
+   "id": "0x10740004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1OUTPROT_UBX": {
+   "id": "0x10740001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART1_BAUDRATE": {
+   "id": "0x40520001",
+   "status": "ack",
+   "value": 115200
+  },
+  "CFG_UART2INPROT_NMEA": {
+   "id": "0x10750002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART2INPROT_RTCM3X": {
+   "id": "0x10750004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART2INPROT_UBX": {
+   "id": "0x10750001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART2OUTPROT_NMEA": {
+   "id": "0x10760002",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_UART2OUTPROT_RTCM3X": {
+   "id": "0x10760004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_UART2OUTPROT_UBX": {
+   "id": "0x10760001",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_UART2_BAUDRATE": {
+   "id": "0x40530001",
+   "status": "ack",
+   "value": 38400
+  },
+  "CFG_USBINPROT_NMEA": {
+   "id": "0x10770002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_USBINPROT_RTCM3X": {
+   "id": "0x10770004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_USBINPROT_UBX": {
+   "id": "0x10770001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_USBOUTPROT_NMEA": {
+   "id": "0x10780002",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_USBOUTPROT_RTCM3X": {
+   "id": "0x10780004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_USBOUTPROT_UBX": {
+   "id": "0x10780001",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1006_I2C": {
+   "id": "0x209102c2",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1006_SPI": {
+   "id": "0x209102c6",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1006_UART1": {
+   "id": "0x209102c3",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1006_UART2": {
+   "id": "0x209102c4",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_RTCM_3X_TYPE1006_USB": {
+   "id": "0x209102c5",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_UBX_RXM_COR_I2C": {
+   "id": "0x209106b6",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_UBX_RXM_COR_SPI": {
+   "id": "0x209106ba",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_UBX_RXM_COR_UART1": {
+   "id": "0x209106b7",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_UBX_RXM_COR_UART2": {
+   "id": "0x209106b8",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_MSGOUT_UBX_RXM_COR_USB": {
+   "id": "0x209106b9",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_NAVCOR_ENABLE_GAL_HAS": {
+   "id": "0x100d0002",
+   "status": "nak"
+  },
+  "CFG_NAVCOR_ENABLE_HOST": {
+   "id": "0x100d0001",
+   "status": "nak"
+  },
+  "CFG_RTCM_DF003_IN": {
+   "id": "0x30090008",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_RTCM_DF003_IN_FILTER": {
+   "id": "0x20090009",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_RTCM_DF003_OUT": {
+   "id": "0x30090001",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_RTCM_DF028_OUT": {
+   "id": "0x30090010",
+   "status": "nak"
+  },
+  "CFG_RTCM_MSM_OUT_RANGERATE_SIGN": {
+   "id": "0x10090011",
+   "status": "nak"
+  },
+  "CFG_SIGNAL_BDS_B1C_ENA": {
+   "id": "0x1031000f",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_BDS_B2A_ENA": {
+   "id": "0x10310028",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_BDS_B3_ENA": {
+   "id": "0x10310010",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_GAL_E5A_ENA": {
+   "id": "0x10310009",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_GAL_E6_ENA": {
+   "id": "0x1031000b",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_GPS_L5_ENA": {
+   "id": "0x10310004",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_NAVIC_ENA": {
+   "id": "0x10310026",
+   "status": "ack",
+   "value": 0
+  },
+  "CFG_SIGNAL_NAVIC_L5_ENA": {
+   "id": "0x1031001d",
+   "status": "ack",
+   "value": 1
+  },
+  "CFG_SIGNAL_PLAN": {
+   "id": "0x2031003a",
+   "status": "ack",
+   "value": 2
+  },
+  "CFG_SIGNAL_QZSS_L1CB_ENA": {
+   "id": "0x10310039",
+   "status": "nak"
+  }
+ },
+ "finished_utc": "2026-10-12T19:45:48Z"
+}

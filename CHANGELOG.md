@@ -26,10 +26,23 @@ The groundwork for the remote access Portal (rtk_development#82).
   link-local ranges, so it can't open a socket to anything on the LAN
   whatever its code does. If the base's DNS resolver is on the LAN, the
   installer allows just that address.
-- **Portal page.** A new System > Portal page shows the agent's status:
-  "Not connected" for now.
+- **Claim.** "Connect to Portal" on the System > Portal page starts a
+  Claim: the agent makes the base's key (Ed25519), asks the Portal for an
+  8-letter pairing code and shows it with a 10-minute countdown and an
+  "Approve on Portal" button. Once the Operator approves it on the Portal,
+  the page reads Connected, with the account the base is Claimed by, the
+  Portal's name, the base's id and the last contact. The Claim is kept in
+  `/var/lib/sp-rtk-base-portal-agent` (key mode 0600) and survives
+  restarts, upgrades and reinstalls. Nothing contacts the Portal before
+  "Connect to Portal" is pressed.
+- **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
+  base's id (`{"id": "..."}`), readable cross-origin by the Portal only;
+  an unclaimed base answers 404 with no body.
 - `upgrade.sh` and an Update restart the agent with the app;
-  `uninstall.sh` removes it.
+  `uninstall.sh` removes it, and asks before removing the Claim.
+- New dependency: `sp-rtk-portal-protocol` (the agent-to-Portal protocol,
+  from the sp-rtk-portal repo), pinned to a commit; `httpx` is now
+  declared directly.
 
 ### Breaking (deploy)
 

@@ -267,3 +267,13 @@ the base's own web UI through `localhost:8080` only. Installed with the base
 but idle until the base is Claimed: it holds no key, contacts nothing and
 only answers the app on its control socket. The kernel denies it the LAN.
 _Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
+
+**Claim**:
+Tying a base to one Portal account, started from the base's own Portal
+page ("Connect to Portal") and approved on the Portal with a short pairing
+code (RFC 8628). At Claim the agent makes the base's **base key**
+(Ed25519), which signs every request it makes to the Portal; the Portal
+keeps only the public half. A Claim gives the base an opaque `<id>`, new
+for every Claim, served unauthenticated by `/api/portal/identity`. Kept in
+the agent's state directory, so restarts and reinstalls keep it.
+_Avoid_: register, pair (pairing is the step, Claim the result), link

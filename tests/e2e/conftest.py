@@ -164,11 +164,36 @@ def clean_update(update_dir: Path) -> Iterator[Path]:
 
 
 @pytest.fixture(scope="session")
+def portal_agent_socket() -> Iterator[Path]:
+    """A real, idle Portal agent for the e2e server, on a socket in a temp
+    dir (short: AF_UNIX paths are capped near 108 bytes)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="e2e-agent-") as d:
+        sock = Path(d) / "control.sock"
+        env = {**os.environ, "SP_RTK_BASE_PORTAL_AGENT_SOCKET": str(sock)}
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "sp_rtk_base.portal_agent.main"], env=env
+        )
+        try:
+            deadline = time.monotonic() + 15
+            while not sock.exists():
+                if proc.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError("the Portal agent didn't start listening")
+                time.sleep(0.05)
+            yield sock
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+
+
+@pytest.fixture(scope="session")
 def sp_rtk_base_server(
     tmp_path_factory: pytest.TempPathFactory,
     fake_pypi_dir: Path,
     update_dir: Path,
     host_setup_file: Path,
+    portal_agent_socket: Path,
 ) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
@@ -209,6 +234,8 @@ def sp_rtk_base_server(
     env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
     # The fake Host setup: the units' state comes from this file, not systemd.
     env["SP_RTK_BASE_FAKE_HOST_SETUP"] = str(host_setup_file)
+    # The Portal page asks this (real, idle) agent, not /run's.
+    env["SP_RTK_BASE_PORTAL_AGENT_SOCKET"] = str(portal_agent_socket)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

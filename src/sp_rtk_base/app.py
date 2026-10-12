@@ -253,11 +253,12 @@ def init_app() -> None:
     from sp_rtk_base.ui.pages import gps_config as _gps_config
     from sp_rtk_base.ui.pages import input as _input
     from sp_rtk_base.ui.pages import outputs as _outputs
+    from sp_rtk_base.ui.pages import portal as _portal
     from sp_rtk_base.ui.pages import settings as _settings
     from sp_rtk_base.ui.pages import survey as _survey
 
     # Reference the modules to prevent "unused import" removal
-    _ = (_dashboard, _gps_config, _input, _outputs, _settings, _survey)
+    _ = (_dashboard, _gps_config, _input, _outputs, _portal, _settings, _survey)
 
     # Network page is appliance-only (issue #28) — in managed-host mode
     # something else owns the host's network stack, so the route isn't

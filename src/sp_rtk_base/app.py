@@ -31,6 +31,7 @@ from sp_rtk_base.api.events import router as events_router
 from sp_rtk_base.api.health import router as health_router
 from sp_rtk_base.api.metrics import router as metrics_router
 from sp_rtk_base.api.network import router as network_router
+from sp_rtk_base.api.portal import router as portal_router
 from sp_rtk_base.api.profiles import router as profiles_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
@@ -81,6 +82,7 @@ def create_api_app() -> FastAPI:
     api.include_router(profiles_router)
     api.include_router(bluetooth_router)
     api.include_router(update_router)
+    api.include_router(portal_router)
     return api
 
 

@@ -30,7 +30,7 @@ def unit(k):
 
 with (P/'app-key-contract.csv').open('w') as f:
     fields=['key','id','type','unit','layer_contract','app_groups','2.00','2.02','2.10','2.11','caveat','primary_pages']
-    w=csv.DictWriter(f,fieldnames=fields);w.writeheader()
+    w=csv.DictWriter(f,fieldnames=fields,lineterminator='\n');w.writeheader()
     for r in a['keys']:
         row={'key':r['key'],'id':r['id'],'type':r['library_type'][0]+str(int(r['library_type'][1:])),'unit':unit(r['key']),'layer_contract':'RAM effective; BBR/Flash saved overrides; Default read-only; storage availability must be verified','app_groups':';'.join(r['groups']),'caveat':'','primary_pages':';'.join(v+':'+','.join(str(e['printed_page']) for e in x['evidence']) for v,x in r['firmware'].items())}
         for v,x in r['firmware'].items():

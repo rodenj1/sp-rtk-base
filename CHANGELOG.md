@@ -9,6 +9,36 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## Unreleased
+
+### Portal agent
+
+The groundwork for the remote access Portal (rtk_development#82).
+
+- **Portal agent.** The installer now lays down the Portal agent as its
+  own service, `sp-rtk-base-portal-agent.service`, in both deployment
+  modes. Until the base is Claimed it is idle: it holds no key, contacts
+  nothing, and only answers the app on a Unix socket only the service
+  user can use. Installing sp-rtk-base never makes a base phone home.
+- **Kept off the LAN.** The agent's unit carries the app's sandboxing plus
+  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`,
+  `DevicePolicy=closed` and an `IPAddressDeny` of the private and
+  link-local ranges, so it can't open a socket to anything on the LAN
+  whatever its code does. If the base's DNS resolver is on the LAN, the
+  installer allows just that address.
+- **Portal page.** A new System > Portal page shows the agent's status:
+  "Not connected" for now.
+- `upgrade.sh` and an Update restart the agent with the app;
+  `uninstall.sh` removes it.
+
+### Breaking (deploy)
+
+- **One-time `install.sh` re-run.** The agent's unit is new Host setup
+  (plumbing version 2), which an Update can't add: the base asks for the
+  installer to be re-run once instead of offering Update. `curl -fsSL
+  https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
+  | sudo bash`. A bare re-run keeps the deployment mode.
+
 ## v0.10.0 (2026-10-08)
 
 ### Update from the web UI

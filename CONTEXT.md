@@ -248,3 +248,22 @@ An Update undone because its new version failed to start, putting the
 previous application and Relay back. Automatic; the operator never starts
 one.
 _Avoid_: downgrade, revert
+
+### Remote access
+
+**Portal**:
+The hosted web service at `sp-rtk-base.big-spray.com` where an Operator
+logs in, sees the bases they can reach, and opens a base's web UI from
+anywhere. Also the name of this application's local page that shows the
+base's connection to it. Not the setup-AP's captive portal (the
+`net_provision` `Portal` class), which is unrelated.
+_Avoid_: cloud, captive portal (that's the setup AP's)
+
+**Portal agent**:
+The companion process on a base, run by its own systemd unit
+(`sp-rtk-base-portal-agent.service`, code in `sp_rtk_base.portal_agent`),
+that checks in with the Portal and, on request, carries a remote session to
+the base's own web UI through `localhost:8080` only. Installed with the base
+but idle until the base is Claimed: it holds no key, contacts nothing and
+only answers the app on its control socket. The kernel denies it the LAN.
+_Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)

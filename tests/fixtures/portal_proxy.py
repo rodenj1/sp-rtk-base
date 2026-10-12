@@ -7,6 +7,8 @@ more:
   with ``X-Forwarded-Prefix: <prefix>``.
 - Strips ``Cookie`` and ``Set-Cookie`` both ways, so the base never sees
   a Portal cookie and never sets one.
+- Stamps ``Access-Control-Allow-Origin: *`` and ``Content-Security-Policy:
+  sandbox …`` on every response.
 - Serves a parent page at ``/`` that frames ``<prefix>/<p>`` in
   ``<iframe sandbox="allow-scripts allow-forms allow-downloads">`` (no
   ``allow-same-origin``), so the base runs with an opaque origin.
@@ -146,6 +148,11 @@ class PortalProxy:
             for k, v in upstream.headers.items():
                 if k.lower() not in _HOP:
                     resp.headers.add(k, v)
+            # What the Portal stamps on every base response: subresources
+            # load into the opaque-origin frame, and the base is sandboxed
+            # even if something loads it outside the frame.
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Content-Security-Policy"] = f"sandbox {SANDBOX}"
             return resp
 
     async def _proxy_ws(

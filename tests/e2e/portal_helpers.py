@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
 import httpx
@@ -27,7 +27,7 @@ def open_event_log(page: Page, navigate: Callable[[], object]) -> WebSocket:
 
 
 @contextmanager
-def relay_started_event(api_base_url: str) -> Iterator[str]:
+def relay_started_event(api_base_url: str) -> Generator[str]:
     """Start the Relay from a TCP input (a listener here); yields the text of
     a live event that start sends to every open Event log."""
     source = socket.create_server(("127.0.0.1", 0))

@@ -239,7 +239,12 @@ def init_app() -> None:
     sets up all NiceGUI page routes, and schedules service initialization.
     Must be called before ui.run().
     """
-    from nicegui import app
+    from nicegui import app, ui
+
+    from sp_rtk_base.ui.storage_stand_in import STORAGE_STAND_IN
+
+    # Every page also runs inside the Portal's sandboxed frame (ADR 0004).
+    ui.add_head_html(STORAGE_STAND_IN, shared=True)
 
     api = create_api_app()
 

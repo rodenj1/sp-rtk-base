@@ -1,0 +1,561 @@
+{
+ "baseline_sha": "8854c750f06ff321be29c9d29f9874484ce92b97",
+ "baseline_extracted": {
+  "MIN_USED_RATIO": 0.9,
+  "MIN_RECEIVED_RATIO": 0.9,
+  "survey_consts": {
+   "STALL_ABORT_S": 600.0,
+   "FIXED_SETTLE_S": 30.0,
+   "MAX_CORRECTION_AGE_S": 10.0
+  },
+  "watched_identity": "RXM-RTCM",
+  "REFERENCE_WINDOW_SECONDS": 60.0,
+  "lastCorrectionAge_code_to_upper_bound_s": {
+   "0": null,
+   "1": 1.0,
+   "2": 2.0,
+   "3": 5.0,
+   "4": 10.0,
+   "5": 15.0,
+   "6": 20.0,
+   "7": 30.0,
+   "8": 45.0,
+   "9": 60.0,
+   "10": 90.0,
+   "11": 120.0,
+   "12": 120.0,
+   "13": null,
+   "14": null,
+   "15": null
+  }
+ },
+ "baseline_probe_with_no_receiver_telemetry": [],
+ "scenarios": {
+  "S01_healthy_rtcm_fixed": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "green",
+    "ladder_level": 6,
+    "solution": "fixed",
+    "rtk_fixed_evidence": true,
+    "red": [],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S02_x20_no_use_telemetry_but_fixed": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 2,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "use_telemetry_unavailable"
+    ],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S03_msm_not_used": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": null,
+    "survey_fresh": false,
+    "survey_stall_reason": "no_corrections",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 3,
+    "solution": "none",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "msm_not_used:2/2",
+     "reference_position_not_used"
+    ],
+    "missing": [
+     "no_signal_uses_rtcm3_osr"
+    ],
+    "warnings": [],
+    "osr_signals": 0
+   }
+  },
+  "S04_use_unknown": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 3,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "reference_position_use_unknown",
+     "use_unknown"
+    ],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S05_station_mismatch": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 1.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "no_fixed",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 3,
+    "solution": "float",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "station_mismatch:42,43"
+    ],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S06_no_reference_position_report": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 1.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "no_fixed",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 3,
+    "solution": "float",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "reference_position_report_missing"
+    ],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S07_has_fallback_after_source_loss_HYPOTHETICAL": {
+   "note": "2.11 HAS fallback; whether HAS refreshes lastCorrectionAge or yields carrSoln=1 needs capture",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 1.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "no_fixed",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 0,
+    "solution": "float",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "source_interrupted",
+     "other_source_only:gal_has"
+    ],
+    "missing": [
+     "use_reports_missing"
+    ],
+    "warnings": [
+     "other_protocol_used:has"
+    ],
+    "osr_signals": 0
+   }
+  },
+  "S08_sbas_only_HYPOTHETICAL": {
+   "note": "IM: SBAS sets diffSoln; whether it sets lastCorrectionAge needs capture",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "red",
+    "probe_reasons": [
+     "no correction Frames were written"
+    ],
+    "survey_correction_age_s": 1.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "no_fixed",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 0,
+    "solution": "none",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "not_written",
+     "other_source_only:sbas"
+    ],
+    "missing": [
+     "use_reports_missing"
+    ],
+    "warnings": [],
+    "osr_signals": 0
+   }
+  },
+  "S09_stale_rtcm_receiver_still_fixed": {
+   "note": "receiver keeps RTCM up to CFG-NAVSPG-CONSTR_DGNSSTO (60 s default)",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 30.0,
+    "survey_fresh": false,
+    "survey_stall_reason": "no_corrections",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 3,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "stale",
+     "receiver_correction_age_stale"
+    ],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S10_source_interrupted": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 15.0,
+    "survey_fresh": false,
+    "survey_stall_reason": "no_corrections",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 0,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "source_interrupted",
+     "stale",
+     "receiver_correction_age_stale"
+    ],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S11_erroneous": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "red",
+    "ladder_level": 3,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [
+     "erroneous:1",
+     "msm_not_used:1/1"
+    ],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S12_spartn_alongside_rtcm": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "green",
+    "ladder_level": 6,
+    "solution": "fixed",
+    "rtk_fixed_evidence": true,
+    "red": [],
+    "missing": [],
+    "warnings": [
+     "other_protocol_used:spartn"
+    ],
+    "osr_signals": 12
+   }
+  },
+  "S13_f9p_rxm_rtcm_preserved": {
+   "note": "",
+   "firmware": "F9 HPG 1.51",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": [
+     "1005",
+     "1077",
+     "1087",
+     "1097",
+     "1127",
+     "1230"
+    ]
+   },
+   "proposed": {
+    "verdict": "green",
+    "ladder_level": 6,
+    "solution": "fixed",
+    "rtk_fixed_evidence": true,
+    "red": [],
+    "missing": [],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S14_reports_drained_or_absent": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 2,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "use_reports_missing"
+    ],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S15_truncated_cor": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "green",
+    "ladder_level": 6,
+    "solution": "fixed",
+    "rtk_fixed_evidence": true,
+    "red": [],
+    "missing": [],
+    "warnings": [
+     "malformed_reports:1"
+    ],
+    "osr_signals": 12
+   }
+  },
+  "S16_undocumented_enums": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 3,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "reference_position_use_unknown",
+     "use_unknown"
+    ],
+    "warnings": [
+     "other_protocol_used:undocumented"
+    ],
+    "osr_signals": 12
+   }
+  },
+  "S17_base_role_unexpected_input": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "base",
+   "baseline_on_x20": {
+    "probe_verdict": "red",
+    "probe_reasons": [
+     "no correction Frames were written"
+    ],
+    "survey_correction_age_s": null,
+    "survey_fresh": false,
+    "survey_stall_reason": "no_corrections",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "not_applicable",
+    "ladder_level": null,
+    "solution": null,
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [],
+    "osr_signals": 0,
+    "warnings": [
+     "unexpected_correction_input_on_base"
+    ]
+   }
+  },
+  "S18_fixed_without_nav_sig": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 4,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "nav_sig_unavailable"
+    ],
+    "warnings": [],
+    "osr_signals": 0
+   }
+  },
+  "S19_epoch_mismatch": {
+   "note": "",
+   "firmware": "2.11",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "inconclusive",
+    "ladder_level": 4,
+    "solution": "fixed",
+    "rtk_fixed_evidence": false,
+    "red": [],
+    "missing": [
+     "epoch_mismatch"
+    ],
+    "warnings": [],
+    "osr_signals": 12
+   }
+  },
+  "S20_has_on_2_02_is_undocumented": {
+   "note": "",
+   "firmware": "2.02",
+   "role": "rover",
+   "baseline_on_x20": {
+    "probe_verdict": "green",
+    "probe_reasons": [],
+    "survey_correction_age_s": 2.0,
+    "survey_fresh": true,
+    "survey_stall_reason": "fixed_unsettled",
+    "rtcm_tally_keys": []
+   },
+   "proposed": {
+    "verdict": "green",
+    "ladder_level": 6,
+    "solution": "fixed",
+    "rtk_fixed_evidence": true,
+    "red": [],
+    "missing": [],
+    "warnings": [
+     "other_protocol_used:undocumented"
+    ],
+    "osr_signals": 12
+   }
+  }
+ }
+}

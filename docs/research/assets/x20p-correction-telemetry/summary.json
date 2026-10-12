@@ -1,0 +1,297 @@
+{
+ "manual_documents": {
+  "2.00": {
+   "file": "2.00.md",
+   "sha256": "e589e9d623dafd3752da346a2936ce5c1524d2086cc6c442dee1c2ea45002c5b",
+   "lines": 21714,
+   "document": "UBXDOC-304424225-19888 - R01"
+  },
+  "2.02": {
+   "file": "2.02.md",
+   "sha256": "0d8c8a913c2ce5524d058016c62dc2d4a2212f6d96d942ef156a78f6ad9d93b0",
+   "lines": 23041,
+   "document": "UBXDOC-304424225-19967 - R03"
+  },
+  "2.10": {
+   "file": "2.10.md",
+   "sha256": "65021da30042cd49e58901c1ef3414d7b8daca56dc7e92f2c8625c728011256c",
+   "lines": 22754,
+   "document": "UBXDOC-304424225-21263 - R02"
+  },
+  "2.11": {
+   "file": "2.11.md",
+   "sha256": "02d6439e3994f928fbef293d4acdcac10577b3d88887a7b8893cd20a4cc98371",
+   "lines": 27620,
+   "document": "UBXDOC-304424225-21617 - R01"
+  }
+ },
+ "manual_pages": {
+  "RXM-COR": {
+   "2.00": [
+    118,
+    119
+   ],
+   "2.02": [
+    125,
+    126
+   ],
+   "2.10": [
+    119,
+    121
+   ],
+   "2.11": [
+    152,
+    154
+   ]
+  },
+  "NAV-PVT": {
+   "2.00": [
+    98,
+    101
+   ],
+   "2.02": [
+    105,
+    107
+   ],
+   "2.10": [
+    99,
+    102
+   ],
+   "2.11": [
+    110,
+    113
+   ]
+  },
+  "NAV-SAT": {
+   "2.00": [
+    103,
+    105
+   ],
+   "2.02": [
+    109,
+    111
+   ],
+   "2.10": [
+    104,
+    105
+   ],
+   "2.11": [
+    115,
+    116
+   ]
+  },
+  "NAV-SIG": {
+   "2.00": [
+    106,
+    108
+   ],
+   "2.02": [
+    112,
+    114
+   ],
+   "2.10": [
+    107,
+    109
+   ],
+   "2.11": [
+    118,
+    120
+   ]
+  }
+ },
+ "manual_revision_enum_diffs": [
+  {
+   "message": "RXM-COR",
+   "field": "protocol",
+   "version": "2.00",
+   "values": [
+    "0",
+    "1",
+    "2",
+    "29",
+    "30"
+   ],
+   "values_2.11": [
+    "0",
+    "1",
+    "2",
+    "5",
+    "29",
+    "30"
+   ]
+  },
+  {
+   "message": "RXM-COR",
+   "field": "protocol",
+   "version": "2.02",
+   "values": [
+    "0",
+    "1",
+    "2",
+    "29",
+    "30"
+   ],
+   "values_2.11": [
+    "0",
+    "1",
+    "2",
+    "5",
+    "29",
+    "30"
+   ]
+  },
+  {
+   "message": "NAV-SIG",
+   "field": "ionoModel",
+   "version": "2.00",
+   "values": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "8"
+   ],
+   "values_2.11": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "7",
+    "8",
+    "9",
+    "11"
+   ]
+  },
+  {
+   "message": "NAV-SIG",
+   "field": "ionoModel",
+   "version": "2.02",
+   "values": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "8"
+   ],
+   "values_2.11": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "7",
+    "8",
+    "9",
+    "11"
+   ]
+  }
+ ],
+ "parser_runs": {
+  "locked": {
+   "pyubx2": "1.3.0",
+   "python": "3.14.7",
+   "total": 263,
+   "unique_ids": 263,
+   "ok": 261,
+   "failed": [
+    "neg:cor-truncated-11-bytes",
+    "pvt:fixed-age-bucket3"
+   ],
+   "by_kind": {
+    "cor": 14,
+    "f9p": 1,
+    "neg": 3,
+    "pvt": 6,
+    "reserved": 20,
+    "sat": 1,
+    "sig": 2,
+    "walk": 216
+   },
+   "fields_checked": 7737
+  },
+  "candidate": {
+   "pyubx2": "1.3.8",
+   "python": "3.14.7",
+   "total": 263,
+   "unique_ids": 263,
+   "ok": 261,
+   "failed": [
+    "neg:cor-truncated-11-bytes",
+    "pvt:fixed-age-bucket3"
+   ],
+   "by_kind": {
+    "cor": 14,
+    "f9p": 1,
+    "neg": 3,
+    "pvt": 6,
+    "reserved": 20,
+    "sat": 1,
+    "sig": 2,
+    "walk": 216
+   },
+   "fields_checked": 7737
+  }
+ },
+ "unique_bitfields_walked": 54,
+ "expected_failures": {
+  "pvt:fixed-age-bucket3": "pyubx2 serializer truncates scaled lat 47.35 to raw 473499999 (parse is exact)",
+  "neg:cor-truncated-11-bytes": "pyubx2 parses an 11-byte RXM-COR payload without error; msgSubType=4 not 0x0304"
+ },
+ "parser_frame_or_outcome_differences": [],
+ "contract_scenarios": {
+  "total": 20,
+  "proposed_verdicts": {
+   "green": 5,
+   "inconclusive": 7,
+   "not_applicable": 1,
+   "red": 7
+  },
+  "baseline_probe_green_but_proposed_not_green": [
+   "S02_x20_no_use_telemetry_but_fixed",
+   "S03_msm_not_used",
+   "S04_use_unknown",
+   "S05_station_mismatch",
+   "S06_no_reference_position_report",
+   "S07_has_fallback_after_source_loss_HYPOTHETICAL",
+   "S09_stale_rtcm_receiver_still_fixed",
+   "S10_source_interrupted",
+   "S11_erroneous",
+   "S14_reports_drained_or_absent",
+   "S16_undocumented_enums",
+   "S18_fixed_without_nav_sig",
+   "S19_epoch_mismatch"
+  ]
+ },
+ "baseline_extracted": {
+  "MIN_USED_RATIO": 0.9,
+  "MIN_RECEIVED_RATIO": 0.9,
+  "survey_consts": {
+   "STALL_ABORT_S": 600.0,
+   "FIXED_SETTLE_S": 30.0,
+   "MAX_CORRECTION_AGE_S": 10.0
+  },
+  "watched_identity": "RXM-RTCM",
+  "REFERENCE_WINDOW_SECONDS": 60.0,
+  "lastCorrectionAge_code_to_upper_bound_s": {
+   "0": null,
+   "1": 1.0,
+   "2": 2.0,
+   "3": 5.0,
+   "4": 10.0,
+   "5": 15.0,
+   "6": 20.0,
+   "7": 30.0,
+   "8": 45.0,
+   "9": 60.0,
+   "10": 90.0,
+   "11": 120.0,
+   "12": 120.0,
+   "13": null,
+   "14": null,
+   "15": null
+  }
+ },
+ "assertion_errors": []
+}

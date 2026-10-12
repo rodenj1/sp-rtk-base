@@ -1,0 +1,4698 @@
+{
+ "source_dir": "/home/ubuntu/.hermes/cache/scratch/x20p-manual-extracts",
+ "documents": {
+  "2.00": {
+   "file": "2.00.md",
+   "sha256": "e589e9d623dafd3752da346a2936ce5c1524d2086cc6c442dee1c2ea45002c5b",
+   "lines": 21714,
+   "document": "UBXDOC-304424225-19888 - R01"
+  },
+  "2.02": {
+   "file": "2.02.md",
+   "sha256": "0d8c8a913c2ce5524d058016c62dc2d4a2212f6d96d942ef156a78f6ad9d93b0",
+   "lines": 23041,
+   "document": "UBXDOC-304424225-19967 - R03"
+  },
+  "2.10": {
+   "file": "2.10.md",
+   "sha256": "65021da30042cd49e58901c1ef3414d7b8daca56dc7e92f2c8625c728011256c",
+   "lines": 22754,
+   "document": "UBXDOC-304424225-21263 - R02"
+  },
+  "2.11": {
+   "file": "2.11.md",
+   "sha256": "02d6439e3994f928fbef293d4acdcac10577b3d88887a7b8893cd20a4cc98371",
+   "lines": 27620,
+   "document": "UBXDOC-304424225-21617 - R01"
+  }
+ },
+ "messages": {
+  "RXM-COR": {
+   "2.00": {
+    "extract_line": 11127,
+    "printed_pages": [
+     118,
+     119
+    ],
+    "page_markers": [
+     118
+    ],
+    "document_pages": 224,
+    "length": "12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "1",
+      "type": "U1",
+      "name": "ebno"
+     },
+     {
+      "offset": "2",
+      "type": "U1",
+      "name": "reserved0"
+     },
+     {
+      "offset": "3",
+      "type": "U1",
+      "name": "reserved1"
+     },
+     {
+      "offset": "4",
+      "type": "X4",
+      "name": "statusInfo"
+     },
+     {
+      "offset": "8",
+      "type": "U2",
+      "name": "msgType"
+     },
+     {
+      "offset": "10",
+      "type": "U2",
+      "name": "msgSubType"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "statusInfo",
+      "lsb": 0,
+      "msb": 4,
+      "width": 5,
+      "name": "protocol"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 5,
+      "msb": 6,
+      "width": 2,
+      "name": "errStatus"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 7,
+      "msb": 8,
+      "width": 2,
+      "name": "msgUsed"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 9,
+      "msb": 24,
+      "width": 16,
+      "name": "correctionId"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "msgTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 26,
+      "msb": 26,
+      "width": 1,
+      "name": "msgSubTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 27,
+      "msb": 27,
+      "width": 1,
+      "name": "msgInputHandle"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 28,
+      "msb": 29,
+      "width": 2,
+      "name": "msgEncrypted"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 30,
+      "msb": 31,
+      "width": 2,
+      "name": "msgDecrypted"
+     }
+    ],
+    "enums": {
+     "protocol": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "RTCM3"
+      ],
+      [
+       "2",
+       "SPARTN (Secure Position Augmentation for Real Time Navigation)"
+      ],
+      [
+       "29",
+       "UBX-RXM-PMP (SPARTN)"
+      ],
+      [
+       "30",
+       "UBX-RXM-QZSSL6"
+      ]
+     ],
+     "errStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Error-free"
+      ],
+      [
+       "2",
+       "Erroneous"
+      ]
+     ],
+     "msgUsed": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not used"
+      ],
+      [
+       "2",
+       "Used"
+      ]
+     ],
+     "msgInputHandle": [
+      [
+       "0",
+       "Receiver does not have input handling support for this message"
+      ],
+      [
+       "1",
+       "Receiver has input handling support for this message. Input handling support does not necessarily mean that message is supported/ used by the receiver."
+      ]
+     ],
+     "msgEncrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not encrypted"
+      ],
+      [
+       "2",
+       "Encrypted"
+      ]
+     ],
+     "msgDecrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not decrypted"
+      ],
+      [
+       "2",
+       "Decrypted"
+      ]
+     ]
+    }
+   },
+   "2.02": {
+    "extract_line": 11650,
+    "printed_pages": [
+     125,
+     126
+    ],
+    "page_markers": [
+     125
+    ],
+    "document_pages": 238,
+    "length": "12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "1",
+      "type": "U1",
+      "name": "ebno"
+     },
+     {
+      "offset": "2",
+      "type": "U1",
+      "name": "reserved0"
+     },
+     {
+      "offset": "3",
+      "type": "U1",
+      "name": "reserved1"
+     },
+     {
+      "offset": "4",
+      "type": "X4",
+      "name": "statusInfo"
+     },
+     {
+      "offset": "8",
+      "type": "U2",
+      "name": "msgType"
+     },
+     {
+      "offset": "10",
+      "type": "U2",
+      "name": "msgSubType"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "statusInfo",
+      "lsb": 0,
+      "msb": 4,
+      "width": 5,
+      "name": "protocol"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 5,
+      "msb": 6,
+      "width": 2,
+      "name": "errStatus"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 7,
+      "msb": 8,
+      "width": 2,
+      "name": "msgUsed"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 9,
+      "msb": 24,
+      "width": 16,
+      "name": "correctionId"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "msgTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 26,
+      "msb": 26,
+      "width": 1,
+      "name": "msgSubTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 27,
+      "msb": 27,
+      "width": 1,
+      "name": "msgInputHandle"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 28,
+      "msb": 29,
+      "width": 2,
+      "name": "msgEncrypted"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 30,
+      "msb": 31,
+      "width": 2,
+      "name": "msgDecrypted"
+     }
+    ],
+    "enums": {
+     "protocol": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "RTCM3"
+      ],
+      [
+       "2",
+       "SPARTN (Secure Position Augmentation for Real Time Navigation)"
+      ],
+      [
+       "29",
+       "UBX-RXM-PMP (SPARTN)"
+      ],
+      [
+       "30",
+       "UBX-RXM-QZSSL6"
+      ]
+     ],
+     "errStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Error-free"
+      ],
+      [
+       "2",
+       "Erroneous"
+      ]
+     ],
+     "msgUsed": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not used"
+      ],
+      [
+       "2",
+       "Used"
+      ]
+     ],
+     "msgInputHandle": [
+      [
+       "0",
+       "Receiver does not have input handling support for this message"
+      ],
+      [
+       "1",
+       "Receiver has input handling support for this message. Input handling support does not necessarily mean that message is supported/ used by the receiver."
+      ]
+     ],
+     "msgEncrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not encrypted"
+      ],
+      [
+       "2",
+       "Encrypted"
+      ]
+     ],
+     "msgDecrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not decrypted"
+      ],
+      [
+       "2",
+       "Decrypted"
+      ]
+     ]
+    }
+   },
+   "2.10": {
+    "extract_line": 11249,
+    "printed_pages": [
+     119,
+     121
+    ],
+    "page_markers": [
+     119,
+     120
+    ],
+    "document_pages": 233,
+    "length": "12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "1",
+      "type": "U1",
+      "name": "ebno"
+     },
+     {
+      "offset": "2",
+      "type": "U1",
+      "name": "reserved0"
+     },
+     {
+      "offset": "3",
+      "type": "U1",
+      "name": "reserved1"
+     },
+     {
+      "offset": "4",
+      "type": "X4",
+      "name": "statusInfo"
+     },
+     {
+      "offset": "8",
+      "type": "U2",
+      "name": "msgType"
+     },
+     {
+      "offset": "10",
+      "type": "U2",
+      "name": "msgSubType"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "statusInfo",
+      "lsb": 0,
+      "msb": 4,
+      "width": 5,
+      "name": "protocol"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 5,
+      "msb": 6,
+      "width": 2,
+      "name": "errStatus"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 7,
+      "msb": 8,
+      "width": 2,
+      "name": "msgUsed"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 9,
+      "msb": 24,
+      "width": 16,
+      "name": "correctionId"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "msgTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 26,
+      "msb": 26,
+      "width": 1,
+      "name": "msgSubTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 27,
+      "msb": 27,
+      "width": 1,
+      "name": "msgInputHandle"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 28,
+      "msb": 29,
+      "width": 2,
+      "name": "msgEncrypted"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 30,
+      "msb": 31,
+      "width": 2,
+      "name": "msgDecrypted"
+     }
+    ],
+    "enums": {
+     "protocol": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "RTCM3"
+      ],
+      [
+       "2",
+       "SPARTN (Secure Position Augmentation for Real Time Navigation)"
+      ],
+      [
+       "5",
+       "HAS (Galileo High Accuracy Service)"
+      ],
+      [
+       "29",
+       "UBX-RXM-PMP (SPARTN)"
+      ],
+      [
+       "30",
+       "UBX-RXM-QZSSL6"
+      ]
+     ],
+     "errStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Error-free"
+      ],
+      [
+       "2",
+       "Erroneous"
+      ]
+     ],
+     "msgUsed": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not used"
+      ],
+      [
+       "2",
+       "Used"
+      ]
+     ],
+     "msgInputHandle": [
+      [
+       "0",
+       "Receiver does not have input handling support for this message"
+      ],
+      [
+       "1",
+       "Receiver has input handling support for this message. Input handling support does not necessarily mean that message is supported/ used by the receiver."
+      ]
+     ],
+     "msgEncrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not encrypted"
+      ],
+      [
+       "2",
+       "Encrypted"
+      ]
+     ],
+     "msgDecrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not decrypted"
+      ],
+      [
+       "2",
+       "Decrypted"
+      ]
+     ]
+    }
+   },
+   "2.11": {
+    "extract_line": 14648,
+    "printed_pages": [
+     152,
+     154
+    ],
+    "page_markers": [
+     152,
+     153
+    ],
+    "document_pages": 278,
+    "length": "12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "1",
+      "type": "U1",
+      "name": "ebno"
+     },
+     {
+      "offset": "2",
+      "type": "U1",
+      "name": "reserved0"
+     },
+     {
+      "offset": "3",
+      "type": "U1",
+      "name": "reserved1"
+     },
+     {
+      "offset": "4",
+      "type": "X4",
+      "name": "statusInfo"
+     },
+     {
+      "offset": "8",
+      "type": "U2",
+      "name": "msgType"
+     },
+     {
+      "offset": "10",
+      "type": "U2",
+      "name": "msgSubType"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "statusInfo",
+      "lsb": 0,
+      "msb": 4,
+      "width": 5,
+      "name": "protocol"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 5,
+      "msb": 6,
+      "width": 2,
+      "name": "errStatus"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 7,
+      "msb": 8,
+      "width": 2,
+      "name": "msgUsed"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 9,
+      "msb": 24,
+      "width": 16,
+      "name": "correctionId"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "msgTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 26,
+      "msb": 26,
+      "width": 1,
+      "name": "msgSubTypeValid"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 27,
+      "msb": 27,
+      "width": 1,
+      "name": "msgInputHandle"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 28,
+      "msb": 29,
+      "width": 2,
+      "name": "msgEncrypted"
+     },
+     {
+      "parent": "statusInfo",
+      "lsb": 30,
+      "msb": 31,
+      "width": 2,
+      "name": "msgDecrypted"
+     }
+    ],
+    "enums": {
+     "protocol": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "RTCM3"
+      ],
+      [
+       "2",
+       "SPARTN (Secure Position Augmentation for Real Time Navigation)"
+      ],
+      [
+       "5",
+       "HAS (Galileo High Accuracy Service)"
+      ],
+      [
+       "29",
+       "UBX-RXM-PMP (SPARTN)"
+      ],
+      [
+       "30",
+       "UBX-RXM-QZSSL6"
+      ]
+     ],
+     "errStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Error-free"
+      ],
+      [
+       "2",
+       "Erroneous"
+      ]
+     ],
+     "msgUsed": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not used"
+      ],
+      [
+       "2",
+       "Used"
+      ]
+     ],
+     "msgInputHandle": [
+      [
+       "0",
+       "Receiver does not have input handling support for this message"
+      ],
+      [
+       "1",
+       "Receiver has input handling support for this message. Input handling support does not necessarily mean that message is supported/ used by the receiver."
+      ]
+     ],
+     "msgEncrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not encrypted"
+      ],
+      [
+       "2",
+       "Encrypted"
+      ]
+     ],
+     "msgDecrypted": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Not decrypted"
+      ],
+      [
+       "2",
+       "Decrypted"
+      ]
+     ]
+    }
+   }
+  },
+  "NAV-PVT": {
+   "2.00": {
+    "extract_line": 8829,
+    "printed_pages": [
+     98,
+     101
+    ],
+    "page_markers": [
+     98,
+     99,
+     100
+    ],
+    "document_pages": 224,
+    "length": "92",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U2",
+      "name": "year"
+     },
+     {
+      "offset": "6",
+      "type": "U1",
+      "name": "month"
+     },
+     {
+      "offset": "7",
+      "type": "U1",
+      "name": "day"
+     },
+     {
+      "offset": "8",
+      "type": "U1",
+      "name": "hour"
+     },
+     {
+      "offset": "9",
+      "type": "U1",
+      "name": "min"
+     },
+     {
+      "offset": "10",
+      "type": "U1",
+      "name": "sec"
+     },
+     {
+      "offset": "11",
+      "type": "X1",
+      "name": "valid"
+     },
+     {
+      "offset": "12",
+      "type": "U4",
+      "name": "tAcc"
+     },
+     {
+      "offset": "16",
+      "type": "I4",
+      "name": "nano"
+     },
+     {
+      "offset": "20",
+      "type": "U1",
+      "name": "fixType"
+     },
+     {
+      "offset": "21",
+      "type": "X1",
+      "name": "flags"
+     },
+     {
+      "offset": "22",
+      "type": "X1",
+      "name": "flags2"
+     },
+     {
+      "offset": "23",
+      "type": "U1",
+      "name": "numSV"
+     },
+     {
+      "offset": "24",
+      "type": "I4",
+      "name": "lon"
+     },
+     {
+      "offset": "28",
+      "type": "I4",
+      "name": "lat"
+     },
+     {
+      "offset": "32",
+      "type": "I4",
+      "name": "height"
+     },
+     {
+      "offset": "36",
+      "type": "I4",
+      "name": "hMSL"
+     },
+     {
+      "offset": "40",
+      "type": "U4",
+      "name": "hAcc"
+     },
+     {
+      "offset": "44",
+      "type": "U4",
+      "name": "vAcc"
+     },
+     {
+      "offset": "48",
+      "type": "I4",
+      "name": "velN"
+     },
+     {
+      "offset": "52",
+      "type": "I4",
+      "name": "velE"
+     },
+     {
+      "offset": "56",
+      "type": "I4",
+      "name": "velD"
+     },
+     {
+      "offset": "60",
+      "type": "I4",
+      "name": "gSpeed"
+     },
+     {
+      "offset": "64",
+      "type": "I4",
+      "name": "headMot"
+     },
+     {
+      "offset": "68",
+      "type": "U4",
+      "name": "sAcc"
+     },
+     {
+      "offset": "72",
+      "type": "U4",
+      "name": "headAcc"
+     },
+     {
+      "offset": "76",
+      "type": "U2",
+      "name": "pDOP"
+     },
+     {
+      "offset": "78",
+      "type": "X2",
+      "name": "flags3"
+     },
+     {
+      "offset": "80",
+      "type": "U1[4]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "84",
+      "type": "I4",
+      "name": "headVeh"
+     },
+     {
+      "offset": "88",
+      "type": "I2",
+      "name": "magDec"
+     },
+     {
+      "offset": "90",
+      "type": "U2",
+      "name": "magAcc"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "valid",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "validDate"
+     },
+     {
+      "parent": "valid",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "validTime"
+     },
+     {
+      "parent": "valid",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "fullyResolved"
+     },
+     {
+      "parent": "valid",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "validMag"
+     },
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "gnssFixOK"
+     },
+     {
+      "parent": "flags",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "diffSoln"
+     },
+     {
+      "parent": "flags",
+      "lsb": 2,
+      "msb": 4,
+      "width": 3,
+      "name": "psmState"
+     },
+     {
+      "parent": "flags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "headVehValid"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 7,
+      "width": 2,
+      "name": "carrSoln"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "confirmedAvai"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "confirmedDate"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "confirmedTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "invalidLlh"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 1,
+      "msb": 4,
+      "width": 4,
+      "name": "lastCorrectionAge"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "authTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "nmaFixStatus"
+     }
+    ],
+    "enums": {
+     "fixType": [
+      [
+       "0",
+       "no fix"
+      ],
+      [
+       "1",
+       "dead reckoning only"
+      ],
+      [
+       "2",
+       "2D-fix"
+      ],
+      [
+       "3",
+       "3D-fix"
+      ],
+      [
+       "4",
+       "GNSS + dead reckoning combined"
+      ],
+      [
+       "5",
+       "time only fix"
+      ]
+     ],
+     "carrSoln": [
+      [
+       "0",
+       "no carrier phase range solution"
+      ],
+      [
+       "1",
+       "carrier phase range solution with floating ambiguities"
+      ],
+      [
+       "2",
+       "carrier phase range solution with fixed ambiguities (not supported for protocol versions less than 20.00)"
+      ]
+     ],
+     "lastCorrectionAge": [
+      [
+       "0",
+       "Not available"
+      ],
+      [
+       "1",
+       "Age between 0 and 1 second"
+      ],
+      [
+       "2",
+       "Age between 1 (inclusive) and 2 seconds"
+      ],
+      [
+       "3",
+       "Age between 2 (inclusive) and 5 seconds"
+      ],
+      [
+       "4",
+       "Age between 5 (inclusive) and 10 seconds"
+      ],
+      [
+       "5",
+       "Age between 10 (inclusive) and 15 seconds"
+      ],
+      [
+       "6",
+       "Age between 15 (inclusive) and 20 seconds"
+      ],
+      [
+       "7",
+       "Age between 20 (inclusive) and 30 seconds"
+      ],
+      [
+       "8",
+       "Age between 30 (inclusive) and 45 seconds"
+      ],
+      [
+       "9",
+       "Age between 45 (inclusive) and 60 seconds"
+      ],
+      [
+       "10",
+       "Age between 60 (inclusive) and 90 seconds"
+      ],
+      [
+       "11",
+       "Age between 90 (inclusive) and 120 seconds"
+      ],
+      [
+       ">=12",
+       "Age greater or equal than 120 seconds"
+      ]
+     ]
+    }
+   },
+   "2.02": {
+    "extract_line": 9350,
+    "printed_pages": [
+     105,
+     107
+    ],
+    "page_markers": [
+     105,
+     106
+    ],
+    "document_pages": 238,
+    "length": "92",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U2",
+      "name": "year"
+     },
+     {
+      "offset": "6",
+      "type": "U1",
+      "name": "month"
+     },
+     {
+      "offset": "7",
+      "type": "U1",
+      "name": "day"
+     },
+     {
+      "offset": "8",
+      "type": "U1",
+      "name": "hour"
+     },
+     {
+      "offset": "9",
+      "type": "U1",
+      "name": "min"
+     },
+     {
+      "offset": "10",
+      "type": "U1",
+      "name": "sec"
+     },
+     {
+      "offset": "11",
+      "type": "X1",
+      "name": "valid"
+     },
+     {
+      "offset": "12",
+      "type": "U4",
+      "name": "tAcc"
+     },
+     {
+      "offset": "16",
+      "type": "I4",
+      "name": "nano"
+     },
+     {
+      "offset": "20",
+      "type": "U1",
+      "name": "fixType"
+     },
+     {
+      "offset": "21",
+      "type": "X1",
+      "name": "flags"
+     },
+     {
+      "offset": "22",
+      "type": "X1",
+      "name": "flags2"
+     },
+     {
+      "offset": "23",
+      "type": "U1",
+      "name": "numSV"
+     },
+     {
+      "offset": "24",
+      "type": "I4",
+      "name": "lon"
+     },
+     {
+      "offset": "28",
+      "type": "I4",
+      "name": "lat"
+     },
+     {
+      "offset": "32",
+      "type": "I4",
+      "name": "height"
+     },
+     {
+      "offset": "36",
+      "type": "I4",
+      "name": "hMSL"
+     },
+     {
+      "offset": "40",
+      "type": "U4",
+      "name": "hAcc"
+     },
+     {
+      "offset": "44",
+      "type": "U4",
+      "name": "vAcc"
+     },
+     {
+      "offset": "48",
+      "type": "I4",
+      "name": "velN"
+     },
+     {
+      "offset": "52",
+      "type": "I4",
+      "name": "velE"
+     },
+     {
+      "offset": "56",
+      "type": "I4",
+      "name": "velD"
+     },
+     {
+      "offset": "60",
+      "type": "I4",
+      "name": "gSpeed"
+     },
+     {
+      "offset": "64",
+      "type": "I4",
+      "name": "headMot"
+     },
+     {
+      "offset": "68",
+      "type": "U4",
+      "name": "sAcc"
+     },
+     {
+      "offset": "72",
+      "type": "U4",
+      "name": "headAcc"
+     },
+     {
+      "offset": "76",
+      "type": "U2",
+      "name": "pDOP"
+     },
+     {
+      "offset": "78",
+      "type": "X2",
+      "name": "flags3"
+     },
+     {
+      "offset": "80",
+      "type": "U1[4]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "84",
+      "type": "I4",
+      "name": "headVeh"
+     },
+     {
+      "offset": "88",
+      "type": "I2",
+      "name": "magDec"
+     },
+     {
+      "offset": "90",
+      "type": "U2",
+      "name": "magAcc"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "valid",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "validDate"
+     },
+     {
+      "parent": "valid",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "validTime"
+     },
+     {
+      "parent": "valid",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "fullyResolved"
+     },
+     {
+      "parent": "valid",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "validMag"
+     },
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "gnssFixOK"
+     },
+     {
+      "parent": "flags",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "diffSoln"
+     },
+     {
+      "parent": "flags",
+      "lsb": 2,
+      "msb": 4,
+      "width": 3,
+      "name": "psmState"
+     },
+     {
+      "parent": "flags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "headVehValid"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 7,
+      "width": 2,
+      "name": "carrSoln"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "confirmedAvai"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "confirmedDate"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "confirmedTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "invalidLlh"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 1,
+      "msb": 4,
+      "width": 4,
+      "name": "lastCorrectionAge"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "authTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "nmaFixStatus"
+     }
+    ],
+    "enums": {
+     "fixType": [
+      [
+       "0",
+       "no fix"
+      ],
+      [
+       "1",
+       "dead reckoning only"
+      ],
+      [
+       "2",
+       "2D-fix"
+      ],
+      [
+       "3",
+       "3D-fix"
+      ],
+      [
+       "4",
+       "GNSS + dead reckoning combined"
+      ],
+      [
+       "5",
+       "time only fix"
+      ]
+     ],
+     "carrSoln": [
+      [
+       "0",
+       "no carrier phase range solution"
+      ],
+      [
+       "1",
+       "carrier phase range solution with floating ambiguities"
+      ],
+      [
+       "2",
+       "carrier phase range solution with fixed ambiguities (not supported for protocol versions less than 20.00)"
+      ]
+     ],
+     "lastCorrectionAge": [
+      [
+       "0",
+       "Not available"
+      ],
+      [
+       "1",
+       "Age between 0 and 1 second"
+      ],
+      [
+       "2",
+       "Age between 1 (inclusive) and 2 seconds"
+      ],
+      [
+       "3",
+       "Age between 2 (inclusive) and 5 seconds"
+      ],
+      [
+       "4",
+       "Age between 5 (inclusive) and 10 seconds"
+      ],
+      [
+       "5",
+       "Age between 10 (inclusive) and 15 seconds"
+      ],
+      [
+       "6",
+       "Age between 15 (inclusive) and 20 seconds"
+      ],
+      [
+       "7",
+       "Age between 20 (inclusive) and 30 seconds"
+      ],
+      [
+       "8",
+       "Age between 30 (inclusive) and 45 seconds"
+      ],
+      [
+       "9",
+       "Age between 45 (inclusive) and 60 seconds"
+      ],
+      [
+       "10",
+       "Age between 60 (inclusive) and 90 seconds"
+      ],
+      [
+       "11",
+       "Age between 90 (inclusive) and 120 seconds"
+      ],
+      [
+       ">=12",
+       "Age greater or equal than 120 seconds"
+      ]
+     ]
+    }
+   },
+   "2.10": {
+    "extract_line": 8943,
+    "printed_pages": [
+     99,
+     102
+    ],
+    "page_markers": [
+     99,
+     100,
+     101
+    ],
+    "document_pages": 233,
+    "length": "92",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U2",
+      "name": "year"
+     },
+     {
+      "offset": "6",
+      "type": "U1",
+      "name": "month"
+     },
+     {
+      "offset": "7",
+      "type": "U1",
+      "name": "day"
+     },
+     {
+      "offset": "8",
+      "type": "U1",
+      "name": "hour"
+     },
+     {
+      "offset": "9",
+      "type": "U1",
+      "name": "min"
+     },
+     {
+      "offset": "10",
+      "type": "U1",
+      "name": "sec"
+     },
+     {
+      "offset": "11",
+      "type": "X1",
+      "name": "valid"
+     },
+     {
+      "offset": "12",
+      "type": "U4",
+      "name": "tAcc"
+     },
+     {
+      "offset": "16",
+      "type": "I4",
+      "name": "nano"
+     },
+     {
+      "offset": "20",
+      "type": "U1",
+      "name": "fixType"
+     },
+     {
+      "offset": "21",
+      "type": "X1",
+      "name": "flags"
+     },
+     {
+      "offset": "22",
+      "type": "X1",
+      "name": "flags2"
+     },
+     {
+      "offset": "23",
+      "type": "U1",
+      "name": "numSV"
+     },
+     {
+      "offset": "24",
+      "type": "I4",
+      "name": "lon"
+     },
+     {
+      "offset": "28",
+      "type": "I4",
+      "name": "lat"
+     },
+     {
+      "offset": "32",
+      "type": "I4",
+      "name": "height"
+     },
+     {
+      "offset": "36",
+      "type": "I4",
+      "name": "hMSL"
+     },
+     {
+      "offset": "40",
+      "type": "U4",
+      "name": "hAcc"
+     },
+     {
+      "offset": "44",
+      "type": "U4",
+      "name": "vAcc"
+     },
+     {
+      "offset": "48",
+      "type": "I4",
+      "name": "velN"
+     },
+     {
+      "offset": "52",
+      "type": "I4",
+      "name": "velE"
+     },
+     {
+      "offset": "56",
+      "type": "I4",
+      "name": "velD"
+     },
+     {
+      "offset": "60",
+      "type": "I4",
+      "name": "gSpeed"
+     },
+     {
+      "offset": "64",
+      "type": "I4",
+      "name": "headMot"
+     },
+     {
+      "offset": "68",
+      "type": "U4",
+      "name": "sAcc"
+     },
+     {
+      "offset": "72",
+      "type": "U4",
+      "name": "headAcc"
+     },
+     {
+      "offset": "76",
+      "type": "U2",
+      "name": "pDOP"
+     },
+     {
+      "offset": "78",
+      "type": "X2",
+      "name": "flags3"
+     },
+     {
+      "offset": "80",
+      "type": "U1[4]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "84",
+      "type": "I4",
+      "name": "headVeh"
+     },
+     {
+      "offset": "88",
+      "type": "I2",
+      "name": "magDec"
+     },
+     {
+      "offset": "90",
+      "type": "U2",
+      "name": "magAcc"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "valid",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "validDate"
+     },
+     {
+      "parent": "valid",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "validTime"
+     },
+     {
+      "parent": "valid",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "fullyResolved"
+     },
+     {
+      "parent": "valid",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "validMag"
+     },
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "gnssFixOK"
+     },
+     {
+      "parent": "flags",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "diffSoln"
+     },
+     {
+      "parent": "flags",
+      "lsb": 2,
+      "msb": 4,
+      "width": 3,
+      "name": "psmState"
+     },
+     {
+      "parent": "flags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "headVehValid"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 7,
+      "width": 2,
+      "name": "carrSoln"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "confirmedAvai"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "confirmedDate"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "confirmedTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "invalidLlh"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 1,
+      "msb": 4,
+      "width": 4,
+      "name": "lastCorrectionAge"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "authTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "nmaFixStatus"
+     }
+    ],
+    "enums": {
+     "fixType": [
+      [
+       "0",
+       "no fix"
+      ],
+      [
+       "1",
+       "dead reckoning only"
+      ],
+      [
+       "2",
+       "2D-fix"
+      ],
+      [
+       "3",
+       "3D-fix"
+      ],
+      [
+       "4",
+       "GNSS + dead reckoning combined"
+      ],
+      [
+       "5",
+       "time only fix"
+      ]
+     ],
+     "carrSoln": [
+      [
+       "0",
+       "no carrier phase range solution"
+      ],
+      [
+       "1",
+       "carrier phase range solution with floating ambiguities"
+      ],
+      [
+       "2",
+       "carrier phase range solution with fixed ambiguities (not supported for protocol versions less than 20.00)"
+      ]
+     ],
+     "lastCorrectionAge": [
+      [
+       "0",
+       "Not available"
+      ],
+      [
+       "1",
+       "Age between 0 and 1 second"
+      ],
+      [
+       "2",
+       "Age between 1 (inclusive) and 2 seconds"
+      ],
+      [
+       "3",
+       "Age between 2 (inclusive) and 5 seconds"
+      ],
+      [
+       "4",
+       "Age between 5 (inclusive) and 10 seconds"
+      ],
+      [
+       "5",
+       "Age between 10 (inclusive) and 15 seconds"
+      ],
+      [
+       "6",
+       "Age between 15 (inclusive) and 20 seconds"
+      ],
+      [
+       "7",
+       "Age between 20 (inclusive) and 30 seconds"
+      ],
+      [
+       "8",
+       "Age between 30 (inclusive) and 45 seconds"
+      ],
+      [
+       "9",
+       "Age between 45 (inclusive) and 60 seconds"
+      ],
+      [
+       "10",
+       "Age between 60 (inclusive) and 90 seconds"
+      ],
+      [
+       "11",
+       "Age between 90 (inclusive) and 120 seconds"
+      ],
+      [
+       ">=12",
+       "Age greater or equal than 120 seconds"
+      ]
+     ]
+    }
+   },
+   "2.11": {
+    "extract_line": 9878,
+    "printed_pages": [
+     110,
+     113
+    ],
+    "page_markers": [
+     110,
+     111,
+     112
+    ],
+    "document_pages": 278,
+    "length": "92",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U2",
+      "name": "year"
+     },
+     {
+      "offset": "6",
+      "type": "U1",
+      "name": "month"
+     },
+     {
+      "offset": "7",
+      "type": "U1",
+      "name": "day"
+     },
+     {
+      "offset": "8",
+      "type": "U1",
+      "name": "hour"
+     },
+     {
+      "offset": "9",
+      "type": "U1",
+      "name": "min"
+     },
+     {
+      "offset": "10",
+      "type": "U1",
+      "name": "sec"
+     },
+     {
+      "offset": "11",
+      "type": "X1",
+      "name": "valid"
+     },
+     {
+      "offset": "12",
+      "type": "U4",
+      "name": "tAcc"
+     },
+     {
+      "offset": "16",
+      "type": "I4",
+      "name": "nano"
+     },
+     {
+      "offset": "20",
+      "type": "U1",
+      "name": "fixType"
+     },
+     {
+      "offset": "21",
+      "type": "X1",
+      "name": "flags"
+     },
+     {
+      "offset": "22",
+      "type": "X1",
+      "name": "flags2"
+     },
+     {
+      "offset": "23",
+      "type": "U1",
+      "name": "numSV"
+     },
+     {
+      "offset": "24",
+      "type": "I4",
+      "name": "lon"
+     },
+     {
+      "offset": "28",
+      "type": "I4",
+      "name": "lat"
+     },
+     {
+      "offset": "32",
+      "type": "I4",
+      "name": "height"
+     },
+     {
+      "offset": "36",
+      "type": "I4",
+      "name": "hMSL"
+     },
+     {
+      "offset": "40",
+      "type": "U4",
+      "name": "hAcc"
+     },
+     {
+      "offset": "44",
+      "type": "U4",
+      "name": "vAcc"
+     },
+     {
+      "offset": "48",
+      "type": "I4",
+      "name": "velN"
+     },
+     {
+      "offset": "52",
+      "type": "I4",
+      "name": "velE"
+     },
+     {
+      "offset": "56",
+      "type": "I4",
+      "name": "velD"
+     },
+     {
+      "offset": "60",
+      "type": "I4",
+      "name": "gSpeed"
+     },
+     {
+      "offset": "64",
+      "type": "I4",
+      "name": "headMot"
+     },
+     {
+      "offset": "68",
+      "type": "U4",
+      "name": "sAcc"
+     },
+     {
+      "offset": "72",
+      "type": "U4",
+      "name": "headAcc"
+     },
+     {
+      "offset": "76",
+      "type": "U2",
+      "name": "pDOP"
+     },
+     {
+      "offset": "78",
+      "type": "X2",
+      "name": "flags3"
+     },
+     {
+      "offset": "80",
+      "type": "U1[4]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "84",
+      "type": "I4",
+      "name": "headVeh"
+     },
+     {
+      "offset": "88",
+      "type": "I2",
+      "name": "magDec"
+     },
+     {
+      "offset": "90",
+      "type": "U2",
+      "name": "magAcc"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "valid",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "validDate"
+     },
+     {
+      "parent": "valid",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "validTime"
+     },
+     {
+      "parent": "valid",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "fullyResolved"
+     },
+     {
+      "parent": "valid",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "validMag"
+     },
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "gnssFixOK"
+     },
+     {
+      "parent": "flags",
+      "lsb": 1,
+      "msb": 1,
+      "width": 1,
+      "name": "diffSoln"
+     },
+     {
+      "parent": "flags",
+      "lsb": 2,
+      "msb": 4,
+      "width": 3,
+      "name": "psmState"
+     },
+     {
+      "parent": "flags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "headVehValid"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 7,
+      "width": 2,
+      "name": "carrSoln"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "confirmedAvai"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "confirmedDate"
+     },
+     {
+      "parent": "flags2",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "confirmedTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 0,
+      "msb": 0,
+      "width": 1,
+      "name": "invalidLlh"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 1,
+      "msb": 4,
+      "width": 4,
+      "name": "lastCorrectionAge"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "authTime"
+     },
+     {
+      "parent": "flags3",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "nmaFixStatus"
+     }
+    ],
+    "enums": {
+     "fixType": [
+      [
+       "0",
+       "no fix"
+      ],
+      [
+       "1",
+       "dead reckoning only"
+      ],
+      [
+       "2",
+       "2D-fix"
+      ],
+      [
+       "3",
+       "3D-fix"
+      ],
+      [
+       "4",
+       "GNSS + dead reckoning combined"
+      ],
+      [
+       "5",
+       "time only fix"
+      ]
+     ],
+     "carrSoln": [
+      [
+       "0",
+       "no carrier phase range solution"
+      ],
+      [
+       "1",
+       "carrier phase range solution with floating ambiguities"
+      ],
+      [
+       "2",
+       "carrier phase range solution with fixed ambiguities (not supported for protocol versions less than 20.00)"
+      ]
+     ],
+     "lastCorrectionAge": [
+      [
+       "0",
+       "Not available"
+      ],
+      [
+       "1",
+       "Age between 0 and 1 second"
+      ],
+      [
+       "2",
+       "Age between 1 (inclusive) and 2 seconds"
+      ],
+      [
+       "3",
+       "Age between 2 (inclusive) and 5 seconds"
+      ],
+      [
+       "4",
+       "Age between 5 (inclusive) and 10 seconds"
+      ],
+      [
+       "5",
+       "Age between 10 (inclusive) and 15 seconds"
+      ],
+      [
+       "6",
+       "Age between 15 (inclusive) and 20 seconds"
+      ],
+      [
+       "7",
+       "Age between 20 (inclusive) and 30 seconds"
+      ],
+      [
+       "8",
+       "Age between 30 (inclusive) and 45 seconds"
+      ],
+      [
+       "9",
+       "Age between 45 (inclusive) and 60 seconds"
+      ],
+      [
+       "10",
+       "Age between 60 (inclusive) and 90 seconds"
+      ],
+      [
+       "11",
+       "Age between 90 (inclusive) and 120 seconds"
+      ],
+      [
+       ">=12",
+       "Age greater or equal than 120 seconds"
+      ]
+     ]
+    }
+   }
+  },
+  "NAV-SAT": {
+   "2.00": {
+    "extract_line": 9412,
+    "printed_pages": [
+     103,
+     105
+    ],
+    "page_markers": [
+     103,
+     104
+    ],
+    "document_pages": 224,
+    "length": "8 + numSvs·12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSvs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·12",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·12",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·12",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "11 + n·12",
+      "type": "I1",
+      "name": "elev"
+     },
+     {
+      "offset": "12 + n·12",
+      "type": "I2",
+      "name": "azim"
+     },
+     {
+      "offset": "14 + n·12",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "16 + n·12",
+      "type": "X4",
+      "name": "flags"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 2,
+      "width": 3,
+      "name": "qualityInd"
+     },
+     {
+      "parent": "flags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "svUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 4,
+      "msb": 5,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "diffCorr"
+     },
+     {
+      "parent": "flags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "smoothed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 8,
+      "msb": 10,
+      "width": 3,
+      "name": "orbitSource"
+     },
+     {
+      "parent": "flags",
+      "lsb": 11,
+      "msb": 11,
+      "width": 1,
+      "name": "ephAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 12,
+      "msb": 12,
+      "width": 1,
+      "name": "almAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "anoAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "aopAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 16,
+      "msb": 16,
+      "width": 1,
+      "name": "sbasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 17,
+      "msb": 17,
+      "width": 1,
+      "name": "rtcmCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 18,
+      "msb": 18,
+      "width": 1,
+      "name": "slasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 19,
+      "msb": 19,
+      "width": 1,
+      "name": "spartnCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 20,
+      "msb": 20,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 21,
+      "msb": 21,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 22,
+      "msb": 22,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 23,
+      "msb": 23,
+      "width": 1,
+      "name": "clasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 24,
+      "msb": 24,
+      "width": 1,
+      "name": "lppCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "hasCorrUsed"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "orbitSource": [
+      [
+       "0",
+       "no orbit information is available for this SV"
+      ],
+      [
+       "1",
+       "ephemeris is used"
+      ],
+      [
+       "2",
+       "almanac is used"
+      ],
+      [
+       "3",
+       "AssistNow Offline orbit is used"
+      ],
+      [
+       "4",
+       "AssistNow Autonomous orbit is used"
+      ],
+      [
+       "5,6,7",
+       "other orbit information is used"
+      ]
+     ]
+    }
+   },
+   "2.02": {
+    "extract_line": 9927,
+    "printed_pages": [
+     109,
+     111
+    ],
+    "page_markers": [
+     109,
+     110
+    ],
+    "document_pages": 238,
+    "length": "8 + numSvs·12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSvs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·12",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·12",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·12",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "11 + n·12",
+      "type": "I1",
+      "name": "elev"
+     },
+     {
+      "offset": "12 + n·12",
+      "type": "I2",
+      "name": "azim"
+     },
+     {
+      "offset": "14 + n·12",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "16 + n·12",
+      "type": "X4",
+      "name": "flags"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 2,
+      "width": 3,
+      "name": "qualityInd"
+     },
+     {
+      "parent": "flags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "svUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 4,
+      "msb": 5,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "diffCorr"
+     },
+     {
+      "parent": "flags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "smoothed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 8,
+      "msb": 10,
+      "width": 3,
+      "name": "orbitSource"
+     },
+     {
+      "parent": "flags",
+      "lsb": 11,
+      "msb": 11,
+      "width": 1,
+      "name": "ephAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 12,
+      "msb": 12,
+      "width": 1,
+      "name": "almAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "anoAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "aopAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 16,
+      "msb": 16,
+      "width": 1,
+      "name": "sbasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 17,
+      "msb": 17,
+      "width": 1,
+      "name": "rtcmCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 18,
+      "msb": 18,
+      "width": 1,
+      "name": "slasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 19,
+      "msb": 19,
+      "width": 1,
+      "name": "spartnCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 20,
+      "msb": 20,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 21,
+      "msb": 21,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 22,
+      "msb": 22,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 23,
+      "msb": 23,
+      "width": 1,
+      "name": "clasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 24,
+      "msb": 24,
+      "width": 1,
+      "name": "lppCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "hasCorrUsed"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "orbitSource": [
+      [
+       "0",
+       "no orbit information is available for this SV"
+      ],
+      [
+       "1",
+       "ephemeris is used"
+      ],
+      [
+       "2",
+       "almanac is used"
+      ],
+      [
+       "3",
+       "AssistNow Offline orbit is used"
+      ],
+      [
+       "4",
+       "AssistNow Autonomous orbit is used"
+      ],
+      [
+       "5,6,7",
+       "other orbit information is used"
+      ]
+     ]
+    }
+   },
+   "2.10": {
+    "extract_line": 9508,
+    "printed_pages": [
+     104,
+     105
+    ],
+    "page_markers": [
+     104
+    ],
+    "document_pages": 233,
+    "length": "8 + numSvs·12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSvs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·12",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·12",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·12",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "11 + n·12",
+      "type": "I1",
+      "name": "elev"
+     },
+     {
+      "offset": "12 + n·12",
+      "type": "I2",
+      "name": "azim"
+     },
+     {
+      "offset": "14 + n·12",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "16 + n·12",
+      "type": "X4",
+      "name": "flags"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 2,
+      "width": 3,
+      "name": "qualityInd"
+     },
+     {
+      "parent": "flags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "svUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 4,
+      "msb": 5,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "diffCorr"
+     },
+     {
+      "parent": "flags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "smoothed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 8,
+      "msb": 10,
+      "width": 3,
+      "name": "orbitSource"
+     },
+     {
+      "parent": "flags",
+      "lsb": 11,
+      "msb": 11,
+      "width": 1,
+      "name": "ephAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 12,
+      "msb": 12,
+      "width": 1,
+      "name": "almAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "anoAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "aopAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 16,
+      "msb": 16,
+      "width": 1,
+      "name": "sbasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 17,
+      "msb": 17,
+      "width": 1,
+      "name": "rtcmCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 18,
+      "msb": 18,
+      "width": 1,
+      "name": "slasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 19,
+      "msb": 19,
+      "width": 1,
+      "name": "spartnCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 20,
+      "msb": 20,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 21,
+      "msb": 21,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 22,
+      "msb": 22,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 23,
+      "msb": 23,
+      "width": 1,
+      "name": "clasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 24,
+      "msb": 24,
+      "width": 1,
+      "name": "lppCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "hasCorrUsed"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "orbitSource": [
+      [
+       "0",
+       "no orbit information is available for this SV"
+      ],
+      [
+       "1",
+       "ephemeris is used"
+      ],
+      [
+       "2",
+       "almanac is used"
+      ],
+      [
+       "3",
+       "AssistNow Offline orbit is used"
+      ],
+      [
+       "4",
+       "AssistNow Autonomous orbit is used"
+      ],
+      [
+       "5,6,7",
+       "other orbit information is used"
+      ]
+     ]
+    }
+   },
+   "2.11": {
+    "extract_line": 10442,
+    "printed_pages": [
+     115,
+     116
+    ],
+    "page_markers": [
+     115
+    ],
+    "document_pages": 278,
+    "length": "8 + numSvs·12",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSvs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·12",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·12",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·12",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "11 + n·12",
+      "type": "I1",
+      "name": "elev"
+     },
+     {
+      "offset": "12 + n·12",
+      "type": "I2",
+      "name": "azim"
+     },
+     {
+      "offset": "14 + n·12",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "16 + n·12",
+      "type": "X4",
+      "name": "flags"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "flags",
+      "lsb": 0,
+      "msb": 2,
+      "width": 3,
+      "name": "qualityInd"
+     },
+     {
+      "parent": "flags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "svUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 4,
+      "msb": 5,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "flags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "diffCorr"
+     },
+     {
+      "parent": "flags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "smoothed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 8,
+      "msb": 10,
+      "width": 3,
+      "name": "orbitSource"
+     },
+     {
+      "parent": "flags",
+      "lsb": 11,
+      "msb": 11,
+      "width": 1,
+      "name": "ephAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 12,
+      "msb": 12,
+      "width": 1,
+      "name": "almAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 13,
+      "msb": 13,
+      "width": 1,
+      "name": "anoAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 14,
+      "msb": 14,
+      "width": 1,
+      "name": "aopAvail"
+     },
+     {
+      "parent": "flags",
+      "lsb": 16,
+      "msb": 16,
+      "width": 1,
+      "name": "sbasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 17,
+      "msb": 17,
+      "width": 1,
+      "name": "rtcmCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 18,
+      "msb": 18,
+      "width": 1,
+      "name": "slasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 19,
+      "msb": 19,
+      "width": 1,
+      "name": "spartnCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 20,
+      "msb": 20,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 21,
+      "msb": 21,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 22,
+      "msb": 22,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 23,
+      "msb": 23,
+      "width": 1,
+      "name": "clasCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 24,
+      "msb": 24,
+      "width": 1,
+      "name": "lppCorrUsed"
+     },
+     {
+      "parent": "flags",
+      "lsb": 25,
+      "msb": 25,
+      "width": 1,
+      "name": "hasCorrUsed"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "orbitSource": [
+      [
+       "0",
+       "no orbit information is available for this SV"
+      ],
+      [
+       "1",
+       "ephemeris is used"
+      ],
+      [
+       "2",
+       "almanac is used"
+      ],
+      [
+       "3",
+       "AssistNow Predictive Orbits orbit is used"
+      ],
+      [
+       "4",
+       "AssistNow Autonomous orbit is used"
+      ],
+      [
+       "5,6,7",
+       "other orbit information is used"
+      ]
+     ]
+    }
+   }
+  },
+  "NAV-SIG": {
+   "2.00": {
+    "extract_line": 9815,
+    "printed_pages": [
+     106,
+     108
+    ],
+    "page_markers": [
+     106,
+     107
+    ],
+    "document_pages": 224,
+    "length": "8 + numSigs·16",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSigs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·16",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·16",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·16",
+      "type": "U1",
+      "name": "sigId"
+     },
+     {
+      "offset": "11 + n·16",
+      "type": "U1",
+      "name": "freqId"
+     },
+     {
+      "offset": "12 + n·16",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "14 + n·16",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "15 + n·16",
+      "type": "U1",
+      "name": "qualityInd"
+     },
+     {
+      "offset": "16 + n·16",
+      "type": "U1",
+      "name": "corrSource"
+     },
+     {
+      "offset": "17 + n·16",
+      "type": "U1",
+      "name": "ionoModel"
+     },
+     {
+      "offset": "18 + n·16",
+      "type": "X2",
+      "name": "sigFlags"
+     },
+     {
+      "offset": "20 + n·16",
+      "type": "U1[4]",
+      "name": "reserved1"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "sigFlags",
+      "lsb": 0,
+      "msb": 1,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "prSmoothed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "prUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 4,
+      "msb": 4,
+      "width": 1,
+      "name": "crUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "doUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 8,
+      "msb": 8,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 9,
+      "msb": 9,
+      "width": 1,
+      "name": "authStatus"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "corrSource": [
+      [
+       "0",
+       "no corrections"
+      ],
+      [
+       "1",
+       "SBAS corrections"
+      ],
+      [
+       "2",
+       "BeiDou corrections"
+      ],
+      [
+       "3",
+       "RTCM2 corrections"
+      ],
+      [
+       "4",
+       "RTCM3 OSR corrections"
+      ],
+      [
+       "5",
+       "RTCM3 SSR corrections"
+      ],
+      [
+       "6",
+       "QZSS SLAS corrections"
+      ],
+      [
+       "7",
+       "SPARTN corrections"
+      ],
+      [
+       "9",
+       "CLAS corrections"
+      ],
+      [
+       "10",
+       "LPP OSR corrections"
+      ],
+      [
+       "11",
+       "LPP SSR corrections"
+      ],
+      [
+       "12",
+       "GAL HAS corrections"
+      ]
+     ],
+     "ionoModel": [
+      [
+       "0",
+       "Default delay values"
+      ],
+      [
+       "1",
+       "Klobuchar model transmitted by GPS"
+      ],
+      [
+       "2",
+       "SBAS model"
+      ],
+      [
+       "3",
+       "Klobuchar model transmitted by BeiDou"
+      ],
+      [
+       "8",
+       "Iono delay derived from dual frequency observations"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "authStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Authenticated"
+      ]
+     ]
+    }
+   },
+   "2.02": {
+    "extract_line": 10331,
+    "printed_pages": [
+     112,
+     114
+    ],
+    "page_markers": [
+     112,
+     113
+    ],
+    "document_pages": 238,
+    "length": "8 + numSigs·16",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSigs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·16",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·16",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·16",
+      "type": "U1",
+      "name": "sigId"
+     },
+     {
+      "offset": "11 + n·16",
+      "type": "U1",
+      "name": "freqId"
+     },
+     {
+      "offset": "12 + n·16",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "14 + n·16",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "15 + n·16",
+      "type": "U1",
+      "name": "qualityInd"
+     },
+     {
+      "offset": "16 + n·16",
+      "type": "U1",
+      "name": "corrSource"
+     },
+     {
+      "offset": "17 + n·16",
+      "type": "U1",
+      "name": "ionoModel"
+     },
+     {
+      "offset": "18 + n·16",
+      "type": "X2",
+      "name": "sigFlags"
+     },
+     {
+      "offset": "20 + n·16",
+      "type": "U1[4]",
+      "name": "reserved1"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "sigFlags",
+      "lsb": 0,
+      "msb": 1,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "prSmoothed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "prUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 4,
+      "msb": 4,
+      "width": 1,
+      "name": "crUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "doUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 8,
+      "msb": 8,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 9,
+      "msb": 9,
+      "width": 1,
+      "name": "authStatus"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "corrSource": [
+      [
+       "0",
+       "no corrections"
+      ],
+      [
+       "1",
+       "SBAS corrections"
+      ],
+      [
+       "2",
+       "BeiDou corrections"
+      ],
+      [
+       "3",
+       "RTCM2 corrections"
+      ],
+      [
+       "4",
+       "RTCM3 OSR corrections"
+      ],
+      [
+       "5",
+       "RTCM3 SSR corrections"
+      ],
+      [
+       "6",
+       "QZSS SLAS corrections"
+      ],
+      [
+       "7",
+       "SPARTN corrections"
+      ],
+      [
+       "9",
+       "CLAS corrections"
+      ],
+      [
+       "10",
+       "LPP OSR corrections"
+      ],
+      [
+       "11",
+       "LPP SSR corrections"
+      ],
+      [
+       "12",
+       "GAL HAS corrections"
+      ]
+     ],
+     "ionoModel": [
+      [
+       "0",
+       "Default delay values"
+      ],
+      [
+       "1",
+       "Klobuchar model transmitted by GPS"
+      ],
+      [
+       "2",
+       "SBAS model"
+      ],
+      [
+       "3",
+       "Klobuchar model transmitted by BeiDou"
+      ],
+      [
+       "4",
+       "NTCM model transmitted by Galileo"
+      ],
+      [
+       "8",
+       "Iono delay derived from dual frequency observations"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "authStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Authenticated"
+      ]
+     ]
+    }
+   },
+   "2.10": {
+    "extract_line": 9913,
+    "printed_pages": [
+     107,
+     109
+    ],
+    "page_markers": [
+     107,
+     108
+    ],
+    "document_pages": 233,
+    "length": "8 + numSigs·16",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSigs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·16",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·16",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·16",
+      "type": "U1",
+      "name": "sigId"
+     },
+     {
+      "offset": "11 + n·16",
+      "type": "U1",
+      "name": "freqId"
+     },
+     {
+      "offset": "12 + n·16",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "14 + n·16",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "15 + n·16",
+      "type": "U1",
+      "name": "qualityInd"
+     },
+     {
+      "offset": "16 + n·16",
+      "type": "U1",
+      "name": "corrSource"
+     },
+     {
+      "offset": "17 + n·16",
+      "type": "U1",
+      "name": "ionoModel"
+     },
+     {
+      "offset": "18 + n·16",
+      "type": "X2",
+      "name": "sigFlags"
+     },
+     {
+      "offset": "20 + n·16",
+      "type": "U1[4]",
+      "name": "reserved1"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "sigFlags",
+      "lsb": 0,
+      "msb": 1,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "prSmoothed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "prUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 4,
+      "msb": 4,
+      "width": 1,
+      "name": "crUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "doUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 8,
+      "msb": 8,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 9,
+      "msb": 9,
+      "width": 1,
+      "name": "authStatus"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "corrSource": [
+      [
+       "0",
+       "no corrections"
+      ],
+      [
+       "1",
+       "SBAS corrections"
+      ],
+      [
+       "2",
+       "BeiDou corrections"
+      ],
+      [
+       "3",
+       "RTCM2 corrections"
+      ],
+      [
+       "4",
+       "RTCM3 OSR corrections"
+      ],
+      [
+       "5",
+       "RTCM3 SSR corrections"
+      ],
+      [
+       "6",
+       "QZSS SLAS corrections"
+      ],
+      [
+       "7",
+       "SPARTN corrections"
+      ],
+      [
+       "9",
+       "CLAS corrections"
+      ],
+      [
+       "10",
+       "LPP OSR corrections"
+      ],
+      [
+       "11",
+       "LPP SSR corrections"
+      ],
+      [
+       "12",
+       "GAL HAS corrections"
+      ]
+     ],
+     "ionoModel": [
+      [
+       "0",
+       "No model"
+      ],
+      [
+       "1",
+       "Klobuchar model transmitted by GPS"
+      ],
+      [
+       "2",
+       "SBAS model"
+      ],
+      [
+       "3",
+       "Klobuchar model transmitted by BeiDou"
+      ],
+      [
+       "4",
+       "NTCM model transmitted by Galileo"
+      ],
+      [
+       "7",
+       "Locally estimated iono model"
+      ],
+      [
+       "8",
+       "Iono delay derived from dual-frequency observations"
+      ],
+      [
+       "9",
+       "Iono delay derived from multi-frequency observations"
+      ],
+      [
+       "11",
+       "Default delay values"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "authStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Authenticated"
+      ]
+     ]
+    }
+   },
+   "2.11": {
+    "extract_line": 10848,
+    "printed_pages": [
+     118,
+     120
+    ],
+    "page_markers": [
+     118,
+     119
+    ],
+    "document_pages": 278,
+    "length": "8 + numSigs·16",
+    "fields": [
+     {
+      "offset": "0",
+      "type": "U4",
+      "name": "iTOW"
+     },
+     {
+      "offset": "4",
+      "type": "U1",
+      "name": "version"
+     },
+     {
+      "offset": "5",
+      "type": "U1",
+      "name": "numSigs"
+     },
+     {
+      "offset": "6",
+      "type": "U1[2]",
+      "name": "reserved0"
+     },
+     {
+      "offset": "8 + n·16",
+      "type": "U1",
+      "name": "gnssId"
+     },
+     {
+      "offset": "9 + n·16",
+      "type": "U1",
+      "name": "svId"
+     },
+     {
+      "offset": "10 + n·16",
+      "type": "U1",
+      "name": "sigId"
+     },
+     {
+      "offset": "11 + n·16",
+      "type": "U1",
+      "name": "freqId"
+     },
+     {
+      "offset": "12 + n·16",
+      "type": "I2",
+      "name": "prRes"
+     },
+     {
+      "offset": "14 + n·16",
+      "type": "U1",
+      "name": "cno"
+     },
+     {
+      "offset": "15 + n·16",
+      "type": "U1",
+      "name": "qualityInd"
+     },
+     {
+      "offset": "16 + n·16",
+      "type": "U1",
+      "name": "corrSource"
+     },
+     {
+      "offset": "17 + n·16",
+      "type": "U1",
+      "name": "ionoModel"
+     },
+     {
+      "offset": "18 + n·16",
+      "type": "X2",
+      "name": "sigFlags"
+     },
+     {
+      "offset": "20 + n·16",
+      "type": "U1[4]",
+      "name": "reserved1"
+     }
+    ],
+    "bits": [
+     {
+      "parent": "sigFlags",
+      "lsb": 0,
+      "msb": 1,
+      "width": 2,
+      "name": "health"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 2,
+      "msb": 2,
+      "width": 1,
+      "name": "prSmoothed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 3,
+      "msb": 3,
+      "width": 1,
+      "name": "prUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 4,
+      "msb": 4,
+      "width": 1,
+      "name": "crUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 5,
+      "msb": 5,
+      "width": 1,
+      "name": "doUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 6,
+      "msb": 6,
+      "width": 1,
+      "name": "prCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 7,
+      "msb": 7,
+      "width": 1,
+      "name": "crCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 8,
+      "msb": 8,
+      "width": 1,
+      "name": "doCorrUsed"
+     },
+     {
+      "parent": "sigFlags",
+      "lsb": 9,
+      "msb": 9,
+      "width": 1,
+      "name": "authStatus"
+     }
+    ],
+    "enums": {
+     "qualityInd": [
+      [
+       "0",
+       "no signal"
+      ],
+      [
+       "1",
+       "searching signal"
+      ],
+      [
+       "2",
+       "signal acquired"
+      ],
+      [
+       "3",
+       "signal detected but unusable"
+      ],
+      [
+       "4",
+       "code locked and time synchronized"
+      ],
+      [
+       "5,6,7",
+       "code and carrier locked and time synchronized"
+      ]
+     ],
+     "corrSource": [
+      [
+       "0",
+       "no corrections"
+      ],
+      [
+       "1",
+       "SBAS corrections"
+      ],
+      [
+       "2",
+       "BeiDou corrections"
+      ],
+      [
+       "3",
+       "RTCM2 corrections"
+      ],
+      [
+       "4",
+       "RTCM3 OSR corrections"
+      ],
+      [
+       "5",
+       "RTCM3 SSR corrections"
+      ],
+      [
+       "6",
+       "QZSS SLAS corrections"
+      ],
+      [
+       "7",
+       "SPARTN corrections"
+      ],
+      [
+       "9",
+       "CLAS corrections"
+      ],
+      [
+       "10",
+       "LPP OSR corrections"
+      ],
+      [
+       "11",
+       "LPP SSR corrections"
+      ],
+      [
+       "12",
+       "GAL HAS corrections"
+      ]
+     ],
+     "ionoModel": [
+      [
+       "0",
+       "No model"
+      ],
+      [
+       "1",
+       "Klobuchar model transmitted by GPS"
+      ],
+      [
+       "2",
+       "SBAS model"
+      ],
+      [
+       "3",
+       "Klobuchar model transmitted by BeiDou"
+      ],
+      [
+       "4",
+       "NTCM model transmitted by Galileo"
+      ],
+      [
+       "7",
+       "Locally estimated iono model"
+      ],
+      [
+       "8",
+       "Iono delay derived from dual-frequency observations"
+      ],
+      [
+       "9",
+       "Iono delay derived from multi-frequency observations"
+      ],
+      [
+       "11",
+       "Default delay values"
+      ]
+     ],
+     "health": [
+      [
+       "0",
+       "unknown"
+      ],
+      [
+       "1",
+       "healthy"
+      ],
+      [
+       "2",
+       "unhealthy"
+      ]
+     ],
+     "authStatus": [
+      [
+       "0",
+       "Unknown"
+      ],
+      [
+       "1",
+       "Authenticated"
+      ]
+     ]
+    }
+   }
+  }
+ }
+}

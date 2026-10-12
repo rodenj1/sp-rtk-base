@@ -1,0 +1,158 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Not production code. Issue #256 (map #247).
+  Question: how should the band-aware signal section of the GPS Config page and
+  the profile's signal shape look and behave for both receivers?
+  Three structurally different variants, switchable via ?variant=A|B|C, the
+  floating bottom bar, or the ← → keys. ?rx=f9p|x20p picks the receiver
+  capability set. Nothing here talks to a receiver; Apply is simulated.
+  Run: open this file in a browser (or python3 -m http.server in this folder).
+-->
+<html lang="en"><head><meta charset="utf-8">
+<title>PROTOTYPE — band-aware signals</title>
+<style>
+  body{margin:0;font:14px/1.4 system-ui,sans-serif;background:#121212;color:#e0e0e0}
+  header{background:#1d1d1d;padding:10px 16px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #333}
+  header b{color:#90caf9} .tag{background:#b71c1c;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px}
+  main{display:grid;grid-template-columns:minmax(560px,1fr) 420px;gap:16px;padding:16px 16px 90px}
+  .card{background:#1e1e1e;border:1px solid #333;border-radius:6px;padding:14px}
+  h2{font-size:15px;margin:0 0 4px;color:#fff} .sub{color:#9e9e9e;font-size:12px;margin-bottom:12px}
+  table{border-collapse:collapse;width:100%} th,td{padding:6px 8px;border-bottom:1px solid #2c2c2c;text-align:center}
+  th{color:#9e9e9e;font-weight:500;font-size:12px} td.name{text-align:left;font-weight:600}
+  .na{color:#555} .dim{opacity:.45}
+  .chip{display:inline-block;margin:2px;padding:3px 9px;border-radius:12px;border:1px solid #555;cursor:pointer;user-select:none;font-size:12px}
+  .chip.on{background:#1565c0;border-color:#1565c0;color:#fff} .chip.ro{cursor:default}
+  .warn{color:#ffb74d;font-size:12px} .ok{color:#81c784} .bad{color:#e57373}
+  .row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2c2c2c}
+  .row .lbl{width:90px;font-weight:600}
+  details{border-bottom:1px solid #2c2c2c;padding:6px 0} summary{cursor:pointer;display:flex;gap:10px;align-items:center}
+  .preset{display:block;padding:10px;border:1px solid #444;border-radius:6px;margin:6px 0;cursor:pointer}
+  .preset.sel{border-color:#90caf9;background:#0d2137}
+  pre{background:#111;border:1px solid #333;padding:10px;font-size:12px;overflow:auto;max-height:340px;margin:6px 0}
+  button{background:#1565c0;color:#fff;border:0;border-radius:4px;padding:6px 14px;cursor:pointer}
+  button.sec{background:#424242}
+  select{background:#2a2a2a;color:#eee;border:1px solid #555;padding:3px}
+  #bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fff;color:#000;border-radius:24px;
+       padding:6px 10px;display:flex;gap:10px;align-items:center;box-shadow:0 4px 16px rgba(0,0,0,.6);font-weight:600;z-index:9}
+  #bar button{background:#000;border-radius:50%;width:30px;height:30px;padding:0}
+</style></head>
+<body>
+<header>
+  <span class="tag">PROTOTYPE</span><b>sp-rtk-base</b><span>GPS Config › Signals</span>
+  <span style="margin-left:auto">Receiver:
+    <select id="rx"><option value="f9p">ZED-F9P (HPG 1.51)</option><option value="x20p">ZED-X20P (HPG 2.02, captured)</option></select>
+  </span>
+</header>
+<main>
+  <section class="card" id="variant"></section>
+  <aside>
+    <div class="card"><h2>State</h2><div class="sub">Updates on every change. Simulated readback.</div>
+      <div id="notes"></div>
+      <b>Profile <code>signals:</code> section</b><pre id="yaml"></pre>
+      <b>Keys an Apply would write</b><pre id="keys"></pre>
+      <b>Old F9P profile → migrated</b><pre id="mig"></pre>
+    </div>
+  </aside>
+</main>
+<div id="bar"><button id="prev">‹</button><span id="vlabel"></span><button id="next">›</button></div>
+<script>
+// ---- Capability data (band key suffixes match CFG_SIGNAL_<C>_<BAND>_ENA) ----
+const COLS=[["L1","L1 / E1 / B1"],["L2","L2"],["L5","L5 / E5a / B2a"],["E5B","E5b / B2I"],["E6","E6 / B3 / L6"]];
+const CONST=[["GPS","GPS"],["GLO","GLONASS"],["GAL","Galileo"],["BDS","BeiDou"],["QZSS","QZSS"],["NAVIC","NavIC"],["SBAS","SBAS"]];
+// band: [key suffix, label, column]
+const BANDS={GPS:[["L1CA","L1C/A","L1"],["L2C","L2C","L2"],["L5","L5","L5"]],
+ GLO:[["L1","L1OF","L1"],["L2","L2OF","L2"]],
+ GAL:[["E1","E1","L1"],["E5A","E5a","L5"],["E5B","E5b","E5B"],["E6","E6","E6"]],
+ BDS:[["B1","B1I","L1"],["B1C","B1C","L1"],["B2A","B2a","L5"],["B2","B2I","E5B"],["B3","B3","E6"]],
+ QZSS:[["L1CA","L1C/A","L1"],["L1S","L1S","L1"],["L2C","L2C","L2"],["L5","L5","L5"]],
+ NAVIC:[["L5","L5","L5"]], SBAS:[["L1CA","L1C/A","L1"]]};
+// Receiver capability sets. F9P from F9 HPG docs (to confirm); X20P from the 2.02
+// catalog + the #255 capture (MON-VER lists no GLONASS on this unit).
+const RX={
+ f9p:{name:"ZED-F9P",bands:{GPS:["L1CA","L2C"],GLO:["L1","L2"],GAL:["E1","E5B"],BDS:["B1","B2"],QZSS:["L1CA","L1S","L2C"],SBAS:["L1CA"]},
+      state:{GPS:{on:1,b:["L1CA","L2C"]},GLO:{on:1,b:["L1","L2"]},GAL:{on:1,b:["E1","E5B"]},BDS:{on:1,b:["B1","B2"]},QZSS:{on:0,b:["L1CA","L2C"]},SBAS:{on:0,b:["L1CA"]}}},
+ x20p:{name:"ZED-X20P",note:"GLONASS: not on this unit (MON-VER). QZSS L1C/B: NAKed on 2.02.",
+      bands:{GPS:["L1CA","L2C","L5"],GAL:["E1","E5A","E5B","E6"],BDS:["B1","B1C","B2A","B2","B3"],QZSS:["L1CA","L1S","L2C","L5"],NAVIC:["L5"],SBAS:["L1CA"]},
+      // Values as captured (#255) where read; others assumed on.
+      state:{GPS:{on:1,b:["L1CA","L2C","L5"]},GAL:{on:1,b:["E1","E5A","E5B","E6"]},BDS:{on:1,b:["B1","B1C","B2A","B3"]},QZSS:{on:0,b:["L1CA","L2C","L5"]},NAVIC:{on:0,b:["L5"]},SBAS:{on:1,b:["L1CA"]}}}};
+const PRESETS={all:"All supported bands (recommended)",l1l2:"L1 + L2 only (F9P-style)",l1l5:"L1 + L5/E5a/B2a",custom:"Custom…"};
+
+const qs=new URLSearchParams(location.search);
+let variant=qs.get("variant")||"A", rxKey=qs.get("rx")||"x20p", preset="custom", dirty=new Set();
+let rx, st;
+function load(){rx=RX[rxKey]; st=JSON.parse(JSON.stringify(rx.state)); dirty.clear(); preset="custom";}
+function has(c,b){return (rx.bands[c]||[]).includes(b)}
+function label(c,b){return BANDS[c].find(x=>x[0]===b)[1]}
+function toggleC(c){st[c].on^=1; dirty.add(c+"_ENA"); preset="custom"; render()}
+function toggleB(c,b){const s=st[c].b,i=s.indexOf(b); i<0?s.push(b):s.splice(i,1); dirty.add(c+"_"+b+"_ENA"); preset="custom"; render()}
+function applyPreset(p){preset=p; if(p==="custom"){render();return}
+  for(const c in rx.bands){const cols=p==="all"?null:p==="l1l2"?["L1","L2"]:["L1","L5"];
+    st[c].on=1; st[c].b=rx.bands[c].filter(b=>!cols||cols.includes(BANDS[c].find(x=>x[0]===b)[2])); dirty.add(c+"*")}
+  render()}
+function warnings(){const w=[];
+  for(const c in st){if(!st[c].on&&st[c].b.length) w.push(`${c}: constellation off but ${st[c].b.map(b=>label(c,b)).join(", ")} still enabled on the receiver; kept dimmed, applied when ${c} is turned on.`);
+    if(st[c].on&&!st[c].b.length) w.push(`${c}: on with no bands, so no signals are tracked.`);
+    if(st[c].on&&!st[c].b.some(b=>BANDS[c].find(x=>x[0]===b)[2]==="L1")&&st[c].b.length) w.push(`${c}: no L1-group band; u-blox may reject this signal plan (needs bench check).`)}
+  return w}
+
+// ---- Variant A: constellation × band matrix ----
+function vA(){let h=`<h2>Signals: matrix</h2><div class="sub">Rows: constellations. Columns: frequency groups. "—" means this receiver lacks the band.</div><table><tr><th></th><th>On</th>`+COLS.map(c=>`<th>${c[1]}</th>`).join("")+`</tr>`;
+  for(const [c,n] of CONST){ if(!rx.bands[c]){h+=`<tr class="na"><td class="name">${n}</td><td colspan="${COLS.length+1}">not available on ${rx.name}</td></tr>`;continue}
+    h+=`<tr class="${st[c].on?"":"dim"}"><td class="name">${n}</td><td><input type=checkbox ${st[c].on?"checked":""} onchange="toggleC('${c}')"></td>`;
+    for(const [col] of COLS){const bs=BANDS[c].filter(b=>b[2]===col&&has(c,b[0]));
+      h+=`<td>${bs.length?bs.map(b=>`<span class="chip ${st[c].b.includes(b[0])?"on":""}" onclick="toggleB('${c}','${b[0]}')">${b[1]}</span>`).join(""):'<span class="na">—</span>'}</td>`}
+    h+=`</tr>`}
+  return h+`</table>`+foot()}
+// ---- Variant B: per-constellation accordion ----
+function vB(){let h=`<h2>Signals: by constellation</h2><div class="sub">One switch per constellation; expand to pick bands. Bands this receiver lacks aren't shown.</div>`;
+  for(const [c,n] of CONST){ if(!rx.bands[c]) continue;
+    const on=st[c].b.map(b=>label(c,b)).join(" · ")||"no bands";
+    h+=`<details><summary><input type=checkbox ${st[c].on?"checked":""} onclick="event.stopPropagation()" onchange="toggleC('${c}')"><span class="lbl" style="width:90px;font-weight:600">${n}</span><span class="${st[c].on?"":"dim"}" style="color:#9e9e9e">${on}</span></summary><div style="padding:6px 0 6px 30px">`+
+      rx.bands[c].map(b=>`<label style="margin-right:14px"><input type=checkbox ${st[c].b.includes(b)?"checked":""} onchange="toggleB('${c}','${b}')"> ${label(c,b)}</label>`).join("")+`</div></details>`}
+  const missing=CONST.filter(([c])=>!rx.bands[c]).map(x=>x[1]);
+  if(missing.length) h+=`<div class="sub" style="margin-top:8px">Not available on ${rx.name}: ${missing.join(", ")}</div>`;
+  return h+foot()}
+// ---- Variant C: preset-first, custom on demand ----
+function vC(){let h=`<h2>Signals: preset</h2><div class="sub">Pick an intent; the receiver's capability set expands it into bands. Custom opens per-band control.</div>`;
+  for(const p in PRESETS) h+=`<label class="preset ${preset===p?"sel":""}" onclick="applyPreset('${p}')"><input type=radio ${preset===p?"checked":""}> ${PRESETS[p]}</label>`;
+  h+=`<div style="margin-top:10px"><b>Resulting bands on ${rx.name}</b><br>`;
+  for(const [c,n] of CONST){ if(!rx.bands[c]) continue;
+    h+=`<div class="row ${st[c].on?"":"dim"}"><span class="lbl">${n}</span>`+rx.bands[c].map(b=>`<span class="chip ${st[c].b.includes(b)?"on":""} ${preset==="custom"?"":"ro"}" ${preset==="custom"?`onclick="toggleB('${c}','${b}')"`:""}>${label(c,b)}</span>`).join("")+
+      (preset==="custom"?` <input type=checkbox title="constellation" ${st[c].on?"checked":""} onchange="toggleC('${c}')">`:"")+`</div>`}
+  return h+`</div>`+foot()}
+function foot(){return `<div style="margin-top:14px;display:flex;gap:8px;align-items:center"><button onclick="apply()">Apply</button><button class="sec" onclick="load();render()">Revert</button><span id="res"></span></div>`}
+function apply(){const r=document.getElementById("res"); r.innerHTML=dirty.size?`<span class="ok">✓ ${dirty.size} change(s) written to RAM and read back (simulated)</span>`:"<span>Nothing to write</span>"; dirty.clear()}
+
+// ---- State panel ----
+function yaml(){let y="signals:\n";
+  for(const c in rx.bands) y+=`  ${c.toLowerCase().padEnd(6)}: {enabled: ${!!st[c].on}, bands: [${st[c].b.join(", ")}]}\n`;
+  return y+`# Bands missing from a receiver's capability set are skipped with a warning.\n# Unlisted supported bands are written off, so the profile states every band.`}
+function keys(){let k=[];
+  for(const c in rx.bands){k.push(`CFG_SIGNAL_${c}_ENA=${st[c].on}`); for(const b of rx.bands[c]) k.push(`CFG_SIGNAL_${c}_${b}_ENA=${st[c].b.includes(b)?1:0}`)}
+  return k.join("\n")+`\n(${k.length} keys, one VALSET ≤64; exact batching and plan rules need the bench check)`}
+function mig(){return `# old F9P profile
+constellations: [gps, glonass, galileo, beidou]
+bds_b2_enabled: false
+# migrated: each listed constellation gets all of its
+# F9P bands, then bds_b2=false removes B2I
+signals:
+  gps:     {enabled: true,  bands: [L1CA, L2C]}
+  glo:     {enabled: true,  bands: [L1, L2]}
+  gal:     {enabled: true,  bands: [E1, E5B]}
+  bds:     {enabled: true,  bands: [B1]}
+  qzss:    {enabled: false, bands: [L1CA, L1S, L2C]}
+  sbas:    {enabled: false, bands: [L1CA]}`}
+function render(){
+  document.getElementById("variant").innerHTML={A:vA,B:vB,C:vC}[variant]();
+  const w=warnings(); document.getElementById("notes").innerHTML=(rx.note?`<div class="sub">${rx.note}</div>`:"")+
+    (w.length?w.map(x=>`<div class="warn">⚠ ${x}</div>`).join(""):'<div class="ok">No warnings</div>')+`<div class="sub">Pending changes: ${dirty.size}</div>`;
+  document.getElementById("yaml").textContent=yaml(); document.getElementById("keys").textContent=keys(); document.getElementById("mig").textContent=mig();
+  document.getElementById("vlabel").textContent=`${variant} (${{A:"Matrix",B:"Accordion",C:"Preset-first"}[variant]})`;
+  document.getElementById("rx").value=rxKey;
+  const u=new URL(location); u.searchParams.set("variant",variant); u.searchParams.set("rx",rxKey); history.replaceState(null,"",u)}
+function cycle(d){const v=["A","B","C"]; variant=v[(v.indexOf(variant)+d+3)%3]; render()}
+document.getElementById("prev").onclick=()=>cycle(-1); document.getElementById("next").onclick=()=>cycle(1);
+document.addEventListener("keydown",e=>{if(e.target.closest("input,textarea,select,[contenteditable]"))return; if(e.key==="ArrowLeft")cycle(-1); if(e.key==="ArrowRight")cycle(1)});
+document.getElementById("rx").onchange=e=>{rxKey=e.target.value; load(); render()};
+load(); render();
+</script></body></html>

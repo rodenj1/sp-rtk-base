@@ -30,6 +30,7 @@ import httpx
 import pytest
 
 from sp_rtk_base.update.host_setup import PLUMBING_VERSION
+from tests.fixtures.fake_agent_socket import FakeAgentSocket
 from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.fake_pypi import FakePyPI
 
@@ -164,27 +165,29 @@ def clean_update(update_dir: Path) -> Iterator[Path]:
 
 
 @pytest.fixture(scope="session")
-def portal_agent_socket() -> Iterator[Path]:
-    """A real, idle Portal agent for the e2e server, on a socket in a temp
-    dir (short: AF_UNIX paths are capped near 108 bytes)."""
+def fake_agent() -> Iterator[FakeAgentSocket]:
+    """The Portal agent's control socket, faked (spec #82), on a socket in a
+    temp dir (short: AF_UNIX paths are capped near 108 bytes). It starts
+    unclaimed; the agent's own behaviour is covered by its unit tests and by
+    sp-rtk-portal's seam-1 suite."""
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="e2e-agent-") as d:
-        sock = Path(d) / "control.sock"
-        env = {**os.environ, "SP_RTK_BASE_PORTAL_AGENT_SOCKET": str(sock)}
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "sp_rtk_base.portal_agent.main"], env=env
-        )
-        try:
-            deadline = time.monotonic() + 15
-            while not sock.exists():
-                if proc.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError("the Portal agent didn't start listening")
-                time.sleep(0.05)
-            yield sock
-        finally:
-            proc.terminate()
-            proc.wait(timeout=10)
+        with FakeAgentSocket(Path(d) / "control.sock") as fake:
+            yield fake
+
+
+@pytest.fixture()
+def portal_agent(fake_agent: FakeAgentSocket) -> Iterator[FakeAgentSocket]:
+    """The fake agent, reset to unclaimed before and after the test."""
+    fake_agent.reset()
+    yield fake_agent
+    fake_agent.reset()
+
+
+@pytest.fixture(scope="session")
+def portal_agent_socket(fake_agent: FakeAgentSocket) -> Path:
+    return fake_agent.path
 
 
 @pytest.fixture(scope="session")

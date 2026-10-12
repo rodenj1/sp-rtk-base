@@ -1,18 +1,44 @@
-"""The local Portal page (ticket #83, spec #82).
+"""The local Portal page (tickets #83 and #86, spec #82).
 
-The e2e server talks to a real, idle Portal agent on a socket in a temp dir
-(see ``portal_agent_socket`` in conftest), so an unclaimed base shows
-"Not connected" and offers "Connect to Portal".
+The e2e server talks to a fake Portal agent on a socket in a temp dir
+(``portal_agent`` in conftest), which starts unclaimed: "Not connected",
+offering "Connect to Portal". Tests script what it answers next.
 """
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from playwright.sync_api import Page, expect
 
+from tests.fixtures.fake_agent_socket import FakeAgentSocket
+
+
+def _pairing(base_url: str) -> dict[str, object]:
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    return {
+        "state": "pairing",
+        "user_code": "BCDFGHJK",
+        "approve_url": f"{base_url}/claim-on-portal?code=BCDFGHJK",
+        "expires_at": expires.isoformat(),
+    }
+
+
+CONNECTED = {
+    "state": "connected",
+    "base_id": "k3mnp4qrst",
+    "account": "op@example.com",
+    "portal": "sp-rtk-base.big-spray.com",
+    "last_contact": "2026-01-01T12:03:00+00:00",
+}
+
 
 @pytest.mark.e2e
-def test_an_unclaimed_base_is_not_connected(page: Page, base_url: str) -> None:
+def test_an_unclaimed_base_is_not_connected(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
     page.goto(f"{base_url}/portal")
 
     expect(page.get_by_test_id("portal-headline")).to_have_text(
@@ -22,7 +48,9 @@ def test_an_unclaimed_base_is_not_connected(page: Page, base_url: str) -> None:
 
 
 @pytest.mark.e2e
-def test_the_drawer_links_to_the_portal_page(page: Page, base_url: str) -> None:
+def test_the_drawer_links_to_the_portal_page(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
     page.goto(f"{base_url}/")
     expect(page.locator("text=SP-Base").first).to_be_visible(timeout=15_000)
 
@@ -34,3 +62,83 @@ def test_the_drawer_links_to_the_portal_page(page: Page, base_url: str) -> None:
     expect(page.get_by_test_id("portal-headline")).to_have_text(
         "Not connected", timeout=15_000
     )
+
+
+@pytest.mark.e2e
+def test_connect_shows_the_code_a_countdown_and_approve_on_portal(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.after_claim = _pairing(base_url)
+    page.goto(f"{base_url}/portal")
+
+    page.get_by_role("button", name="Connect to Portal").click()
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Pairing", timeout=15_000
+    )
+    expect(page.get_by_test_id("portal-code")).to_have_text("BCDF-GHJK")
+    countdown = page.get_by_test_id("portal-countdown")
+    expect(countdown).to_have_text(re.compile(r"^(10:00|9:5\d)$"))
+    first = countdown.inner_text()
+    expect(countdown).not_to_have_text(first, timeout=5_000)  # it ticks
+    assert "start_claim" in portal_agent.ops
+    with page.expect_popup() as popup:
+        page.get_by_test_id("portal-approve").click()
+    assert popup.value.url == f"{base_url}/claim-on-portal?code=BCDFGHJK"
+
+
+@pytest.mark.e2e
+def test_once_approved_the_page_shows_connected_with_the_claim(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.after_claim = _pairing(base_url)
+    page.goto(f"{base_url}/portal")
+    page.get_by_role("button", name="Connect to Portal").click()
+    expect(page.get_by_test_id("portal-code")).to_be_visible(timeout=15_000)
+
+    portal_agent.status = CONNECTED
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Connected", timeout=10_000
+    )
+    expect(page.get_by_test_id("portal-account")).to_have_text("op@example.com")
+    expect(page.get_by_test_id("portal-portal")).to_have_text(
+        "sp-rtk-base.big-spray.com"
+    )
+    expect(page.get_by_test_id("portal-base-id")).to_have_text("k3mnp4qrst")
+    expect(page.get_by_test_id("portal-last-contact")).to_have_text(
+        "2026-01-01 12:03 UTC"
+    )
+    expect(page.get_by_role("button", name="Connect to Portal")).to_have_count(0)
+
+
+@pytest.mark.e2e
+def test_a_connect_that_fails_says_why_and_stays_not_connected(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.claim_error = "Couldn't reach the Portal (timed out)."
+    page.goto(f"{base_url}/portal")
+
+    page.get_by_role("button", name="Connect to Portal").click()
+
+    expect(page.get_by_text("Couldn't reach the Portal (timed out).")).to_be_visible(
+        timeout=10_000
+    )
+    expect(page.get_by_test_id("portal-headline")).to_have_text("Not connected")
+
+
+@pytest.mark.e2e
+def test_an_expired_pairing_says_so_and_offers_connect_again(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = {
+        "state": "not_connected",
+        "message": "The code expired before it was approved. Connect again for a new one.",
+    }
+
+    page.goto(f"{base_url}/portal")
+
+    expect(page.get_by_test_id("portal-detail")).to_contain_text(
+        "The code expired before it was approved.", timeout=15_000
+    )
+    expect(page.get_by_role("button", name="Connect to Portal")).to_be_enabled()

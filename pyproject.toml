@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.135.3",
+    "httpx>=0.28",
     "markdown2>=2.5",
     "nicegui>=3.9.0",
     "packaging>=24",
@@ -33,6 +34,7 @@ dependencies = [
     "pyubx2>=1.2.43",
     "pyyaml>=6.0.3",
     "sp_rtk_base_relay>=4.1.0,<5",
+    "sp-rtk-portal-protocol",
     "uvicorn>=0.42.0",
 ]
 
@@ -48,6 +50,9 @@ Homepage = "https://github.com/rodenj1/sp-rtk-base"
 Documentation = "https://github.com/rodenj1/sp-rtk-base#readme"
 Repository = "https://github.com/rodenj1/sp-rtk-base"
 Issues = "https://github.com/rodenj1/sp-rtk-base/issues"
+
+[tool.uv.sources]
+sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "ce1bd1abc32b376fb7e52687c86ba2b1485a1cc2" }
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]

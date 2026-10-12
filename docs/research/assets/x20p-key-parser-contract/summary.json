@@ -1,0 +1,116 @@
+{
+  "baseline_message_identities": 17,
+  "unique_app_keys": 112,
+  "group_counts": {
+    "rtcm_read_5_ports": 60,
+    "rtcm_write_3_ports": 36,
+    "protocol_3_ports": 18,
+    "correction_reports_3_ports": 3,
+    "scalar": 14,
+    "tmode": 17,
+    "rate_writer": 2,
+    "literal_database_keys": 31
+  },
+  "catalog_present_counts": {
+    "2.00": 83,
+    "2.02": 99,
+    "2.10": 109,
+    "2.11": 109
+  },
+  "locked_tests": 165,
+  "candidate_tests": 164,
+  "locked_expected_errors": [
+    {
+      "name": "cap_poll_65",
+      "error": "UBXMessageError: Number of configuration keys 65 exceeds maximum of 64"
+    },
+    {
+      "name": "cap_set_65",
+      "error": "UBXMessageError: Number of configuration tuples 65 exceeds maximum of 64"
+    },
+    {
+      "name": "cap_del_65",
+      "error": "UBXMessageError: Number of configuration keys 65 exceeds maximum of 64"
+    },
+    {
+      "name": "candidate_key:CFG_NAVCOR_ENABLE_HOST",
+      "error": "UBXMessageError: Undefined configuration database key CFG_NAVCOR_ENABLE_HOST"
+    },
+    {
+      "name": "candidate_key:CFG_NAVCOR_ENABLE_GAL_HAS",
+      "error": "UBXMessageError: Undefined configuration database key CFG_NAVCOR_ENABLE_GAL_HAS"
+    },
+    {
+      "name": "candidate_key:CFG_RTCM_MSM_OUT_RANGERATE_SIGN",
+      "error": "UBXMessageError: Undefined configuration database key CFG_RTCM_MSM_OUT_RANGERATE_SIGN"
+    },
+    {
+      "name": "candidate_key:CFG_RTCM_DF028_OUT",
+      "error": "UBXMessageError: Undefined configuration database key CFG_RTCM_DF028_OUT"
+    },
+    {
+      "name": "candidate_key:CFG_SIGNAL_QZSS_L1CB_ENA",
+      "error": "UBXMessageError: Undefined configuration database key CFG_SIGNAL_QZSS_L1CB_ENA"
+    },
+    {
+      "name": "unknown_numeric_sign_key:1",
+      "error": "TypeError: Attribute type X001 value 1 must be <class 'bytes'>, not <class 'int'>"
+    }
+  ],
+  "candidate_expected_errors": [
+    {
+      "name": "cap_poll_65",
+      "error": "UBXMessageError: Number of configuration keys 65 exceeds maximum of 64"
+    },
+    {
+      "name": "cap_set_65",
+      "error": "UBXMessageError: Number of configuration tuples 65 exceeds maximum of 64"
+    },
+    {
+      "name": "cap_del_65",
+      "error": "UBXMessageError: Number of configuration keys 65 exceeds maximum of 64"
+    },
+    {
+      "name": "unknown_numeric_sign_key:b'\\x01'",
+      "error": "TypeError: Attribute type L001 value b'\\x01' must be <class 'int'>, not <class 'bytes'>"
+    }
+  ],
+  "supplemental_keys": 27,
+  "signal_tables_equal": true,
+  "candidate_research_key_additions": {
+    "CFG_NAVCOR_ENABLE_GAL_HAS": {
+      "id": "0x100d0002",
+      "library_type": "L001"
+    },
+    "CFG_NAVCOR_ENABLE_HOST": {
+      "id": "0x100d0001",
+      "library_type": "L001"
+    },
+    "CFG_RTCM_DF028_OUT": {
+      "id": "0x30090010",
+      "library_type": "U002"
+    },
+    "CFG_RTCM_MSM_OUT_RANGERATE_SIGN": {
+      "id": "0x10090011",
+      "library_type": "L001"
+    },
+    "CFG_SIGNAL_LBAND_ENA": {
+      "id": "0x1031002a",
+      "library_type": "L001"
+    },
+    "CFG_SIGNAL_LBAND_PMP_ENA": {
+      "id": "0x1031002f",
+      "library_type": "L001"
+    },
+    "CFG_SIGNAL_QZSS_L1CB_ENA": {
+      "id": "0x10310039",
+      "library_type": "L001"
+    }
+  },
+  "manual_sha256": {
+    "2.00": "e589e9d623dafd3752da346a2936ce5c1524d2086cc6c442dee1c2ea45002c5b",
+    "2.02": "0d8c8a913c2ce5524d058016c62dc2d4a2212f6d96d942ef156a78f6ad9d93b0",
+    "2.10": "65021da30042cd49e58901c1ef3414d7b8daca56dc7e92f2c8625c728011256c",
+    "2.11": "02d6439e3994f928fbef293d4acdcac10577b3d88887a7b8893cd20a4cc98371"
+  }
+}

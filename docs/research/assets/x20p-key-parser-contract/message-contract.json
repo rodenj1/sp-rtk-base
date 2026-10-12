@@ -1,0 +1,441 @@
+[
+  {
+    "identity": "ACK-ACK",
+    "baseline_literal_lines": [
+      2963
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x05 0x01"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x05 0x01"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x05 0x01"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x05 0x01"
+      }
+    }
+  },
+  {
+    "identity": "ACK-NAK",
+    "baseline_literal_lines": [
+      1121,
+      2965
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x05 0x00"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x05 0x00"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x05 0x00"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x05 0x00"
+      }
+    }
+  },
+  {
+    "identity": "CFG-CFG",
+    "baseline_literal_lines": [
+      1916,
+      1925
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x06 0x09"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x06 0x09"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x06 0x09"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x06 0x09"
+      }
+    }
+  },
+  {
+    "identity": "CFG-GNSS",
+    "baseline_literal_lines": [
+      1399,
+      1407
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.02": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.10": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.11": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      }
+    }
+  },
+  {
+    "identity": "CFG-RST",
+    "baseline_literal_lines": [
+      621,
+      2287
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x06 0x04"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x06 0x04"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x06 0x04"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x06 0x04"
+      }
+    }
+  },
+  {
+    "identity": "CFG-VALDEL",
+    "baseline_literal_lines": [
+      2944
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "supported high-level section 6.4.1; detailed wire description absent",
+        "class_id": null
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x06 0x8c"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x06 0x8c"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x06 0x8c"
+      }
+    }
+  },
+  {
+    "identity": "CFG-VALGET",
+    "baseline_literal_lines": [
+      1114
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "supported high-level section 6.4.1; detailed wire description absent",
+        "class_id": null
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x06 0x8b"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x06 0x8b"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x06 0x8b"
+      }
+    }
+  },
+  {
+    "identity": "CFG-VALSET",
+    "baseline_literal_lines": [
+      2855
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "supported high-level section 6.4.1; detailed wire description absent",
+        "class_id": null
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x06 0x8a"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x06 0x8a"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x06 0x8a"
+      }
+    }
+  },
+  {
+    "identity": "MON-COMMS",
+    "baseline_literal_lines": [
+      2565,
+      2583
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x0a 0x36"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x0a 0x36"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x0a 0x36"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x0a 0x36"
+      }
+    }
+  },
+  {
+    "identity": "MON-VER",
+    "baseline_literal_lines": [
+      2683,
+      2718
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x0a 0x04"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x0a 0x04"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x0a 0x04"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x0a 0x04"
+      }
+    }
+  },
+  {
+    "identity": "NAV-HPPOSECEF",
+    "baseline_literal_lines": [
+      2001
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x13"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x13"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x13"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x13"
+      }
+    }
+  },
+  {
+    "identity": "NAV-PVT",
+    "baseline_literal_lines": [
+      1960,
+      1969,
+      2002
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x07"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x07"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x07"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x07"
+      }
+    }
+  },
+  {
+    "identity": "NAV-SAT",
+    "baseline_literal_lines": [
+      2076
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x35"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x35"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x35"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x35"
+      }
+    }
+  },
+  {
+    "identity": "NAV-SIG",
+    "baseline_literal_lines": [
+      2077
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x43"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x43"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x43"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x43"
+      }
+    }
+  },
+  {
+    "identity": "NAV-STATUS",
+    "baseline_literal_lines": [
+      98
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x03"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x03"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x03"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x03"
+      }
+    }
+  },
+  {
+    "identity": "NAV-SVIN",
+    "baseline_literal_lines": [
+      2327,
+      2335
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x01 0x3b"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x01 0x3b"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x01 0x3b"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x01 0x3b"
+      }
+    }
+  },
+  {
+    "identity": "RXM-RTCM",
+    "baseline_literal_lines": [
+      333
+    ],
+    "firmware": {
+      "2.00": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.02": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.10": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      },
+      "2.11": {
+        "status": "absent_from_detailed_inventory",
+        "class_id": null
+      }
+    }
+  },
+  {
+    "identity": "RXM-COR",
+    "baseline_literal_lines": [],
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "class_id": "0x02 0x34"
+      },
+      "2.02": {
+        "status": "documented",
+        "class_id": "0x02 0x34"
+      },
+      "2.10": {
+        "status": "documented",
+        "class_id": "0x02 0x34"
+      },
+      "2.11": {
+        "status": "documented",
+        "class_id": "0x02 0x34"
+      }
+    }
+  }
+]

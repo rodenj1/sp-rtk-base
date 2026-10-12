@@ -1,0 +1,866 @@
+[
+  {
+    "key": "CFG_MSGOUT_RTCM_3X_TYPE1006_I2C",
+    "id": "0x209102c2",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209102c2",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_SPI\n0x209102c6\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART1\n0x209102c3\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x20"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209102c2",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_SPI\n0x209102c6\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART1\n0x209102c3\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x20"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_RTCM_3X_TYPE1006_SPI",
+    "id": "0x209102c6",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209102c6",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART1\n0x209102c3\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209102c6",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART1\n0x209102c3\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_RTCM_3X_TYPE1006_UART1",
+    "id": "0x209102c3",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209102c3",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x20"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209102c3",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_UART2\n0x209102c4\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x20"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_RTCM_3X_TYPE1006_UART2",
+    "id": "0x209102c4",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209102c4",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x2091035f\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART2\n0x20"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209102c4",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1006_USB\n0x209102c5\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x2091035f\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART2\n0x20"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_RTCM_3X_TYPE1006_USB",
+    "id": "0x209102c5",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209102c5",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x2091035f\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART2\n0x20910360\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_USB\n0x20"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209102c5",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_I2C\n0x2091035e\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_SPI\n0x20910362\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART1\n0x2091035f\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_UART2\n0x20910360\nU1--0\nCFG-MSGOUT-RTCM_3X_TYPE1074_USB\n0x20"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_UBX_RXM_COR_I2C",
+    "id": "0x209106b6",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x209106b6",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nport I2C\nCFG-MSGOUT-UBX_RXM_COR_SPI\n0x209106ba\nU1--Output rate of the UBX-RXM-COR message on\nport SPI\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nport UA"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x209106b6",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nport I2C\nCFG-MSGOUT-UBX_RXM_COR_SPI\n0x209106ba\nU1--Output rate of the UBX-RXM-COR message on\nport SPI\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nport UA"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209106b6",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe I2C port\nCFG-MSGOUT-UBX_RXM_COR_SPI\n0x209106ba\nU1--Output rate of the UBX-RXM-COR message on\nthe SPI port\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209106b6",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe I2C port\nCFG-MSGOUT-UBX_RXM_COR_SPI\n0x209106ba\nU1--Output rate of the UBX-RXM-COR message on\nthe SPI port\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_UBX_RXM_COR_SPI",
+    "id": "0x209106ba",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x209106ba",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nport SPI\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nport UART1\nCFG-MSGOUT-UBX_RXM_COR_\nUART2\n0x209106b8\nU1--Output rate of the UBX-RXM-COR message on\npo"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x209106ba",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nport SPI\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nport UART1\nUBXDOC-304424225-19967 - R03\n\u00a0\n6 Configuration interfacePage 194 of 238\nC1-Public\n\nu-blox"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209106ba",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe SPI port\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nthe UART1 port\nCFG-MSGOUT-UBX_RXM_COR_\nUART2\n0x209106b8\nU1--Output rate of the UBX-RXM-COR messa"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209106ba",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe SPI port\nCFG-MSGOUT-UBX_RXM_COR_\nUART1\n0x209106b7\nU1--Output rate of the UBX-RXM-COR message on\nthe UART1 port\nCFG-MSGOUT-UBX_RXM_COR_\nUART2\n0x209106b8\nU1--Output rate of the UBX-RXM-COR messa"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_UBX_RXM_COR_UART1",
+    "id": "0x209106b7",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x209106b7",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_UART2\n0x209106b8\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART2\n0x20910206\nU1--0\nCF"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x209106b7",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_UART2\n0x209106b8\nU1--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nUBXDOC-304424225-19967 - R03\n\u00a0\nConfiguration defaultsPage 226 of 238\nC1-Public\n\nu-blox X20 HPG 2.02\u00a0"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209106b7",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_UART2\n0x209106b8\nU1--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MS"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209106b7",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_UART2\n0x209106b8\nU1--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MS"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_UBX_RXM_COR_UART2",
+    "id": "0x209106b8",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x209106b8",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART2\n0x20910206\nU1--0\nCFG-MSGOUT-UBX_RXM_RAWX_I2C\n0x209102a4\nU1--0\nCFG"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x209106b8",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nUBXDOC-304424225-19967 - R03\n\u00a0\nConfiguration defaultsPage 226 of 238\nC1-Public\n\nu-blox X20 HPG 2.02\u00a0-\u00a0Interface description\nConfiguration itemKey "
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209106b8",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART2\n0x20910206\nU1--0\nCFG-"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209106b8",
+        "type": "U1",
+        "text": "--0\nCFG-MSGOUT-UBX_RXM_COR_USB\n0x209106b9\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART1\n0x20910205\nU1--0\nCFG-MSGOUT-UBX_RXM_MEASX_UART2\n0x20910206\nU1--0\nCFG-"
+      }
+    }
+  },
+  {
+    "key": "CFG_MSGOUT_UBX_RXM_COR_USB",
+    "id": "0x209106b9",
+    "library_type": "U001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x209106b9",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nport USB\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--Output rate of the UBX-RXM-MEASX message\non port I2C\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--Output rate of the UBX-RXM-MEASX message\non po"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x209106b9",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe USB port\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--Output rate of the UBX-RXM-MEASX message\non the I2C port\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--Output rate of the UBX-RXM-MEASX messa"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x209106b9",
+        "type": "U1",
+        "text": "--Output rate of the UBX-RXM-COR message on\nthe USB port\nCFG-MSGOUT-UBX_RXM_MEASX_I2C\n0x20910204\nU1--Output rate of the UBX-RXM-MEASX message\non the I2C port\nCFG-MSGOUT-UBX_RXM_MEASX_SPI\n0x20910208\nU1--Output rate of the UBX-RXM-MEASX messa"
+      }
+    }
+  },
+  {
+    "key": "CFG_NAVCOR_ENABLE_GAL_HAS",
+    "id": "0x100d0002",
+    "library_type": "L001",
+    "locked_name_available": false,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x100d0002",
+        "type": "L",
+        "text": "--Enable/disable Galileo HAS corrections\nIf this is true, and HOST corrections are disabled, Galileo HAS corrections are processed.\nTable 19: CFG-NAVCOR configuration items\n6.9.12 CFG-NAVHPG: High precision navigation configuration\nThis gro"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x100d0002",
+        "type": "L",
+        "text": "--Enable/disable Galileo HAS corrections\nUBXDOC-304424225-21617 - R01\n\u00a0\n6 Configuration interfacePage 233 of 278\nC1-Public\n\nu-blox X20 HPG 2.11\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nIf this is true, and HO"
+      }
+    }
+  },
+  {
+    "key": "CFG_NAVCOR_ENABLE_HOST",
+    "id": "0x100d0001",
+    "library_type": "L001",
+    "locked_name_available": false,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x100d0001",
+        "type": "L",
+        "text": "--Enable/disable HOST corrections\nIf this is true, HOST-based corrections are processed.\nCFG-NAVCOR-ENABLE_GAL_HAS\n0x100d0002\nL--Enable/disable Galileo HAS corrections\nIf this is true, and HOST corrections are disabled, Galileo HAS correcti"
+      },
+      "2.11": {
+        "status": "removed explicitly in R11 section 2.1.2",
+        "id": null,
+        "type": null,
+        "text": null
+      }
+    }
+  },
+  {
+    "key": "CFG_RTCM_DF003_IN",
+    "id": "0x30090008",
+    "library_type": "U002",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x30090008",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) input value\nValue to use for filtering out RTCM input messages based on their DF003 data field (Reference station ID) value. To be\nused in conjunction with CFG-RTCM-DF003_IN_FILTER. The value can be 0..40"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x30090008",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) input value\nUBXDOC-304424225-19967 - R03\n\u00a0\n6 Configuration interfacePage 203 of 238\nC1-Public\n\nu-blox X20 HPG 2.02\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nValue to use for"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x30090008",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) input value\nValue to use for filtering out RTCM input messages based on their DF003 data field (Reference station ID) value. To be\nused in conjunction with CFG-RTCM-DF003_IN_FILTER. The value can be 0..40"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x30090008",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) input value\nValue to use for filtering out RTCM input messages based on their DF003 data field (Reference station ID) value. To be\nused in conjunction with CFG-RTCM-DF003_IN_FILTER. The value can be 0..40"
+      }
+    }
+  },
+  {
+    "key": "CFG_RTCM_DF003_IN_FILTER",
+    "id": "0x20090009",
+    "library_type": "E001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x20090009",
+        "type": "E1",
+        "text": "--RTCM input filter configuration based on RTCM\nDF003 (Reference station ID) value\nConfigures if and how the filtering out of RTCM input messages based on their DF003 data field (Reference station ID)\noperates.\nSee Table 39 below for a list"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x20090009",
+        "type": "E1",
+        "text": "--RTCM input filter configuration based on RTCM\nDF003 (Reference station ID) value\nConfigures if and how the filtering out of RTCM input messages based on their DF003 data field (Reference station ID)\noperates.\nSee Table 39 below for a list"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x20090009",
+        "type": "E1",
+        "text": "--RTCM input filter configuration based on RTCM\nDF003 (Reference station ID) value\nConfigures if and how the filtering out of RTCM input messages based on their DF003 data field (Reference station ID)\noperates.\nSee Table 36 below for a list"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x20090009",
+        "type": "E1",
+        "text": "--RTCM input filter configuration based on RTCM\nDF003 (Reference station ID) value\nConfigures if and how the filtering out of RTCM input messages based on their DF003 data field (Reference station ID)\noperates.\nSee Table 39 below for a list"
+      }
+    }
+  },
+  {
+    "key": "CFG_RTCM_DF003_OUT",
+    "id": "0x30090001",
+    "library_type": "U002",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x30090001",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) output\nvalue\nValue to set in RTCM data field DF003 (Reference station ID) in RTCM output messages containing DF003. The value\ncan be 0..4095.\nCFG-RTCM-DF003_IN\n0x30090008\nU2--RTCM DF003 (Reference station"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x30090001",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) output\nvalue\nValue to set in RTCM data field DF003 (Reference station ID) in RTCM output messages containing DF003. The value\ncan be 0..4095.\nCFG-RTCM-DF003_IN\n0x30090008\nU2--RTCM DF003 (Reference station"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x30090001",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) output\nvalue\nValue to set in RTCM data field DF003 (Reference station ID) in RTCM output messages containing DF003. The value\ncan be 0..4095.\nCFG-RTCM-DF003_IN\n0x30090008\nU2--RTCM DF003 (Reference station"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x30090001",
+        "type": "U2",
+        "text": "--RTCM DF003 (Reference station ID) output\nvalue\nValue to set in RTCM data field DF003 (Reference station ID) in RTCM output messages containing DF003. The value\ncan be 0..4095.\nCFG-RTCM-DF003_IN\n0x30090008\nU2--RTCM DF003 (Reference station"
+      }
+    }
+  },
+  {
+    "key": "CFG_RTCM_DF028_OUT",
+    "id": "0x30090010",
+    "library_type": "U002",
+    "locked_name_available": false,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x30090010",
+        "type": "U2",
+        "text": "0.0001mRTCM DF028 (antenna height) output value\nHeight of the antenna reference point (ARP) position above the marker used in the survey campaign. Value is used with\nRTCM 1006 output and input.\nFor example 10000 results in 1 m height. The a"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x30090010",
+        "type": "U2",
+        "text": "0.0001mRTCM DF028 (antenna height) output value\nHeight of the antenna reference point (ARP) position above the marker used in the survey campaign. Value is used with\nRTCM 1006 output and input.\nFor example 10000 results in 1 m height. The a"
+      }
+    }
+  },
+  {
+    "key": "CFG_RTCM_MSM_OUT_RANGERATE_SIGN",
+    "id": "0x10090011",
+    "library_type": "L001",
+    "locked_name_available": false,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10090011",
+        "type": "L",
+        "text": "--1 (true)\nCFG-RTCM-DF028_OUT\n0x30090010\nU20.0001m0\nTable 94: CFG-RTCM configuration defaults\nConfiguration itemKey IDTypeScaleUnitDefault value\nCFG-SBAS-USE_TESTMODE\n0x10360002\nL--0 (false)\nCFG-SBAS-USE_RANGING\n0x10360003\nL--1 (true)\nCFG-S"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_BDS_B1C_ENA",
+    "id": "0x1031000f",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x1031000f",
+        "type": "L",
+        "text": "--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x1031000f",
+        "type": "L",
+        "text": "--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x1031000f",
+        "type": "L",
+        "text": "--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x1031000f",
+        "type": "L",
+        "text": "--BeiDou B1C\nUBXDOC-304424225-21617 - R01\n\u00a0\n6 Configuration interfacePage 243 of 278\nC1-Public\n\nu-blox X20 HPG 2.11\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_BDS_B2A_ENA",
+    "id": "0x10310028",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x10310028",
+        "type": "L",
+        "text": "--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL-"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x10310028",
+        "type": "L",
+        "text": "--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL-"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310028",
+        "type": "L",
+        "text": "--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1CB_ENA\n0x10310039\nL--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310028",
+        "type": "L",
+        "text": "--BeiDou B2a\nCFG-SIGNAL-BDS_B3_ENA\n0x10310010\nL--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1CB_ENA\n0x10310039\nL--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_BDS_B3_ENA",
+    "id": "0x10310010",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x10310010",
+        "type": "L",
+        "text": "--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL--QZSS L2C\nCFG-SIGNAL-QZSS_L5_ENA\n0x10310017\nL--"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x10310010",
+        "type": "L",
+        "text": "--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL--QZSS L2C\nCFG-SIGNAL-QZSS_L5_ENA\n0x10310017\nL--"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310010",
+        "type": "L",
+        "text": "--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1CB_ENA\n0x10310039\nL--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310010",
+        "type": "L",
+        "text": "--BeiDou B3I\nCFG-SIGNAL-QZSS_ENA\n0x10310024\nL--QZSS enable\nCFG-SIGNAL-QZSS_L1CA_ENA\n0x10310012\nL--QZSS L1C/A\nCFG-SIGNAL-QZSS_L1CB_ENA\n0x10310039\nL--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_GAL_E5A_ENA",
+    "id": "0x10310009",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x10310009",
+        "type": "L",
+        "text": "--Galileo E5a\nCFG-SIGNAL-GAL_E5B_ENA\n0x1031000a\nL--Galileo E5b\nCFG-SIGNAL-GAL_E6_ENA\n0x1031000b\nL--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL-"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x10310009",
+        "type": "L",
+        "text": "--Galileo E5a\nCFG-SIGNAL-GAL_E5B_ENA\n0x1031000a\nL--Galileo E5b\nCFG-SIGNAL-GAL_E6_ENA\n0x1031000b\nL--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL-"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310009",
+        "type": "L",
+        "text": "--Galileo E5a\nCFG-SIGNAL-GAL_E5B_ENA\n0x1031000a\nL--Galileo E5b\nCFG-SIGNAL-GAL_E6_ENA\n0x1031000b\nL--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL-"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310009",
+        "type": "L",
+        "text": "--Galileo E5a\nCFG-SIGNAL-GAL_E5B_ENA\n0x1031000a\nL--Galileo E5b\nCFG-SIGNAL-GAL_E6_ENA\n0x1031000b\nL--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL-"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_GAL_E6_ENA",
+    "id": "0x1031000b",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x1031000b",
+        "type": "L",
+        "text": "--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--B"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x1031000b",
+        "type": "L",
+        "text": "--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--B"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x1031000b",
+        "type": "L",
+        "text": "--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL--BeiDou B1C\nCFG-SIGNAL-BDS_B2_ENA\n0x1031000e\nL--BeiDou B2I\nCFG-SIGNAL-BDS_B2A_ENA\n0x10310028\nL--B"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x1031000b",
+        "type": "L",
+        "text": "--Galileo E6\nCFG-SIGNAL-BDS_ENA\n0x10310022\nL--BeiDou Enable\nCFG-SIGNAL-BDS_B1_ENA\n0x1031000d\nL--BeiDou B1I\nCFG-SIGNAL-BDS_B1C_ENA\n0x1031000f\nL--BeiDou B1C\nUBXDOC-304424225-21617 - R01\n\u00a0\n6 Configuration interfacePage 243 of 278\nC1-Public\n\nu-"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_GPS_L5_ENA",
+    "id": "0x10310004",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x10310004",
+        "type": "L",
+        "text": "--GPS L5\nCFG-SIGNAL-SBAS_ENA\n0x10310020\nL--SBAS enable\nCFG-SIGNAL-SBAS_L1CA_ENA\n0x10310005\nL--SBAS L1C/A\nUBXDOC-304424225-19888 - R01\n\u00a0\n6 Configuration interfacePage 197 of 224\nC1-Public\n\nu-blox 20 HPG 2.00\u00a0-\u00a0Interface description\nConfigura"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x10310004",
+        "type": "L",
+        "text": "--GPS L5\nCFG-SIGNAL-SBAS_ENA\n0x10310020\nL--SBAS enable\nUBXDOC-304424225-19967 - R03\n\u00a0\n6 Configuration interfacePage 206 of 238\nC1-Public\n\nu-blox X20 HPG 2.02\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nCFG-SIGNA"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310004",
+        "type": "L",
+        "text": "--GPS L5\nCFG-SIGNAL-SBAS_ENA\n0x10310020\nL--SBAS enable\nCFG-SIGNAL-SBAS_L1CA_ENA\n0x10310005\nL--SBAS L1C/A\nCFG-SIGNAL-GAL_ENA\n0x10310021\nL--Galileo enable\nCFG-SIGNAL-GAL_E1_ENA\n0x10310007\nL--Galileo E1\nCFG-SIGNAL-GAL_E5A_ENA\n0x10310009\nL--Gal"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310004",
+        "type": "L",
+        "text": "--GPS L5\nCFG-SIGNAL-SBAS_ENA\n0x10310020\nL--SBAS enable\nCFG-SIGNAL-SBAS_L1CA_ENA\n0x10310005\nL--SBAS L1C/A\nCFG-SIGNAL-GAL_ENA\n0x10310021\nL--Galileo enable\nCFG-SIGNAL-GAL_E1_ENA\n0x10310007\nL--Galileo E1\nCFG-SIGNAL-GAL_E5A_ENA\n0x10310009\nL--Gal"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_NAVIC_ENA",
+    "id": "0x10310026",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x10310026",
+        "type": "L",
+        "text": "--NavIC enable\nCFG-SIGNAL-NAVIC_L5_ENA\n0x1031001d\nL--NavIC L5\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nU"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x10310026",
+        "type": "L",
+        "text": "--NavIC enable\nCFG-SIGNAL-NAVIC_L5_ENA\n0x1031001d\nL--NavIC L5\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nU"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310026",
+        "type": "L",
+        "text": "--NavIC enable\nCFG-SIGNAL-NAVIC_L5_ENA\n0x1031001d\nL--NavIC L5\nUBXDOC-304424225-21263 - R02\n\u00a0\n6 Configuration interfacePage 203 of 233\nC1-Public\n\nu-blox X20 HPG 2.10\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nCF"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310026",
+        "type": "L",
+        "text": "--NavIC enable\nCFG-SIGNAL-NAVIC_L5_ENA\n0x1031001d\nL--NavIC L5\nCFG-SIGNAL-LBAND_ENA\n0x1031002a\nL--L-Band enable\nCFG-SIGNAL-LBAND_PMP_ENA\n0x1031002f\nL--L-Band PMP\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_NAVIC_L5_ENA",
+    "id": "0x1031001d",
+    "library_type": "L001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x1031001d",
+        "type": "L",
+        "text": "--NavIC L5\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this "
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x1031001d",
+        "type": "L",
+        "text": "--NavIC L5\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this "
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x1031001d",
+        "type": "L",
+        "text": "--NavIC L5\nUBXDOC-304424225-21263 - R02\n\u00a0\n6 Configuration interfacePage 203 of 233\nC1-Public\n\nu-blox X20 HPG 2.10\u00a0-\u00a0Interface description\nConfiguration itemKey IDTypeScaleUnitDescription\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSel"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x1031001d",
+        "type": "L",
+        "text": "--NavIC L5\nCFG-SIGNAL-LBAND_ENA\n0x1031002a\nL--L-Band enable\nCFG-SIGNAL-LBAND_PMP_ENA\n0x1031002f\nL--L-Band PMP\nCFG-SIGNAL-PLAN\n0x2031003a\nE1--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all s"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_PLAN",
+    "id": "0x2031003a",
+    "library_type": "E001",
+    "locked_name_available": true,
+    "firmware": {
+      "2.00": {
+        "status": "documented",
+        "id": "0x2031003a",
+        "type": "E1",
+        "text": "--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this product.\nSee Table 45 below for a list o"
+      },
+      "2.02": {
+        "status": "documented",
+        "id": "0x2031003a",
+        "type": "E1",
+        "text": "--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this product.\nSee Table 45 below for a list o"
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x2031003a",
+        "type": "E1",
+        "text": "--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this product.\nSee Table 42 below for a list o"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x2031003a",
+        "type": "E1",
+        "text": "--Active signal plan\nSelect the active signal plan of the receiver. Multiple options exist. Not all signal plans are available in this product. See\nUBX-MON-GNSS for the signal plans available in this product.\nSee Table 45 below for a list o"
+      }
+    }
+  },
+  {
+    "key": "CFG_SIGNAL_QZSS_L1CB_ENA",
+    "id": "0x10310039",
+    "library_type": "L001",
+    "locked_name_available": false,
+    "firmware": {
+      "2.00": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.02": {
+        "status": "absent/unknown",
+        "id": null,
+        "type": null,
+        "text": null
+      },
+      "2.10": {
+        "status": "documented",
+        "id": "0x10310039",
+        "type": "L",
+        "text": "--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL--QZSS L2C\nCFG-SIGNAL-QZSS_L5_ENA\n0x10310017\nL--QZSS L5\nCFG-SIGNAL-GLO_ENA\n0x10310025\nL--GLONASS enable\nCFG-SIGNAL-GLO_L1_ENA\n0x10310018\nL--GLON"
+      },
+      "2.11": {
+        "status": "documented",
+        "id": "0x10310039",
+        "type": "L",
+        "text": "--QZSS L1C/B\nCFG-SIGNAL-QZSS_L1S_ENA\n0x10310014\nL--QZSS L1S\nCFG-SIGNAL-QZSS_L2C_ENA\n0x10310015\nL--QZSS L2C\nCFG-SIGNAL-QZSS_L5_ENA\n0x10310017\nL--QZSS L5\nCFG-SIGNAL-GLO_ENA\n0x10310025\nL--GLONASS enable\nCFG-SIGNAL-GLO_L1_ENA\n0x10310018\nL--GLON"
+      }
+    }
+  }
+]

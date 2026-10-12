@@ -91,10 +91,21 @@ def test_denied_the_lan_and_allowed_only_loopback() -> None:
     assert _words(AGENT_UNIT, "IPAddressAllow") == {"127.0.0.0/8", "::1"}
 
 
-def test_writes_nothing_on_disk_but_its_socket() -> None:
+def test_writes_nothing_on_disk_but_its_socket_and_state() -> None:
     assert _values(AGENT_UNIT, "ReadWritePaths") == []
     assert _values(AGENT_UNIT, "RuntimeDirectory") == ["sp-rtk-base-portal-agent"]
     assert _values(AGENT_UNIT, "RuntimeDirectoryMode") == ["0700"]
+
+
+def test_keeps_the_claim_in_its_own_state_directory() -> None:
+    """The base key lives where only the agent's unit writes, never in
+    /etc/sp-rtk-base or an app backup (#69)."""
+    assert _values(AGENT_UNIT, "StateDirectory") == ["sp-rtk-base-portal-agent"]
+    assert _values(AGENT_UNIT, "StateDirectoryMode") == ["0700"]
+    assert (
+        "SP_RTK_BASE_PORTAL_AGENT_STATE=/var/lib/sp-rtk-base-portal-agent"
+        in _values(AGENT_UNIT, "Environment")
+    )
 
 
 @pytest.mark.parametrize(

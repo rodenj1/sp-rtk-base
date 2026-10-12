@@ -12,13 +12,21 @@ from pydantic import ValidationError
 from sp_rtk_base.portal_agent.protocol import AgentStatus
 
 TIMEOUT_S = 2.0
+CLAIM_TIMEOUT_S = 15.0
+"""Starting a Claim waits for the Portal (the agent gives it 10 s)."""
 
 
 class AgentUnavailableError(Exception):
     """The agent couldn't be asked: not running, refused us, or garbled."""
 
 
-async def _request(path: Path, request: dict[str, Any]) -> dict[str, Any]:
+class ClaimFailedError(Exception):
+    """The agent couldn't start a Claim. The message is for the Operator."""
+
+
+async def _request(
+    path: Path, request: dict[str, Any], timeout: float = TIMEOUT_S
+) -> dict[str, Any]:
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_unix_connection(str(path)), TIMEOUT_S
@@ -30,7 +38,7 @@ async def _request(path: Path, request: dict[str, Any]) -> dict[str, Any]:
     try:
         writer.write((json.dumps(request) + "\n").encode())
         await writer.drain()
-        line = await asyncio.wait_for(reader.readline(), TIMEOUT_S)
+        line = await asyncio.wait_for(reader.readline(), timeout)
     except (OSError, asyncio.TimeoutError) as exc:
         raise AgentUnavailableError(f"The Portal agent didn't answer: {exc}") from exc
     finally:
@@ -43,14 +51,28 @@ async def _request(path: Path, request: dict[str, Any]) -> dict[str, Any]:
         raise AgentUnavailableError("The Portal agent answered garbage")
     reply = cast(dict[str, Any], reply)
     if reply.get("ok") is not True:
+        if isinstance(reply.get("message"), str):
+            raise ClaimFailedError(reply["message"])
         raise AgentUnavailableError(f"The Portal agent {reply.get('error', 'failed')}")
     return reply
 
 
-async def read_status(path: Path) -> AgentStatus:
-    """Ask the agent at ``path`` for its status."""
-    reply = await _request(path, {"op": "status"})
+def _status(reply: dict[str, Any]) -> AgentStatus:
     try:
         return AgentStatus.model_validate(reply.get("status"))
     except ValidationError as exc:
         raise AgentUnavailableError("The Portal agent answered garbage") from exc
+
+
+async def read_status(path: Path) -> AgentStatus:
+    """Ask the agent at ``path`` for its status."""
+    return _status(await _request(path, {"op": "status"}))
+
+
+async def start_claim(path: Path) -> AgentStatus:
+    """Start a Claim ("Connect to Portal"): the agent asks for a pairing code.
+
+    Raises :class:`ClaimFailedError` (e.g. the Portal can't be reached) or
+    :class:`AgentUnavailableError`.
+    """
+    return _status(await _request(path, {"op": "start_claim"}, CLAIM_TIMEOUT_S))

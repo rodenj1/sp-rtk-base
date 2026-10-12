@@ -48,6 +48,9 @@ class Host:
             + "".join(f"nameserver {r}\n" for r in resolvers)
         )
         self.unit_known = unit_known
+        self.state = root / "state"
+        self.answer = "false"
+        """What ``ask`` answers in uninstall.sh (``true``: yes)."""
 
     @property
     def unit(self) -> Path:
@@ -68,6 +71,8 @@ class Host:
             f'if [[ "$1" == list-unit-files ]]; then {"true" if self.unit_known else "false"}; fi; }}\n'
             f'VENV_DIR="{VENV_DIR}"\n'
             f'PORTAL_AGENT_SYSTEMD_UNIT="{self.unit}"\n'
+            f'PORTAL_AGENT_STATE_DIR="{self.state}"\n'
+            f"ask() {{ {self.answer}; }}\n"
             f'RESOLV_CONF="{self.resolv}"\n'
             f"{block}\n"
         )
@@ -156,6 +161,17 @@ class TestInstall:
         assert text.index("# Step 5 —") < text.index(START)
 
 
+class TestClaimSurvivesReinstall:
+    """The Claim lives in the agent's state directory; installing or
+    upgrading over it never touches it (#86)."""
+
+    @pytest.mark.parametrize("script", ["install.sh", "upgrade.sh"])
+    def test_the_scripts_never_touch_the_state_directory(self, script: str) -> None:
+        text = (DEPLOY / script).read_text()
+        assert "/var/lib/sp-rtk-base-portal-agent" not in text
+        assert "PORTAL_AGENT_STATE" not in text
+
+
 class TestUpgrade:
     def test_restarts_an_installed_agent(self, tmp_path: Path) -> None:
         host = Host(tmp_path, resolvers=[])
@@ -185,6 +201,19 @@ class TestUninstall:
         assert f"systemctl disable --now {UNIT}" in calls
         assert not host.unit.exists()
         assert not host.drop_in.parent.exists()
+
+    @pytest.mark.parametrize(("answer", "kept"), [("false", True), ("true", False)])
+    def test_removes_the_claim_only_when_asked_to(
+        self, tmp_path: Path, answer: str, kept: bool
+    ) -> None:
+        host = Host(tmp_path, resolvers=[])
+        host.state.mkdir()
+        (host.state / "base_key.pem").write_text("key")
+        host.answer = answer
+
+        host.run(_block("uninstall.sh"))
+
+        assert host.state.exists() is kept
 
     def test_removes_it_before_the_app_tree(self) -> None:
         text = (DEPLOY / "uninstall.sh").read_text()

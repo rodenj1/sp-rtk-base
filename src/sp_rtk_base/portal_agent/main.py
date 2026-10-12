@@ -1,7 +1,9 @@
 """``sp-rtk-base-portal-agent``: the Portal agent process.
 
 Run by ``sp-rtk-base-portal-agent.service``. Idle until Claimed: it holds no
-base key, contacts nothing and only answers its control socket.
+base key, contacts nothing and only answers its control socket, until the
+local Portal page's "Connect to Portal" starts a Claim. A Claim is kept in
+its state directory and picked up again at start.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import logging
 import signal
 from pathlib import Path
 
-from sp_rtk_base.portal_agent.control import serve
+from sp_rtk_base.portal_agent.control import PortalAgent, serve
 from sp_rtk_base.portal_agent.protocol import socket_path
 
 logger = logging.getLogger(__name__)
@@ -20,13 +22,15 @@ logger = logging.getLogger(__name__)
 
 async def run(path: Path, stop: asyncio.Event) -> None:
     """Serve the control socket at ``path`` until ``stop`` is set."""
-    server = await serve(path)
-    logger.info("Portal agent idle (not Claimed); control socket %s", path)
+    agent = PortalAgent()
+    server = await serve(path, agent)
+    logger.info("Portal agent %s; control socket %s", agent.status().state, path)
     try:
         await stop.wait()
     finally:
         server.close()
         await server.wait_closed()
+        await agent.close()
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
 

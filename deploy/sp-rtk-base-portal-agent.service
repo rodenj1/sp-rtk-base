@@ -17,13 +17,20 @@ Group=sp-rtk-base
 RuntimeDirectory=sp-rtk-base-portal-agent
 RuntimeDirectoryMode=0700
 Environment=SP_RTK_BASE_PORTAL_AGENT_SOCKET=/run/sp-rtk-base-portal-agent/control.sock
+# The base key and the Claim: /var/lib/sp-rtk-base-portal-agent, owned by the
+# service user, mode 0700 (the key in it is 0600). Empty until a Claim; the
+# app reads the base's <id> from it for /api/portal/identity. install.sh
+# never touches it, so reinstalling keeps the Claim.
+StateDirectory=sp-rtk-base-portal-agent
+StateDirectoryMode=0700
+Environment=SP_RTK_BASE_PORTAL_AGENT_STATE=/var/lib/sp-rtk-base-portal-agent
 ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-portal-agent
 Restart=on-failure
 RestartSec=5
 
 # --- Sandboxing / hardening ---------------------------------------------
 # The sp-rtk-base unit's sandboxing (a unit test keeps them in step), with
-# no writable paths and no devices.
+# no writable paths but its StateDirectory, and no devices.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

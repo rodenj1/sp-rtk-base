@@ -15,21 +15,188 @@ import logging
 import os
 import socket
 import struct
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from sp_rtk_base.portal_agent.protocol import AgentStatus
+import httpx
+from sp_rtk_portal_protocol import (
+    BaseKey,
+    Claimed,
+    ClaimStart,
+    ClaimStarted,
+    ErrorReply,
+)
+
+from sp_rtk_base import __version__
+from sp_rtk_base.portal_agent.portal_api import PortalApi, PortalUnreachableError
+from sp_rtk_base.portal_agent.protocol import AgentStatus, state_path
+from sp_rtk_base.portal_agent.protocol import portal_url as default_portal_url
+from sp_rtk_base.portal_agent.state import Claim, load_claim, save_claim
 
 logger = logging.getLogger(__name__)
 
 _MAX_REQUEST = 64 * 1024
 
 
+class ClaimStartError(Exception):
+    """A Claim couldn't start. The message is for the Operator."""
+
+
+@dataclass
+class _Pairing:
+    key: BaseKey
+    started: ClaimStarted
+    expires_at: datetime
+    task: asyncio.Task[None] | None = None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+EXPIRED = "The code expired before it was approved. Connect again for a new one."
+REFUSED = "The Portal refused the Claim. Connect again to retry."
+SLOW_DOWN_S = 5
+"""RFC 8628 §3.5: a ``slow_down`` adds this to the poll interval, for good."""
+
+
 class PortalAgent:
-    """The agent's state. Unclaimed (the only state yet): idle."""
+    """The agent's state: not connected, pairing or connected (Claimed).
+
+    Unclaimed it is idle and contacts nothing. "Connect to Portal" calls
+    :meth:`start_claim`: it makes a base key, asks the Portal for a pairing
+    code and polls (RFC 8628) until the Operator approves it, the code
+    expires or the Portal refuses. Once Claimed, the key and Claim are on
+    disk (:mod:`.state`) and survive restarts and reinstalls.
+    """
+
+    def __init__(
+        self,
+        state_dir: Path | None = None,
+        *,
+        portal_url: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        now: Callable[[], datetime] = _utcnow,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        name: str | None = None,
+        software_version: str | None = None,
+    ) -> None:
+        self._state_dir = state_dir if state_dir is not None else state_path()
+        self._api = PortalApi(
+            portal_url if portal_url is not None else default_portal_url(),
+            now=now,
+            transport=transport,
+        )
+        self._now = now
+        self._sleep = sleep
+        self._name = name if name is not None else socket.gethostname()
+        self._version = (
+            software_version if software_version is not None else __version__
+        )
+        loaded = load_claim(self._state_dir)
+        self._claim: Claim | None = loaded[1] if loaded else None
+        self._pairing: _Pairing | None = None
+        self._message: str | None = None
+        self._lock = asyncio.Lock()
 
     def status(self) -> AgentStatus:
-        return AgentStatus(state="not_connected")
+        if self._claim is not None:
+            c = self._claim
+            return AgentStatus(
+                state="connected",
+                base_id=c.base_id,
+                account=c.account,
+                portal=c.portal,
+                last_contact=datetime.fromisoformat(c.last_contact),
+            )
+        if self._pairing is not None:
+            p = self._pairing
+            return AgentStatus(
+                state="pairing",
+                user_code=p.started.user_code,
+                approve_url=p.started.verification_uri_complete,
+                expires_at=p.expires_at,
+            )
+        return AgentStatus(state="not_connected", message=self._message)
+
+    async def start_claim(self) -> AgentStatus:
+        """Ask the Portal for a pairing code. Raises :class:`ClaimStartError`."""
+        async with self._lock:
+            if self._claim is not None:
+                raise ClaimStartError("This base is already Claimed.")
+            if self._pairing is not None:
+                return self.status()
+            key = BaseKey.generate()
+            try:
+                started = await self._api.start_claim(
+                    key, ClaimStart(name=self._name, software_version=self._version)
+                )
+            except PortalUnreachableError as exc:
+                logger.warning("Couldn't start a Claim: %s", exc)
+                raise ClaimStartError(f"Couldn't reach the Portal ({exc}).") from exc
+            pairing = _Pairing(
+                key, started, self._now() + timedelta(seconds=started.expires_in)
+            )
+            self._pairing, self._message = pairing, None
+            pairing.task = asyncio.create_task(self._poll(pairing))
+            logger.info("Pairing started; code %s", started.user_code)
+            return self.status()
+
+    async def _poll(self, pairing: _Pairing) -> None:
+        interval = max(pairing.started.interval, 1)
+        while True:
+            await self._sleep(interval)
+            if self._now() >= pairing.expires_at:
+                self._end_pairing(EXPIRED)
+                return
+            try:
+                result = await self._api.poll_claim(
+                    pairing.key, pairing.started.device_code
+                )
+            except PortalUnreachableError as exc:
+                logger.info("Claim poll failed, will retry: %s", exc)
+                continue
+            if isinstance(result, Claimed):
+                self._claimed(pairing, result)
+                return
+            if result == ErrorReply.AUTHORIZATION_PENDING:
+                continue
+            if result == ErrorReply.SLOW_DOWN:
+                interval += SLOW_DOWN_S
+                continue
+            self._end_pairing(
+                EXPIRED if result == ErrorReply.EXPIRED_TOKEN else REFUSED
+            )
+            return
+
+    def _claimed(self, pairing: _Pairing, claimed: Claimed) -> None:
+        now = self._now().isoformat()
+        claim = Claim(
+            base_id=claimed.base_id,
+            account=claimed.account,
+            portal=self._api.host,
+            claimed_at=now,
+            last_contact=now,
+        )
+        save_claim(self._state_dir, pairing.key, claim)
+        self._claim, self._pairing = claim, None
+        logger.info("Claimed by %s as %s", claimed.account, claimed.base_id)
+
+    def _end_pairing(self, message: str) -> None:
+        logger.info("Pairing ended: %s", message)
+        self._pairing, self._message = None, message
+
+    async def close(self) -> None:
+        """Stop any pairing in progress and close connections."""
+        pairing = self._pairing
+        if pairing is not None and pairing.task is not None:
+            pairing.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pairing.task
+        await self._api.aclose()
 
 
 def _peer_uid(writer: asyncio.StreamWriter) -> int | None:
@@ -47,15 +214,22 @@ def _encode(reply: dict[str, Any]) -> bytes:
     return (json.dumps(reply) + "\n").encode()
 
 
-def _answer(agent: PortalAgent, line: bytes) -> dict[str, Any]:
+async def _answer(agent: PortalAgent, line: bytes) -> dict[str, Any]:
     try:
         request = json.loads(line)
     except ValueError:
         return {"ok": False, "error": "bad request"}
     if not isinstance(request, dict):
         return {"ok": False, "error": "bad request"}
-    if request.get("op") == "status":  # pyright: ignore[reportUnknownMemberType]
-        return {"ok": True, "status": agent.status().model_dump()}
+    op: Any = cast(dict[str, Any], request).get("op")
+    if op == "status":
+        return {"ok": True, "status": agent.status().model_dump(mode="json")}
+    if op == "start_claim":
+        try:
+            status = await agent.start_claim()
+        except ClaimStartError as exc:
+            return {"ok": False, "error": "claim failed", "message": str(exc)}
+        return {"ok": True, "status": status.model_dump(mode="json")}
     return {"ok": False, "error": "unknown op"}
 
 
@@ -86,7 +260,7 @@ async def serve(
                 line = await reader.readline()
                 if not line:
                     return
-                writer.write(_encode(_answer(the_agent, line)))
+                writer.write(_encode(await _answer(the_agent, line)))
                 await writer.drain()
         except (ConnectionError, asyncio.LimitOverrunError, ValueError):
             return

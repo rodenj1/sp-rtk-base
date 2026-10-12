@@ -197,6 +197,7 @@ def test_this_repo_reads_its_install_sh() -> None:
         "deploy/sp-rtk-base-update.service",
         "deploy/sp-rtk-base-update.path",
         "deploy/sp-rtk-base-net-provision.service",
+        "deploy/sp-rtk-base-portal-agent.service",
         "deploy/polkit/10-sp-rtk-base-net-provision.rules",
         "deploy/shared/net-provision-teardown.sh",
     } == files

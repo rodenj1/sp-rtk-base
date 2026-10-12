@@ -28,6 +28,7 @@ SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
 UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-update.service}"
 UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
+PORTAL_AGENT_SYSTEMD_UNIT="${PORTAL_AGENT_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-portal-agent.service}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-/etc/polkit-1/rules.d/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_WILDCARD_CONF="${DNSMASQ_WILDCARD_CONF:-/etc/NetworkManager/dnsmasq-shared.d/sp-rtk-base-wildcard.conf}"
 
@@ -107,6 +108,14 @@ systemctl disable --now sp-rtk-base-update.path 2>/dev/null || true
 systemctl stop sp-rtk-base-update.service 2>/dev/null || true
 rm -f "$UPDATE_PATH_UNIT" "$UPDATE_SYSTEMD_UNIT"
 # End of the Update units
+
+# Portal agent (spec #82): its unit and the resolver drop-in install.sh
+# may have written beside it.
+echo "==> Stopping + disabling sp-rtk-base-portal-agent.service…"
+systemctl disable --now sp-rtk-base-portal-agent.service 2>/dev/null || true
+rm -f "$PORTAL_AGENT_SYSTEMD_UNIT"
+rm -rf "${PORTAL_AGENT_SYSTEMD_UNIT}.d"
+# End of the Portal agent
 
 echo "==> Stopping + disabling sp-rtk-base.service…"
 systemctl stop    sp-rtk-base.service 2>/dev/null || true

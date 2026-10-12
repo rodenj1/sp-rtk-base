@@ -1,0 +1,47 @@
+[Unit]
+Description=SP-RTK-Base — Portal agent (remote access; idle until the base is Claimed)
+Documentation=https://github.com/rodenj1/sp-rtk-base
+# Independent of sp-rtk-base.service: the agent reaches the app only
+# through localhost:8080, and the app reads the agent's status over the
+# control socket below. Neither waits on the other.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sp-rtk-base
+Group=sp-rtk-base
+# The control socket the app talks to: /run/sp-rtk-base-portal-agent is
+# created for this unit, owned by the service user, mode 0700; the socket
+# in it is 0600 and the agent refuses any other peer uid.
+RuntimeDirectory=sp-rtk-base-portal-agent
+RuntimeDirectoryMode=0700
+Environment=SP_RTK_BASE_PORTAL_AGENT_SOCKET=/run/sp-rtk-base-portal-agent/control.sock
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-portal-agent
+Restart=on-failure
+RestartSec=5
+
+# --- Sandboxing / hardening ---------------------------------------------
+# The sp-rtk-base unit's sandboxing (a unit test keeps them in step), with
+# no writable paths and no devices.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+DevicePolicy=closed
+
+# --- Network: never the LAN ---------------------------------------------
+# Whatever the agent's code does, the kernel won't let it open a socket to
+# a private, link-local or unique-local address. Loopback stays open: the
+# agent reaches the base's own UI only through localhost:8080. If this
+# host's DNS resolver is on the LAN, install.sh allows just that address
+# in a drop-in (sp-rtk-base-portal-agent.service.d/resolver.conf).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fc00::/7 fe80::/10
+IPAddressAllow=127.0.0.0/8 ::1
+
+[Install]
+WantedBy=multi-user.target

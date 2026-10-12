@@ -36,6 +36,7 @@ ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-apply-update
 # failed restart is judged by the health check below, not here.
 ExecStart=-+/usr/bin/systemctl restart sp-rtk-base.service
 ExecStart=-+/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service
+ExecStart=-+/usr/bin/systemctl try-restart sp-rtk-base-portal-agent.service
 # The health check, run from venv.prev: the old version's code, so a release
 # that fails on import can't stop its own Rollback. -I keeps the state dir
 # (the working directory, which the app can write) off sys.path. Unhealthy:
@@ -49,7 +50,7 @@ ExecStopPost=-/bin/sh -c '[ -x /opt/sp-rtk-base/venv.prev/bin/python ] && exec /
 # Then restarts the restored old version, only when
 # the rollback marker exists: a compromised app that plants it gains only a
 # restart of itself.
-ExecStopPost=-+/bin/sh -c 'if [ -e /var/lib/sp-rtk-base/update/rollback ]; then /usr/bin/systemctl restart sp-rtk-base.service; /usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; fi'
+ExecStopPost=-+/bin/sh -c 'if [ -e /var/lib/sp-rtk-base/update/rollback ]; then /usr/bin/systemctl restart sp-rtk-base.service; /usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; /usr/bin/systemctl try-restart sp-rtk-base-portal-agent.service; fi'
 # Then: health-checks the old version after a Rollback (one attempt only),
 # removes the snapshot once the running version is healthy, and reports an
 # Update left half-way as failed. Run from venv.prev with -I, like --verify,

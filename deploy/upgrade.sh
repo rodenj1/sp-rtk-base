@@ -68,6 +68,15 @@ if systemctl list-unit-files sp-rtk-base-net-provision.service >/dev/null 2>&1; 
     systemctl restart sp-rtk-base-net-provision.service 2>/dev/null || true
 fi
 
+# Portal agent (spec #82): runs the venv's code too, so it restarts with
+# the app. A host installed before the agent has no unit for it; re-run
+# deploy/install.sh to add it (this script never touches host files).
+if systemctl list-unit-files sp-rtk-base-portal-agent.service >/dev/null 2>&1; then
+    echo "==> Restarting sp-rtk-base-portal-agent.service…"
+    systemctl try-restart sp-rtk-base-portal-agent.service 2>/dev/null || true
+fi
+# End of the Portal agent
+
 sleep 2
 if systemctl is-active --quiet sp-rtk-base.service; then
     echo "✓ Upgrade complete: sp-rtk-base ${old_ver} → ${new_ver}"

@@ -248,6 +248,7 @@ class TestInstallFetchesByTag:
             "sp-rtk-base.service",
             "polkit/10-sp-rtk-base-net-provision.rules",
             "sp-rtk-base-net-provision.service",
+            "sp-rtk-base-portal-agent.service",
         ):
             assert re.search(rf"fetch_deploy_file {re.escape(rel)} ", install_text), rel
         # Only the helper itself calls curl to download.

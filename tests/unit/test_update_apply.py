@@ -1132,6 +1132,7 @@ class TestTheUnit:
     RESTARTS = [
         "restart sp-rtk-base.service",
         "try-restart sp-rtk-base-net-provision.service",
+        "try-restart sp-rtk-base-portal-agent.service",
     ]
 
     def test_a_healthy_update_is_done(self, host: Host) -> None:
@@ -1322,9 +1323,11 @@ class TestTheUnit:
         assert privileged == [
             "-+/usr/bin/systemctl restart sp-rtk-base.service",
             "-+/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service",
+            "-+/usr/bin/systemctl try-restart sp-rtk-base-portal-agent.service",
             "-+/bin/sh -c 'if [ -e /var/lib/sp-rtk-base/update/rollback ]; then "
             "/usr/bin/systemctl restart sp-rtk-base.service; "
-            "/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; fi'",
+            "/usr/bin/systemctl try-restart sp-rtk-base-net-provision.service; "
+            "/usr/bin/systemctl try-restart sp-rtk-base-portal-agent.service; fi'",
         ]
 
     def test_runs_as_the_service_user_in_its_own_sandbox(self) -> None:

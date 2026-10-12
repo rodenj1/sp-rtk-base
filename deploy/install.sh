@@ -81,6 +81,8 @@ SYSTEMD_UNIT="${SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base.service}"
 NET_PROVISION_SYSTEMD_UNIT="${NET_PROVISION_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-net-provision.service}"
 UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-update.service}"
 UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
+PORTAL_AGENT_SYSTEMD_UNIT="${PORTAL_AGENT_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-portal-agent.service}"
+RESOLV_CONF="${RESOLV_CONF:-/etc/resolv.conf}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_SHARED_D="${DNSMASQ_SHARED_D:-/etc/NetworkManager/dnsmasq-shared.d}"
@@ -598,6 +600,31 @@ else
     ok "Update units installed; Update from the web UI is on"
 fi
 # End of the Update units
+
+# Portal agent (spec #82), in both modes. Its own service, idle until the
+# base is Claimed from the local Portal page: it holds no key, contacts
+# nothing and only answers the app on its control socket. Its unit denies
+# it the LAN (IPAddressDeny); if this host's DNS resolver is on the LAN,
+# a drop-in allows just that address, and a re-run rewrites or removes it.
+log "Installing the Portal agent unit…"
+fetch_deploy_file sp-rtk-base-portal-agent.service "$PORTAL_AGENT_SYSTEMD_UNIT"
+portal_agent_drop_in_dir="${PORTAL_AGENT_SYSTEMD_UNIT}.d"
+portal_agent_resolver="$("${VENV_DIR}/bin/python" -I -m sp_rtk_base.portal_agent.resolver "$RESOLV_CONF")" \
+    || die "Couldn't read this host's DNS resolvers for the Portal agent's unit."
+if [[ -n "$portal_agent_resolver" ]]; then
+    mkdir -p "$portal_agent_drop_in_dir"
+    printf '%s\n' "$portal_agent_resolver" >"${portal_agent_drop_in_dir}/resolver.conf"
+    chmod 0644 "${portal_agent_drop_in_dir}/resolver.conf"
+    warn "This host's DNS resolver is on the LAN; the Portal agent may reach it (and no other LAN address)."
+else
+    rm -f "${portal_agent_drop_in_dir}/resolver.conf"
+    rmdir "$portal_agent_drop_in_dir" 2>/dev/null || true
+fi
+systemctl daemon-reload
+systemctl enable sp-rtk-base-portal-agent.service >/dev/null
+systemctl restart sp-rtk-base-portal-agent.service
+ok "Portal agent installed and running (idle: not Claimed)"
+# End of the Portal agent
 
 # ---------------------------------------------------------------------------
 # Steps 8.2-8.6 — Network takeover (appliance mode only, issue #27/#29)

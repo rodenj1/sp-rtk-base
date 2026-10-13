@@ -114,6 +114,9 @@ async def startup_services() -> None:
     # Check PyPI for an Available update now, then every 24 h.
     services_mod.update_check_service.start()
 
+    # Tunnel opens and closes from the Portal agent go into the Event log.
+    services_mod.portal_events.start()
+
 
 async def shutdown_services() -> None:
     """Gracefully stop the GPS device and the relay engine.
@@ -189,6 +192,17 @@ async def shutdown_services() -> None:
         logger.warning("Timed out stopping the update check")
     except Exception:
         logger.exception("Error stopping the update check")
+
+    # 0b''. Portal agent's Event log entries — nothing depends on it.
+    try:
+        await asyncio.wait_for(
+            services_mod.portal_events.stop(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the Portal agent's Event log entries")
+    except Exception:
+        logger.exception("Error stopping the Portal agent's Event log entries")
 
     # 0c. Survey-in — stop the station's averaging before the device goes.
     try:

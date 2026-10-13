@@ -22,6 +22,13 @@ Any frame the protocol package refuses (an unknown type, a payload on a
 new-stream frame, ...) or a text message closes the whole tunnel, and the
 agent logs why. The Portal closes the tunnel when its last Remote session
 ends; the agent then goes back to polling only.
+
+The agent doesn't rely on that alone: a Portal that never closes (a bug, or
+a compromised Portal) can't hold the tunnel open for ever. The agent closes
+it itself after ``tunnel_idle_timeout`` with no stream open, and once it has
+been open longer than ``tunnel_hard_cap + tunnel_idle_timeout`` (the
+Portal's own limits, plus the idle time as slack). A later Wake opens a new
+one.
 """
 
 from __future__ import annotations
@@ -33,7 +40,7 @@ import re
 import secrets
 from collections import deque
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from sp_rtk_portal_protocol import FrameError, Stream, Tunnel
@@ -117,11 +124,15 @@ class TunnelClient:
         *,
         headers: Callable[[str, str], dict[str, str]],
         now: Callable[[], datetime],
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
     ) -> None:
         self._headers = headers
         self._now = now
+        self._sleep = sleep
+        self._active = 0
+        self._idle_since: datetime | None = None
         self._connect = connect
         self._app_port = app_port
         self.state: TunnelState = "closed"
@@ -135,9 +146,11 @@ class TunnelClient:
     def streams(self) -> int:
         return self._tunnel.streams if self._tunnel is not None else 0
 
-    def wake(self, nonce: str, url: str) -> None:
+    def wake(self, nonce: str, url: str, *, idle_timeout: int, hard_cap: int) -> None:
         """Open the tunnel at ``url`` (the checked tunnel URL), echoing
-        ``nonce``. Ignored while a tunnel is open or opening."""
+        ``nonce``. Ignored while a tunnel is open or opening. The agent
+        closes it after ``idle_timeout`` s with no stream, or once it has
+        been open ``hard_cap + idle_timeout`` s."""
         if self.state != "closed":
             logger.info("Ignoring a Wake: the tunnel is already %s", self.state)
             return
@@ -145,7 +158,9 @@ class TunnelClient:
             logger.warning("Ignoring a Wake with a malformed nonce")
             return
         self._set("opening")
-        self._task = asyncio.ensure_future(self._run(nonce, url))
+        self._task = asyncio.ensure_future(
+            self._run(nonce, url, timedelta(seconds=idle_timeout), hard_cap)
+        )
 
     def _set(self, state: TunnelState) -> None:
         previous = self.state
@@ -161,7 +176,9 @@ class TunnelClient:
             TunnelEvent(id=secrets.token_hex(8), event=event, at=self.since)
         )
 
-    async def _run(self, nonce: str, url: str) -> None:
+    async def _run(
+        self, nonce: str, url: str, idle_timeout: timedelta, hard_cap: int
+    ) -> None:
         try:
             ws = await self._connect(url, self._headers(url, nonce))
         except InvalidStatus as exc:
@@ -178,13 +195,16 @@ class TunnelClient:
         tunnel = Tunnel(ws.send, role="agent", on_new_stream=self._serve_stream)
         self._tunnel = tunnel
         self._set("open")
+        self._active, self._idle_since = 0, self.since
         logger.info("Tunnel open")
+        receive = asyncio.ensure_future(self._receive(ws, tunnel))
+        backstop = asyncio.ensure_future(
+            self._backstop(idle_timeout, idle_timeout + timedelta(seconds=hard_cap))
+        )
         try:
-            while True:
-                message = await ws.recv()
-                if isinstance(message, str):
-                    raise FrameError("a text message (frames are binary)")
-                await tunnel.feed(message)
+            await asyncio.wait({receive, backstop}, return_when=asyncio.FIRST_COMPLETED)
+            if receive.done():
+                receive.result()
         except FrameError as exc:
             logger.warning(
                 "Closing the tunnel: refused a frame from the Portal: %s", exc
@@ -192,13 +212,61 @@ class TunnelClient:
         except (WebSocketException, OSError) as exc:
             logger.info("Tunnel closed: %s", exc or type(exc).__name__)
         finally:
+            for task in (receive, backstop):
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
             tunnel.close()
             with contextlib.suppress(Exception):
                 await ws.close()
             self._tunnel = None
             self._set("closed")
 
+    @staticmethod
+    async def _receive(ws: WebSocket, tunnel: Tunnel) -> None:
+        while True:
+            message = await ws.recv()
+            if isinstance(message, str):
+                raise FrameError("a text message (frames are binary)")
+            await tunnel.feed(message)
+
+    async def _backstop(self, idle_timeout: timedelta, lifetime: timedelta) -> None:
+        """Return when the tunnel has had no stream for ``idle_timeout``, or
+        has been open for ``lifetime``, whatever the Portal does."""
+        assert self.since is not None
+        closes_at = self.since + lifetime
+        while True:
+            now = self._now()
+            if now >= closes_at:
+                logger.warning(
+                    "Closing the tunnel: open for %d s, past its hard cap",
+                    lifetime.total_seconds(),
+                )
+                return
+            wake_at = closes_at
+            if self._active == 0 and self._idle_since is not None:
+                idle_ends = self._idle_since + idle_timeout
+                if now >= idle_ends:
+                    logger.info(
+                        "Closing the tunnel: no stream for %d s",
+                        idle_timeout.total_seconds(),
+                    )
+                    return
+                wake_at = min(wake_at, idle_ends)
+            else:
+                wake_at = min(wake_at, now + idle_timeout)
+            await self._sleep((wake_at - now).total_seconds())
+
     async def _serve_stream(self, stream: Stream) -> None:
+        self._active += 1
+        try:
+            await self._serve(stream)
+        finally:
+            self._active -= 1
+            if self._active == 0:
+                self._idle_since = self._now()
+
+    async def _serve(self, stream: Stream) -> None:
         head = bytearray()
         while b"\r\n\r\n" not in head:
             chunk = await stream.read()

@@ -61,7 +61,10 @@ The groundwork for the remote access Portal (rtk_development#82).
   stream carries one origin-form HTTP request (or websocket) with a fixed
   `Host`, and a frame the agent doesn't recognise, or one carrying any
   such field, closes the whole tunnel and is logged. The Portal closes
-  the tunnel 2 minutes after the last remote user leaves. The agent's
+  the tunnel 2 minutes after the last remote user leaves; the agent
+  doesn't count on it, and closes the tunnel itself after the agent
+  config's idle timeout with nothing passing through, or once it has been
+  open longer than the hard cap plus that idle timeout. The agent's
   status reports the tunnel's state and open streams.
 - **Who is connected, and a brake.** While Connected, the Portal page lists
   the live Remote sessions (who, and since when) and offers "Pause remote

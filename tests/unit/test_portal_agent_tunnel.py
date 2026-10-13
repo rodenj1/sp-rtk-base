@@ -371,3 +371,92 @@ async def test_a_local_un_claim_closes_the_tunnel(
     await running.unclaim()
 
     await asyncio.wait_for(endpoint.closed.wait(), 5)
+
+
+# --- The agent's own backstop (a Portal that never closes) -------------------------
+
+IDLE, CAP = 30, 120
+
+
+@pytest.fixture()
+def limits(portal: FakePortal) -> None:
+    """Short tunnel limits in the agent config (applied on the first poll)."""
+    portal.config = AgentConfig(
+        revision=2, tunnel_idle_timeout=IDLE, tunnel_hard_cap=CAP
+    )
+
+
+async def held_stream(endpoint: TunnelEndpoint):
+    """A websocket down a stream, left open: a Remote session in use."""
+    stream = await endpoint.open_stream()
+    ws = WSConnection(ConnectionType.CLIENT)
+    await stream.write(ws.send(Request(host="base", target="/ws")))
+    while not any(isinstance(e, AcceptConnection) for e in ws.events()):
+        ws.receive_data(await stream.read())
+    return stream
+
+
+async def test_a_tunnel_left_idle_by_the_portal_is_closed_by_the_agent(
+    limits: None,
+    running: Running,
+    portal: FakePortal,
+    endpoint: TunnelEndpoint,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await wake(running, portal, endpoint, clock)
+
+    await clock.run(seconds=IDLE - 1)
+    assert (await running.status()).tunnel == "open"
+    with caplog.at_level(logging.INFO):
+        await clock.run(seconds=1)
+        await asyncio.wait_for(endpoint.closed.wait(), 5)
+
+    status = await running.until_status(lambda s: s.tunnel == "closed", "closed")
+    assert [e.event for e in status.tunnel_events] == ["opened", "closed"]
+    assert "no stream for 30 s" in caplog.text
+    await wake(running, portal, endpoint, clock)  # a fresh Wake opens a new one
+    assert len(endpoint.opens) == 2
+
+
+async def test_a_tunnel_in_use_stays_open_past_the_idle_timeout(
+    limits: None,
+    running: Running,
+    portal: FakePortal,
+    endpoint: TunnelEndpoint,
+    clock: FakeClock,
+) -> None:
+    await wake(running, portal, endpoint, clock)
+    stream = await held_stream(endpoint)
+
+    await clock.run(seconds=IDLE * 2)
+    assert (await running.status()).tunnel == "open"
+
+    await stream.close()
+    await running.until_status(lambda s: s.tunnel_streams == 0, "stream gone")
+    await clock.run(seconds=IDLE - 1)
+    assert (await running.status()).tunnel == "open"
+    await clock.run(seconds=1)
+    await asyncio.wait_for(endpoint.closed.wait(), 5)
+
+
+async def test_a_tunnel_is_closed_past_its_hard_cap_even_in_use(
+    limits: None,
+    running: Running,
+    portal: FakePortal,
+    endpoint: TunnelEndpoint,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await wake(running, portal, endpoint, clock)
+    await held_stream(endpoint)
+
+    await clock.run(seconds=CAP + IDLE - 1)
+    assert (await running.status()).tunnel == "open"
+    with caplog.at_level(logging.INFO):
+        await clock.run(seconds=1)
+        await asyncio.wait_for(endpoint.closed.wait(), 5)
+
+    status = await running.until_status(lambda s: s.tunnel == "closed", "closed")
+    assert status.tunnel_events[-1].event == "closed"
+    assert "open for 150 s" in caplog.text

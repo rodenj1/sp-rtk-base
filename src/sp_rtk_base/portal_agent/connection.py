@@ -126,6 +126,7 @@ class Connection:
         self.tunnel = TunnelClient(
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
             now=now,
+            sleep=sleep,
             connect=tunnel_connect,
             app_port=app_port,
         )
@@ -207,7 +208,12 @@ class Connection:
         if self.paused:
             logger.info("Ignoring a Wake: remote access is paused")
             return
-        self.tunnel.wake(nonce, self.config.tunnel_url)
+        self.tunnel.wake(
+            nonce,
+            self.config.tunnel_url,
+            idle_timeout=self.config.tunnel_idle_timeout,
+            hard_cap=self.config.tunnel_hard_cap,
+        )
 
     def _check_in_soon(self) -> None:
         self._check_in_due = self._now()

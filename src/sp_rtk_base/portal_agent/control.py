@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import socket
 import struct
@@ -38,6 +39,7 @@ from sp_rtk_base.portal_agent.connection import UPGRADE_MESSAGE, Connection
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
+    RateLimitedError,
     UnclaimedError,
     UpgradeRequiredError,
 )
@@ -53,6 +55,16 @@ _MAX_REQUEST = 64 * 1024
 
 class ClaimStartError(Exception):
     """A Claim couldn't start. The message is for the Operator."""
+
+
+def _too_many_claims(retry_after: float | None) -> str:
+    """What the Operator reads when the Portal refuses a Claim start 429."""
+    text = "Too many Claims were started from this network."
+    if retry_after is None:
+        return f"{text} Try again later."
+    minutes = max(1, math.ceil(retry_after / 60))
+    unit = "minute" if minutes == 1 else "minutes"
+    return f"{text} Try again in {minutes} {unit}."
 
 
 @dataclass
@@ -197,6 +209,9 @@ class PortalAgent:
             except UpgradeRequiredError as exc:
                 logger.warning("Couldn't start a Claim: %s", exc)
                 raise ClaimStartError(UPGRADE_MESSAGE) from exc
+            except RateLimitedError as exc:
+                logger.warning("Couldn't start a Claim: too many from this network")
+                raise ClaimStartError(_too_many_claims(exc.retry_after)) from exc
             except PortalUnreachableError as exc:
                 logger.warning("Couldn't start a Claim: %s", exc)
                 raise ClaimStartError(f"Couldn't reach the Portal ({exc}).") from exc

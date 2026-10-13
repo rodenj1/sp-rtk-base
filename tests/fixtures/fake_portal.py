@@ -159,6 +159,9 @@ class FakePortal:
     """The base was Un-claimed on the Portal: polls, Check-ins and releases
     get 401 ``unclaimed`` (ticket #93)."""
     released_base_id: str = "k3mnp4qrst"
+    rate_limited: dict[str, int | str | None] = field(default_factory=dict)
+    """Answer requests to these paths 429 ``slow_down`` with this
+    ``Retry-After`` (seconds; ``None``: no header) (ticket #98)."""
     _key: str | None = None
     _replays: ReplayCache = field(default_factory=ReplayCache)
 
@@ -208,6 +211,15 @@ class FakePortal:
                 json=UpgradeRequired(
                     min_version=self.min_version, message="Too old, upgrade."
                 ).to_json(),
+            )
+        if request.url.path in self.rate_limited:
+            retry_after = self.rate_limited[request.url.path]
+            return httpx.Response(
+                429,
+                json=ErrorReply(ErrorReply.SLOW_DOWN).to_json(),
+                headers={}
+                if retry_after is None
+                else {"Retry-After": str(retry_after)},
             )
         if self.unclaimed and request.url.path in (
             POLL_PATH,

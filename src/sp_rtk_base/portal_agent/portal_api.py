@@ -7,6 +7,7 @@ protocol package) and the protocol version header.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from datetime import datetime
 from typing import TypeVar
@@ -53,6 +54,19 @@ class UpgradeRequiredError(Exception):
     def __init__(self, reply: UpgradeRequired) -> None:
         super().__init__(reply.message or "upgrade required")
         self.reply = reply
+
+
+class RateLimitedError(Exception):
+    """429: the Portal says this agent asks too often. Wait ``retry_after``
+    seconds (``None``: it didn't say) before asking again."""
+
+    def __init__(self, retry_after: float | None) -> None:
+        super().__init__("the Portal asked the agent to slow down")
+        self.retry_after = retry_after
+
+
+MAX_RETRY_AFTER_S = 24 * 3600
+"""A longer ``Retry-After`` is read as this: the agent always comes back."""
 
 
 class UnclaimedError(Exception):
@@ -126,6 +140,7 @@ class PortalApi:
     async def start_claim(self, key: BaseKey, message: ClaimStart) -> ClaimStarted:
         resp = await self._post(key, CLAIMS_PATH, message)
         _raise_for_upgrade(resp)
+        _raise_for_rate_limit(resp)
         if resp.status_code != 200:
             raise PortalUnreachableError(f"the Portal answered HTTP {resp.status_code}")
         try:
@@ -173,6 +188,7 @@ class PortalApi:
         resp = await self._post(key, path, message)
         _raise_for_upgrade(resp)
         _raise_for_unclaimed(resp)
+        _raise_for_rate_limit(resp)
         if resp.status_code != 200:
             raise PortalUnreachableError(f"the Portal answered HTTP {resp.status_code}")
         try:
@@ -203,3 +219,14 @@ def _raise_for_upgrade(resp: httpx.Response) -> None:
 def _raise_for_unclaimed(resp: httpx.Response) -> None:
     if resp.status_code == 401 and _error(resp) == ErrorReply.UNCLAIMED:
         raise UnclaimedError("the Portal has no base with this key")
+
+
+def _raise_for_rate_limit(resp: httpx.Response) -> None:
+    if resp.status_code != 429:
+        return
+    try:
+        seconds = float(resp.headers.get("retry-after", ""))
+    except ValueError:
+        seconds = math.nan  # absent, or an HTTP date: back off our own way
+    retry_after = min(seconds, MAX_RETRY_AFTER_S) if seconds >= 0 else None
+    raise RateLimitedError(retry_after)

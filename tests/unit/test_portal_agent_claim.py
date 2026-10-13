@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sp_rtk_portal_protocol import PROTOCOL_VERSION, BaseKey
+from sp_rtk_portal_protocol import CLAIMS_PATH, PROTOCOL_VERSION, BaseKey
 
 from sp_rtk_base import __version__
 from sp_rtk_base.portal_agent.client import (
@@ -229,6 +229,42 @@ async def test_a_portal_error_on_start_is_reported(
 
     with pytest.raises(ClaimFailedError, match="Couldn't reach the Portal"):
         await start_claim(running.sock)
+
+
+@pytest.mark.asyncio
+async def test_too_many_claims_from_this_network_is_reported_with_the_wait(
+    running: Running, portal: FakePortal
+) -> None:
+    portal.rate_limited[CLAIMS_PATH] = 1800
+
+    with pytest.raises(ClaimFailedError, match="Too many Claims") as refused:
+        await start_claim(running.sock)
+
+    assert "30 minutes" in str(refused.value)
+    assert (await read_status(running.sock)).state == "not_connected"
+    assert not running.state.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retry_after", "wait"),
+    [
+        (None, "Try again later."),
+        ("Wed, 21 Oct 2026 07:28:00 GMT", "Try again later."),
+        ("-5", "Try again later."),
+        ("20", "Try again in 1 minute."),
+        ("10000000", "Try again in 1440 minutes."),
+    ],
+)
+async def test_the_wait_after_too_many_claims_reads_well_whatever_the_portal_says(
+    running: Running, portal: FakePortal, retry_after: str | None, wait: str
+) -> None:
+    portal.rate_limited[CLAIMS_PATH] = retry_after
+
+    with pytest.raises(ClaimFailedError) as refused:
+        await start_claim(running.sock)
+
+    assert str(refused.value).endswith(wait)
 
 
 @pytest.mark.asyncio

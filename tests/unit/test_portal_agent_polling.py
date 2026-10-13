@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sp_rtk_portal_protocol import (
+    CHECK_IN_PATH,
+    POLL_PATH,
     PROTOCOL_VERSION,
     AgentConfig,
     BaseKey,
@@ -167,6 +169,53 @@ async def test_an_unreachable_portal_is_retried_at_the_poll_interval(
         (p.at - portal.agent_polls[0].at).total_seconds() for p in portal.agent_polls
     ] == [0, 80]
     assert (await running.status()).last_contact == portal.agent_polls[-1].at
+
+
+# --- Rate limits (ticket #98) ------------------------------------------------------
+
+
+def _since_first(seen: list[Seen]) -> list[float]:
+    return [(s.at - seen[0].at).total_seconds() for s in seen]
+
+
+async def test_a_poll_refused_429_waits_the_retry_after_before_polling_again(
+    running: Running, portal: FakePortal, clock: FakeClock
+) -> None:
+    portal.rate_limited[POLL_PATH] = 70
+    await clock.run(seconds=20)  # this poll gets 429
+    portal.rate_limited.clear()
+    await clock.run(seconds=100)
+
+    assert _since_first(portal.agent_polls) == [0, 20, 90, 110]
+    assert (await running.status()).state == "connected"
+
+
+async def test_a_poll_refused_429_without_retry_after_waits_twice_the_interval(
+    running: Running, portal: FakePortal, clock: FakeClock
+) -> None:
+    portal.rate_limited[POLL_PATH] = None
+    await clock.run(seconds=20)
+    portal.rate_limited.clear()
+    await clock.run(seconds=60)
+
+    assert _since_first(portal.agent_polls) == [0, 20, 60, 80]
+
+
+async def test_a_check_in_refused_429_is_retried_later_and_polls_go_on(
+    running: Running, portal: FakePortal, clock: FakeClock
+) -> None:
+    await clock.run(seconds=10)
+    portal.rate_limited[CHECK_IN_PATH] = 120
+    await running.restart()  # a restart Checks in at once: refused
+    start = portal.check_ins[-1].at
+    portal.rate_limited.clear()
+    await clock.run(seconds=140)
+
+    assert [(c.at - start).total_seconds() for c in portal.check_ins[-2:]] == [0, 120]
+    polls = [p for p in portal.agent_polls if p.at >= start]
+    assert len(polls) == 8
+    assert set(_gaps(polls)) == {20}
+    assert (polls[0].at - start).total_seconds() == 0
 
 
 # --- Agent config -----------------------------------------------------------------

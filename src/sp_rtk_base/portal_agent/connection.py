@@ -20,6 +20,11 @@ Check-in forward to the next beat.
 A 401 ``unclaimed`` means the base was Un-claimed on the Portal: the loop
 ends with :attr:`Connection.unclaimed` set, and the agent wipes its key.
 
+A 429 means the Portal finds the agent too fast (ticket #98): a refused
+poll waits its ``Retry-After``, or twice the poll interval when it gives
+none, whichever is longer; a refused Check-in is tried again after its
+``Retry-After`` (else half the Check-in interval) while polls go on.
+
 A 426 means this agent's protocol version is no longer supported: it keeps
 its key and Claim, stops polling and tries again once a day; the status says
 ``needs_upgrade``.
@@ -49,6 +54,7 @@ from sp_rtk_base.portal_agent import agent_config, doorbell
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
+    RateLimitedError,
     UnclaimedError,
     UpgradeRequiredError,
 )
@@ -151,10 +157,15 @@ class Connection:
             try:
                 await self.bell.follow(self.config.doorbell)
                 if self._now() >= self._check_in_due:
-                    await self._check_in()
+                    await self._check_in_unless_limited()
+                backoff = 0.0
                 if self.wake_mode == "polling":
-                    await self._poll()
-                delay = self.poll_interval
+                    try:
+                        await self._poll()
+                    except RateLimitedError as exc:
+                        backoff = max(exc.retry_after or 0, 2 * self.poll_interval)
+                        logger.info("The Portal asked for fewer polls: %ss", backoff)
+                delay = max(self.poll_interval, backoff)
             except UpgradeRequiredError as exc:
                 self._upgrade_required(exc)
                 delay = UPGRADE_RETRY_S
@@ -185,6 +196,16 @@ class Connection:
 
     def _check_in_soon(self) -> None:
         self._check_in_due = self._now()
+
+    async def _check_in_unless_limited(self) -> None:
+        try:
+            await self._check_in()
+        except RateLimitedError as exc:
+            wait = exc.retry_after
+            if wait is None:
+                wait = self.config.check_in_interval / 2
+            logger.info("The Portal asked for fewer Check-ins; next in %ss", wait)
+            self._check_in_due = self._now() + timedelta(seconds=wait)
 
     async def _check_in(self) -> None:
         reply = await self._api.check_in(

@@ -51,6 +51,12 @@ DEFAULT_PORTAL_URL = "https://sp-rtk-base.big-spray.com"
 AgentState = Literal["not_connected", "pairing", "connected", "paused"]
 
 
+UPDATE_TO_KEEP_USING = "Update sp-rtk-base to keep using the Portal"
+"""What the base says once the Portal no longer supports its protocol
+version (HTTP 426): the local page's headline, and the agent's message when
+the Portal's reply has none."""
+
+
 class RemoteSession(BaseModel):
     """A live Remote session on this base, as the Portal last reported it."""
 

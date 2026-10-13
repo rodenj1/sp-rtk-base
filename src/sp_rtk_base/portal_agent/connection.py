@@ -62,7 +62,7 @@ from sp_rtk_base.portal_agent.portal_api import (
     UnclaimedError,
     UpgradeRequiredError,
 )
-from sp_rtk_base.portal_agent.protocol import RemoteSession
+from sp_rtk_base.portal_agent.protocol import UPDATE_TO_KEEP_USING, RemoteSession
 from sp_rtk_base.portal_agent.state import (
     Claim,
     load_agent_config,
@@ -80,9 +80,7 @@ from sp_rtk_base.portal_agent.tunnel import (
 logger = logging.getLogger(__name__)
 
 UPGRADE_RETRY_S = 24 * 3600
-"""After a 426, try again once a day (sp-rtk-base may have been upgraded)."""
-
-UPGRADE_MESSAGE = "Upgrade sp-rtk-base to keep using the Portal."
+"""After a 426, try again once a day (sp-rtk-base may have been Updated)."""
 
 
 class Connection:
@@ -306,7 +304,7 @@ class Connection:
                 exc.reply.message,
             )
         self.needs_upgrade = True
-        self.upgrade_message = exc.reply.message or UPGRADE_MESSAGE
+        self.upgrade_message = exc.reply.message or UPDATE_TO_KEEP_USING
         self._check_in_due = self._now()  # first thing once accepted again
 
 

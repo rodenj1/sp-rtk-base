@@ -415,6 +415,19 @@ async def test_426_stops_polling_and_retries_once_a_day(
     assert len(portal.requests) == refused + 1
 
 
+async def test_a_426_without_a_message_says_to_update(
+    running: Running, portal: FakePortal, clock: FakeClock
+) -> None:
+    portal.min_version = PROTOCOL_VERSION + 1
+    portal.upgrade_message = ""
+
+    await clock.run(seconds=20)
+
+    status = await running.status()
+    assert status.needs_upgrade
+    assert status.message == "Update sp-rtk-base to keep using the Portal"
+
+
 async def test_after_an_upgrade_polling_resumes_with_the_same_claim(
     running: Running, portal: FakePortal, clock: FakeClock
 ) -> None:

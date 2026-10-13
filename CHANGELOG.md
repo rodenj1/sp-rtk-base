@@ -33,7 +33,7 @@ The groundwork for the remote access Portal (rtk_development#82).
   the page reads Connected, with the account the base is Claimed by, the
   Portal's name, the base's id and the last contact. The Claim is kept in
   `/var/lib/sp-rtk-base-portal-agent` (key mode 0600) and survives
-  restarts, upgrades and reinstalls. Nothing contacts the Portal before
+  restarts, Updates and reinstalls. Nothing contacts the Portal before
   "Connect to Portal" is pressed.
 - **Polling and Check-ins.** A Claimed base polls the Portal over HTTPS
   every 20 s (every 60 s once its Operator marks it metered on the
@@ -46,7 +46,7 @@ The groundwork for the remote access Portal (rtk_development#82).
   Doorbell host that resolves into the LAN (re-checked before each use);
   both are logged and ignored. If the Portal stops supporting this
   version, the base stays Claimed, asks once a day, and the page says
-  "Upgrade sp-rtk-base to keep using the Portal".
+  "Update sp-rtk-base to keep using the Portal".
 - **Backs off when the Portal says so.** A poll the Portal refuses as too
   fast (HTTP 429) waits its `Retry-After`, or twice the poll interval,
   whichever is longer; a refused Check-in is retried after its

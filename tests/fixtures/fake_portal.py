@@ -148,6 +148,8 @@ class FakePortal:
     notices: list[Notice] = field(default_factory=list)
     min_version: int | None = None
     """Refuse (426) any request with a lower protocol version."""
+    upgrade_message: str = "Too old, upgrade."
+    """The 426 reply's message (may be empty)."""
     status: int = 200
     """Answer polls and Check-ins with this HTTP status (with no body)."""
     wake: str | None = None
@@ -212,7 +214,7 @@ class FakePortal:
             return httpx.Response(
                 426,
                 json=UpgradeRequired(
-                    min_version=self.min_version, message="Too old, upgrade."
+                    min_version=self.min_version, message=self.upgrade_message
                 ).to_json(),
             )
         if request.url.path in self.rate_limited:

@@ -35,7 +35,7 @@ from sp_rtk_portal_protocol import (
 
 from sp_rtk_base import __version__
 from sp_rtk_base.portal_agent import doorbell, lan
-from sp_rtk_base.portal_agent.connection import UPGRADE_MESSAGE, Connection
+from sp_rtk_base.portal_agent.connection import Connection
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
@@ -44,6 +44,7 @@ from sp_rtk_base.portal_agent.portal_api import (
     UpgradeRequiredError,
 )
 from sp_rtk_base.portal_agent.protocol import (
+    UPDATE_TO_KEEP_USING,
     AgentState,
     AgentStatus,
     state_path,
@@ -227,7 +228,7 @@ class PortalAgent:
                 )
             except UpgradeRequiredError as exc:
                 logger.warning("Couldn't start a Claim: %s", exc)
-                raise ClaimStartError(UPGRADE_MESSAGE) from exc
+                raise ClaimStartError(UPDATE_TO_KEEP_USING) from exc
             except RateLimitedError as exc:
                 logger.warning("Couldn't start a Claim: too many from this network")
                 raise ClaimStartError(_too_many_claims(exc.retry_after)) from exc

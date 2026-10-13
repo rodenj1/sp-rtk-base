@@ -195,7 +195,7 @@ def test_a_base_too_old_for_the_portal_says_to_upgrade(
     page.goto(f"{base_url}/portal")
 
     expect(page.get_by_test_id("portal-headline")).to_have_text(
-        "Upgrade sp-rtk-base to keep using the Portal", timeout=15_000
+        "Update sp-rtk-base to keep using the Portal", timeout=15_000
     )
     expect(page.get_by_test_id("portal-base-id")).to_have_text("k3mnp4qrst")
 

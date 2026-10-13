@@ -23,7 +23,11 @@ from sp_rtk_base.portal_agent.client import (
     start_claim,
 )
 from sp_rtk_base.portal_agent.client import unclaim as agent_unclaim
-from sp_rtk_base.portal_agent.protocol import AgentState, AgentStatus
+from sp_rtk_base.portal_agent.protocol import (
+    UPDATE_TO_KEEP_USING,
+    AgentState,
+    AgentStatus,
+)
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 
 HEADLINES: dict[AgentState, str] = {
@@ -92,10 +96,9 @@ def _utc(when: datetime) -> str:
     return when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-UPGRADE_HEADLINE = "Upgrade sp-rtk-base to keep using the Portal"
 UPGRADE_DETAIL = (
     "The Portal no longer supports this version of sp-rtk-base. The base "
-    "stays Claimed and tries again once a day; after an upgrade it carries "
+    "stays Claimed and tries again once a day; after an Update it carries "
     "on by itself."
 )
 
@@ -142,7 +145,7 @@ def _view(status: AgentStatus) -> PortalView:
         if health:
             facts += (("Doorbell", health),)
     if status.needs_upgrade:
-        headline = UPGRADE_HEADLINE
+        headline = UPDATE_TO_KEEP_USING
         detail = (
             f"{status.message} {UPGRADE_DETAIL}" if status.message else UPGRADE_DETAIL
         )

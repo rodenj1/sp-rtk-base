@@ -278,7 +278,7 @@ async def test_notices_from_the_portal_are_shown(sock_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_agent_too_old_for_the_portal_says_to_upgrade(
+async def test_an_agent_too_old_for_the_portal_says_to_update(
     sock_path: Path,
 ) -> None:
     view = await _view_of(
@@ -286,7 +286,8 @@ async def test_an_agent_too_old_for_the_portal_says_to_upgrade(
         CONNECTED | {"needs_upgrade": True, "message": "Protocol 1 ended."},
     )
 
-    assert view.headline == "Upgrade sp-rtk-base to keep using the Portal"
+    assert view.headline == "Update sp-rtk-base to keep using the Portal"
+    assert "upgrade" not in f"{view.headline} {view.detail}".lower()
     assert "Protocol 1 ended." in view.detail
     assert ("Base id", "k3mnp4qrst") in view.facts  # still Claimed
     assert not view.can_connect

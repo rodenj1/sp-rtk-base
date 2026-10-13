@@ -277,3 +277,12 @@ keeps only the public half. A Claim gives the base an opaque `<id>`, new
 for every Claim, served unauthenticated by `/api/portal/identity`. Kept in
 the agent's state directory, so restarts and reinstalls keep it.
 _Avoid_: register, pair (pairing is the step, Claim the result), link
+
+**Poll** / **Check-in**:
+What a Claimed base's agent sends the Portal: a small HTTPS poll every
+20 s (60 s when metered), which is how the Portal knows it is online and
+how a Wake reaches it, and a slower Check-in every ~5 min with its
+version, Doorbell health and LAN addresses. Each reply carries the
+**agent config** (revisioned timings and addresses the agent checks
+before use) and any notices.
+_Avoid_: heartbeat, keepalive

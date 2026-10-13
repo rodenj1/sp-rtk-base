@@ -35,6 +35,18 @@ The groundwork for the remote access Portal (rtk_development#82).
   `/var/lib/sp-rtk-base-portal-agent` (key mode 0600) and survives
   restarts, upgrades and reinstalls. Nothing contacts the Portal before
   "Connect to Portal" is pressed.
+- **Polling and Check-ins.** A Claimed base polls the Portal over HTTPS
+  every 20 s (every 60 s once its Operator marks it metered on the
+  Portal) and Checks in every 5 minutes with its version, Doorbell health
+  and private LAN addresses (the one on the default route marked
+  primary). No connection is held open. The Portal page shows the last
+  contact, the wake mode ("Polling every 20 s") and any notices from the
+  Portal. The agent follows the Portal's agent config (intervals,
+  timeouts) but never a tunnel URL off the Portal's own host, nor a
+  Doorbell host that resolves into the LAN (re-checked before each use);
+  both are logged and ignored. If the Portal stops supporting this
+  version, the base stays Claimed, asks once a day, and the page says
+  "Upgrade sp-rtk-base to keep using the Portal".
 - **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
   base's id (`{"id": "..."}`), readable cross-origin by the Portal only;
   an unclaimed base answers 404 with no body.

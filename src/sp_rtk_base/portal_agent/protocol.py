@@ -9,15 +9,17 @@ One JSON object per line each way, on a Unix socket:
 - request ``{"op": "pause"}`` / ``{"op": "resume"}``: pause or resume remote
   access (#92). Replies with the status (``paused`` / ``connected``), or
   ``{"ok": false, "error": "not claimed"}``.
+- request ``{"op": "unclaim"}``: Un-claim the base here (and tell the
+  Portal). Replies with the status, now ``not_connected``.
 - or ``{"ok": false, "error": "<reason>"}`` (``unknown op``, ``bad request``,
   ``refused``), or ``{"ok": false, "error": "claim failed", "message":
   "<for the Operator>"}``
 
-Later tickets add ops (pause/resume, Un-claim) and status fields; a reader
-ignores fields it doesn't know. Once Claimed the status also carries the
-polling fields (``wake_mode``, ``poll_interval``, ``metered``,
-``notices``, ``needs_upgrade``, ...) and the tunnel's (``tunnel``,
-``tunnel_since``, ``tunnel_streams``).
+A reader ignores status fields it doesn't know. Once Claimed the status
+also carries the polling fields (``wake_mode``, ``poll_interval``,
+``metered``, ``notices``, ``needs_upgrade``, ...), the tunnel's
+(``tunnel``, ``tunnel_since``, ``tunnel_streams``, ``tunnel_events``) and
+the live Remote ``sessions``.
 """
 
 from __future__ import annotations
@@ -58,7 +60,11 @@ the Portal's reply has none."""
 
 
 class RemoteSession(BaseModel):
-    """A live Remote session on this base, as the Portal last reported it."""
+    """A live Remote session on this base, as the Portal last reported it.
+
+    The protocol's ``LiveSession`` checked for the app: ``since`` is parsed
+    into a datetime (the protocol sends an ISO string), and the control
+    socket carries it as part of the pydantic :class:`AgentStatus`."""
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 

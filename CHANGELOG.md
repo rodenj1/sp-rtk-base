@@ -81,7 +81,7 @@ The groundwork for the remote access Portal (rtk_development#82).
 - `upgrade.sh` and an Update restart the agent with the app;
   `uninstall.sh` removes it, and asks before removing the Claim.
 - New dependency: `sp-rtk-portal-protocol` (the agent-to-Portal protocol,
-  from the sp-rtk-portal repo), pinned to a commit; `httpx` and
+  from the sp-rtk-portal repo), 0.9.0 or later, pinned to a commit; `httpx` and
   `websockets` (both already installed) are now declared directly.
 
 ### Breaking (deploy)

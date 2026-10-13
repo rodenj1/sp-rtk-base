@@ -2948,7 +2948,7 @@ requires-dist = [
     { name = "pyubx2", specifier = ">=1.2.43" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sp-rtk-base-relay", specifier = ">=4.1.0,<5" },
-    { name = "sp-rtk-portal-protocol", git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=2188e7915a9c9c2def99705a2e7d9aebf7b92762" },
+    { name = "sp-rtk-portal-protocol", specifier = ">=0.9.0,<1" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=14" },
 ]
@@ -2988,9 +2988,13 @@ wheels = [
 [[package]]
 name = "sp-rtk-portal-protocol"
 version = "0.9.0"
-source = { git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=2188e7915a9c9c2def99705a2e7d9aebf7b92762#2188e7915a9c9c2def99705a2e7d9aebf7b92762" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/28/3fee12039981326f4d8e9a500109cba61ed5ec2ee33a09701afbbb5ec929/sp_rtk_portal_protocol-0.9.0.tar.gz", hash = "sha256:bb4c6dc4f1001bfd6a698ab29a09431aebaa733052c6b8c51a285a794b91901b", size = 16994, upload-time = "2026-10-13T16:34:51.266Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/75/f52f1130c48169041863bacde3fe702e7f2deea97c526d1d29b28a2046cf/sp_rtk_portal_protocol-0.9.0-py3-none-any.whl", hash = "sha256:7d82c21f3c9a412e67c416ba2ef6f8324057b79ff8fc42e53cc30d6f0aa1013b", size = 20763, upload-time = "2026-10-13T16:34:50.106Z" },
 ]
 
 [[package]]

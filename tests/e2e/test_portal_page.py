@@ -169,6 +169,24 @@ def test_a_polling_base_shows_its_wake_mode_and_the_portals_notices(
 
 
 @pytest.mark.e2e
+def test_a_base_on_a_doorbell_shows_doorbell_as_its_wake_mode_and_its_health(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED | {
+        "wake_mode": "doorbell",
+        "poll_interval": 20,
+        "doorbell": "ok",
+    }
+
+    page.goto(f"{base_url}/portal")
+
+    expect(page.get_by_test_id("portal-wake-mode")).to_have_text(
+        "Doorbell", timeout=15_000
+    )
+    expect(page.get_by_test_id("portal-doorbell")).to_have_text("Working")
+
+
+@pytest.mark.e2e
 def test_a_base_too_old_for_the_portal_says_to_upgrade(
     page: Page, base_url: str, portal_agent: FakeAgentSocket
 ) -> None:

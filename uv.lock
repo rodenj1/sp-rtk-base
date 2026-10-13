@@ -2948,7 +2948,7 @@ requires-dist = [
     { name = "pyubx2", specifier = ">=1.2.43" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sp-rtk-base-relay", specifier = ">=4.1.0,<5" },
-    { name = "sp-rtk-portal-protocol", git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=ff71d01e078235a25cdcdfa9db3ac0ddb0a7221b" },
+    { name = "sp-rtk-portal-protocol", git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=032bf0af13f9270c123de6c852c5e29bca7122f3" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=14" },
 ]
@@ -2987,8 +2987,8 @@ wheels = [
 
 [[package]]
 name = "sp-rtk-portal-protocol"
-version = "0.6.0"
-source = { git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=ff71d01e078235a25cdcdfa9db3ac0ddb0a7221b#ff71d01e078235a25cdcdfa9db3ac0ddb0a7221b" }
+version = "0.8.0"
+source = { git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=032bf0af13f9270c123de6c852c5e29bca7122f3#032bf0af13f9270c123de6c852c5e29bca7122f3" }
 dependencies = [
     { name = "cryptography" },
 ]

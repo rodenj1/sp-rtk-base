@@ -243,6 +243,32 @@ async def test_connected_shows_the_wake_mode(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("doorbell", "shown"),
+    [
+        ("ok", "Working"),
+        ("unavailable", "Not heard by the Portal; polling meanwhile"),
+        ("ignored", "Ignored: its address isn't public; polling"),
+    ],
+)
+async def test_connected_shows_the_doorbell_health(
+    sock_path: Path, doorbell: str, shown: str
+) -> None:
+    extra: dict[str, object] = {"doorbell": doorbell}
+    view = await _view_of(sock_path, CONNECTED | extra)
+
+    assert ("Doorbell", shown) in view.facts
+
+
+@pytest.mark.asyncio
+async def test_without_a_doorbell_no_doorbell_row_is_shown(sock_path: Path) -> None:
+    extra: dict[str, object] = {"doorbell": "off"}
+    view = await _view_of(sock_path, CONNECTED | extra)
+
+    assert "Doorbell" not in dict(view.facts)
+
+
+@pytest.mark.asyncio
 async def test_notices_from_the_portal_are_shown(sock_path: Path) -> None:
     view = await _view_of(
         sock_path, CONNECTED | {"notices": ["Protocol 1 ends on 2027-06-01."]}

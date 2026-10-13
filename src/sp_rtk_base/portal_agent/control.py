@@ -123,10 +123,12 @@ class PortalAgent:
         protocol_version: int = PROTOCOL_VERSION,
         tunnel_connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
+        open_udp: doorbell.OpenUdp = doorbell.open_udp,
     ) -> None:
-        """``tunnel_connect`` and ``app_port`` exist for tests (a websocket
-        connector reaching a test Portal, and the stub UI's port). Nothing the
-        Portal sends can change either."""
+        """``tunnel_connect``, ``app_port`` and ``open_udp`` exist for tests (a
+        websocket connector reaching a test Portal, the stub UI's port, and
+        UDP reaching a stub Doorbell server). Nothing the Portal sends can
+        change any of them."""
         self._state_dir = state_dir if state_dir is not None else state_path()
         self._api = PortalApi(
             portal_url if portal_url is not None else default_portal_url(),
@@ -138,6 +140,7 @@ class PortalAgent:
         self._lan_addresses = lan_addresses
         self._tunnel_connect = tunnel_connect
         self._app_port = app_port
+        self._open_udp = open_udp
         self._now = now
         self._sleep = sleep
         self._name = name if name is not None else socket.gethostname()
@@ -282,6 +285,7 @@ class PortalAgent:
             tunnel_connect=self._tunnel_connect,
             app_port=self._app_port,
             paused=self._paused,
+            open_udp=self._open_udp,
         )
         self._connection_task = asyncio.create_task(
             self._run_connection(self._connection)

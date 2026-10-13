@@ -110,6 +110,14 @@ def wake_mode(status: AgentStatus) -> str | None:
     return None
 
 
+DOORBELL_HEALTH = {
+    "ok": "Working",
+    "unavailable": "Not heard by the Portal; polling meanwhile",
+    "ignored": "Ignored: its address isn't public; polling",
+}
+"""Doorbell health for the page; no row when there is no Doorbell."""
+
+
 def _view(status: AgentStatus) -> PortalView:
     headline = HEADLINES[status.state]
     detail = DETAILS[status.state]
@@ -130,6 +138,9 @@ def _view(status: AgentStatus) -> PortalView:
         mode = wake_mode(status)
         if mode:
             facts += (("Wake mode", mode),)
+        health = DOORBELL_HEALTH.get(status.doorbell or "off")
+        if health:
+            facts += (("Doorbell", health),)
     if status.needs_upgrade:
         headline = UPGRADE_HEADLINE
         detail = (

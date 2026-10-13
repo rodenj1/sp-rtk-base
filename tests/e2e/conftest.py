@@ -17,6 +17,7 @@ and by the ``api_base_url`` fixture below for direct REST calls.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import subprocess
@@ -203,6 +204,27 @@ def sp_rtk_base_server(
     Yields:
         The base URL (``http://127.0.0.1:<port>``) of the running server.
     """
+    with running_server(
+        tmp_path_factory,
+        fake_pypi_dir,
+        update_dir,
+        host_setup_file,
+        portal_agent_socket,
+    ) as url:
+        yield url
+
+
+@contextlib.contextmanager
+def running_server(
+    tmp_path_factory: pytest.TempPathFactory,
+    fake_pypi_dir: Path,
+    update_dir: Path,
+    host_setup_file: Path,
+    portal_agent_socket: Path,
+) -> Iterator[str]:
+    """An SP-Base server in a subprocess, until the block ends. A module
+    whose tests leave state the rest can't share (e.g. Event log entries)
+    starts its own with this."""
     port = _find_free_port()
     base_url = f"http://127.0.0.1:{port}"
 

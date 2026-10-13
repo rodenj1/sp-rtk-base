@@ -8,14 +8,18 @@ here, in a covered module.
 from __future__ import annotations
 
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from sp_rtk_base.portal_agent.client import (
     AgentUnavailableError,
     ClaimFailedError,
+    pause,
     read_status,
+    resume,
     start_claim,
 )
 from sp_rtk_base.portal_agent.protocol import AgentState, AgentStatus
@@ -38,8 +42,14 @@ DETAILS: dict[AgentState, str] = {
         "it runs out. You can also type it in on the Portal's Claim page."
     ),
     "connected": "",
-    "paused": "",
+    "paused": (
+        "Remote access is paused: this base stays Claimed and keeps "
+        "contacting the Portal, but nobody can open it remotely and live "
+        "Remote sessions were cut. Only someone here can resume it."
+    ),
 }
+
+NO_SESSIONS = "Nobody is using this base remotely."
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,13 @@ class PortalView:
     facts: tuple[tuple[str, str], ...] = ()
     notices: tuple[str, ...] = ()
     """Notices from the Portal (e.g. a deprecation date)."""
+    # Connected or paused: remote use (ticket #92)
+    sessions: tuple[tuple[str, str], ...] = ()
+    """Live Remote sessions: (who, since when)."""
+    no_sessions: str | None = None
+    """What to say instead when there are none (only while Connected)."""
+    switch: Literal["pause", "resume"] | None = None
+    """"Pause remote access" or "Resume remote access"."""
 
 
 def countdown(expires_at: datetime, now: datetime) -> str:
@@ -96,7 +113,8 @@ def _view(status: AgentStatus) -> PortalView:
     if status.state == "not_connected" and status.message:
         detail = f"{status.message} {detail}"
     facts: tuple[tuple[str, str], ...] = ()
-    if status.state == "connected":
+    claimed = status.state in ("connected", "paused")
+    if claimed:
         facts = (
             ("Account", status.account or "?"),
             ("Portal", status.portal or "?"),
@@ -114,7 +132,19 @@ def _view(status: AgentStatus) -> PortalView:
         detail = (
             f"{status.message} {UPGRADE_DETAIL}" if status.message else UPGRADE_DETAIL
         )
+    sessions = tuple(
+        (
+            f"{s.who} (Shared user)" if s.shared else s.who,
+            f"since {_utc(s.since)}",
+        )
+        for s in status.sessions
+    )
     return PortalView(
+        sessions=sessions,
+        no_sessions=NO_SESSIONS
+        if status.state == "connected" and not sessions
+        else None,
+        switch=("resume" if status.state == "paused" else "pause") if claimed else None,
         notices=tuple(status.notices),
         headline=headline,
         detail=detail,
@@ -151,3 +181,21 @@ async def connect(path: Path) -> str | None:
     except (AgentUnavailableError, ClaimFailedError) as exc:
         return str(exc)
     return None
+
+
+async def _ask(path: Path, op: Callable[[Path], Awaitable[object]]) -> str | None:
+    try:
+        await op(path)
+    except (AgentUnavailableError, ClaimFailedError) as exc:
+        return str(exc)
+    return None
+
+
+async def pause_remote_access(path: Path) -> str | None:
+    """ "Pause remote access". ``None``, or why it didn't happen."""
+    return await _ask(path, pause)
+
+
+async def resume_remote_access(path: Path) -> str | None:
+    """ "Resume remote access". ``None``, or why it didn't happen."""
+    return await _ask(path, resume)

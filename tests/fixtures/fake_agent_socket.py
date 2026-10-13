@@ -3,8 +3,9 @@ agent's Unix socket is faked there").
 
 Speaks the control socket's wire format (one JSON object per line). A test
 sets what it answers: ``fake.status`` for ``status``, ``fake.after_claim``
-for ``start_claim`` (``None``: refuse with ``fake.claim_error``). ``ops``
-lists every op asked. Runs its own event loop on a thread.
+for ``start_claim`` (``None``: refuse with ``fake.claim_error``).
+``pause``/``resume`` switch ``status["state"]`` between ``paused`` and
+``connected`` (and drop ``sessions`` on pause). ``ops`` lists every op asked. Runs its own event loop on a thread.
 """
 
 from __future__ import annotations
@@ -48,6 +49,14 @@ class FakeAgentSocket:
                 }
             self.status = self.after_claim
             return {"ok": True, "status": self.status}
+        if op in ("pause", "resume"):
+            if self.status.get("state") not in ("connected", "paused"):
+                return {"ok": False, "error": "not claimed"}
+            self.status = dict(self.status)
+            self.status["state"] = "paused" if op == "pause" else "connected"
+            if op == "pause":
+                self.status["sessions"] = []
+            return {"ok": True, "status": self.status}
         return {"ok": False, "error": "unknown op"}
 
     async def _handle(
@@ -72,6 +81,13 @@ class FakeAgentSocket:
             assert self._server is not None
             self._server.close()
             await self._server.wait_closed()
+            # Connections still open (a client that hasn't hung up yet).
+            handlers = [
+                t for t in asyncio.all_tasks() if t is not asyncio.current_task()
+            ]
+            for task in handlers:
+                task.cancel()
+            await asyncio.gather(*handlers, return_exceptions=True)
 
         asyncio.run_coroutine_threadsafe(stop(), self._loop).result(10)
         self._loop.call_soon_threadsafe(self._loop.stop)

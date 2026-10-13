@@ -16,7 +16,14 @@ from nicegui import ui
 
 from sp_rtk_base.portal_agent.protocol import socket_path
 from sp_rtk_base.ui.layout import page_layout
-from sp_rtk_base.ui.portal_status import PortalView, connect, countdown, portal_view
+from sp_rtk_base.ui.portal_status import (
+    PortalView,
+    connect,
+    countdown,
+    pause_remote_access,
+    portal_view,
+    resume_remote_access,
+)
 
 _POLL_S = 5.0
 """How often the page asks the agent again (a local socket round trip)."""
@@ -37,6 +44,17 @@ async def portal_page() -> None:
         async def on_connect(button: ui.button) -> None:
             button.props("loading")
             problem = await connect(socket_path())
+            button.props(remove="loading")
+            if problem:
+                ui.notify(problem, type="negative")
+            await refresh()
+
+        async def on_switch(button: ui.button, pause: bool) -> None:
+            button.props("loading")
+            if pause:
+                problem = await pause_remote_access(socket_path())
+            else:
+                problem = await resume_remote_access(socket_path())
             button.props(remove="loading")
             if problem:
                 ui.notify(problem, type="negative")
@@ -97,6 +115,33 @@ async def portal_page() -> None:
                             ui.label(value).classes("text-white").props(
                                 f'data-testid="portal-{slug}"'
                             )
+                if view.sessions or view.no_sessions:
+                    ui.label("Remote sessions").classes("text-subtitle1 text-white")
+                    for who, since in view.sessions:
+                        with (
+                            ui.row()
+                            .classes("items-center q-gutter-sm no-wrap")
+                            .props('data-testid="portal-session"')
+                        ):
+                            ui.icon("person", color="info")
+                            ui.label(who).classes("text-white")
+                            ui.label(since).classes("text-grey-5")
+                    if view.no_sessions:
+                        ui.label(view.no_sessions).classes("text-grey-5").props(
+                            'data-testid="portal-no-sessions"'
+                        )
+                if view.switch:
+                    pausing = view.switch == "pause"
+                    switch = ui.button(
+                        "Pause remote access" if pausing else "Resume remote access",
+                        icon="pause_circle" if pausing else "play_circle",
+                    ).props(
+                        f"color={'warning' if pausing else 'primary'}"
+                        ' data-testid="portal-switch"'
+                    )
+                    switch.on_click(
+                        lambda b=switch, p=pausing: on_switch(b, p)  # type: ignore[misc]
+                    )
                 if view.can_connect:
                     connect_button = ui.button("Connect to Portal", icon="cloud").props(
                         'color=primary data-testid="portal-connect"'

@@ -11,7 +11,14 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.portal_agent.control import serve
-from sp_rtk_base.ui.portal_status import connect, countdown, portal_view
+from sp_rtk_base.ui.portal_status import (
+    connect,
+    countdown,
+    pause_remote_access,
+    portal_view,
+    resume_remote_access,
+)
+from tests.fixtures.fake_agent_socket import FakeAgentSocket
 
 
 @pytest.fixture()
@@ -256,3 +263,66 @@ async def test_an_agent_too_old_for_the_portal_says_to_upgrade(
     assert "Protocol 1 ended." in view.detail
     assert ("Base id", "k3mnp4qrst") in view.facts  # still Claimed
     assert not view.can_connect
+
+
+# --- Pause and live Remote sessions (ticket #92) ----------------------------------
+
+SESSIONS = [
+    {"who": "op@example.com", "since": "2026-01-01T12:01:00+00:00"},
+    {"who": "sam@example.com", "since": "2026-01-01T12:02:00+00:00", "shared": True},
+]
+
+
+@pytest.mark.asyncio
+async def test_connected_lists_live_remote_sessions_and_offers_pause(
+    sock_path: Path,
+) -> None:
+    view = await _view_of(sock_path, CONNECTED | {"sessions": SESSIONS})
+
+    assert view.sessions == (
+        ("op@example.com", "since 2026-01-01 12:01 UTC"),
+        ("sam@example.com (Shared user)", "since 2026-01-01 12:02 UTC"),
+    )
+    assert view.switch == "pause"
+
+
+@pytest.mark.asyncio
+async def test_connected_with_nobody_remote_says_so(sock_path: Path) -> None:
+    view = await _view_of(sock_path, CONNECTED)
+
+    assert view.sessions == ()
+    assert view.no_sessions == "Nobody is using this base remotely."
+
+
+@pytest.mark.asyncio
+async def test_paused_keeps_the_claim_and_offers_resume(sock_path: Path) -> None:
+    view = await _view_of(sock_path, CONNECTED | {"state": "paused"})
+
+    assert view.headline == "Paused"
+    assert "resume" in view.detail.lower()
+    assert ("Base id", "k3mnp4qrst") in view.facts
+    assert view.switch == "resume"
+    assert not view.can_connect
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_offers_no_switch(sock_path: Path) -> None:
+    view = await _view_of(sock_path, {"state": "not_connected"})
+
+    assert view.switch is None
+    assert view.no_sessions is None
+
+
+@pytest.mark.asyncio
+async def test_pause_and_resume_ask_the_agent(sock_path: Path) -> None:
+    agent = FakeAgentSocket(sock_path)
+    with agent:
+        agent.status = dict(CONNECTED)
+        assert await pause_remote_access(sock_path) is None
+        assert await resume_remote_access(sock_path) is None
+        assert agent.ops == ["pause", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_pause_says_why_it_failed(sock_path: Path) -> None:
+    assert await pause_remote_access(sock_path) == "The Portal agent is not running"

@@ -71,7 +71,9 @@ The groundwork for the remote access Portal (rtk_development#82).
   access": the base stays Claimed and keeps polling, but ignores Wakes,
   closes its tunnel at once and the Portal ends its Remote sessions. The
   pause survives restarts, and only "Resume remote access" on the base
-  lifts it. Every tunnel open and close is an Event log entry, whether or
+  lifts it. The list stays current while the tunnel is open even when the
+  base relies on a Doorbell rather than polling, and Check-ins report the
+  pause too. Every tunnel open and close is an Event log entry, whether or
   not the Relay is running.
 - **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
   base's id (`{"id": "..."}`), readable cross-origin by the Portal only;

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sp_rtk_portal_protocol import AgentConfig, BaseKey, doorbell
+from sp_rtk_portal_protocol import AgentConfig, BaseKey, LiveSession, doorbell
 
 from sp_rtk_base.portal_agent.client import pause
 from sp_rtk_base.portal_agent.state import Claim, save_claim
@@ -229,6 +229,51 @@ async def test_when_the_portal_stops_hearing_it_the_agent_polls_again(
 
     assert status.doorbell == "unavailable"
     assert len(portal.agent_polls) >= polls + 3
+
+
+async def test_in_doorbell_mode_the_agent_polls_while_its_tunnel_is_open(
+    running: Running,
+    portal: FakePortal,
+    clock: FakeClock,
+    udp: FakeUdp,
+    endpoint: TunnelEndpoint,
+) -> None:
+    """Only poll replies say who is connected: the local page's list of
+    Remote sessions stays current while the tunnel is open."""
+    ring_key = await _heard(running, portal, clock)
+    await clock.run(seconds=30)
+    endpoint.nonce = NONCE
+    udp.deliver(doorbell.ring(ring_key, NONCE, now=clock.now()), (BELL_IP, PORT))
+    await endpoint.wait_open()
+    await running.until_status(lambda s: s.tunnel == "open", "tunnel open")
+    portal.sessions = [
+        LiveSession(who="sam@example.com", since=clock.now().isoformat())
+    ]
+    polls = len(portal.agent_polls)
+
+    await clock.run(minutes=1)
+
+    assert len(portal.agent_polls) >= polls + 3  # every 20 s
+    status = await running.status()
+    assert [s.who for s in status.sessions] == ["sam@example.com"]
+    assert status.wake_mode == "doorbell"
+
+    portal.sessions = []
+    await clock.run(seconds=20)
+    assert (await running.status()).sessions == []
+
+
+async def test_check_ins_say_whether_remote_access_is_paused(
+    running: Running, portal: FakePortal, clock: FakeClock
+) -> None:
+    await _heard(running, portal, clock)
+    await clock.run(minutes=5)
+    assert portal.check_ins[-1].body["paused"] is False
+
+    await pause(running.sock)
+    await clock.run(minutes=5)
+
+    assert portal.check_ins[-1].body["paused"] is True
 
 
 # --- Rings ----------------------------------------------------------------------------

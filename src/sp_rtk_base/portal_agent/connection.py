@@ -13,8 +13,10 @@ revision changes, then persisted). A poll reply also goes through
 
 When the agent config names a Doorbell host, the :class:`~.doorbell.Doorbell`
 sends keepalives; once a Check-in reply says the Portal hears them (wake
-mode Doorbell) the beat skips its poll, and a ring Wakes the base instead
-(:meth:`Connection._on_wake`). A change of Doorbell health brings the next
+mode Doorbell) the beat skips its poll unless the tunnel is open (only poll
+replies list the live Remote sessions), and a ring Wakes the base instead
+(:meth:`Connection._on_wake`). Check-ins carry the pause too, so the Portal
+learns it from a base that rarely polls. A change of Doorbell health brings the next
 Check-in forward to the next beat.
 
 A 401 ``unclaimed`` means the base was Un-claimed on the Portal: the loop
@@ -169,7 +171,7 @@ class Connection:
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
                 backoff = 0.0
-                if self.wake_mode == "polling":
+                if self._polls_now:
                     try:
                         await self._poll()
                     except RateLimitedError as exc:
@@ -187,6 +189,13 @@ class Connection:
                 logger.info("Couldn't reach the Portal, will retry: %s", exc)
                 delay = self.poll_interval
             await self._sleep(delay)
+
+    @property
+    def _polls_now(self) -> bool:
+        """Polling mode, or Doorbell mode while the tunnel is open: only a
+        poll reply says who is connected (the local page's Remote
+        sessions)."""
+        return self.wake_mode == "polling" or self.tunnel.state != "closed"
 
     async def _poll(self) -> None:
         state = "paused" if self.paused else "connected"
@@ -255,6 +264,7 @@ class Connection:
                 software_version=self._version,
                 doorbell=self.doorbell,
                 lan_addresses=self._lan_addresses(),
+                paused=self.paused,
             ),
         )
         self._heard(reply)

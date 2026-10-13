@@ -117,6 +117,7 @@ async def test_a_check_in_carries_the_version_doorbell_health_and_lan_addresses(
         "lan_addresses": [
             {"address": "192.168.1.20", "interface": "eth0", "primary": True}
         ],
+        "paused": False,
     }
 
 

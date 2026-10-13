@@ -1,0 +1,68 @@
+[Unit]
+Description=SP-RTK-Base — Portal agent (remote access; idle until the base is Claimed)
+Documentation=https://github.com/rodenj1/sp-rtk-base
+# Independent of sp-rtk-base.service: the agent reaches the app only
+# through 127.0.0.1:8080, and the app reads the agent's status over the
+# control socket below. Neither waits on the other.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sp-rtk-base
+Group=sp-rtk-base
+# The control socket the app talks to: /run/sp-rtk-base-portal-agent is
+# created for this unit, owned by the service user, mode 0700; the socket
+# in it is 0600 and the agent refuses any other peer uid.
+RuntimeDirectory=sp-rtk-base-portal-agent
+RuntimeDirectoryMode=0700
+Environment=SP_RTK_BASE_PORTAL_AGENT_SOCKET=/run/sp-rtk-base-portal-agent/control.sock
+# The base key and the Claim: /var/lib/sp-rtk-base-portal-agent, owned by the
+# service user, mode 0700 (the key in it is 0600). Empty until a Claim; the
+# app reads the base's <id> from it for /api/portal/identity. install.sh
+# never touches it, so reinstalling keeps the Claim.
+StateDirectory=sp-rtk-base-portal-agent
+StateDirectoryMode=0700
+Environment=SP_RTK_BASE_PORTAL_AGENT_STATE=/var/lib/sp-rtk-base-portal-agent
+ExecStart=/opt/sp-rtk-base/venv/bin/sp-rtk-base-portal-agent
+Restart=on-failure
+RestartSec=5
+
+# --- Sandboxing / hardening ---------------------------------------------
+# The sp-rtk-base unit's sandboxing (a unit test keeps them in step), with
+# no writable paths but its StateDirectory, and no devices.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+DevicePolicy=closed
+
+# --- Network: never the LAN ---------------------------------------------
+# Whatever the agent's code does, the kernel won't let it open a socket to
+# a private or link-local IPv4 address, or to any IPv6 address but ::1: on
+# a dual-stack LAN every device has a global IPv6 address, so only "no
+# IPv6" keeps the agent off it. systemd drops a denied packet silently, so
+# AF_INET6 is left out of the address families as well: the agent can't
+# even create an IPv6 socket, fails at once and uses IPv4 (its clients ask
+# for IPv4 addresses only). Loopback stays open: the agent reaches the
+# base's own UI only through 127.0.0.1:8080.
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 ::/0
+IPAddressAllow=127.0.0.0/8 ::1
+# DNS: the agent resolves names through public IPv4 resolvers, never the
+# LAN's (on a home LAN that is the router, and IPAddressAllow can't be
+# limited to port 53). install.sh writes the ones that answer from this
+# host into this file, in a root-owned directory (not /etc/sp-rtk-base,
+# which the app's user can write). If none does (public DNS blocked),
+# install.sh instead writes a drop-in,
+# sp-rtk-base-portal-agent.service.d/resolver.conf, that clears this bind
+# mount and allows the host's LAN resolver, and warns that the agent can
+# then reach that address on any port. Re-running install.sh re-checks
+# and converges.
+BindReadOnlyPaths=/etc/sp-rtk-base-portal-agent/resolv.conf:/etc/resolv.conf
+
+[Install]
+WantedBy=multi-user.target

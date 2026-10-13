@@ -9,6 +9,97 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
+## Unreleased
+
+### Portal agent
+
+The groundwork for the remote access Portal (rtk_development#82).
+
+- **Portal agent.** The installer now lays down the Portal agent as its
+  own service, `sp-rtk-base-portal-agent.service`, in both deployment
+  modes. Until the base is Claimed it is idle: it holds no key, contacts
+  nothing, and only answers the app on a Unix socket only the service
+  user can use. Installing sp-rtk-base never makes a base phone home.
+- **Kept off the LAN.** The agent's unit carries the app's sandboxing plus
+  `RestrictAddressFamilies=AF_INET AF_UNIX`, `DevicePolicy=closed` and an
+  `IPAddressDeny` of the private and link-local IPv4 ranges and of all
+  IPv6 but `::1`, so it can't open a socket to anything on the LAN
+  whatever its code does, including a LAN device's global IPv6 address.
+  It reaches dual-stack hosts over IPv4 without waiting on IPv6.
+- **Its own DNS.** The agent resolves names through public resolvers
+  (1.1.1.1, 9.9.9.9, 8.8.8.8), from its own resolv.conf in
+  `/etc/sp-rtk-base-portal-agent/`, so it never needs the LAN's resolver,
+  which on a home LAN is the router. The installer checks they answer
+  from the base. If public DNS is blocked, it falls back to allowing the
+  base's LAN resolver and warns that the agent can then reach that address
+  on any port (a router's admin page included). Re-running the installer
+  checks again.
+- **Claim.** "Connect to Portal" on the System > Portal page starts a
+  Claim: the agent makes the base's key (Ed25519), asks the Portal for an
+  8-letter pairing code and shows it with a 10-minute countdown and an
+  "Approve on Portal" button. Once the Operator approves it on the Portal,
+  the page reads Connected, with the account the base is Claimed by, the
+  Portal's name, the base's id and the last contact. The Claim is kept in
+  `/var/lib/sp-rtk-base-portal-agent` (key mode 0600) and survives
+  restarts, Updates and reinstalls. Nothing contacts the Portal before
+  "Connect to Portal" is pressed.
+- **Polling and Check-ins.** A Claimed base polls the Portal over HTTPS
+  every 20 s (every 60 s once its Operator marks it metered on the
+  Portal) and Checks in every 5 minutes with its version, Doorbell health
+  and private LAN addresses (the one on the default route marked
+  primary). No connection is held open. The Portal page shows the last
+  contact, the wake mode ("Polling every 20 s") and any notices from the
+  Portal. The agent follows the Portal's agent config (intervals,
+  timeouts) but never a tunnel URL off the Portal's own host, nor a
+  Doorbell host that resolves into the LAN (re-checked before each use);
+  both are logged and ignored. If the Portal stops supporting this
+  version, the base stays Claimed, asks once a day, and the page says
+  "Update sp-rtk-base to keep using the Portal".
+- **Backs off when the Portal says so.** A poll the Portal refuses as too
+  fast (HTTP 429) waits its `Retry-After`, or twice the poll interval,
+  whichever is longer; a refused Check-in is retried after its
+  `Retry-After` while polls go on. When too many Claims were started from
+  the base's network, "Connect to Portal" says so and how long to wait.
+- **Wake and tunnel.** When someone opens the base remotely, the Portal
+  Wakes it: the next poll's reply carries a one-time nonce, and the agent
+  opens its tunnel (`wss://<Portal>/agent/tunnel`, signed with the base
+  key and echoing the nonce) to its own Portal URL only. Every stream the
+  Portal sends through it goes to the base's own UI on `127.0.0.1:8080`
+  and nowhere else: the framing has no field to name a destination, each
+  stream carries one origin-form HTTP request (or websocket) with a fixed
+  `Host`, and a frame the agent doesn't recognise, or one carrying any
+  such field, closes the whole tunnel and is logged. The Portal closes
+  the tunnel 2 minutes after the last remote user leaves; the agent
+  doesn't count on it, and closes the tunnel itself after the agent
+  config's idle timeout with nothing passing through, or once it has been
+  open longer than the hard cap plus that idle timeout. The agent's
+  status reports the tunnel's state and open streams.
+- **Who is connected, and a brake.** While Connected, the Portal page lists
+  the live Remote sessions (who, and since when) and offers "Pause remote
+  access": the base stays Claimed and keeps polling, but ignores Wakes,
+  closes its tunnel at once and the Portal ends its Remote sessions. The
+  pause survives restarts, and only "Resume remote access" on the base
+  lifts it. The list stays current while the tunnel is open even when the
+  base relies on a Doorbell rather than polling, and Check-ins report the
+  pause too. Every tunnel open and close is an Event log entry, whether or
+  not the Relay is running.
+- **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
+  base's id (`{"id": "..."}`), readable cross-origin by the Portal only;
+  an unclaimed base answers 404 with no body.
+- `upgrade.sh` and an Update restart the agent with the app;
+  `uninstall.sh` removes it, and asks before removing the Claim.
+- New dependency: `sp-rtk-portal-protocol` (the agent-to-Portal protocol,
+  published to PyPI from the sp-rtk-portal repo), `>=0.9.0,<1`; `httpx` and
+  `websockets` (both already installed) are now declared directly.
+
+### Breaking (deploy)
+
+- **One-time `install.sh` re-run.** The agent's unit is new Host setup
+  (plumbing version 2), which an Update can't add: the base asks for the
+  installer to be re-run once instead of offering Update. `curl -fsSL
+  https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
+  | sudo bash`. A bare re-run keeps the deployment mode.
+
 ## v0.10.0 (2026-10-08)
 
 ### Update from the web UI

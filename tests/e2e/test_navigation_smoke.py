@@ -20,6 +20,7 @@ PAGES: list[tuple[str, str]] = [
     ("/survey", "Survey-In"),
     ("/settings", "Settings"),
     ("/gps-config", "Advanced GPS"),
+    ("/portal", "Portal"),
 ]
 
 

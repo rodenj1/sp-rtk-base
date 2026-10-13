@@ -203,7 +203,8 @@ jobs:
 
   # ------------------------------------------------------------------
   # End-to-end (Playwright) tests — launch the real SP-Base server in a
-  # subprocess and drive the NiceGUI front-end with headless Chromium.
+  # subprocess and drive the NiceGUI front-end with headless Chromium
+  # (the Portal sandboxed-frame tests also run in Firefox).
   # See docs/e2e-testing.md for design notes and tests/e2e/conftest.py
   # for the fixtures.  Runs on Python 3.12 only because the matrix
   # already exercises 3.10-3.13 at the unit-test level.
@@ -233,12 +234,14 @@ jobs:
         with:
           # Default install location for Playwright on Linux.
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          # The browser set is in the key: a cache saved with fewer
+          # browsers must not satisfy an exact hit and skip saving.
+          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('uv.lock') }}
           restore-keys: |
-            playwright-${{ runner.os }}-
+            playwright-${{ runner.os }}-chromium-firefox-
 
-      - name: Install Playwright Chromium + system deps
-        run: uv run playwright install --with-deps chromium
+      - name: Install Playwright Chromium + Firefox + system deps
+        run: uv run playwright install --with-deps chromium firefox
 
       - name: Run e2e tests
         # --no-cov: the e2e suite intentionally runs out-of-process so

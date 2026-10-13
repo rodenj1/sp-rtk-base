@@ -31,6 +31,7 @@ from sp_rtk_base.api.events import router as events_router
 from sp_rtk_base.api.health import router as health_router
 from sp_rtk_base.api.metrics import router as metrics_router
 from sp_rtk_base.api.network import router as network_router
+from sp_rtk_base.api.portal import router as portal_router
 from sp_rtk_base.api.profiles import router as profiles_router
 from sp_rtk_base.api.relay import router as relay_router
 from sp_rtk_base.api.settings import router as settings_router
@@ -81,6 +82,7 @@ def create_api_app() -> FastAPI:
     api.include_router(profiles_router)
     api.include_router(bluetooth_router)
     api.include_router(update_router)
+    api.include_router(portal_router)
     return api
 
 
@@ -111,6 +113,9 @@ async def startup_services() -> None:
 
     # Check PyPI for an Available update now, then every 24 h.
     services_mod.update_check_service.start()
+
+    # Tunnel opens and closes from the Portal agent go into the Event log.
+    services_mod.portal_events.start()
 
 
 async def shutdown_services() -> None:
@@ -188,6 +193,17 @@ async def shutdown_services() -> None:
     except Exception:
         logger.exception("Error stopping the update check")
 
+    # 0b''. Portal agent's Event log entries — nothing depends on it.
+    try:
+        await asyncio.wait_for(
+            services_mod.portal_events.stop(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the Portal agent's Event log entries")
+    except Exception:
+        logger.exception("Error stopping the Portal agent's Event log entries")
+
     # 0c. Survey-in — stop the station's averaging before the device goes.
     try:
         await asyncio.wait_for(
@@ -239,7 +255,12 @@ def init_app() -> None:
     sets up all NiceGUI page routes, and schedules service initialization.
     Must be called before ui.run().
     """
-    from nicegui import app
+    from nicegui import app, ui
+
+    from sp_rtk_base.ui.storage_stand_in import STORAGE_STAND_IN
+
+    # Every page also runs inside the Portal's sandboxed frame (ADR 0004).
+    ui.add_head_html(STORAGE_STAND_IN, shared=True)
 
     api = create_api_app()
 
@@ -253,11 +274,12 @@ def init_app() -> None:
     from sp_rtk_base.ui.pages import gps_config as _gps_config
     from sp_rtk_base.ui.pages import input as _input
     from sp_rtk_base.ui.pages import outputs as _outputs
+    from sp_rtk_base.ui.pages import portal as _portal
     from sp_rtk_base.ui.pages import settings as _settings
     from sp_rtk_base.ui.pages import survey as _survey
 
     # Reference the modules to prevent "unused import" removal
-    _ = (_dashboard, _gps_config, _input, _outputs, _settings, _survey)
+    _ = (_dashboard, _gps_config, _input, _outputs, _portal, _settings, _survey)
 
     # Network page is appliance-only (issue #28) — in managed-host mode
     # something else owns the host's network stack, so the route isn't

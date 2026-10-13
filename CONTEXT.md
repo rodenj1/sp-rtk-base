@@ -248,3 +248,61 @@ An Update undone because its new version failed to start, putting the
 previous application and Relay back. Automatic; the operator never starts
 one.
 _Avoid_: downgrade, revert
+
+### Remote access
+
+**Portal**:
+The hosted web service at `sp-rtk-base.big-spray.com` where an Operator
+logs in, sees the bases they can reach, and opens a base's web UI from
+anywhere. Also the name of this application's local page that shows the
+base's connection to it. Not the setup-AP's captive portal (the
+`net_provision` `Portal` class), which is unrelated.
+_Avoid_: cloud, captive portal (that's the setup AP's)
+
+**Portal agent**:
+The companion process on a base, run by its own systemd unit
+(`sp-rtk-base-portal-agent.service`, code in `sp_rtk_base.portal_agent`),
+that checks in with the Portal and, on request, carries a remote session to
+the base's own web UI through `127.0.0.1:8080` only. Installed with the base
+but idle until the base is Claimed: it holds no key, contacts nothing and
+only answers the app on its control socket. The kernel denies it the LAN
+and all IPv6 but loopback, and it resolves names through public resolvers
+rather than the LAN's (usually the router).
+_Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
+
+**Claim**:
+Tying a base to one Portal account, started from the base's own Portal
+page ("Connect to Portal") and approved on the Portal with a short pairing
+code (RFC 8628). At Claim the agent makes the base's **base key**
+(Ed25519), which signs every request it makes to the Portal; the Portal
+keeps only the public half. A Claim gives the base an opaque `<id>`, new
+for every Claim, served unauthenticated by `/api/portal/identity`. Kept in
+the agent's state directory, so restarts and reinstalls keep it.
+_Avoid_: register, pair (pairing is the step, Claim the result), link
+
+**Wake** / **tunnel**:
+A Wake is the Portal asking a base to open its tunnel: a poll reply
+carrying only a one-time nonce. The agent then opens the tunnel, one
+websocket to its own Portal (signed with the base key, echoing the nonce),
+carrying the Portal's streams to the base's UI on `127.0.0.1:8080` and
+nowhere else. Open only while someone uses the base remotely; the Portal
+closes it 2 minutes after the last remote user leaves.
+_Avoid_: connection, VPN, session (a Remote session is the Portal's)
+
+**Poll** / **Check-in**:
+What a Claimed base's agent sends the Portal: a small HTTPS poll every
+20 s (60 s when metered), which is how the Portal knows it is online and
+how a Wake reaches it, and a slower Check-in every ~5 min with its
+version, Doorbell health and LAN addresses. Each reply carries the
+**agent config** (revisioned timings and addresses the agent checks
+before use) and any notices.
+_Avoid_: heartbeat, keepalive
+
+**Paused** (remote access paused):
+The Operator's brake on remote use, on the base's local Portal page
+("Pause remote access"). A paused agent keeps its key and Claim and keeps
+polling, but each poll says `paused` and it ignores Wakes; pausing closes
+the tunnel, and the Portal ends the live Remote sessions. Kept across
+restarts; only "Resume remote access" on the base undoes it. Each tunnel
+open and close also goes into the Event log.
+_Avoid_: disabled, offline (an offline base isn't polling at all)

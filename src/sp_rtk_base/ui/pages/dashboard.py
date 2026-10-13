@@ -662,7 +662,7 @@ def dashboard_page() -> None:
             js_code = """
             (function() {
                 const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = proto + '//' + window.location.host + '/api/events/ws';
+                const wsUrl = proto + '//' + window.location.host + (window.path_prefix || '') + '/api/events/ws';
                 let ws = null;
                 let reconnectTimer = null;
 

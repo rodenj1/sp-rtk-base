@@ -109,9 +109,12 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
    1. Verify the tag matches `pyproject.toml`.
    2. Run lint + the full test matrix (Python 3.10 / 3.11 / 3.12 / 3.13).
    3. Build sdist + wheel, validate metadata with `twine check`.
-   4. Upload to PyPI via OIDC.
-   5. Sign the artifacts with sigstore (PEP 740 attestations).
-   6. Attach the artifacts + signatures to the GitHub Release page.
+   4. Smoke-test the wheel: `pip install` it into a plain Python 3.10
+      venv (no uv), with its dependencies from PyPI, then import it and
+      load every console script.
+   5. Upload to PyPI via OIDC.
+   6. Sign the artifacts with sigstore (PEP 740 attestations).
+   7. Attach the artifacts + signatures to the GitHub Release page.
 
    End-to-end ~5–8 minutes.
 
@@ -120,6 +123,25 @@ For every release (e.g. `0.2.0`, `0.3.0`, …):
    - `pip install --upgrade sp-rtk-base` works.
    - The GitHub Release page now has `.tar.gz`, `.whl`, and
      `.sigstore` attestation files attached.
+
+---
+
+## The protocol package goes to PyPI first
+
+The Portal agent depends on
+[`sp-rtk-portal-protocol`](https://github.com/rodenj1/sp-rtk-portal/tree/main/protocol#readme),
+which ships separately: it is released from the `sp-rtk-portal` repo
+with its own `protocol-v*` tags and workflow, not with this package
+(see its README's *Releasing*).
+
+- **Publish an sp-rtk-base release only after every
+  `sp-rtk-portal-protocol` version it requires is on PyPI.**  A base
+  installs from PyPI, where `[tool.uv.sources]` means nothing, so a
+  version that's only in git can't be installed.
+- The release workflow's smoke job enforces this: it `pip install`s the
+  wheel with its dependencies from PyPI, and fails before the upload
+  if the required protocol version isn't there yet.  Release the
+  protocol, then re-run this release (`workflow_dispatch` with the tag).
 
 ---
 
@@ -175,6 +197,14 @@ The PyPI pending-publisher fields must match the workflow *exactly*:
 repo, workflow filename, environment name, and ref (PyPI checks that
 the workflow is running from the configured repository).  Re-read the
 "Register the Trusted Publisher" section and double-check each field.
+
+### Smoke test can't find `sp-rtk-portal-protocol`
+
+pip found no version on PyPI that satisfies the requirement in
+`pyproject.toml`.  Publish that protocol version first (see
+*The protocol package goes to PyPI first*), then re-run this
+workflow with the tag.  Nothing was uploaded, so the version is
+still free.
 
 ### Tests fail in the release workflow but passed in CI
 

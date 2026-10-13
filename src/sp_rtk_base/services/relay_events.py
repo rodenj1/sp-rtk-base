@@ -105,6 +105,11 @@ class RelayEvents:
         self._attach()
         return stream
 
+    def publish(self, event: dict[str, Any]) -> None:
+        """Send an event that isn't the engine's to every open stream."""
+        for stream in self._streams:
+            stream.offer(event)
+
     def follow(self, engine: RelayEngine) -> None:
         """Stream ``engine``'s events from now on."""
         if engine is not self._engine:

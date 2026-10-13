@@ -17,6 +17,7 @@ and by the ``api_base_url`` fixture below for direct REST calls.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import subprocess
@@ -30,6 +31,7 @@ import httpx
 import pytest
 
 from sp_rtk_base.update.host_setup import PLUMBING_VERSION
+from tests.fixtures.fake_agent_socket import FakeAgentSocket
 from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.fake_pypi import FakePyPI
 
@@ -164,17 +166,65 @@ def clean_update(update_dir: Path) -> Iterator[Path]:
 
 
 @pytest.fixture(scope="session")
+def fake_agent() -> Iterator[FakeAgentSocket]:
+    """The Portal agent's control socket, faked (spec #82), on a socket in a
+    temp dir (short: AF_UNIX paths are capped near 108 bytes). It starts
+    unclaimed; the agent's own behaviour is covered by its unit tests and by
+    sp-rtk-portal's seam-1 suite."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="e2e-agent-") as d:
+        with FakeAgentSocket(Path(d) / "control.sock") as fake:
+            yield fake
+
+
+@pytest.fixture()
+def portal_agent(fake_agent: FakeAgentSocket) -> Iterator[FakeAgentSocket]:
+    """The fake agent, reset to unclaimed before and after the test."""
+    fake_agent.reset()
+    yield fake_agent
+    fake_agent.reset()
+
+
+@pytest.fixture(scope="session")
+def portal_agent_socket(fake_agent: FakeAgentSocket) -> Path:
+    return fake_agent.path
+
+
+@pytest.fixture(scope="session")
 def sp_rtk_base_server(
     tmp_path_factory: pytest.TempPathFactory,
     fake_pypi_dir: Path,
     update_dir: Path,
     host_setup_file: Path,
+    portal_agent_socket: Path,
 ) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
     Yields:
         The base URL (``http://127.0.0.1:<port>``) of the running server.
     """
+    with running_server(
+        tmp_path_factory,
+        fake_pypi_dir,
+        update_dir,
+        host_setup_file,
+        portal_agent_socket,
+    ) as url:
+        yield url
+
+
+@contextlib.contextmanager
+def running_server(
+    tmp_path_factory: pytest.TempPathFactory,
+    fake_pypi_dir: Path,
+    update_dir: Path,
+    host_setup_file: Path,
+    portal_agent_socket: Path,
+) -> Iterator[str]:
+    """An SP-Base server in a subprocess, until the block ends. A module
+    whose tests leave state the rest can't share (e.g. Event log entries)
+    starts its own with this."""
     port = _find_free_port()
     base_url = f"http://127.0.0.1:{port}"
 
@@ -209,6 +259,8 @@ def sp_rtk_base_server(
     env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
     # The fake Host setup: the units' state comes from this file, not systemd.
     env["SP_RTK_BASE_FAKE_HOST_SETUP"] = str(host_setup_file)
+    # The Portal page asks this (real, idle) agent, not /run's.
+    env["SP_RTK_BASE_PORTAL_AGENT_SOCKET"] = str(portal_agent_socket)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects
     # any of these pytest env vars (see nicegui.helpers.is_pytest and
     # nicegui.ui_run.run).  We're running the server as a real

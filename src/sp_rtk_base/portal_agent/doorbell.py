@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
 import random
 import socket
@@ -52,6 +51,8 @@ from sp_rtk_portal_protocol import (
     DoorbellError,
 )
 from sp_rtk_portal_protocol import doorbell as packets
+
+from sp_rtk_base.portal_agent.doh import is_public
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +119,7 @@ async def checked_address(host: str, port: int, resolve: Resolve) -> str | None:
         logger.warning("Ignoring the Doorbell host %s: no addresses", host)
         return None
     for address in addresses:
-        try:
-            ip = ipaddress.ip_address(address.split("%", 1)[0])
-        except ValueError:
-            ip = None
-        if ip is None or not ip.is_global:
+        if not is_public(address):
             logger.warning(
                 "Ignoring the Doorbell host %s: it resolves to %s, which isn't "
                 "a public address (private, loopback or link-local); staying "

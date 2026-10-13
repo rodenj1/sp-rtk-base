@@ -72,6 +72,12 @@ async def portal_page() -> None:
                             .props('data-testid="portal-countdown"')
                         )
                     tick()
+                for notice in view.notices:
+                    with ui.row().classes("items-center q-gutter-sm no-wrap"):
+                        ui.icon("campaign", color="warning")
+                        ui.label(notice).classes("text-warning").props(
+                            'data-testid="portal-notice"'
+                        )
                 if view.detail:
                     ui.label(view.detail).classes("text-grey-5").props(
                         'data-testid="portal-detail"'

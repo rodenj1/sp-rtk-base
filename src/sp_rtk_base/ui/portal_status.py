@@ -54,6 +54,8 @@ class PortalView:
     expires_at: datetime | None = None
     # Connected: (label, value) rows
     facts: tuple[tuple[str, str], ...] = ()
+    notices: tuple[str, ...] = ()
+    """Notices from the Portal (e.g. a deprecation date)."""
 
 
 def countdown(expires_at: datetime, now: datetime) -> str:
@@ -70,7 +72,26 @@ def _utc(when: datetime) -> str:
     return when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+UPGRADE_HEADLINE = "Upgrade sp-rtk-base to keep using the Portal"
+UPGRADE_DETAIL = (
+    "The Portal no longer supports this version of sp-rtk-base. The base "
+    "stays Claimed and tries again once a day; after an upgrade it carries "
+    "on by itself."
+)
+
+
+def wake_mode(status: AgentStatus) -> str | None:
+    """How the Portal wakes this base, for the page."""
+    if status.wake_mode == "doorbell":
+        return "Doorbell"
+    if status.wake_mode == "polling" and status.poll_interval:
+        metered = " (metered)" if status.metered else ""
+        return f"Polling every {status.poll_interval} s{metered}"
+    return None
+
+
 def _view(status: AgentStatus) -> PortalView:
+    headline = HEADLINES[status.state]
     detail = DETAILS[status.state]
     if status.state == "not_connected" and status.message:
         detail = f"{status.message} {detail}"
@@ -85,8 +106,17 @@ def _view(status: AgentStatus) -> PortalView:
                 _utc(status.last_contact) if status.last_contact else "never",
             ),
         )
+        mode = wake_mode(status)
+        if mode:
+            facts += (("Wake mode", mode),)
+    if status.needs_upgrade:
+        headline = UPGRADE_HEADLINE
+        detail = (
+            f"{status.message} {UPGRADE_DETAIL}" if status.message else UPGRADE_DETAIL
+        )
     return PortalView(
-        headline=HEADLINES[status.state],
+        notices=tuple(status.notices),
+        headline=headline,
         detail=detail,
         agent_running=True,
         can_connect=status.state == "not_connected",

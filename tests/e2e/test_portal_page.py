@@ -142,3 +142,41 @@ def test_an_expired_pairing_says_so_and_offers_connect_again(
         "The code expired before it was approved.", timeout=15_000
     )
     expect(page.get_by_role("button", name="Connect to Portal")).to_be_enabled()
+
+
+@pytest.mark.e2e
+def test_a_polling_base_shows_its_wake_mode_and_the_portals_notices(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED | {
+        "wake_mode": "polling",
+        "poll_interval": 60,
+        "metered": True,
+        "notices": ["Protocol 1 ends on 2027-06-01."],
+    }
+
+    page.goto(f"{base_url}/portal")
+
+    expect(page.get_by_test_id("portal-wake-mode")).to_have_text(
+        "Polling every 60 s (metered)", timeout=15_000
+    )
+    expect(page.get_by_test_id("portal-last-contact")).to_have_text(
+        "2026-01-01 12:03 UTC"
+    )
+    expect(page.get_by_test_id("portal-notice")).to_have_text(
+        "Protocol 1 ends on 2027-06-01."
+    )
+
+
+@pytest.mark.e2e
+def test_a_base_too_old_for_the_portal_says_to_upgrade(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED | {"needs_upgrade": True}
+
+    page.goto(f"{base_url}/portal")
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Upgrade sp-rtk-base to keep using the Portal", timeout=15_000
+    )
+    expect(page.get_by_test_id("portal-base-id")).to_have_text("k3mnp4qrst")

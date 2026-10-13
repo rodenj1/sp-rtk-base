@@ -281,6 +281,11 @@ async def test_a_refused_tunnel_is_neither_an_open_nor_a_close(
 ) -> None:
     portal.wake, endpoint.nonce = NONCE, "another nonce"
     await running.clock.run(seconds=20)
-    await running.until_status(lambda s: s.tunnel == "closed" and bool(endpoint.opens))
+    portal.wake = None
+    for _ in range(500):  # the refusal comes back in real time
+        if endpoint.opens and (await running.status()).tunnel == "closed":
+            break
+        await asyncio.sleep(0.01)
 
+    assert endpoint.opens and not endpoint.opens[0].accepted
     assert (await running.status()).tunnel_events == []

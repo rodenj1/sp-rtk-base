@@ -250,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     timeout = float(args.timeout)
     with ThreadPoolExecutor(max_workers=len(tried)) as pool:
-        ok = list(pool.map(lambda s: answers(s, timeout), tried))
+        ok = list(pool.map(answers, tried, [timeout] * len(tried)))
     answering = [_parse_server(s)[0] for s, good in zip(tried, ok, strict=True) if good]
     try:
         host = Path(args.host_resolv_conf).read_text(encoding="utf-8", errors="replace")

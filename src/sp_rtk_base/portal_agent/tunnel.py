@@ -30,6 +30,8 @@ import asyncio
 import contextlib
 import logging
 import re
+import secrets
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Literal, Protocol
@@ -38,6 +40,8 @@ from sp_rtk_portal_protocol import FrameError, Stream, Tunnel
 from sp_rtk_portal_protocol.tunnel import MAX_DATA
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus, WebSocketException
+
+from sp_rtk_base.portal_agent.protocol import TunnelEvent
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,8 @@ HOST_HEADER = b"localhost:8080"
 MAX_HEAD = 64 * 1024
 """The largest request head a stream may start with."""
 MAX_NONCE = 256
+TUNNEL_EVENTS = 20
+"""How many tunnel opens and closes the status keeps."""
 
 _REQUEST_LINE = re.compile(rb"^[A-Z]+ /[^ ]* HTTP/1\.[01]$")
 _HOP_BY_HOP = (b"host", b"connection", b"keep-alive")
@@ -122,6 +128,8 @@ class TunnelClient:
         self.since: datetime | None = None
         self._tunnel: Tunnel | None = None
         self._task: asyncio.Task[None] | None = None
+        self.events: deque[TunnelEvent] = deque(maxlen=TUNNEL_EVENTS)
+        """Opens and closes (not refused or failed attempts)."""
 
     @property
     def streams(self) -> int:
@@ -140,7 +148,18 @@ class TunnelClient:
         self._task = asyncio.ensure_future(self._run(nonce, url))
 
     def _set(self, state: TunnelState) -> None:
+        previous = self.state
         self.state, self.since = state, self._now()
+        if previous == "opening" and state == "open":
+            self._event("opened")
+        elif previous == "open" and state == "closed":
+            self._event("closed")
+
+    def _event(self, event: Literal["opened", "closed"]) -> None:
+        assert self.since is not None
+        self.events.append(
+            TunnelEvent(id=secrets.token_hex(8), event=event, at=self.since)
+        )
 
     async def _run(self, nonce: str, url: str) -> None:
         try:

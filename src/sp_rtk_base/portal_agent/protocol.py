@@ -6,6 +6,9 @@ One JSON object per line each way, on a Unix socket:
 - reply ``{"ok": true, "status": {"state": "not_connected", ...}}``
 - request ``{"op": "start_claim"}``: ask the Portal for a pairing code (the
   "Connect to Portal" button). Replies with the status, now ``pairing``.
+- request ``{"op": "pause"}`` / ``{"op": "resume"}``: pause or resume remote
+  access (#92). Replies with the status (``paused`` / ``connected``), or
+  ``{"ok": false, "error": "not claimed"}``.
 - or ``{"ok": false, "error": "<reason>"}`` (``unknown op``, ``bad request``,
   ``refused``), or ``{"ok": false, "error": "claim failed", "message":
   "<for the Operator>"}``
@@ -46,6 +49,29 @@ PORTAL_URL_ENV = "SP_RTK_BASE_PORTAL_URL"
 DEFAULT_PORTAL_URL = "https://sp-rtk-base.big-spray.com"
 
 AgentState = Literal["not_connected", "pairing", "connected", "paused"]
+
+
+class RemoteSession(BaseModel):
+    """A live Remote session on this base, as the Portal last reported it."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    who: str
+    """The user's email."""
+    since: datetime
+    shared: bool = False
+    """A Shared user rather than the Operator."""
+
+
+class TunnelEvent(BaseModel):
+    """The tunnel opened or closed (the app's Event log shows these)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: str
+    """Unique, so a reader can tell which ones it has seen."""
+    event: Literal["opened", "closed"]
+    at: datetime
 
 
 class AgentStatus(BaseModel):
@@ -92,6 +118,12 @@ class AgentStatus(BaseModel):
     """When the tunnel last changed state (opened, or closed)."""
     tunnel_streams: int = 0
     """Streams open through the tunnel now (requests and websockets)."""
+    # Connected or paused: remote use (ticket #92)
+    sessions: list[RemoteSession] = []
+    """Live Remote sessions, as of the last poll."""
+    tunnel_events: list[TunnelEvent] = []
+    """The latest tunnel opens and closes since the agent started, oldest
+    first (at most :data:`~.tunnel.TUNNEL_EVENTS`)."""
 
 
 def socket_path() -> Path:

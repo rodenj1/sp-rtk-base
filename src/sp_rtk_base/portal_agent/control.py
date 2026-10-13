@@ -40,9 +40,19 @@ from sp_rtk_base.portal_agent.portal_api import (
     PortalUnreachableError,
     UpgradeRequiredError,
 )
-from sp_rtk_base.portal_agent.protocol import AgentStatus, state_path
+from sp_rtk_base.portal_agent.protocol import (
+    AgentState,
+    AgentStatus,
+    state_path,
+)
 from sp_rtk_base.portal_agent.protocol import portal_url as default_portal_url
-from sp_rtk_base.portal_agent.state import Claim, load_claim, save_claim
+from sp_rtk_base.portal_agent.state import (
+    Claim,
+    load_claim,
+    load_paused,
+    save_claim,
+    save_paused,
+)
 from sp_rtk_base.portal_agent.tunnel import APP_PORT, Connect, connect_websocket
 
 logger = logging.getLogger(__name__)
@@ -52,6 +62,10 @@ _MAX_REQUEST = 64 * 1024
 
 class ClaimStartError(Exception):
     """A Claim couldn't start. The message is for the Operator."""
+
+
+class NotClaimedError(Exception):
+    """Pause and resume need a Claimed base."""
 
 
 @dataclass
@@ -127,22 +141,24 @@ class PortalAgent:
         self._connection_task: asyncio.Task[None] | None = None
         self._pairing: _Pairing | None = None
         self._message: str | None = None
+        self._paused = load_paused(self._state_dir)
         self._lock = asyncio.Lock()
 
     def status(self) -> AgentStatus:
         if self._claim is not None:
             c = self._claim
             conn = self._connection
+            state: AgentState = "paused" if self._paused else "connected"
             if conn is None:
                 return AgentStatus(
-                    state="connected",
+                    state=state,
                     base_id=c.base_id,
                     account=c.account,
                     portal=c.portal,
                     last_contact=datetime.fromisoformat(c.last_contact),
                 )
             return AgentStatus(
-                state="connected",
+                state=state,
                 base_id=c.base_id,
                 account=c.account,
                 portal=c.portal,
@@ -159,6 +175,8 @@ class PortalAgent:
                 tunnel=conn.tunnel.state,
                 tunnel_since=conn.tunnel.since,
                 tunnel_streams=conn.tunnel.streams,
+                sessions=conn.sessions,
+                tunnel_events=list(conn.tunnel.events),
             )
         if self._pairing is not None:
             p = self._pairing
@@ -253,8 +271,20 @@ class PortalAgent:
             lan_addresses=self._lan_addresses,
             tunnel_connect=self._tunnel_connect,
             app_port=self._app_port,
+            paused=self._paused,
         )
         self._connection_task = asyncio.create_task(self._connection.run())
+
+    async def set_paused(self, paused: bool) -> AgentStatus:
+        """Pause or resume remote access. Raises :class:`NotClaimedError`."""
+        if self._claim is None:
+            raise NotClaimedError
+        self._paused = paused
+        if self._connection is not None:
+            await self._connection.set_paused(paused)
+        else:
+            save_paused(self._state_dir, paused)
+        return self.status()
 
     def _end_pairing(self, message: str) -> None:
         logger.info("Pairing ended: %s", message)
@@ -305,6 +335,12 @@ async def _answer(agent: PortalAgent, line: bytes) -> dict[str, Any]:
             status = await agent.start_claim()
         except ClaimStartError as exc:
             return {"ok": False, "error": "claim failed", "message": str(exc)}
+        return {"ok": True, "status": status.model_dump(mode="json")}
+    if op in ("pause", "resume"):
+        try:
+            status = await agent.set_paused(op == "pause")
+        except NotClaimedError:
+            return {"ok": False, "error": "not claimed"}
         return {"ok": True, "status": status.model_dump(mode="json")}
     return {"ok": False, "error": "unknown op"}
 

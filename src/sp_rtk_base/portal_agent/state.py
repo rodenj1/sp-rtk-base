@@ -7,6 +7,7 @@ identity endpoint serves). Nothing is written until a Claim succeeds.
 Once Claimed, ``agent_config.json`` holds the last agent config block the
 Portal sent, and ``claim.json``'s ``last_contact`` is refreshed on each
 Check-in (not each poll: an SD card shouldn't take a write every 20 s).
+An empty ``paused`` file is there while remote access is paused on site.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ KEY_FILE = "base_key.pem"
 CLAIM_FILE = "claim.json"
 ID_FILE = "base_id"
 CONFIG_FILE = "agent_config.json"
+PAUSED_FILE = "paused"
+"""Present while remote access is paused on site (survives restarts)."""
 
 
 @dataclass(frozen=True)
@@ -102,3 +105,16 @@ def load_agent_config(state_dir: Path) -> AgentConfig | None:
     except (OSError, ValueError, MessageError) as exc:
         logger.warning("Ignoring an unreadable agent config: %s", exc)
         return None
+
+
+def save_paused(state_dir: Path, paused: bool) -> None:
+    """Remember that remote access is paused (or not) across restarts."""
+    if paused:
+        _write(state_dir / PAUSED_FILE, b"", 0o600)
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            (state_dir / PAUSED_FILE).unlink()
+
+
+def load_paused(state_dir: Path) -> bool:
+    return (state_dir / PAUSED_FILE).exists()

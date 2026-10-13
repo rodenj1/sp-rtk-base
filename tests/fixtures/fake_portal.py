@@ -31,6 +31,7 @@ from sp_rtk_portal_protocol import (
     ClaimStarted,
     ClaimToken,
     ErrorReply,
+    LiveSession,
     Notice,
     Poll,
     PollReply,
@@ -148,6 +149,8 @@ class FakePortal:
     """Answer polls and Check-ins with this HTTP status (with no body)."""
     wake: str | None = None
     """Put this Wake nonce in every poll reply (ticket #88)."""
+    sessions: list[LiveSession] = field(default_factory=list)
+    """Live Remote sessions for every poll reply (ticket #92)."""
     _key: str | None = None
     _replays: ReplayCache = field(default_factory=ReplayCache)
 
@@ -209,7 +212,10 @@ class FakePortal:
             }
             if request.url.path == POLL_PATH:
                 return httpx.Response(
-                    200, json=PollReply(**common, wake=self.wake).to_json()
+                    200,
+                    json=PollReply(
+                        **common, wake=self.wake, sessions=list(self.sessions)
+                    ).to_json(),
                 )
             return httpx.Response(200, json=CheckInReply(**common).to_json())
         if request.url.path == CLAIMS_PATH:

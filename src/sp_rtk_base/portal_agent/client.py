@@ -13,7 +13,8 @@ from sp_rtk_base.portal_agent.protocol import AgentStatus
 
 TIMEOUT_S = 2.0
 CLAIM_TIMEOUT_S = 15.0
-"""Starting a Claim waits for the Portal (the agent gives it 10 s)."""
+"""Starting a Claim, pausing or resuming waits for the Portal (the agent
+gives it 10 s)."""
 
 
 class AgentUnavailableError(Exception):
@@ -51,6 +52,8 @@ async def _request(
         raise AgentUnavailableError("The Portal agent answered garbage")
     reply = cast(dict[str, Any], reply)
     if reply.get("ok") is not True:
+        if reply.get("error") == "not claimed":
+            raise AgentUnavailableError("This base is not Claimed")
         if isinstance(reply.get("message"), str):
             raise ClaimFailedError(reply["message"])
         raise AgentUnavailableError(f"The Portal agent {reply.get('error', 'failed')}")
@@ -76,3 +79,15 @@ async def start_claim(path: Path) -> AgentStatus:
     :class:`AgentUnavailableError`.
     """
     return _status(await _request(path, {"op": "start_claim"}, CLAIM_TIMEOUT_S))
+
+
+async def pause(path: Path) -> AgentStatus:
+    """Pause remote access: the agent keeps its Claim and keeps polling, but
+    reports ``paused`` and ignores Wakes. Raises
+    :class:`AgentUnavailableError` (also when the base isn't Claimed)."""
+    return _status(await _request(path, {"op": "pause"}, CLAIM_TIMEOUT_S))
+
+
+async def resume(path: Path) -> AgentStatus:
+    """Resume remote access (only ever from here: the Portal can't)."""
+    return _status(await _request(path, {"op": "resume"}, CLAIM_TIMEOUT_S))

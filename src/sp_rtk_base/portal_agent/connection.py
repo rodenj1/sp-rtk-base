@@ -238,10 +238,10 @@ class Connection:
 
 def _sessions(reported: list[LiveSession]) -> list[RemoteSession]:
     """The live Remote sessions a poll reply lists, skipping any malformed."""
-    sessions = []
+    sessions: list[RemoteSession] = []
     for s in reported:
         try:
-            sessions.append(RemoteSession(who=s.who, since=s.since, shared=s.shared))  # type: ignore[arg-type]
+            sessions.append(RemoteSession.model_validate(s.to_json()))
         except ValidationError:
             logger.warning("Ignoring a malformed Remote session from the Portal")
     return sessions

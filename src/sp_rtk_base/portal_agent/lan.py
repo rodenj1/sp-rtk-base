@@ -5,8 +5,8 @@ default route's interface marked primary. The Portal uses them for Local
 access (opening the base on its own LAN).
 
 Read with ``SIOCGIFCONF``/``SIOCGIFFLAGS`` ioctls on an ``AF_INET`` socket
-and ``/proc/net/route``: the agent's unit allows only ``AF_INET``,
-``AF_INET6`` and ``AF_UNIX`` sockets, so netlink (``ip addr``) is out.
+and ``/proc/net/route``: the agent's unit allows only ``AF_INET`` and
+``AF_UNIX`` sockets, so netlink (``ip addr``) is out.
 Opening a datagram socket sends nothing.
 """
 

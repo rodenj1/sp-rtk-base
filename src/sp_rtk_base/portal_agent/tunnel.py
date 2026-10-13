@@ -38,6 +38,7 @@ import contextlib
 import logging
 import re
 import secrets
+import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -91,6 +92,9 @@ async def connect_websocket(url: str, headers: dict[str, str]) -> WebSocket:
         open_timeout=15,
         ping_interval=20,
         ping_timeout=20,
+        # IPv4 only: the agent's unit gives it no IPv6 (passed through to
+        # the event loop's create_connection, so only A records are used).
+        family=socket.AF_INET,
     )
 
 

@@ -77,8 +77,10 @@ OpenUdp = Callable[[str, OnDatagram], Awaitable[Datagrams]]
 
 
 async def system_resolve(host: str, port: int) -> list[str]:
+    # IPv4 only: the agent's unit gives it no IPv6, so an AAAA answer could
+    # only be dropped.
     infos = await asyncio.get_running_loop().getaddrinfo(
-        host, port, type=socket.SOCK_DGRAM
+        host, port, family=socket.AF_INET, type=socket.SOCK_DGRAM
     )
     return [str(info[4][0]) for info in infos]
 

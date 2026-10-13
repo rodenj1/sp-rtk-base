@@ -77,6 +77,13 @@ class UnclaimedError(Exception):
 R = TypeVar("R", PollReply, CheckInReply)
 
 
+def ipv4_transport() -> httpx.AsyncHTTPTransport:
+    """httpx's transport, on IPv4 only: binding to ``0.0.0.0`` makes it look
+    up A records alone. The agent's unit gives it no IPv6, so an AAAA
+    attempt could only fail."""
+    return httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+
+
 class PortalApi:
     def __init__(
         self,
@@ -121,7 +128,7 @@ class PortalApi:
         # Made on first use: an unclaimed, idle agent opens nothing.
         if self._client is None:
             self._client = httpx.AsyncClient(
-                transport=self._transport, timeout=TIMEOUT_S
+                transport=self._transport or ipv4_transport(), timeout=TIMEOUT_S
             )
         url = self.base_url + path
         body = json.dumps(message.to_json()).encode()

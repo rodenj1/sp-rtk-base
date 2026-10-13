@@ -140,8 +140,12 @@ def ipv4_transport(
     transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", verify=verify)
     if names is not None:
         # httpx has no option for a network backend; its pool takes one.
+        # The same pool httpx makes (its default limits), with that backend.
         transport._pool = httpcore.AsyncConnectionPool(  # pyright: ignore[reportPrivateUsage]
             ssl_context=ssl_context(verify),
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=5.0,
             local_address="0.0.0.0",
             network_backend=_NamedBackend(names),
         )

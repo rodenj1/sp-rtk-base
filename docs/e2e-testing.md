@@ -78,9 +78,9 @@ One-time setup (already done if you ran `uv sync --all-extras`):
 
 ```bash
 uv sync --all-extras
-uv run playwright install chromium      # ~140 MB download
+uv run playwright install chromium firefox   # ~250 MB download
 # Linux only — system libs for the headless browser:
-sudo uv run playwright install-deps chromium
+sudo uv run playwright install-deps chromium firefox
 ```
 
 Run the full e2e suite:
@@ -320,8 +320,10 @@ priority order:
    mocked GPS service so we can assert on the round-trip into the
    base-positions list.~~ ✅ Landed 2026-05-26 via FakeGpsDriver +
    `tests/e2e/test_survey_save_position.py`.
-5. **Cross-browser** — add Firefox + WebKit to the
-   `pytest-playwright --browser` flag in CI once the suite stabilises.
+5. **Cross-browser** — the Portal sandboxed-frame tests already run in
+   Firefox too (CI installs it); add Firefox + WebKit to the
+   `pytest-playwright --browser` flag for the rest of the suite once it
+   stabilises.
 
 ## Playwright MCP server (optional, dev-time only)
 

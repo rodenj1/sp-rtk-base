@@ -9,5 +9,5 @@ unit-coverage measurement — run them explicitly with:
 
 Prerequisites:
     uv sync --all-extras
-    uv run playwright install chromium
+    uv run playwright install chromium firefox  # Firefox: the sandboxed-frame tests
 """

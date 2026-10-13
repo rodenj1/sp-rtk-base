@@ -19,6 +19,7 @@ import ssl
 import struct
 import time
 from collections.abc import Callable, Sequence
+from typing import Protocol
 
 import httpx
 
@@ -58,6 +59,28 @@ def is_public(address: str) -> bool:
         return ipaddress.ip_address(address.split("%", 1)[0]).is_global
     except ValueError:
         return False
+
+
+class Names(Protocol):
+    """Where the agent connects for a host name: what its clients ask."""
+
+    async def address(self, host: str) -> str | None:
+        """The address to connect to, or ``None``: connect by name."""
+        ...
+
+    def forget(self, host: str) -> None:
+        """Connecting to the address given for ``host`` failed."""
+        ...
+
+
+class SystemNames:
+    """:class:`Names` that always connect by name (the system resolver)."""
+
+    async def address(self, host: str) -> str | None:
+        return None
+
+    def forget(self, host: str) -> None:
+        pass
 
 
 class DohResolver:

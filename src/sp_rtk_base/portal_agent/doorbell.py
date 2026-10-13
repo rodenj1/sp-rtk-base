@@ -12,9 +12,14 @@ a sign of life.
 host that resolves into the base's LAN and so steer the agent's UDP at it.
 The agent resolves the host before each keepalive and refuses it if any
 answer is not a global address (private, loopback, link-local, carrier-grade
-NAT, ...): it logs that, sends nothing and stays on polling. Re-resolving
+NAT, ...): it logs that, sends nothing and stays on polling. Checking
 every time means a later DNS change can't slip a LAN address in. The unit's
 ``IPAddressDeny`` blocks the LAN ranges as well.
+
+The host is looked up as the Portal host is (:mod:`.doh`): over
+DNS-over-HTTPS, its answer kept for its TTL (only public answers are kept),
+and with the system resolver when DoH fails. So a home DNS that answers the
+Doorbell's name with a LAN address doesn't leave the base on polling.
 
 **Health and wake mode.** ``off`` (no host), ``ignored`` (the host was
 refused), ``unavailable`` (keepalives go out, but the Portal hasn't said it
@@ -52,7 +57,7 @@ from sp_rtk_portal_protocol import (
 )
 from sp_rtk_portal_protocol import doorbell as packets
 
-from sp_rtk_base.portal_agent.doh import is_public
+from sp_rtk_base.portal_agent.doh import Names, is_public
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,20 @@ async def system_resolve(host: str, port: int) -> list[str]:
         host, port, family=socket.AF_INET, type=socket.SOCK_DGRAM
     )
     return [str(info[4][0]) for info in infos]
+
+
+def resolve_with(names: Names, fallback: Resolve = system_resolve) -> Resolve:
+    """A :data:`Resolve` asking ``names`` first (the agent's DoH), and
+    ``fallback`` when they say to connect by name. :func:`checked_address`
+    checks the answer either way."""
+
+    async def resolve(host: str, port: int) -> list[str]:
+        address = await names.address(host)
+        if address is not None:
+            return [address]
+        return await fallback(host, port)
+
+    return resolve
 
 
 class _Receiver(asyncio.DatagramProtocol):

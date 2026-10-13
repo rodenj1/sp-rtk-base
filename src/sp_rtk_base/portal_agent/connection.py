@@ -35,6 +35,7 @@ can ring it) and tries again once a day; the status says ``needs_upgrade``.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -96,7 +97,7 @@ class Connection:
         software_version: str,
         resolve: doorbell.Resolve,
         lan_addresses: Callable[[], list[LanAddress]],
-        tunnel_connect: Connect = connect_websocket,
+        tunnel_connect: Connect | None = None,
         app_port: int = APP_PORT,
         open_udp: doorbell.OpenUdp = doorbell.open_udp,
         paused: bool = False,
@@ -127,7 +128,11 @@ class Connection:
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
             now=now,
             sleep=sleep,
-            connect=tunnel_connect,
+            connect=(
+                tunnel_connect
+                if tunnel_connect is not None
+                else functools.partial(connect_websocket, names=api.names)
+            ),
             app_port=app_port,
         )
         self.bell = doorbell.Doorbell(

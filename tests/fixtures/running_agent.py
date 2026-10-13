@@ -14,6 +14,7 @@ from sp_rtk_portal_protocol import PROTOCOL_VERSION, LanAddress
 
 from sp_rtk_base.portal_agent.client import read_status, unclaim
 from sp_rtk_base.portal_agent.control import PortalAgent, serve
+from sp_rtk_base.portal_agent.doh import SystemNames
 from sp_rtk_base.portal_agent.protocol import AgentStatus
 from tests.fixtures.fake_portal import ORIGIN, FakeClock, FakePortal
 
@@ -54,6 +55,7 @@ class Running:
             sleep=self.clock.sleep,
             name="pi-north",
             resolve=self.dns,
+            names=SystemNames(),
             lan_addresses=lambda: list(self.lan),
             protocol_version=self.protocol_version,
             **kwargs,

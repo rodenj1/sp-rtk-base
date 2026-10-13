@@ -25,6 +25,9 @@ def _name(common: str) -> x509.Name:
 
 
 class TestCa:
+    """Its certificates pass Python 3.13's strict X.509 checks (key
+    identifiers present)."""
+
     __test__ = False  # not a pytest class
 
     def __init__(self) -> None:
@@ -52,6 +55,10 @@ class TestCa:
                     decipher_only=False,
                 ),
                 True,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(self._key.public_key()),
+                False,
             )
             .sign(self._key, hashes.SHA256())
         )
@@ -84,6 +91,16 @@ class TestCa:
             .not_valid_before(now - timedelta(days=1))
             .not_valid_after(now + timedelta(days=1))
             .add_extension(x509.SubjectAlternativeName(sans), False)
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                    self._key.public_key()
+                ),
+                False,
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                False,
+            )
             .sign(self._key, hashes.SHA256())
         )
         path = Path(self._dir.name) / f"{x509.random_serial_number()}.pem"

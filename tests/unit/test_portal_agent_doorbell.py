@@ -320,6 +320,28 @@ async def test_a_forged_ring_is_ignored(
     assert endpoint.opens == []
 
 
+async def test_once_the_doorbell_host_moves_into_the_lan_its_old_address_cannot_ring(
+    running: Running,
+    portal: FakePortal,
+    clock: FakeClock,
+    udp: FakeUdp,
+    endpoint: TunnelEndpoint,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ring_key = await _heard(running, portal, clock)
+    running.dns.records[BELL] = ["192.168.1.1"]
+    await clock.run(seconds=30)  # the next keepalive finds it refused
+    assert (await running.status()).doorbell == "ignored"
+    endpoint.nonce = NONCE
+
+    with caplog.at_level(logging.INFO):
+        udp.deliver(doorbell.ring(ring_key, NONCE, now=clock.now()), (BELL_IP, PORT))
+        await clock.run(seconds=5)
+
+    assert "Rung by the Doorbell" not in caplog.text
+    assert (await running.status()).tunnel == "closed"
+
+
 async def test_a_ring_is_ignored_while_remote_access_is_paused(
     running: Running,
     portal: FakePortal,

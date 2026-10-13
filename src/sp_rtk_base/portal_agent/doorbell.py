@@ -228,6 +228,9 @@ class Doorbell:
         host, port = self._target
         address = await checked_address(host, port, self._resolve)
         if address is None:
+            # Rings are accepted only from where the last keepalive went:
+            # once the host is refused, from nowhere.
+            self._sent_to = None
             self._usable = False
             return
         try:

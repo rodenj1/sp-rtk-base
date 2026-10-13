@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Literal, NamedTuple, Protocol
@@ -185,6 +186,10 @@ class FrameSubscriber(Protocol):
     def relay_stopped(self) -> None: ...
 
 
+APP_EVENTS = 50
+"""How many of the app's own Event log entries the backfill keeps."""
+
+
 class RelayService:
     """Async adapter for sp-rtk-base-relay's threaded RelayEngine.
 
@@ -216,6 +221,7 @@ class RelayService:
         """While an Update runs, Start is refused: nothing new starts on
         code that's about to be replaced."""
         self._events = RelayEvents()
+        self._app_events: deque[dict[str, Any]] = deque(maxlen=APP_EVENTS)
 
     def set_console_check(self, check: Callable[[], bool]) -> None:
         """Set a callback that says whether the console is connected.
@@ -590,7 +596,8 @@ class RelayService:
         return self._events.open()
 
     def get_recent_events(self, count: int = 50) -> list[dict[str, Any]]:
-        """Get recent events from the ring buffer as dicts.
+        """Get recent events from the ring buffer as dicts, merged with the
+        app's own (:meth:`publish_app_event`).
 
         Args:
             count: Maximum number of events to return.
@@ -598,10 +605,20 @@ class RelayService:
         Returns:
             List of event dictionaries (oldest first).
         """
-        if self._engine is None:
-            return []
-        events: list[RelayEvent] = self._engine.get_recent_events(count)
-        return [asdict(e) for e in events]
+        events: list[dict[str, Any]] = list(self._app_events)
+        if self._engine is not None:
+            relay_events: list[RelayEvent] = self._engine.get_recent_events(count)
+            events += [asdict(e) for e in relay_events]
+        events.sort(key=lambda e: float(e.get("timestamp", 0.0)))
+        return events[-count:] if count > 0 else []
+
+    def publish_app_event(self, event: dict[str, Any]) -> None:
+        """Add an Event log entry that isn't the Relay's (e.g. the Portal
+        tunnel opened): kept for the backfill and streamed to every open
+        stream, whether or not the Relay is running. Call it on the event
+        loop."""
+        self._app_events.append(event)
+        self._events.publish(event)
 
     # ------------------------------------------------------------------
     # Internals

@@ -19,6 +19,7 @@ import pytest
 import pytest_asyncio
 from sp_rtk_portal_protocol import AgentConfig, BaseKey, doorbell
 
+from sp_rtk_base.portal_agent.client import pause
 from sp_rtk_base.portal_agent.state import Claim, save_claim
 from tests.fixtures.fake_portal import FakeClock, FakePortal
 from tests.fixtures.fake_tunnel import TunnelEndpoint
@@ -272,3 +273,21 @@ async def test_a_forged_ring_is_ignored(
     await clock.run(seconds=5)
 
     assert endpoint.opens == []
+
+
+async def test_a_ring_is_ignored_while_remote_access_is_paused(
+    running: Running,
+    portal: FakePortal,
+    clock: FakeClock,
+    udp: FakeUdp,
+    endpoint: TunnelEndpoint,
+) -> None:
+    ring_key = await _heard(running, portal, clock)
+    endpoint.nonce = NONCE
+    await pause(running.sock)
+
+    udp.deliver(doorbell.ring(ring_key, NONCE, now=clock.now()), (BELL_IP, PORT))
+    await clock.run(seconds=5)
+
+    assert endpoint.opens == []
+    assert (await running.status()).tunnel == "closed"

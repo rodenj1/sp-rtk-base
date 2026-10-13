@@ -11,6 +11,8 @@ application's service layer:
 - ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
 - ``UpdateCheckService`` — checks PyPI for an Available update
 - ``UpdateService`` — requests an Update and follows it (ADR 0005)
+- ``PortalEvents`` — the Portal agent's tunnel opens and closes, in the
+  Event log
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from typing import Literal
 from pydantic import ValidationError
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
+from sp_rtk_base.portal_agent.client import read_status
+from sp_rtk_base.portal_agent.protocol import socket_path
 from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.correction_verification import (
@@ -34,6 +38,7 @@ from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceSe
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_service import NetworkService
+from sp_rtk_base.services.portal_events import PortalEvents
 from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
@@ -252,6 +257,11 @@ def wire_host_setup(update: UpdateService, check: UpdateCheckService) -> None:
 
 
 wire_host_setup(update_service, update_check_service)
+
+portal_events: PortalEvents = PortalEvents(
+    lambda: read_status(socket_path()), relay_service.publish_app_event
+)
+"""Tunnel opens and closes, read from the Portal agent, in the Event log."""
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers

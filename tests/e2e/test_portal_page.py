@@ -225,3 +225,62 @@ def test_un_claim_on_the_local_page_returns_it_to_not_connected(
     expect(page.get_by_test_id("portal-detail")).to_contain_text("Un-claimed.")
     expect(page.get_by_role("button", name="Connect to Portal")).to_be_enabled()
     assert portal_agent.ops.count("unclaim") == 1
+
+
+# --- Pause and live Remote sessions (ticket #92) ----------------------------------
+
+
+@pytest.mark.e2e
+def test_connected_lists_who_is_connected_remotely_and_since_when(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED | {
+        "sessions": [
+            {"who": "op@example.com", "since": "2026-01-01T12:01:00+00:00"},
+            {
+                "who": "sam@example.com",
+                "since": "2026-01-01T12:02:00+00:00",
+                "shared": True,
+            },
+        ]
+    }
+    page.goto(f"{base_url}/portal")
+
+    sessions = page.get_by_test_id("portal-session")
+    expect(sessions).to_have_count(2, timeout=15_000)
+    expect(sessions.nth(0)).to_contain_text("op@example.com")
+    expect(sessions.nth(0)).to_contain_text("since 2026-01-01 12:01 UTC")
+    expect(sessions.nth(1)).to_contain_text("sam@example.com (Shared user)")
+
+    portal_agent.status = dict(CONNECTED)
+
+    expect(page.get_by_test_id("portal-no-sessions")).to_have_text(
+        "Nobody is using this base remotely.", timeout=10_000
+    )
+
+
+@pytest.mark.e2e
+def test_the_switch_pauses_and_resumes_remote_access(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED | {
+        "sessions": [{"who": "op@example.com", "since": "2026-01-01T12:01:00+00:00"}]
+    }
+    page.goto(f"{base_url}/portal")
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Connected", timeout=15_000
+    )
+
+    page.get_by_role("button", name="Pause remote access").click()
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text("Paused")
+    expect(page.get_by_test_id("portal-detail")).to_contain_text("resume")
+    expect(page.get_by_test_id("portal-session")).to_have_count(0)
+    expect(page.get_by_test_id("portal-base-id")).to_have_text("k3mnp4qrst")
+    assert "pause" in portal_agent.ops
+
+    page.get_by_role("button", name="Resume remote access").click()
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text("Connected")
+    expect(page.get_by_role("button", name="Pause remote access")).to_be_visible()
+    assert "resume" in portal_agent.ops

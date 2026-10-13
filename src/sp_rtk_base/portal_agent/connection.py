@@ -39,6 +39,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from pydantic import ValidationError
 from sp_rtk_portal_protocol import (
     DOORBELL_OK,
     AgentConfig,
@@ -46,6 +47,7 @@ from sp_rtk_portal_protocol import (
     CheckIn,
     CheckInReply,
     LanAddress,
+    LiveSession,
     Poll,
     PollReply,
 )
@@ -58,11 +60,13 @@ from sp_rtk_base.portal_agent.portal_api import (
     UnclaimedError,
     UpgradeRequiredError,
 )
+from sp_rtk_base.portal_agent.protocol import RemoteSession
 from sp_rtk_base.portal_agent.state import (
     Claim,
     load_agent_config,
     save_agent_config,
     save_claim_file,
+    save_paused,
 )
 from sp_rtk_base.portal_agent.tunnel import (
     APP_PORT,
@@ -95,6 +99,7 @@ class Connection:
         tunnel_connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
         open_udp: doorbell.OpenUdp = doorbell.open_udp,
+        paused: bool = False,
     ) -> None:
         self._state_dir = state_dir
         self._key = key
@@ -111,6 +116,10 @@ class Connection:
         self.notices: list[str] = []
         self.needs_upgrade = False
         self.upgrade_message: str | None = None
+        self.paused = paused
+        """Remote access paused on site: polls say so and Wakes are ignored."""
+        self.sessions: list[RemoteSession] = []
+        """Live Remote sessions, from the last poll reply."""
         self.unclaimed = False
         """The Portal answered 401 ``unclaimed``: the loop has ended."""
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
@@ -179,19 +188,25 @@ class Connection:
             await self._sleep(delay)
 
     async def _poll(self) -> None:
-        reply = await self._api.poll(self._key, Poll(state="connected"))
+        state = "paused" if self.paused else "connected"
+        reply = await self._api.poll(self._key, Poll(state=state))
         self._heard(reply)
         self._on_poll_reply(reply)
 
     def _on_poll_reply(self, reply: PollReply) -> None:
         """What a poll reply asks beyond the common part: a Wake opens the
         tunnel at the agent's own checked tunnel URL, never anywhere the
-        reply names."""
+        reply names, unless remote access is paused."""
+        self.sessions = [] if self.paused else _sessions(reply.sessions)
         if reply.wake is not None:
             self._on_wake(reply.wake)
 
     def _on_wake(self, nonce: str) -> None:
-        """A Wake, from a poll reply or a Doorbell ring."""
+        """A Wake, from a poll reply or a Doorbell ring; ignored while remote
+        access is paused."""
+        if self.paused:
+            logger.info("Ignoring a Wake: remote access is paused")
+            return
         self.tunnel.wake(nonce, self.config.tunnel_url)
 
     def _check_in_soon(self) -> None:
@@ -206,6 +221,26 @@ class Connection:
                 wait = self.config.check_in_interval / 2
             logger.info("The Portal asked for fewer Check-ins; next in %ss", wait)
             self._check_in_due = self._now() + timedelta(seconds=wait)
+
+    async def set_paused(self, paused: bool) -> None:
+        """Pause (or resume) remote access, and tell the Portal at once.
+
+        Pausing closes the tunnel, so live Remote sessions are cut here
+        whatever the Portal does; the Portal ends them and revokes their
+        tokens when it hears ``paused``. The pause is kept on disk.
+        """
+        self.paused = paused
+        save_paused(self._state_dir, paused)
+        logger.info("Remote access %s", "paused" if paused else "resumed")
+        if paused:
+            self.sessions = []
+            await self.tunnel.close()
+        try:
+            await self._poll()
+        except UpgradeRequiredError as exc:
+            self._upgrade_required(exc)
+        except (UnclaimedError, PortalUnreachableError, RateLimitedError) as exc:
+            logger.info("Couldn't tell the Portal yet, the next poll will: %s", exc)
 
     async def _check_in(self) -> None:
         reply = await self._api.check_in(
@@ -253,3 +288,14 @@ class Connection:
         self.needs_upgrade = True
         self.upgrade_message = exc.reply.message or UPGRADE_MESSAGE
         self._check_in_due = self._now()  # first thing once accepted again
+
+
+def _sessions(reported: list[LiveSession]) -> list[RemoteSession]:
+    """The live Remote sessions a poll reply lists, skipping any malformed."""
+    sessions: list[RemoteSession] = []
+    for s in reported:
+        try:
+            sessions.append(RemoteSession.model_validate(s.to_json()))
+        except ValidationError:
+            logger.warning("Ignoring a malformed Remote session from the Portal")
+    return sessions

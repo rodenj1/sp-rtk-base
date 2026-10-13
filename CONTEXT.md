@@ -295,3 +295,12 @@ version, Doorbell health and LAN addresses. Each reply carries the
 **agent config** (revisioned timings and addresses the agent checks
 before use) and any notices.
 _Avoid_: heartbeat, keepalive
+
+**Paused** (remote access paused):
+The Operator's brake on remote use, on the base's local Portal page
+("Pause remote access"). A paused agent keeps its key and Claim and keeps
+polling, but each poll says `paused` and it ignores Wakes; pausing closes
+the tunnel, and the Portal ends the live Remote sessions. Kept across
+restarts; only "Resume remote access" on the base undoes it. Each tunnel
+open and close also goes into the Event log.
+_Avoid_: disabled, offline (an offline base isn't polling at all)

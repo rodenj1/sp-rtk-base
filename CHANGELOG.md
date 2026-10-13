@@ -63,6 +63,13 @@ The groundwork for the remote access Portal (rtk_development#82).
   such field, closes the whole tunnel and is logged. The Portal closes
   the tunnel 2 minutes after the last remote user leaves. The agent's
   status reports the tunnel's state and open streams.
+- **Who is connected, and a brake.** While Connected, the Portal page lists
+  the live Remote sessions (who, and since when) and offers "Pause remote
+  access": the base stays Claimed and keeps polling, but ignores Wakes,
+  closes its tunnel at once and the Portal ends its Remote sessions. The
+  pause survives restarts, and only "Resume remote access" on the base
+  lifts it. Every tunnel open and close is an Event log entry, whether or
+  not the Relay is running.
 - **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
   base's id (`{"id": "..."}`), readable cross-origin by the Portal only;
   an unclaimed base answers 404 with no body.

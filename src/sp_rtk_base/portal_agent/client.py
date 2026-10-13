@@ -27,6 +27,20 @@ class ClaimFailedError(Exception):
     """The agent couldn't start a Claim. The message is for the Operator."""
 
 
+async def _hang_up(writer: asyncio.StreamWriter) -> None:
+    """Close the connection and wait until it really is closed.
+
+    ``close()`` alone only schedules it: the socket stays open until this
+    loop runs again, and the agent keeps a connection for a caller that
+    has already moved on.
+    """
+    writer.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), TIMEOUT_S)
+    except (OSError, asyncio.TimeoutError):
+        pass  # Closed as far as we're concerned: the reply is all we needed.
+
+
 async def _request(
     path: Path, request: dict[str, Any], timeout: float = TIMEOUT_S
 ) -> dict[str, Any]:
@@ -45,7 +59,7 @@ async def _request(
     except (OSError, asyncio.TimeoutError) as exc:
         raise AgentUnavailableError(f"The Portal agent didn't answer: {exc}") from exc
     finally:
-        writer.close()
+        await _hang_up(writer)
     try:
         reply = json.loads(line)
     except ValueError as exc:

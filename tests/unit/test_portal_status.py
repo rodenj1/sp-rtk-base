@@ -352,6 +352,16 @@ async def test_pause_and_resume_ask_the_agent(sock_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_request_hangs_up_before_it_returns(sock_path: Path) -> None:
+    agent = FakeAgentSocket(sock_path)
+    with agent:
+        agent.status = dict(CONNECTED)
+        assert await pause_remote_access(sock_path) is None
+        # No await from here on: this loop never runs again before the check.
+        assert agent.hung_up(timeout=2.0)
+
+
+@pytest.mark.asyncio
 async def test_pause_says_why_it_failed(sock_path: Path) -> None:
     assert await pause_remote_access(sock_path) == "The Portal agent is not running"
 

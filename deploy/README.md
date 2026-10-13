@@ -102,3 +102,34 @@ override with `PORTAL_AGENT_PUBLIC_DNS`) answer from this host:
 
 Re-running `install.sh` checks again and removes whichever file is stale;
 `uninstall.sh` removes both.
+
+Public resolvers aren't always what they seem: some home networks (a
+Firewalla, for one) intercept every query to port 53, even one addressed
+to 1.1.1.1, and may answer the Portal's name with a LAN address, which the
+agent is denied. So the agent looks up the Portal host, and the Doorbell
+host, over **DNS-over-HTTPS** instead: an RFC 8484 query for A records to
+`https://1.1.1.1/dns-query` (Cloudflare), then `https://8.8.8.8/dns-query`
+(Google). Both are named by IP, so DoH needs no DNS, and both certificates
+cover those IPs. (Quad9's 9.9.9.9 needs HTTP/2 for DoH, which the agent's
+client doesn't speak.)
+
+- It keeps only public answers: a private, loopback or link-local one is
+  dropped and logged, as for the Doorbell host.
+- It connects to that address but as the host name: TLS (SNI and the
+  certificate check) and the HTTP `Host` header are still the Portal's, so
+  nothing else changes.
+- An answer is kept for its TTL, at least 5 minutes and at most an hour,
+  so polls don't each cost a lookup (one is about 5 KB with its TLS
+  handshake: under 50 MB a month at the 5-minute floor). A connection to a kept address that fails
+  looks it up again next time.
+- If DoH fails (blocked, or no answer within 3 s), the agent logs it once
+  and uses the resolver above, trying DoH again every 5 minutes. A LAN
+  answer from there is still blocked by the unit, as before.
+- A development override (`SP_RTK_BASE_PORTAL_URL`) on an IP address or
+  `localhost` skips DoH. Any other name is looked up over DoH too, so an
+  override name only the local DNS knows falls back to it (with the
+  warning).
+
+To check DoH from the base: `journalctl -u sp-rtk-base-portal-agent`
+shows `using system DNS` when it fell back, `Dropped the DoH answer ...`
+for a private answer.

@@ -34,6 +34,14 @@ The groundwork for the remote access Portal (rtk_development#82).
   base's LAN resolver and warns that the agent can then reach that address
   on any port (a router's admin page included). Re-running the installer
   checks again.
+- **The Portal over DNS-over-HTTPS.** The agent looks up the Portal host
+  and the Doorbell host over DoH (`https://1.1.1.1/dns-query`, then
+  `https://8.8.8.8/dns-query`), so a network that intercepts port-53 DNS
+  and answers the Portal's name with a LAN address (a Firewalla does)
+  doesn't cut the base off. Only public answers are used, kept for their
+  TTL (5 minutes to an hour); the agent connects to that address with TLS
+  and the `Host` header still on the Portal's name. If DoH is blocked it
+  logs that once and uses ordinary DNS, as before.
 - **Claim.** "Connect to Portal" on the System > Portal page starts a
   Claim: the agent makes the base's key (Ed25519), asks the Portal for an
   8-letter pairing code and shows it with a 10-minute countdown and an

@@ -43,6 +43,7 @@ from sp_rtk_base.portal_agent.portal_api import (
 from sp_rtk_base.portal_agent.protocol import AgentStatus, state_path
 from sp_rtk_base.portal_agent.protocol import portal_url as default_portal_url
 from sp_rtk_base.portal_agent.state import Claim, load_claim, save_claim
+from sp_rtk_base.portal_agent.tunnel import APP_PORT, Connect, connect_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,12 @@ class PortalAgent:
         resolve: doorbell.Resolve = doorbell.system_resolve,
         lan_addresses: Callable[[], list[LanAddress]] = lan.lan_addresses,
         protocol_version: int = PROTOCOL_VERSION,
+        tunnel_connect: Connect = connect_websocket,
+        app_port: int = APP_PORT,
     ) -> None:
+        """``tunnel_connect`` and ``app_port`` exist for tests (a websocket
+        connector reaching a test Portal, and the stub UI's port). Nothing the
+        Portal sends can change either."""
         self._state_dir = state_dir if state_dir is not None else state_path()
         self._api = PortalApi(
             portal_url if portal_url is not None else default_portal_url(),
@@ -106,6 +112,8 @@ class PortalAgent:
         )
         self._resolve = resolve
         self._lan_addresses = lan_addresses
+        self._tunnel_connect = tunnel_connect
+        self._app_port = app_port
         self._now = now
         self._sleep = sleep
         self._name = name if name is not None else socket.gethostname()
@@ -148,6 +156,9 @@ class PortalAgent:
                 tunnel_url=conn.config.tunnel_url,
                 notices=conn.notices,
                 needs_upgrade=conn.needs_upgrade,
+                tunnel=conn.tunnel.state,
+                tunnel_since=conn.tunnel.since,
+                tunnel_streams=conn.tunnel.streams,
             )
         if self._pairing is not None:
             p = self._pairing
@@ -240,6 +251,8 @@ class PortalAgent:
             software_version=self._version,
             resolve=self._resolve,
             lan_addresses=self._lan_addresses,
+            tunnel_connect=self._tunnel_connect,
+            app_port=self._app_port,
         )
         self._connection_task = asyncio.create_task(self._connection.run())
 

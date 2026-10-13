@@ -84,6 +84,13 @@ class AgentStatus(BaseModel):
     needs_upgrade: bool = False
     """The Portal no longer supports this agent's protocol version (426); it
     retries once a day. ``message`` is the Portal's explanation."""
+    # Connected: the tunnel (ticket #88)
+    tunnel: Literal["closed", "opening", "open"] | None = None
+    """The tunnel a Wake opens; ``closed`` between Remote sessions."""
+    tunnel_since: datetime | None = None
+    """When the tunnel last changed state (opened, or closed)."""
+    tunnel_streams: int = 0
+    """Streams open through the tunnel now (requests and websockets)."""
 
 
 def socket_path() -> Path:

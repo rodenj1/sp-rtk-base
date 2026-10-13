@@ -50,6 +50,12 @@ from sp_rtk_base.portal_agent.state import (
     save_agent_config,
     save_claim_file,
 )
+from sp_rtk_base.portal_agent.tunnel import (
+    APP_PORT,
+    Connect,
+    TunnelClient,
+    connect_websocket,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +78,8 @@ class Connection:
         software_version: str,
         resolve: doorbell.Resolve,
         lan_addresses: Callable[[], list[LanAddress]],
+        tunnel_connect: Connect = connect_websocket,
+        app_port: int = APP_PORT,
     ) -> None:
         self._state_dir = state_dir
         self._key = key
@@ -91,6 +99,12 @@ class Connection:
         self.needs_upgrade = False
         self.upgrade_message: str | None = None
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
+        self.tunnel = TunnelClient(
+            headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
+            now=now,
+            connect=tunnel_connect,
+            app_port=app_port,
+        )
 
     @property
     def wake_mode(self) -> Literal["polling", "doorbell"]:
@@ -101,7 +115,13 @@ class Connection:
         return self.config.interval(self.metered)
 
     async def run(self) -> None:
-        """Poll and Check in until cancelled."""
+        """Poll and Check in until cancelled (which also closes the tunnel)."""
+        try:
+            await self._beat()
+        finally:
+            await self.tunnel.close()
+
+    async def _beat(self) -> None:
         while True:
             try:
                 if self._now() >= self._check_in_due:
@@ -127,7 +147,11 @@ class Connection:
         self._on_poll_reply(reply)
 
     def _on_poll_reply(self, reply: PollReply) -> None:
-        """What a poll reply asks beyond the common part (a Wake, #88)."""
+        """What a poll reply asks beyond the common part: a Wake opens the
+        tunnel at the agent's own checked tunnel URL, never anywhere the
+        reply names."""
+        if reply.wake is not None:
+            self.tunnel.wake(reply.wake, self.config.tunnel_url)
 
     async def _check_in(self) -> None:
         self.doorbell = await doorbell.health(self.config.doorbell, self._resolve)

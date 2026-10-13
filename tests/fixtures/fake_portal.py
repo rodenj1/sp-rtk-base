@@ -146,6 +146,8 @@ class FakePortal:
     """Refuse (426) any request with a lower protocol version."""
     status: int = 200
     """Answer polls and Check-ins with this HTTP status (with no body)."""
+    wake: str | None = None
+    """Put this Wake nonce in every poll reply (ticket #88)."""
     _key: str | None = None
     _replays: ReplayCache = field(default_factory=ReplayCache)
 
@@ -200,15 +202,16 @@ class FakePortal:
                 return httpx.Response(self.status)
             msg_cls = Poll if request.url.path == POLL_PATH else CheckIn
             msg_cls.from_json(data)
-            reply_cls = PollReply if request.url.path == POLL_PATH else CheckInReply
-            return httpx.Response(
-                200,
-                json=reply_cls(
-                    config=self.config,
-                    metered=self.metered,
-                    notices=list(self.notices),
-                ).to_json(),
-            )
+            common: dict[str, Any] = {
+                "config": self.config,
+                "metered": self.metered,
+                "notices": list(self.notices),
+            }
+            if request.url.path == POLL_PATH:
+                return httpx.Response(
+                    200, json=PollReply(**common, wake=self.wake).to_json()
+                )
+            return httpx.Response(200, json=CheckInReply(**common).to_json())
         if request.url.path == CLAIMS_PATH:
             ClaimStart.from_json(data)
             if self.start_status != 200:

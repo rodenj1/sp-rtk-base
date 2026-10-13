@@ -34,6 +34,7 @@ from sp_rtk_portal_protocol import (
     PollReply,
     UpgradeRequired,
 )
+from sp_rtk_portal_protocol.tunnel import signed_url
 
 TIMEOUT_S = 10.0
 
@@ -81,6 +82,16 @@ class PortalApi:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    def tunnel_headers(self, key: BaseKey, url: str, nonce: str) -> dict[str, str]:
+        """Headers of the tunnel open: a GET signed for ``url`` whose proof
+        echoes the Wake ``nonce``, and the protocol version."""
+        return {
+            "Authorization": key.authorization(
+                "GET", signed_url(url), now=self._now(), nonce=nonce
+            ),
+            VERSION_HEADER: str(self.protocol_version),
+        }
 
     async def _post(self, key: BaseKey, path: str, message: Message) -> httpx.Response:
         # Made on first use: an unclaimed, idle agent opens nothing.

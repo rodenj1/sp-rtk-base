@@ -17,12 +17,15 @@ from nicegui import ui
 from sp_rtk_base.portal_agent.protocol import socket_path
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.portal_status import (
+    UNCLAIM_QUESTION,
+    UNCLAIM_WARNING,
     PortalView,
     connect,
     countdown,
     pause_remote_access,
     portal_view,
     resume_remote_access,
+    unclaim,
 )
 
 _POLL_S = 5.0
@@ -59,6 +62,30 @@ async def portal_page() -> None:
             if problem:
                 ui.notify(problem, type="negative")
             await refresh()
+
+        async def on_unclaim(dialog: ui.dialog, button: ui.button) -> None:
+            button.props("loading")
+            problem = await unclaim(socket_path())
+            button.props(remove="loading")
+            dialog.close()
+            if problem:
+                ui.notify(problem, type="negative")
+            await refresh()
+
+        def confirm_unclaim() -> None:
+            with (
+                ui.dialog() as dialog,
+                ui.card().classes("q-pa-md").style("min-width: 400px"),
+            ):
+                ui.label(UNCLAIM_QUESTION).classes("text-h6 text-white")
+                ui.label(UNCLAIM_WARNING).classes("text-caption text-grey-5 q-mt-sm")
+                with ui.row().classes("justify-end gap-2 q-mt-md"):
+                    ui.button("Cancel", on_click=dialog.close).props("flat")
+                    confirm = ui.button("Un-claim").props(
+                        'color=negative data-testid="portal-unclaim-confirm"'
+                    )
+                    confirm.on_click(lambda: on_unclaim(dialog, confirm))
+            dialog.open()
 
         def tick() -> None:
             view = shown[0]
@@ -147,6 +174,12 @@ async def portal_page() -> None:
                         'color=primary data-testid="portal-connect"'
                     )
                     connect_button.on_click(lambda: on_connect(connect_button))
+                if view.can_unclaim:
+                    ui.button(
+                        "Un-claim", icon="link_off", on_click=confirm_unclaim
+                    ).props('flat color=negative data-testid="portal-unclaim"').classes(
+                        "q-mt-md"
+                    )
 
         async def refresh() -> None:
             render(await portal_view(socket_path()))

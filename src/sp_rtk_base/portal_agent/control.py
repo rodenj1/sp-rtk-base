@@ -38,6 +38,7 @@ from sp_rtk_base.portal_agent.connection import UPGRADE_MESSAGE, Connection
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
+    UnclaimedError,
     UpgradeRequiredError,
 )
 from sp_rtk_base.portal_agent.protocol import (
@@ -52,6 +53,7 @@ from sp_rtk_base.portal_agent.state import (
     load_paused,
     save_claim,
     save_paused,
+    wipe_claim,
 )
 from sp_rtk_base.portal_agent.tunnel import APP_PORT, Connect, connect_websocket
 
@@ -82,6 +84,12 @@ def _utcnow() -> datetime:
 
 EXPIRED = "The code expired before it was approved. Connect again for a new one."
 REFUSED = "The Portal refused the Claim. Connect again to retry."
+UNCLAIMED = "Un-claimed."
+UNCLAIMED_UNTOLD = (
+    "Un-claimed here, but the Portal couldn't be told: Un-claim the base on "
+    "the Portal too."
+)
+UNCLAIMED_ON_PORTAL = "This base was Un-claimed on the Portal."
 SLOW_DOWN_S = 5
 """RFC 8628 §3.5: a ``slow_down`` adds this to the poll interval, for good."""
 
@@ -89,7 +97,9 @@ SLOW_DOWN_S = 5
 class PortalAgent:
     """The agent's state: not connected, pairing or connected (Claimed).
 
-    Unclaimed it is idle and contacts nothing. "Connect to Portal" calls
+    Unclaimed it is idle and contacts nothing. :meth:`unclaim` (the local
+    page's Un-claim) and a 401 ``unclaimed`` from the Portal both wipe the
+    key and return it there. "Connect to Portal" calls
     :meth:`start_claim`: it makes a base key, asks the Portal for a pairing
     code and polls (RFC 8628) until the Operator approves it, the code
     expires or the Portal refuses. Once Claimed, the key and Claim are on
@@ -273,7 +283,49 @@ class PortalAgent:
             app_port=self._app_port,
             paused=self._paused,
         )
-        self._connection_task = asyncio.create_task(self._connection.run())
+        self._connection_task = asyncio.create_task(
+            self._run_connection(self._connection)
+        )
+
+    async def _run_connection(self, connection: Connection) -> None:
+        await connection.run()
+        if connection.unclaimed:
+            async with self._lock:
+                if self._connection is connection:
+                    self._forget(UNCLAIMED_ON_PORTAL)
+
+    async def unclaim(self) -> AgentStatus:
+        """Un-claim: stop polling (closing the tunnel), tell the Portal with
+        a signed release (best effort), wipe the key and go idle. A no-op
+        when not Claimed."""
+        async with self._lock:
+            if self._claim is None or self._key is None:
+                return self.status()
+            task, self._connection_task = self._connection_task, None
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            message = UNCLAIMED
+            try:
+                await self._api.release(self._key)
+            except UnclaimedError:
+                pass  # the Portal had already forgotten it
+            except (PortalUnreachableError, UpgradeRequiredError) as exc:
+                logger.warning("Couldn't tell the Portal about the Un-claim: %s", exc)
+                message = UNCLAIMED_UNTOLD
+            self._forget(message)
+            return self.status()
+
+    def _forget(self, message: str) -> None:
+        wipe_claim(self._state_dir)
+        logger.info(
+            "Un-claimed %s: %s", self._claim.base_id if self._claim else "?", message
+        )
+        self._key = self._claim = self._connection = None
+        self._connection_task = None
+        self._message = message
+        self._paused = False  # a new Claim starts with remote access on
 
     async def set_paused(self, paused: bool) -> AgentStatus:
         """Pause or resume remote access. Raises :class:`NotClaimedError`."""
@@ -341,6 +393,9 @@ async def _answer(agent: PortalAgent, line: bytes) -> dict[str, Any]:
             status = await agent.set_paused(op == "pause")
         except NotClaimedError:
             return {"ok": False, "error": "not claimed"}
+        return {"ok": True, "status": status.model_dump(mode="json")}
+    if op == "unclaim":
+        status = await agent.unclaim()
         return {"ok": True, "status": status.model_dump(mode="json")}
     return {"ok": False, "error": "unknown op"}
 

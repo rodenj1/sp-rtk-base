@@ -8,6 +8,7 @@ Once Claimed, ``agent_config.json`` holds the last agent config block the
 Portal sent, and ``claim.json``'s ``last_contact`` is refreshed on each
 Check-in (not each poll: an SD card shouldn't take a write every 20 s).
 An empty ``paused`` file is there while remote access is paused on site.
+An Un-claim deletes all of it (:func:`wipe_claim`).
 """
 
 from __future__ import annotations
@@ -84,6 +85,15 @@ def read_base_id(state_dir: Path) -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
     return value if value.isalnum() else None
+
+
+def wipe_claim(state_dir: Path) -> None:
+    """Forget the Claim (Un-claim): delete the key, the Claim, the ``<id>``
+    the agent config and a pause. The next Claim makes a new key."""
+    for name in (KEY_FILE, CLAIM_FILE, ID_FILE, CONFIG_FILE, PAUSED_FILE):
+        for path in (state_dir / name, state_dir / (name + ".tmp")):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
 
 
 def save_claim_file(state_dir: Path, claim: Claim) -> None:

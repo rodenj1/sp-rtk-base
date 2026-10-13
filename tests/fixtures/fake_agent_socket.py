@@ -3,9 +3,11 @@ agent's Unix socket is faked there").
 
 Speaks the control socket's wire format (one JSON object per line). A test
 sets what it answers: ``fake.status`` for ``status``, ``fake.after_claim``
-for ``start_claim`` (``None``: refuse with ``fake.claim_error``).
-``pause``/``resume`` switch ``status["state"]`` between ``paused`` and
-``connected`` (and drop ``sessions`` on pause). ``ops`` lists every op asked. Runs its own event loop on a thread.
+for ``start_claim`` (``None``: refuse with ``fake.claim_error``);
+``unclaim`` goes back to not connected; ``pause``/``resume`` switch
+``status["state"]`` between ``paused`` and ``connected`` (and drop
+``sessions`` on pause). ``ops`` lists every op asked. Runs its own event
+loop on a thread.
 """
 
 from __future__ import annotations
@@ -56,6 +58,9 @@ class FakeAgentSocket:
             self.status["state"] = "paused" if op == "pause" else "connected"
             if op == "pause":
                 self.status["sessions"] = []
+            return {"ok": True, "status": self.status}
+        if op == "unclaim":
+            self.status = {"state": "not_connected", "message": "Un-claimed."}
             return {"ok": True, "status": self.status}
         return {"ok": False, "error": "unknown op"}
 

@@ -15,6 +15,8 @@ TIMEOUT_S = 2.0
 CLAIM_TIMEOUT_S = 15.0
 """Starting a Claim, pausing or resuming waits for the Portal (the agent
 gives it 10 s)."""
+UNCLAIM_TIMEOUT_S = 15.0
+"""Un-claim waits for the release to reach the Portal (best effort, 5 s)."""
 
 
 class AgentUnavailableError(Exception):
@@ -91,3 +93,12 @@ async def pause(path: Path) -> AgentStatus:
 async def resume(path: Path) -> AgentStatus:
     """Resume remote access (only ever from here: the Portal can't)."""
     return _status(await _request(path, {"op": "resume"}, CLAIM_TIMEOUT_S))
+
+
+async def unclaim(path: Path) -> AgentStatus:
+    """Un-claim the base: the agent tells the Portal (best effort), wipes its
+    key and goes back to not connected. A no-op on an unclaimed base.
+
+    Raises :class:`AgentUnavailableError`.
+    """
+    return _status(await _request(path, {"op": "unclaim"}, UNCLAIM_TIMEOUT_S))

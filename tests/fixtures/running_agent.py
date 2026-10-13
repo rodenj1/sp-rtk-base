@@ -12,7 +12,7 @@ from typing import Any
 
 from sp_rtk_portal_protocol import PROTOCOL_VERSION, LanAddress
 
-from sp_rtk_base.portal_agent.client import read_status
+from sp_rtk_base.portal_agent.client import read_status, unclaim
 from sp_rtk_base.portal_agent.control import PortalAgent, serve
 from sp_rtk_base.portal_agent.protocol import AgentStatus
 from tests.fixtures.fake_portal import ORIGIN, FakeClock, FakePortal
@@ -73,6 +73,10 @@ class Running:
 
     async def status(self) -> AgentStatus:
         return await read_status(self.sock)
+
+    async def unclaim(self) -> AgentStatus:
+        """The local page's Un-claim."""
+        return await unclaim(self.sock)
 
     async def until(self, state: str) -> AgentStatus:
         """Let virtual time run until the agent is in ``state``."""

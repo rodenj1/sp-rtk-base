@@ -11,6 +11,9 @@ metered flag, notices, and the agent config block (applied only when its
 revision changes, then persisted). A poll reply also goes through
 :meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled.
 
+A 401 ``unclaimed`` means the base was Un-claimed on the Portal: the loop
+ends with :attr:`Connection.unclaimed` set, and the agent wipes its key.
+
 A 426 means this agent's protocol version is no longer supported: it keeps
 its key and Claim, stops polling and tries again once a day; the status says
 ``needs_upgrade``.
@@ -107,6 +110,8 @@ class Connection:
         """Remote access paused on site: polls say so and Wakes are ignored."""
         self.sessions: list[RemoteSession] = []
         """Live Remote sessions, from the last poll reply."""
+        self.unclaimed = False
+        """The Portal answered 401 ``unclaimed``: the loop has ended."""
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
         self.tunnel = TunnelClient(
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
@@ -124,7 +129,8 @@ class Connection:
         return self.config.interval(self.metered)
 
     async def run(self) -> None:
-        """Poll and Check in until cancelled (which also closes the tunnel)."""
+        """Poll and Check in until cancelled or Un-claimed on the Portal
+        (either also closes the tunnel)."""
         try:
             await self._beat()
         finally:
@@ -141,10 +147,9 @@ class Connection:
                 self._upgrade_required(exc)
                 delay = UPGRADE_RETRY_S
             except UnclaimedError as exc:
-                # Un-claim on the Portal: wiping the key is the Un-claim
-                # ticket's; until then keep asking.
-                logger.warning("Poll refused: %s", exc)
-                delay = self.poll_interval
+                logger.warning("Un-claimed on the Portal: %s", exc)
+                self.unclaimed = True
+                return
             except PortalUnreachableError as exc:
                 logger.info("Couldn't reach the Portal, will retry: %s", exc)
                 delay = self.poll_interval

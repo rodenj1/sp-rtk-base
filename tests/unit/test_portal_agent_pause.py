@@ -22,6 +22,7 @@ from sp_rtk_base.portal_agent.client import (
     AgentUnavailableError,
     pause,
     resume,
+    unclaim,
 )
 from sp_rtk_base.portal_agent.state import Claim, save_claim
 from tests.fixtures.fake_portal import FakeClock, FakePortal
@@ -289,3 +290,14 @@ async def test_a_refused_tunnel_is_neither_an_open_nor_a_close(
 
     assert endpoint.opens and not endpoint.opens[0].accepted
     assert (await running.status()).tunnel_events == []
+
+
+async def test_an_un_claim_forgets_the_pause(running: Running) -> None:
+    await pause(running.sock)
+
+    status = await unclaim(running.sock)
+
+    assert status.state == "not_connected"
+    assert not (running.state / "paused").exists()
+    await running.restart()
+    assert (await running.status()).state == "not_connected"

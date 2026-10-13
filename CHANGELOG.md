@@ -21,11 +21,19 @@ The groundwork for the remote access Portal (rtk_development#82).
   nothing, and only answers the app on a Unix socket only the service
   user can use. Installing sp-rtk-base never makes a base phone home.
 - **Kept off the LAN.** The agent's unit carries the app's sandboxing plus
-  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`,
-  `DevicePolicy=closed` and an `IPAddressDeny` of the private and
-  link-local ranges, so it can't open a socket to anything on the LAN
-  whatever its code does. If the base's DNS resolver is on the LAN, the
-  installer allows just that address.
+  `RestrictAddressFamilies=AF_INET AF_UNIX`, `DevicePolicy=closed` and an
+  `IPAddressDeny` of the private and link-local IPv4 ranges and of all
+  IPv6 but `::1`, so it can't open a socket to anything on the LAN
+  whatever its code does, including a LAN device's global IPv6 address.
+  It reaches dual-stack hosts over IPv4 without waiting on IPv6.
+- **Its own DNS.** The agent resolves names through public resolvers
+  (1.1.1.1, 9.9.9.9, 8.8.8.8), from its own resolv.conf in
+  `/etc/sp-rtk-base-portal-agent/`, so it never needs the LAN's resolver,
+  which on a home LAN is the router. The installer checks they answer
+  from the base. If public DNS is blocked, it falls back to allowing the
+  base's LAN resolver and warns that the agent can then reach that address
+  on any port (a router's admin page included). Re-running the installer
+  checks again.
 - **Claim.** "Connect to Portal" on the System > Portal page starts a
   Claim: the agent makes the base's key (Ed25519), asks the Portal for an
   8-letter pairing code and shows it with a 10-minute countdown and an

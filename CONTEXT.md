@@ -263,9 +263,11 @@ _Avoid_: cloud, captive portal (that's the setup AP's)
 The companion process on a base, run by its own systemd unit
 (`sp-rtk-base-portal-agent.service`, code in `sp_rtk_base.portal_agent`),
 that checks in with the Portal and, on request, carries a remote session to
-the base's own web UI through `localhost:8080` only. Installed with the base
+the base's own web UI through `127.0.0.1:8080` only. Installed with the base
 but idle until the base is Claimed: it holds no key, contacts nothing and
-only answers the app on its control socket. The kernel denies it the LAN.
+only answers the app on its control socket. The kernel denies it the LAN
+and all IPv6 but loopback, and it resolves names through public resolvers
+rather than the LAN's (usually the router).
 _Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
 
 **Claim**:

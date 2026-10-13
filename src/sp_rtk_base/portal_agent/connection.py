@@ -11,6 +11,12 @@ metered flag, notices, and the agent config block (applied only when its
 revision changes, then persisted). A poll reply also goes through
 :meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled.
 
+When the agent config names a Doorbell host, the :class:`~.doorbell.Doorbell`
+sends keepalives; once a Check-in reply says the Portal hears them (wake
+mode Doorbell) the beat skips its poll, and a ring Wakes the base instead
+(:meth:`Connection._on_wake`). A change of Doorbell health brings the next
+Check-in forward to the next beat.
+
 A 426 means this agent's protocol version is no longer supported: it keeps
 its key and Claim, stops polling and tries again once a day; the status says
 ``needs_upgrade``.
@@ -26,7 +32,6 @@ from pathlib import Path
 from typing import Literal
 
 from sp_rtk_portal_protocol import (
-    DOORBELL_OFF,
     DOORBELL_OK,
     AgentConfig,
     BaseKey,
@@ -80,6 +85,7 @@ class Connection:
         lan_addresses: Callable[[], list[LanAddress]],
         tunnel_connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
+        open_udp: doorbell.OpenUdp = doorbell.open_udp,
     ) -> None:
         self._state_dir = state_dir
         self._key = key
@@ -88,14 +94,12 @@ class Connection:
         self._now = now
         self._sleep = sleep
         self._version = software_version
-        self._resolve = resolve
         self._lan_addresses = lan_addresses
         self._block: AgentConfig | None = load_agent_config(state_dir)
         self.config = agent_config.effective(self._block, api.base_url)
         self.last_contact = datetime.fromisoformat(claim.last_contact)
         self.metered = False
         self.notices: list[str] = []
-        self.doorbell = DOORBELL_OFF
         self.needs_upgrade = False
         self.upgrade_message: str | None = None
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
@@ -105,6 +109,20 @@ class Connection:
             connect=tunnel_connect,
             app_port=app_port,
         )
+        self.bell = doorbell.Doorbell(
+            key=key,
+            now=now,
+            sleep=sleep,
+            resolve=resolve,
+            open_udp=open_udp,
+            on_ring=self._on_wake,
+            on_change=self._check_in_soon,
+        )
+
+    @property
+    def doorbell(self) -> str:
+        """Doorbell health (the ``DOORBELL_*`` values)."""
+        return self.bell.health
 
     @property
     def wake_mode(self) -> Literal["polling", "doorbell"]:
@@ -119,14 +137,17 @@ class Connection:
         try:
             await self._beat()
         finally:
+            await self.bell.close()
             await self.tunnel.close()
 
     async def _beat(self) -> None:
         while True:
             try:
+                await self.bell.follow(self.config.doorbell)
                 if self._now() >= self._check_in_due:
                     await self._check_in()
-                await self._poll()
+                if self.wake_mode == "polling":
+                    await self._poll()
                 delay = self.poll_interval
             except UpgradeRequiredError as exc:
                 self._upgrade_required(exc)
@@ -151,10 +172,16 @@ class Connection:
         tunnel at the agent's own checked tunnel URL, never anywhere the
         reply names."""
         if reply.wake is not None:
-            self.tunnel.wake(reply.wake, self.config.tunnel_url)
+            self._on_wake(reply.wake)
+
+    def _on_wake(self, nonce: str) -> None:
+        """A Wake, from a poll reply or a Doorbell ring."""
+        self.tunnel.wake(nonce, self.config.tunnel_url)
+
+    def _check_in_soon(self) -> None:
+        self._check_in_due = self._now()
 
     async def _check_in(self) -> None:
-        self.doorbell = await doorbell.health(self.config.doorbell, self._resolve)
         reply = await self._api.check_in(
             self._key,
             CheckIn(
@@ -167,6 +194,7 @@ class Connection:
         self._check_in_due = self._now() + timedelta(
             seconds=self.config.check_in_interval
         )
+        self.bell.portal_says(reply.doorbell_heard, reply.ring_key)
         # Persisted here rather than on every poll, to spare the SD card.
         self.claim = dataclasses.replace(
             self.claim, last_contact=self.last_contact.isoformat()

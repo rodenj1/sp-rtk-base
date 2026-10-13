@@ -148,6 +148,10 @@ class FakePortal:
     """Answer polls and Check-ins with this HTTP status (with no body)."""
     wake: str | None = None
     """Put this Wake nonce in every poll reply (ticket #88)."""
+    doorbell_heard: bool = False
+    """Tell Check-ins the Portal hears the base's Doorbell (ticket #100)."""
+    ring_key: str | None = None
+    """The ring key every Check-in reply carries."""
     _key: str | None = None
     _replays: ReplayCache = field(default_factory=ReplayCache)
 
@@ -211,7 +215,12 @@ class FakePortal:
                 return httpx.Response(
                     200, json=PollReply(**common, wake=self.wake).to_json()
                 )
-            return httpx.Response(200, json=CheckInReply(**common).to_json())
+            return httpx.Response(
+                200,
+                json=CheckInReply(
+                    **common, doorbell_heard=self.doorbell_heard, ring_key=self.ring_key
+                ).to_json(),
+            )
         if request.url.path == CLAIMS_PATH:
             ClaimStart.from_json(data)
             if self.start_status != 200:

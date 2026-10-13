@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.fake_dns import FakeDns, closed_port
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = REPO_ROOT / "deploy"
 START = "# Portal agent (spec #82)"
@@ -51,6 +53,9 @@ class Host:
         self.state = root / "state"
         self.answer = "false"
         """What ``ask`` answers in uninstall.sh (``true``: yes)."""
+        self.public = [closed_port()]
+        """The "public" resolvers install.sh checks (none answers)."""
+        self.stderr = ""
 
     @property
     def unit(self) -> Path:
@@ -59,6 +64,10 @@ class Host:
     @property
     def drop_in(self) -> Path:
         return self.units / f"{UNIT}.d" / "resolver.conf"
+
+    @property
+    def agent_resolv(self) -> Path:
+        return self.root / "etc" / "sp-rtk-base-portal-agent" / "resolv.conf"
 
     def run(self, block: str) -> list[str]:
         script = (
@@ -74,12 +83,15 @@ class Host:
             f'PORTAL_AGENT_STATE_DIR="{self.state}"\n'
             f"ask() {{ {self.answer}; }}\n"
             f'RESOLV_CONF="{self.resolv}"\n'
+            f'PORTAL_AGENT_RESOLV_CONF="{self.agent_resolv}"\n'
+            f'PORTAL_AGENT_PUBLIC_DNS="{" ".join(self.public)}"\n'
             f"{block}\n"
         )
         result = subprocess.run(
             ["bash", "-c", script], capture_output=True, text=True, check=False
         )
         assert result.returncode == 0, result.stderr
+        self.stderr = result.stderr
         return self.calls.read_text().splitlines()
 
 
@@ -102,44 +114,75 @@ class TestInstall:
         assert calls.index(f"systemctl enable {UNIT}") > reload_at
         assert calls.index(f"systemctl restart {UNIT}") > reload_at
 
-    def test_a_loopback_resolver_needs_no_allowance(
+    def test_public_dns_answers_so_the_lan_resolver_isnt_allowed(
         self, tmp_path: Path, install_block: str
     ) -> None:
-        host = Host(tmp_path, resolvers=["127.0.0.53", "::1"])
+        host = Host(tmp_path, resolvers=["192.168.0.1"])
 
-        host.run(install_block)
+        with FakeDns() as dns:
+            host.public = [dns.server]
+            calls = host.run(install_block)
 
+        # The agent's own resolv.conf (bind-mounted by the unit) lists the
+        # public resolver; no drop-in lets it reach the router.
+        assert "nameserver 127.0.0.1\n" in host.agent_resolv.read_text()
+        assert "192.168.0.1" not in host.agent_resolv.read_text()
         assert not host.drop_in.exists()
+        assert "WARN" not in host.stderr
+        assert calls.index("systemctl daemon-reload") < calls.index(
+            f"systemctl restart {UNIT}"
+        )
 
-    def test_a_lan_resolver_is_allowed_by_address(
+    def test_blocked_public_dns_falls_back_to_the_lan_resolver_with_a_warning(
         self, tmp_path: Path, install_block: str
     ) -> None:
         host = Host(tmp_path, resolvers=["192.168.1.1", "8.8.8.8", "fe80::1%eth0"])
 
-        calls = host.run(install_block)
+        host.run(install_block)
 
         text = host.drop_in.read_text()
         assert "[Service]\n" in text
+        assert "\nBindReadOnlyPaths=\n" in text
         allow = [ln for ln in text.splitlines() if ln.startswith("IPAddressAllow=")]
-        assert allow == ["IPAddressAllow=192.168.1.1 fe80::1"]
-        # ... before systemd reads the unit.
-        assert calls.index("systemctl daemon-reload") >= 0
+        assert allow == ["IPAddressAllow=192.168.1.1"]
+        assert not host.agent_resolv.exists()
+        assert "WARN" in host.stderr
+        assert "192.168.1.1" in host.stderr
+        assert "any port" in host.stderr
 
-    def test_a_rerun_is_idempotent_and_drops_a_stale_allowance(
+    def test_blocked_public_dns_with_a_loopback_resolver_opens_no_lan_address(
         self, tmp_path: Path, install_block: str
     ) -> None:
+        host = Host(tmp_path, resolvers=["127.0.0.53"])
+
+        host.run(install_block)
+
+        assert "IPAddressAllow" not in host.drop_in.read_text()
+        assert "\nBindReadOnlyPaths=\n" in host.drop_in.read_text()
+        assert "WARN" in host.stderr
+
+    def test_a_rerun_converges(self, tmp_path: Path, install_block: str) -> None:
         host = Host(tmp_path, resolvers=["10.0.0.1"])
         host.run(install_block)
         first_unit = host.unit.read_text()
         assert host.drop_in.exists()
 
-        host.resolv.write_text("nameserver 1.1.1.1\n")
-        host.run(install_block)
+        with FakeDns() as dns:
+            host.public = [dns.server]
+            host.run(install_block)
 
         assert host.unit.read_text() == first_unit
         assert not host.drop_in.exists()
+        assert not host.drop_in.parent.exists()
+        assert host.agent_resolv.exists()
 
-    def test_a_missing_resolv_conf_needs_no_allowance(
+        host.public = [closed_port()]
+        host.run(install_block)
+
+        assert host.drop_in.exists()
+        assert not host.agent_resolv.exists()
+
+    def test_a_missing_resolv_conf_is_no_error(
         self, tmp_path: Path, install_block: str
     ) -> None:
         host = Host(tmp_path, resolvers=[])
@@ -147,8 +190,22 @@ class TestInstall:
 
         host.run(install_block)
 
-        assert not host.drop_in.exists()
+        assert "IPAddressAllow" not in host.drop_in.read_text()
+        assert "can't resolve" in host.stderr
         assert host.unit.exists()
+
+    def test_the_unit_bind_mounts_the_file_install_sh_writes(self) -> None:
+        text = (DEPLOY / "install.sh").read_text()
+        default = (
+            'PORTAL_AGENT_RESOLV_CONF="${PORTAL_AGENT_RESOLV_CONF:-'
+            '/etc/sp-rtk-base-portal-agent/resolv.conf}"'
+        )
+        assert default in text
+        assert default in (DEPLOY / "uninstall.sh").read_text()
+        assert (
+            "BindReadOnlyPaths=/etc/sp-rtk-base-portal-agent/resolv.conf:/etc/resolv.conf"
+            in (DEPLOY / UNIT).read_text()
+        )
 
     def test_runs_in_both_modes(self) -> None:
         text = (DEPLOY / "install.sh").read_text()
@@ -195,12 +252,15 @@ class TestUninstall:
         host.unit.write_text("x")
         host.drop_in.parent.mkdir()
         host.drop_in.write_text("x")
+        host.agent_resolv.parent.mkdir(parents=True)
+        host.agent_resolv.write_text("x")
 
         calls = host.run(_block("uninstall.sh"))
 
         assert f"systemctl disable --now {UNIT}" in calls
         assert not host.unit.exists()
         assert not host.drop_in.parent.exists()
+        assert not host.agent_resolv.parent.exists()
 
     @pytest.mark.parametrize(("answer", "kept"), [("false", True), ("true", False)])
     def test_removes_the_claim_only_when_asked_to(

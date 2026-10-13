@@ -20,8 +20,9 @@ LAN_RANGES = {
     "172.16.0.0/12",
     "192.168.0.0/16",
     "169.254.0.0/16",
-    "fc00::/7",
-    "fe80::/10",
+    # No IPv6 at all but loopback: a LAN device's global IPv6 address is
+    # as much the LAN as its private IPv4 one.
+    "::/0",
 }
 
 
@@ -78,17 +79,24 @@ def test_has_no_devices() -> None:
     assert _values(AGENT_UNIT, "DeviceAllow") == []
 
 
-def test_only_inet_and_unix_sockets() -> None:
-    assert _words(AGENT_UNIT, "RestrictAddressFamilies") == {
-        "AF_INET",
-        "AF_INET6",
-        "AF_UNIX",
-    }
+def test_only_ipv4_and_unix_sockets() -> None:
+    """No AF_INET6: with IPv6 denied, a socket that can't be created fails
+    at once, where a denied connect would hang until it timed out."""
+    assert _words(AGENT_UNIT, "RestrictAddressFamilies") == {"AF_INET", "AF_UNIX"}
 
 
 def test_denied_the_lan_and_allowed_only_loopback() -> None:
     assert _words(AGENT_UNIT, "IPAddressDeny") == LAN_RANGES
     assert _words(AGENT_UNIT, "IPAddressAllow") == {"127.0.0.0/8", "::1"}
+
+
+def test_resolves_names_with_its_own_resolv_conf() -> None:
+    """install.sh writes public resolvers there, so the agent never needs
+    the LAN resolver (a fallback drop-in clears this when public DNS is
+    blocked)."""
+    assert _values(AGENT_UNIT, "BindReadOnlyPaths") == [
+        "/etc/sp-rtk-base-portal-agent/resolv.conf:/etc/resolv.conf"
+    ]
 
 
 def test_writes_nothing_on_disk_but_its_socket_and_state() -> None:

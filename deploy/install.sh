@@ -83,6 +83,12 @@ UPDATE_SYSTEMD_UNIT="${UPDATE_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-upda
 UPDATE_PATH_UNIT="${UPDATE_PATH_UNIT:-/etc/systemd/system/sp-rtk-base-update.path}"
 PORTAL_AGENT_SYSTEMD_UNIT="${PORTAL_AGENT_SYSTEMD_UNIT:-/etc/systemd/system/sp-rtk-base-portal-agent.service}"
 RESOLV_CONF="${RESOLV_CONF:-/etc/resolv.conf}"
+# The Portal agent's own resolv.conf: its unit bind-mounts this exact path
+# over /etc/resolv.conf; root-owned, out of the app's reach (the app's user
+# owns CONFIG_DIR). PORTAL_AGENT_PUBLIC_DNS: the public IPv4 resolvers
+# install.sh checks and writes there (empty: 1.1.1.1 9.9.9.9 8.8.8.8).
+PORTAL_AGENT_RESOLV_CONF="${PORTAL_AGENT_RESOLV_CONF:-/etc/sp-rtk-base-portal-agent/resolv.conf}"
+PORTAL_AGENT_PUBLIC_DNS="${PORTAL_AGENT_PUBLIC_DNS:-}"
 POLKIT_RULES_DIR="${POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
 POLKIT_RULE_DEST="${POLKIT_RULE_DEST:-${POLKIT_RULES_DIR}/10-sp-rtk-base-net-provision.rules}"
 DNSMASQ_SHARED_D="${DNSMASQ_SHARED_D:-/etc/NetworkManager/dnsmasq-shared.d}"
@@ -604,22 +610,29 @@ fi
 # Portal agent (spec #82), in both modes. Its own service, idle until the
 # base is Claimed from the local Portal page: it holds no key, contacts
 # nothing and only answers the app on its control socket. Its unit denies
-# it the LAN (IPAddressDeny); if this host's DNS resolver is on the LAN,
-# a drop-in allows just that address, and a re-run rewrites or removes it.
+# it the LAN and all IPv6 (IPAddressDeny). Its DNS: if public resolvers
+# answer from this host, the agent gets them in its own resolv.conf (which
+# the unit bind-mounts) and nothing on the LAN; if public DNS is blocked, a
+# drop-in clears that bind mount and allows this host's LAN resolver, with
+# a warning. A re-run checks again and removes whichever file is stale.
 log "Installing the Portal agent unit…"
 fetch_deploy_file sp-rtk-base-portal-agent.service "$PORTAL_AGENT_SYSTEMD_UNIT"
-portal_agent_drop_in_dir="${PORTAL_AGENT_SYSTEMD_UNIT}.d"
-portal_agent_resolver="$("${VENV_DIR}/bin/python" -I -m sp_rtk_base.portal_agent.resolver "$RESOLV_CONF")" \
-    || die "Couldn't read this host's DNS resolvers for the Portal agent's unit."
-if [[ -n "$portal_agent_resolver" ]]; then
-    mkdir -p "$portal_agent_drop_in_dir"
-    printf '%s\n' "$portal_agent_resolver" >"${portal_agent_drop_in_dir}/resolver.conf"
-    chmod 0644 "${portal_agent_drop_in_dir}/resolver.conf"
-    warn "This host's DNS resolver is on the LAN; the Portal agent may reach it (and no other LAN address)."
-else
-    rm -f "${portal_agent_drop_in_dir}/resolver.conf"
-    rmdir "$portal_agent_drop_in_dir" 2>/dev/null || true
+portal_agent_dns_args=(
+    --host-resolv-conf "$RESOLV_CONF"
+    --agent-resolv-conf "$PORTAL_AGENT_RESOLV_CONF"
+    --drop-in "${PORTAL_AGENT_SYSTEMD_UNIT}.d/resolver.conf"
+)
+if [[ -n "$PORTAL_AGENT_PUBLIC_DNS" ]]; then
+    portal_agent_dns_args+=(--public "$PORTAL_AGENT_PUBLIC_DNS")
 fi
+portal_agent_dns_status=0
+portal_agent_dns="$("${VENV_DIR}/bin/python" -I -m sp_rtk_base.portal_agent.resolver \
+    "${portal_agent_dns_args[@]}")" || portal_agent_dns_status=$?
+case "$portal_agent_dns_status" in
+    0) ok "$portal_agent_dns" ;;
+    3) warn "$portal_agent_dns" ;;
+    *) die "Couldn't set up the Portal agent's DNS." ;;
+esac
 systemctl daemon-reload
 systemctl enable sp-rtk-base-portal-agent.service >/dev/null
 systemctl restart sp-rtk-base-portal-agent.service

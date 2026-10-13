@@ -47,6 +47,11 @@ The groundwork for the remote access Portal (rtk_development#82).
   both are logged and ignored. If the Portal stops supporting this
   version, the base stays Claimed, asks once a day, and the page says
   "Upgrade sp-rtk-base to keep using the Portal".
+- **Backs off when the Portal says so.** A poll the Portal refuses as too
+  fast (HTTP 429) waits its `Retry-After`, or twice the poll interval,
+  whichever is longer; a refused Check-in is retried after its
+  `Retry-After` while polls go on. When too many Claims were started from
+  the base's network, "Connect to Portal" says so and how long to wait.
 - **Wake and tunnel.** When someone opens the base remotely, the Portal
   Wakes it: the next poll's reply carries a one-time nonce, and the agent
   opens its tunnel (`wss://<Portal>/agent/tunnel`, signed with the base

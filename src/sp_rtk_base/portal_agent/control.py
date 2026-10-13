@@ -23,15 +23,23 @@ from typing import Any, cast
 
 import httpx
 from sp_rtk_portal_protocol import (
+    PROTOCOL_VERSION,
     BaseKey,
     Claimed,
     ClaimStart,
     ClaimStarted,
     ErrorReply,
+    LanAddress,
 )
 
 from sp_rtk_base import __version__
-from sp_rtk_base.portal_agent.portal_api import PortalApi, PortalUnreachableError
+from sp_rtk_base.portal_agent import doorbell, lan
+from sp_rtk_base.portal_agent.connection import UPGRADE_MESSAGE, Connection
+from sp_rtk_base.portal_agent.portal_api import (
+    PortalApi,
+    PortalUnreachableError,
+    UpgradeRequiredError,
+)
 from sp_rtk_base.portal_agent.protocol import AgentStatus, state_path
 from sp_rtk_base.portal_agent.protocol import portal_url as default_portal_url
 from sp_rtk_base.portal_agent.state import Claim, load_claim, save_claim
@@ -70,7 +78,9 @@ class PortalAgent:
     :meth:`start_claim`: it makes a base key, asks the Portal for a pairing
     code and polls (RFC 8628) until the Operator approves it, the code
     expires or the Portal refuses. Once Claimed, the key and Claim are on
-    disk (:mod:`.state`) and survive restarts and reinstalls.
+    disk (:mod:`.state`) and survive restarts and reinstalls, and a
+    :class:`~.connection.Connection` polls and Checks in (started by
+    :meth:`start`, which :func:`serve` calls).
     """
 
     def __init__(
@@ -83,13 +93,19 @@ class PortalAgent:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         name: str | None = None,
         software_version: str | None = None,
+        resolve: doorbell.Resolve = doorbell.system_resolve,
+        lan_addresses: Callable[[], list[LanAddress]] = lan.lan_addresses,
+        protocol_version: int = PROTOCOL_VERSION,
     ) -> None:
         self._state_dir = state_dir if state_dir is not None else state_path()
         self._api = PortalApi(
             portal_url if portal_url is not None else default_portal_url(),
             now=now,
             transport=transport,
+            protocol_version=protocol_version,
         )
+        self._resolve = resolve
+        self._lan_addresses = lan_addresses
         self._now = now
         self._sleep = sleep
         self._name = name if name is not None else socket.gethostname()
@@ -97,7 +113,10 @@ class PortalAgent:
             software_version if software_version is not None else __version__
         )
         loaded = load_claim(self._state_dir)
+        self._key: BaseKey | None = loaded[0] if loaded else None
         self._claim: Claim | None = loaded[1] if loaded else None
+        self._connection: Connection | None = None
+        self._connection_task: asyncio.Task[None] | None = None
         self._pairing: _Pairing | None = None
         self._message: str | None = None
         self._lock = asyncio.Lock()
@@ -105,12 +124,30 @@ class PortalAgent:
     def status(self) -> AgentStatus:
         if self._claim is not None:
             c = self._claim
+            conn = self._connection
+            if conn is None:
+                return AgentStatus(
+                    state="connected",
+                    base_id=c.base_id,
+                    account=c.account,
+                    portal=c.portal,
+                    last_contact=datetime.fromisoformat(c.last_contact),
+                )
             return AgentStatus(
                 state="connected",
                 base_id=c.base_id,
                 account=c.account,
                 portal=c.portal,
-                last_contact=datetime.fromisoformat(c.last_contact),
+                last_contact=conn.last_contact,
+                message=conn.upgrade_message,
+                wake_mode=conn.wake_mode,
+                poll_interval=conn.poll_interval,
+                metered=conn.metered,
+                doorbell=conn.doorbell,
+                config_revision=conn.config.revision,
+                tunnel_url=conn.config.tunnel_url,
+                notices=conn.notices,
+                needs_upgrade=conn.needs_upgrade,
             )
         if self._pairing is not None:
             p = self._pairing
@@ -134,6 +171,9 @@ class PortalAgent:
                 started = await self._api.start_claim(
                     key, ClaimStart(name=self._name, software_version=self._version)
                 )
+            except UpgradeRequiredError as exc:
+                logger.warning("Couldn't start a Claim: %s", exc)
+                raise ClaimStartError(UPGRADE_MESSAGE) from exc
             except PortalUnreachableError as exc:
                 logger.warning("Couldn't start a Claim: %s", exc)
                 raise ClaimStartError(f"Couldn't reach the Portal ({exc}).") from exc
@@ -182,20 +222,43 @@ class PortalAgent:
             last_contact=now,
         )
         save_claim(self._state_dir, pairing.key, claim)
-        self._claim, self._pairing = claim, None
+        self._key, self._claim, self._pairing = pairing.key, claim, None
         logger.info("Claimed by %s as %s", claimed.account, claimed.base_id)
+        self.start()
+
+    def start(self) -> None:
+        """Start polling if Claimed (and not already). Needs a running loop."""
+        if self._claim is None or self._key is None or self._connection_task:
+            return
+        self._connection = Connection(
+            state_dir=self._state_dir,
+            key=self._key,
+            claim=self._claim,
+            api=self._api,
+            now=self._now,
+            sleep=self._sleep,
+            software_version=self._version,
+            resolve=self._resolve,
+            lan_addresses=self._lan_addresses,
+        )
+        self._connection_task = asyncio.create_task(self._connection.run())
 
     def _end_pairing(self, message: str) -> None:
         logger.info("Pairing ended: %s", message)
         self._pairing, self._message = None, message
 
     async def close(self) -> None:
-        """Stop any pairing in progress and close connections."""
+        """Stop any pairing or polling and close connections."""
         pairing = self._pairing
-        if pairing is not None and pairing.task is not None:
-            pairing.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pairing.task
+        tasks = [self._connection_task]
+        if pairing is not None:
+            tasks.append(pairing.task)
+        for task in tasks:
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._connection_task = None
         await self._api.aclose()
 
 
@@ -244,6 +307,7 @@ async def serve(
     ``allowed_uids`` defaults to the agent's own uid.
     """
     the_agent = agent if agent is not None else PortalAgent()
+    the_agent.start()
     uids = allowed_uids if allowed_uids is not None else frozenset({os.getuid()})
 
     async def handle(

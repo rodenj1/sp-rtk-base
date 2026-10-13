@@ -1,0 +1,177 @@
+"""A Claimed base's contact with the Portal: polls and Check-ins (ADR 0002).
+
+:class:`Connection` runs one loop for as long as the base is Claimed. Each
+beat it sends a Check-in when one is due (first thing, then every
+``check_in_interval``), then a poll, then sleeps the poll interval (the
+metered one when the Operator marked the base metered). There is no
+standing connection: each beat is a few small HTTPS requests.
+
+Each reply goes through :meth:`Connection._heard`: last contact, the
+metered flag, notices, and the agent config block (applied only when its
+revision changes, then persisted). A poll reply also goes through
+:meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled.
+
+A 426 means this agent's protocol version is no longer supported: it keeps
+its key and Claim, stops polling and tries again once a day; the status says
+``needs_upgrade``.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import logging
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Literal
+
+from sp_rtk_portal_protocol import (
+    DOORBELL_OFF,
+    DOORBELL_OK,
+    AgentConfig,
+    BaseKey,
+    CheckIn,
+    CheckInReply,
+    LanAddress,
+    Poll,
+    PollReply,
+)
+
+from sp_rtk_base.portal_agent import agent_config, doorbell
+from sp_rtk_base.portal_agent.portal_api import (
+    PortalApi,
+    PortalUnreachableError,
+    UnclaimedError,
+    UpgradeRequiredError,
+)
+from sp_rtk_base.portal_agent.state import (
+    Claim,
+    load_agent_config,
+    save_agent_config,
+    save_claim_file,
+)
+
+logger = logging.getLogger(__name__)
+
+UPGRADE_RETRY_S = 24 * 3600
+"""After a 426, try again once a day (sp-rtk-base may have been upgraded)."""
+
+UPGRADE_MESSAGE = "Upgrade sp-rtk-base to keep using the Portal."
+
+
+class Connection:
+    def __init__(
+        self,
+        *,
+        state_dir: Path,
+        key: BaseKey,
+        claim: Claim,
+        api: PortalApi,
+        now: Callable[[], datetime],
+        sleep: Callable[[float], Awaitable[None]],
+        software_version: str,
+        resolve: doorbell.Resolve,
+        lan_addresses: Callable[[], list[LanAddress]],
+    ) -> None:
+        self._state_dir = state_dir
+        self._key = key
+        self.claim = claim
+        self._api = api
+        self._now = now
+        self._sleep = sleep
+        self._version = software_version
+        self._resolve = resolve
+        self._lan_addresses = lan_addresses
+        self._block: AgentConfig | None = load_agent_config(state_dir)
+        self.config = agent_config.effective(self._block, api.base_url)
+        self.last_contact = datetime.fromisoformat(claim.last_contact)
+        self.metered = False
+        self.notices: list[str] = []
+        self.doorbell = DOORBELL_OFF
+        self.needs_upgrade = False
+        self.upgrade_message: str | None = None
+        self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
+
+    @property
+    def wake_mode(self) -> Literal["polling", "doorbell"]:
+        return "doorbell" if self.doorbell == DOORBELL_OK else "polling"
+
+    @property
+    def poll_interval(self) -> int:
+        return self.config.interval(self.metered)
+
+    async def run(self) -> None:
+        """Poll and Check in until cancelled."""
+        while True:
+            try:
+                if self._now() >= self._check_in_due:
+                    await self._check_in()
+                await self._poll()
+                delay = self.poll_interval
+            except UpgradeRequiredError as exc:
+                self._upgrade_required(exc)
+                delay = UPGRADE_RETRY_S
+            except UnclaimedError as exc:
+                # Un-claim on the Portal: wiping the key is the Un-claim
+                # ticket's; until then keep asking.
+                logger.warning("Poll refused: %s", exc)
+                delay = self.poll_interval
+            except PortalUnreachableError as exc:
+                logger.info("Couldn't reach the Portal, will retry: %s", exc)
+                delay = self.poll_interval
+            await self._sleep(delay)
+
+    async def _poll(self) -> None:
+        reply = await self._api.poll(self._key, Poll(state="connected"))
+        self._heard(reply)
+        self._on_poll_reply(reply)
+
+    def _on_poll_reply(self, reply: PollReply) -> None:
+        """What a poll reply asks beyond the common part (a Wake, #88)."""
+
+    async def _check_in(self) -> None:
+        self.doorbell = await doorbell.health(self.config.doorbell, self._resolve)
+        reply = await self._api.check_in(
+            self._key,
+            CheckIn(
+                software_version=self._version,
+                doorbell=self.doorbell,
+                lan_addresses=self._lan_addresses(),
+            ),
+        )
+        self._heard(reply)
+        self._check_in_due = self._now() + timedelta(
+            seconds=self.config.check_in_interval
+        )
+        # Persisted here rather than on every poll, to spare the SD card.
+        self.claim = dataclasses.replace(
+            self.claim, last_contact=self.last_contact.isoformat()
+        )
+        save_claim_file(self._state_dir, self.claim)
+
+    def _heard(self, reply: PollReply | CheckInReply) -> None:
+        self.last_contact = self._now()
+        if self.needs_upgrade:
+            logger.info("The Portal accepts this agent again")
+        self.needs_upgrade, self.upgrade_message = False, None
+        self.metered = reply.metered
+        self.notices = [n.text for n in reply.notices]
+        if self._block is None or reply.config.revision != self._block.revision:
+            self._apply(reply.config)
+
+    def _apply(self, block: AgentConfig) -> None:
+        logger.info("Applying agent config revision %s", block.revision)
+        self._block = block
+        self.config = agent_config.effective(block, self._api.base_url)
+        save_agent_config(self._state_dir, block)
+
+    def _upgrade_required(self, exc: UpgradeRequiredError) -> None:
+        if not self.needs_upgrade:
+            logger.warning(
+                "The Portal needs protocol version %s or later: %s",
+                exc.reply.min_version,
+                exc.reply.message,
+            )
+        self.needs_upgrade = True
+        self.upgrade_message = exc.reply.message or UPGRADE_MESSAGE
+        self._check_in_due = self._now()  # first thing once accepted again

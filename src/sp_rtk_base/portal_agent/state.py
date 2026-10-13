@@ -4,6 +4,9 @@ All in the agent's state directory (its unit's ``StateDirectory``, mode
 0700): ``base_key.pem`` (PKCS#8, mode 0600), ``claim.json`` (what the local
 Portal page shows) and ``base_id`` (the ``<id>`` alone, which the app's
 identity endpoint serves). Nothing is written until a Claim succeeds.
+Once Claimed, ``agent_config.json`` holds the last agent config block the
+Portal sent, and ``claim.json``'s ``last_contact`` is refreshed on each
+Check-in (not each poll: an SD card shouldn't take a write every 20 s).
 """
 
 from __future__ import annotations
@@ -15,13 +18,14 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from sp_rtk_portal_protocol import BaseKey
+from sp_rtk_portal_protocol import AgentConfig, BaseKey, MessageError
 
 logger = logging.getLogger(__name__)
 
 KEY_FILE = "base_key.pem"
 CLAIM_FILE = "claim.json"
 ID_FILE = "base_id"
+CONFIG_FILE = "agent_config.json"
 
 
 @dataclass(frozen=True)
@@ -77,3 +81,24 @@ def read_base_id(state_dir: Path) -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
     return value if value.isalnum() else None
+
+
+def save_claim_file(state_dir: Path, claim: Claim) -> None:
+    """Rewrite ``claim.json`` alone (e.g. a newer ``last_contact``)."""
+    _write(state_dir / CLAIM_FILE, json.dumps(asdict(claim), indent=2).encode(), 0o600)
+
+
+def save_agent_config(state_dir: Path, config: AgentConfig) -> None:
+    _write(state_dir / CONFIG_FILE, json.dumps(config.to_json()).encode(), 0o600)
+
+
+def load_agent_config(state_dir: Path) -> AgentConfig | None:
+    """The last agent config block applied, or ``None`` (built-in defaults)."""
+    try:
+        data = json.loads((state_dir / CONFIG_FILE).read_text(encoding="utf-8"))
+        return AgentConfig.from_json(data)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, MessageError) as exc:
+        logger.warning("Ignoring an unreadable agent config: %s", exc)
+        return None

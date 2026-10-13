@@ -8,7 +8,6 @@ sp-rtk-portal's seam-1 suite.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import stat
 import tempfile
@@ -25,9 +24,8 @@ from sp_rtk_base.portal_agent.client import (
     read_status,
     start_claim,
 )
-from sp_rtk_base.portal_agent.control import PortalAgent, serve
-from sp_rtk_base.portal_agent.protocol import AgentStatus
 from tests.fixtures.fake_portal import ORIGIN, FakeClock, FakePortal
+from tests.fixtures.running_agent import Running
 
 
 @pytest.fixture()
@@ -44,41 +42,6 @@ def clock() -> FakeClock:
 @pytest.fixture()
 def portal(clock: FakeClock) -> FakePortal:
     return FakePortal(clock)
-
-
-class Running:
-    """One agent process's worth: a ``PortalAgent`` behind its socket."""
-
-    def __init__(self, sock: Path, state: Path, portal: FakePortal, clock: FakeClock):
-        self.sock, self.state, self.portal, self.clock = sock, state, portal, clock
-        self.agent: PortalAgent | None = None
-        self.server: asyncio.Server | None = None
-
-    async def start(self) -> None:
-        self.agent = PortalAgent(
-            self.state,
-            portal_url=ORIGIN,
-            transport=self.portal.transport(),
-            now=self.clock.now,
-            sleep=self.clock.sleep,
-            name="pi-north",
-        )
-        self.server = await serve(self.sock, self.agent)
-
-    async def stop(self) -> None:
-        assert self.agent and self.server
-        self.server.close()
-        await self.server.wait_closed()
-        await self.agent.close()
-
-    async def until(self, state: str) -> AgentStatus:
-        status = None
-        for _ in range(500):
-            status = await read_status(self.sock)
-            if status.state == state:
-                return status
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"agent never reached {state}: {status}")
 
 
 @pytest_asyncio.fixture()
@@ -219,7 +182,8 @@ async def test_a_brief_portal_outage_while_pairing_is_ridden_out(
 ) -> None:
     await start_claim(running.sock)
     portal.down = True
-    await asyncio.sleep(0.05)
+    for _ in range(3):
+        await running.clock.step()
 
     portal.down = False
     portal.approve()
@@ -234,8 +198,7 @@ async def test_slow_down_lengthens_the_poll_interval(
     portal.queued = ["authorization_pending", "slow_down", "slow_down"]
 
     await start_claim(running.sock)
-    while len(portal.polls) < 5:
-        await asyncio.sleep(0.005)
+    await running.until_true(lambda: len(portal.polls) >= 5)
 
     gaps = [
         (b.at - a.at).total_seconds() for a, b in zip(portal.polls, portal.polls[1:])

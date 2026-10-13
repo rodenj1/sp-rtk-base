@@ -14,6 +14,8 @@ from sp_rtk_base.portal_agent.protocol import AgentStatus
 TIMEOUT_S = 2.0
 CLAIM_TIMEOUT_S = 15.0
 """Starting a Claim waits for the Portal (the agent gives it 10 s)."""
+UNCLAIM_TIMEOUT_S = 15.0
+"""Un-claim waits for the release to reach the Portal (best effort, 5 s)."""
 
 
 class AgentUnavailableError(Exception):
@@ -76,3 +78,12 @@ async def start_claim(path: Path) -> AgentStatus:
     :class:`AgentUnavailableError`.
     """
     return _status(await _request(path, {"op": "start_claim"}, CLAIM_TIMEOUT_S))
+
+
+async def unclaim(path: Path) -> AgentStatus:
+    """Un-claim the base: the agent tells the Portal (best effort), wipes its
+    key and goes back to not connected. A no-op on an unclaimed base.
+
+    Raises :class:`AgentUnavailableError`.
+    """
+    return _status(await _request(path, {"op": "unclaim"}, UNCLAIM_TIMEOUT_S))

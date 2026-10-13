@@ -349,3 +349,25 @@ async def test_the_portal_closing_the_tunnel_returns_the_agent_to_idle(
     assert status.tunnel_since is not None
     await wake(running, portal, endpoint, clock)  # and opens on the next Wake
     assert len(endpoint.opens) == 2
+
+
+async def test_un_claimed_on_the_portal_the_agent_closes_its_tunnel(
+    running: Running, portal: FakePortal, endpoint: TunnelEndpoint, clock: FakeClock
+) -> None:
+    await wake(running, portal, endpoint, clock)
+
+    portal.unclaimed = True
+    status = await running.until("not_connected")
+
+    await asyncio.wait_for(endpoint.closed.wait(), 5)
+    assert status.tunnel is None
+
+
+async def test_a_local_un_claim_closes_the_tunnel(
+    running: Running, portal: FakePortal, endpoint: TunnelEndpoint, clock: FakeClock
+) -> None:
+    await wake(running, portal, endpoint, clock)
+
+    await running.unclaim()
+
+    await asyncio.wait_for(endpoint.closed.wait(), 5)

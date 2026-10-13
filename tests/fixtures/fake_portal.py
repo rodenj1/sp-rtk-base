@@ -22,6 +22,7 @@ from sp_rtk_portal_protocol import (
     CLAIM_TOKEN_PATH,
     CLAIMS_PATH,
     POLL_PATH,
+    RELEASE_PATH,
     VERSION_HEADER,
     AgentConfig,
     CheckIn,
@@ -35,6 +36,8 @@ from sp_rtk_portal_protocol import (
     Poll,
     PollReply,
     ProofError,
+    Release,
+    Released,
     ReplayCache,
     UpgradeRequired,
     proof_from_authorization,
@@ -152,6 +155,10 @@ class FakePortal:
     """Tell Check-ins the Portal hears the base's Doorbell (ticket #100)."""
     ring_key: str | None = None
     """The ring key every Check-in reply carries."""
+    unclaimed: bool = False
+    """The base was Un-claimed on the Portal: polls, Check-ins and releases
+    get 401 ``unclaimed`` (ticket #93)."""
+    released_base_id: str = "k3mnp4qrst"
     _key: str | None = None
     _replays: ReplayCache = field(default_factory=ReplayCache)
 
@@ -159,6 +166,7 @@ class FakePortal:
         self, base_id: str = "abcdefghij", account: str = "op@example.com"
     ) -> None:
         self.outcome = Claimed(base_id=base_id, account=account)
+        self.unclaimed = False  # a new Claim, a new base
 
     def deny(self) -> None:
         self.outcome = ErrorReply.ACCESS_DENIED
@@ -200,6 +208,18 @@ class FakePortal:
                 json=UpgradeRequired(
                     min_version=self.min_version, message="Too old, upgrade."
                 ).to_json(),
+            )
+        if self.unclaimed and request.url.path in (
+            POLL_PATH,
+            CHECK_IN_PATH,
+            RELEASE_PATH,
+        ):
+            return httpx.Response(401, json=ErrorReply(ErrorReply.UNCLAIMED).to_json())
+        if request.url.path == RELEASE_PATH:
+            Release.from_json(data)
+            self.unclaimed = True
+            return httpx.Response(
+                200, json=Released(base_id=self.released_base_id).to_json()
             )
         if request.url.path in (POLL_PATH, CHECK_IN_PATH):
             if self.status != 200:
@@ -256,6 +276,11 @@ class FakePortal:
     def agent_polls(self) -> list[Seen]:
         """Polls of a Claimed base (``/agent/poll``)."""
         return [r for r in self.requests if r.path == POLL_PATH]
+
+    @property
+    def releases(self) -> list[Seen]:
+        """Local Un-claims' releases (``/agent/release``)."""
+        return [r for r in self.requests if r.path == RELEASE_PATH]
 
     @property
     def check_ins(self) -> list[Seen]:

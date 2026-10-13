@@ -3,7 +3,8 @@ agent's Unix socket is faked there").
 
 Speaks the control socket's wire format (one JSON object per line). A test
 sets what it answers: ``fake.status`` for ``status``, ``fake.after_claim``
-for ``start_claim`` (``None``: refuse with ``fake.claim_error``). ``ops``
+for ``start_claim`` (``None``: refuse with ``fake.claim_error``);
+``unclaim`` goes back to not connected. ``ops``
 lists every op asked. Runs its own event loop on a thread.
 """
 
@@ -47,6 +48,9 @@ class FakeAgentSocket:
                     "message": self.claim_error,
                 }
             self.status = self.after_claim
+            return {"ok": True, "status": self.status}
+        if op == "unclaim":
+            self.status = {"state": "not_connected", "message": "Un-claimed."}
             return {"ok": True, "status": self.status}
         return {"ok": False, "error": "unknown op"}
 

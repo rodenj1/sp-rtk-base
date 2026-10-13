@@ -19,6 +19,7 @@ from sp_rtk_portal_protocol import (
     CLAIMS_PATH,
     POLL_PATH,
     PROTOCOL_VERSION,
+    RELEASE_PATH,
     VERSION_HEADER,
     BaseKey,
     CheckIn,
@@ -32,11 +33,14 @@ from sp_rtk_portal_protocol import (
     MessageError,
     Poll,
     PollReply,
+    Release,
     UpgradeRequired,
 )
 from sp_rtk_portal_protocol.tunnel import signed_url
 
 TIMEOUT_S = 10.0
+RELEASE_TIMEOUT_S = 5.0
+"""A release is best effort: the Operator waits for it on the local page."""
 
 
 class PortalUnreachableError(Exception):
@@ -93,7 +97,13 @@ class PortalApi:
             VERSION_HEADER: str(self.protocol_version),
         }
 
-    async def _post(self, key: BaseKey, path: str, message: Message) -> httpx.Response:
+    async def _post(
+        self,
+        key: BaseKey,
+        path: str,
+        message: Message,
+        timeout: float = TIMEOUT_S,
+    ) -> httpx.Response:
         # Made on first use: an unclaimed, idle agent opens nothing.
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -107,7 +117,9 @@ class PortalApi:
             "Content-Type": "application/json",
         }
         try:
-            return await self._client.post(url, content=body, headers=headers)
+            return await self._client.post(
+                url, content=body, headers=headers, timeout=timeout
+            )
         except httpx.HTTPError as exc:
             raise PortalUnreachableError(str(exc) or type(exc).__name__) from exc
 
@@ -143,6 +155,16 @@ class PortalApi:
     async def check_in(self, key: BaseKey, message: CheckIn) -> CheckInReply:
         return await self._exchange(key, CHECK_IN_PATH, message, CheckInReply)
 
+    async def release(self, key: BaseKey) -> None:
+        """A local Un-claim: ask the Portal to forget the base with this key.
+        Raises :class:`UnclaimedError` (it already had),
+        :class:`UpgradeRequiredError` or :class:`PortalUnreachableError`."""
+        resp = await self._post(key, RELEASE_PATH, Release(), RELEASE_TIMEOUT_S)
+        _raise_for_upgrade(resp)
+        _raise_for_unclaimed(resp)
+        if resp.status_code != 200:
+            raise PortalUnreachableError(f"the Portal answered HTTP {resp.status_code}")
+
     async def _exchange(
         self, key: BaseKey, path: str, message: Message, reply: type[R]
     ) -> R:
@@ -150,8 +172,7 @@ class PortalApi:
         :class:`UnclaimedError` or :class:`PortalUnreachableError`."""
         resp = await self._post(key, path, message)
         _raise_for_upgrade(resp)
-        if resp.status_code == 401 and _error(resp) == ErrorReply.UNCLAIMED:
-            raise UnclaimedError("the Portal has no base with this key")
+        _raise_for_unclaimed(resp)
         if resp.status_code != 200:
             raise PortalUnreachableError(f"the Portal answered HTTP {resp.status_code}")
         try:
@@ -177,3 +198,8 @@ def _raise_for_upgrade(resp: httpx.Response) -> None:
     except (ValueError, MessageError):
         reply = UpgradeRequired(min_version=0)
     raise UpgradeRequiredError(reply)
+
+
+def _raise_for_unclaimed(resp: httpx.Response) -> None:
+    if resp.status_code == 401 and _error(resp) == ErrorReply.UNCLAIMED:
+        raise UnclaimedError("the Portal has no base with this key")

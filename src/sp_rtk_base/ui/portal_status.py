@@ -18,6 +18,7 @@ from sp_rtk_base.portal_agent.client import (
     read_status,
     start_claim,
 )
+from sp_rtk_base.portal_agent.client import unclaim as agent_unclaim
 from sp_rtk_base.portal_agent.protocol import AgentState, AgentStatus
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 
@@ -48,6 +49,8 @@ class PortalView:
     detail: str
     agent_running: bool
     can_connect: bool
+    can_unclaim: bool = False
+    """Claimed: the page offers Un-claim (with a confirmation)."""
     # Pairing
     code: str | None = None
     approve_url: str | None = None
@@ -120,6 +123,7 @@ def _view(status: AgentStatus) -> PortalView:
         detail=detail,
         agent_running=True,
         can_connect=status.state == "not_connected",
+        can_unclaim=status.state in ("connected", "paused"),
         code=_display_code(status.user_code) if status.user_code else None,
         approve_url=status.approve_url,
         expires_at=status.expires_at,
@@ -148,6 +152,23 @@ async def connect(path: Path) -> str | None:
     """Start a Claim ("Connect to Portal"). ``None``, or why it didn't start."""
     try:
         await start_claim(path)
+    except (AgentUnavailableError, ClaimFailedError) as exc:
+        return str(exc)
+    return None
+
+
+UNCLAIM_QUESTION = "Un-claim this base?"
+UNCLAIM_WARNING = (
+    "The Portal forgets this base: its Shares and any Remote sessions end, "
+    "and it stops contacting the Portal. Connecting again Claims it as a new "
+    "base with a new address."
+)
+
+
+async def unclaim(path: Path) -> str | None:
+    """Un-claim the base. ``None``, or why it couldn't be done."""
+    try:
+        await agent_unclaim(path)
     except (AgentUnavailableError, ClaimFailedError) as exc:
         return str(exc)
     return None

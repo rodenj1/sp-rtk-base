@@ -180,3 +180,30 @@ def test_a_base_too_old_for_the_portal_says_to_upgrade(
         "Upgrade sp-rtk-base to keep using the Portal", timeout=15_000
     )
     expect(page.get_by_test_id("portal-base-id")).to_have_text("k3mnp4qrst")
+
+
+@pytest.mark.e2e
+def test_un_claim_on_the_local_page_returns_it_to_not_connected(
+    page: Page, base_url: str, portal_agent: FakeAgentSocket
+) -> None:
+    portal_agent.status = CONNECTED
+    page.goto(f"{base_url}/portal")
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Connected", timeout=15_000
+    )
+
+    page.get_by_test_id("portal-unclaim").click()
+    # A confirmation first; Cancel keeps the Claim.
+    expect(page.get_by_text("Un-claim this base?")).to_be_visible()
+    page.get_by_role("button", name="Cancel").click()
+    assert "unclaim" not in portal_agent.ops
+
+    page.get_by_test_id("portal-unclaim").click()
+    page.get_by_test_id("portal-unclaim-confirm").click()
+
+    expect(page.get_by_test_id("portal-headline")).to_have_text(
+        "Not connected", timeout=10_000
+    )
+    expect(page.get_by_test_id("portal-detail")).to_contain_text("Un-claimed.")
+    expect(page.get_by_role("button", name="Connect to Portal")).to_be_enabled()
+    assert portal_agent.ops.count("unclaim") == 1

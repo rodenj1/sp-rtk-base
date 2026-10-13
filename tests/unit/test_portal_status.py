@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.portal_agent.control import serve
-from sp_rtk_base.ui.portal_status import connect, countdown, portal_view
+from sp_rtk_base.ui.portal_status import connect, countdown, portal_view, unclaim
 
 
 @pytest.fixture()
@@ -256,3 +256,48 @@ async def test_an_agent_too_old_for_the_portal_says_to_upgrade(
     assert "Protocol 1 ended." in view.detail
     assert ("Base id", "k3mnp4qrst") in view.facts  # still Claimed
     assert not view.can_connect
+
+
+# --- Un-claim (ticket #93) ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "offered"),
+    [
+        (CONNECTED, True),
+        (CONNECTED | {"needs_upgrade": True}, True),
+        ({"state": "not_connected"}, False),
+        ({"state": "pairing", "user_code": "BCDFGHJK"}, False),
+    ],
+)
+async def test_un_claim_is_offered_only_on_a_claimed_base(
+    sock_path: Path, status: dict[str, object], offered: bool
+) -> None:
+    view = await _view_of(sock_path, status)
+
+    assert view.can_unclaim is offered
+
+
+@pytest.mark.asyncio
+async def test_un_claim_asks_the_agent_or_says_why_not(sock_path: Path) -> None:
+    assert await unclaim(sock_path) == "The Portal agent is not running"
+
+    server = await _answering(sock_path, {"state": "not_connected"})
+    try:
+        assert await unclaim(sock_path) is None
+    finally:
+        server.close()
+
+
+@pytest.mark.asyncio
+async def test_the_real_agent_answers_un_claim(sock_path: Path) -> None:
+    server = await serve(sock_path)
+    try:
+        assert await unclaim(sock_path) is None
+        view = await portal_view(sock_path)
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert view.headline == "Not connected"

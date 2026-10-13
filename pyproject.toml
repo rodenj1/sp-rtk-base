@@ -54,7 +54,7 @@ Repository = "https://github.com/rodenj1/sp-rtk-base"
 Issues = "https://github.com/rodenj1/sp-rtk-base/issues"
 
 [tool.uv.sources]
-sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "48e9a860be825d6cf2d03a7ffbd75ccab477d55c" }
+sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "2e8fa93da5cc96d0777239a530b1d6b116c788f1" }
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]

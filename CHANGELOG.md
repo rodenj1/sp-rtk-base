@@ -47,14 +47,25 @@ The groundwork for the remote access Portal (rtk_development#82).
   both are logged and ignored. If the Portal stops supporting this
   version, the base stays Claimed, asks once a day, and the page says
   "Upgrade sp-rtk-base to keep using the Portal".
+- **Wake and tunnel.** When someone opens the base remotely, the Portal
+  Wakes it: the next poll's reply carries a one-time nonce, and the agent
+  opens its tunnel (`wss://<Portal>/agent/tunnel`, signed with the base
+  key and echoing the nonce) to its own Portal URL only. Every stream the
+  Portal sends through it goes to the base's own UI on `127.0.0.1:8080`
+  and nowhere else: the framing has no field to name a destination, each
+  stream carries one origin-form HTTP request (or websocket) with a fixed
+  `Host`, and a frame the agent doesn't recognise, or one carrying any
+  such field, closes the whole tunnel and is logged. The Portal closes
+  the tunnel 2 minutes after the last remote user leaves. The agent's
+  status reports the tunnel's state and open streams.
 - **Identity endpoint.** `GET /api/portal/identity` returns the Claimed
   base's id (`{"id": "..."}`), readable cross-origin by the Portal only;
   an unclaimed base answers 404 with no body.
 - `upgrade.sh` and an Update restart the agent with the app;
   `uninstall.sh` removes it, and asks before removing the Claim.
 - New dependency: `sp-rtk-portal-protocol` (the agent-to-Portal protocol,
-  from the sp-rtk-portal repo), pinned to a commit; `httpx` is now
-  declared directly.
+  from the sp-rtk-portal repo), pinned to a commit; `httpx` and
+  `websockets` (both already installed) are now declared directly.
 
 ### Breaking (deploy)
 

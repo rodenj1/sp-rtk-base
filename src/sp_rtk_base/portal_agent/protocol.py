@@ -13,7 +13,8 @@ One JSON object per line each way, on a Unix socket:
 Later tickets add ops (pause/resume, Un-claim) and status fields; a reader
 ignores fields it doesn't know. Once Claimed the status also carries the
 polling fields (``wake_mode``, ``poll_interval``, ``metered``,
-``notices``, ``needs_upgrade``, ...).
+``notices``, ``needs_upgrade``, ...) and the tunnel's (``tunnel``,
+``tunnel_since``, ``tunnel_streams``).
 """
 
 from __future__ import annotations

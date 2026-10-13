@@ -36,6 +36,8 @@ dependencies = [
     "sp_rtk_base_relay>=4.1.0,<5",
     "sp-rtk-portal-protocol",
     "uvicorn>=0.42.0",
+    # The Portal agent's tunnel client (already shipped via uvicorn[standard]).
+    "websockets>=14",
 ]
 
 [project.scripts]
@@ -52,7 +54,7 @@ Repository = "https://github.com/rodenj1/sp-rtk-base"
 Issues = "https://github.com/rodenj1/sp-rtk-base/issues"
 
 [tool.uv.sources]
-sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "a7add362ac613597a239eff747e4ec7612f357f0" }
+sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "48e9a860be825d6cf2d03a7ffbd75ccab477d55c" }
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]

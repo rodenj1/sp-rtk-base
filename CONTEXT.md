@@ -278,6 +278,15 @@ for every Claim, served unauthenticated by `/api/portal/identity`. Kept in
 the agent's state directory, so restarts and reinstalls keep it.
 _Avoid_: register, pair (pairing is the step, Claim the result), link
 
+**Wake** / **tunnel**:
+A Wake is the Portal asking a base to open its tunnel: a poll reply
+carrying only a one-time nonce. The agent then opens the tunnel, one
+websocket to its own Portal (signed with the base key, echoing the nonce),
+carrying the Portal's streams to the base's UI on `127.0.0.1:8080` and
+nowhere else. Open only while someone uses the base remotely; the Portal
+closes it 2 minutes after the last remote user leaves.
+_Avoid_: connection, VPN, session (a Remote session is the Portal's)
+
 **Poll** / **Check-in**:
 What a Claimed base's agent sends the Portal: a small HTTPS poll every
 20 s (60 s when metered), which is how the Portal knows it is online and

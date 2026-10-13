@@ -17,7 +17,13 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sp_rtk_portal_protocol import AgentConfig, BaseKey, LiveSession, doorbell
+from sp_rtk_portal_protocol import (
+    PROTOCOL_VERSION,
+    AgentConfig,
+    BaseKey,
+    LiveSession,
+    doorbell,
+)
 
 from sp_rtk_base.portal_agent.client import pause
 from sp_rtk_base.portal_agent.state import Claim, save_claim
@@ -274,6 +280,31 @@ async def test_check_ins_say_whether_remote_access_is_paused(
     await clock.run(minutes=5)
 
     assert portal.check_ins[-1].body["paused"] is True
+
+
+async def test_a_426_stops_the_keepalives_until_the_portal_accepts_the_agent(
+    running: Running, portal: FakePortal, clock: FakeClock, udp: FakeUdp
+) -> None:
+    """Too old for the Portal: nothing may Wake the base until it is
+    accepted again, so no return path is held open for a ring."""
+    await _heard(running, portal, clock)
+    portal.min_version = PROTOCOL_VERSION + 1
+    await running.until_status(lambda s: s.needs_upgrade, "needs upgrade")
+    sent = len(udp.sent)
+
+    await clock.run(hours=1)
+
+    assert len(udp.sent) == sent
+    assert all(s.closed for s in udp.sockets)
+    assert (await running.status()).doorbell == "off"
+
+    portal.min_version = None
+    await clock.run(days=1)  # the daily retry is accepted
+
+    status = await running.until_status(lambda s: not s.needs_upgrade, "accepted")
+    await clock.run(minutes=1)
+    assert len(udp.sent) > sent
+    assert (await running.status()).doorbell != "off"
 
 
 # --- Rings ----------------------------------------------------------------------------

@@ -28,8 +28,8 @@ none, whichever is longer; a refused Check-in is tried again after its
 ``Retry-After`` (else half the Check-in interval) while polls go on.
 
 A 426 means this agent's protocol version is no longer supported: it keeps
-its key and Claim, stops polling and tries again once a day; the status says
-``needs_upgrade``.
+its key and Claim, stops polling and its Doorbell keepalives (so nothing
+can ring it) and tries again once a day; the status says ``needs_upgrade``.
 """
 
 from __future__ import annotations
@@ -167,7 +167,10 @@ class Connection:
     async def _beat(self) -> None:
         while True:
             try:
-                await self.bell.follow(self.config.doorbell)
+                # No keepalives while too old: no return path for a ring.
+                await self.bell.follow(
+                    None if self.needs_upgrade else self.config.doorbell
+                )
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
                 backoff = 0.0
@@ -180,6 +183,7 @@ class Connection:
                 delay = max(self.poll_interval, backoff)
             except UpgradeRequiredError as exc:
                 self._upgrade_required(exc)
+                await self.bell.follow(None)
                 delay = UPGRADE_RETRY_S
             except UnclaimedError as exc:
                 logger.warning("Un-claimed on the Portal: %s", exc)

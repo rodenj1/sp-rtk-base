@@ -193,7 +193,7 @@ def answers(server: str, timeout: float = TIMEOUT_S) -> bool:
                 reply = sock.recv(4096)
                 if len(reply) < 12:
                     continue
-                rid, flags = struct.unpack("!HH", reply[:4])
+                rid, flags = (int(f) for f in struct.unpack("!HH", reply[:4]))
                 if rid == qid and flags & 0x8000:
                     return flags & 0x000F == 0
     except OSError:

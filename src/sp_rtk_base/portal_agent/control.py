@@ -36,6 +36,7 @@ from sp_rtk_portal_protocol import (
 from sp_rtk_base import __version__
 from sp_rtk_base.portal_agent import doorbell, lan
 from sp_rtk_base.portal_agent.connection import Connection
+from sp_rtk_base.portal_agent.doh import DohResolver, Names
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
@@ -58,7 +59,7 @@ from sp_rtk_base.portal_agent.state import (
     save_paused,
     wipe_claim,
 )
-from sp_rtk_base.portal_agent.tunnel import APP_PORT, Connect, connect_websocket
+from sp_rtk_base.portal_agent.tunnel import APP_PORT, Connect
 
 logger = logging.getLogger(__name__)
 
@@ -131,25 +132,38 @@ class PortalAgent:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         name: str | None = None,
         software_version: str | None = None,
-        resolve: doorbell.Resolve = doorbell.system_resolve,
+        resolve: doorbell.Resolve | None = None,
         lan_addresses: Callable[[], list[LanAddress]] = lan.lan_addresses,
         protocol_version: int = PROTOCOL_VERSION,
-        tunnel_connect: Connect = connect_websocket,
+        tunnel_connect: Connect | None = None,
         app_port: int = APP_PORT,
         open_udp: doorbell.OpenUdp = doorbell.open_udp,
+        names: Names | None = None,
     ) -> None:
         """``tunnel_connect``, ``app_port`` and ``open_udp`` exist for tests (a
         websocket connector reaching a test Portal, the stub UI's port, and
         UDP reaching a stub Doorbell server). Nothing the Portal sends can
-        change any of them."""
+        change any of them.
+
+        ``names`` says where to connect for the Portal host and the Doorbell
+        host: by default a :class:`~.doh.DohResolver` (DNS-over-HTTPS to
+        public resolvers, the system resolver if that fails); ``resolve``
+        overrides it for the Doorbell host (tests)."""
         self._state_dir = state_dir if state_dir is not None else state_path()
+        self._doh: DohResolver | None = None
+        if names is None:
+            names = self._doh = DohResolver()
+        self._names = names
         self._api = PortalApi(
             portal_url if portal_url is not None else default_portal_url(),
             now=now,
             transport=transport,
             protocol_version=protocol_version,
+            names=self._names,
         )
-        self._resolve = resolve
+        self._resolve = (
+            resolve if resolve is not None else doorbell.resolve_with(self._names)
+        )
         self._lan_addresses = lan_addresses
         self._tunnel_connect = tunnel_connect
         self._app_port = app_port
@@ -375,6 +389,8 @@ class PortalAgent:
                     await task
         self._connection_task = None
         await self._api.aclose()
+        if self._doh is not None:
+            await self._doh.aclose()
 
 
 def _peer_uid(writer: asyncio.StreamWriter) -> int | None:

@@ -42,13 +42,16 @@ import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Literal, Protocol
+from ssl import SSLContext
+from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
 from sp_rtk_portal_protocol import FrameError, Stream, Tunnel
 from sp_rtk_portal_protocol.tunnel import MAX_DATA
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus, WebSocketException
 
+from sp_rtk_base.portal_agent.doh import Names
 from sp_rtk_base.portal_agent.protocol import TunnelEvent
 
 logger = logging.getLogger(__name__)
@@ -84,7 +87,35 @@ Connect = Callable[[str, dict[str, str]], Awaitable[WebSocket]]
 """Open a websocket to ``url`` with these request headers."""
 
 
-async def connect_websocket(url: str, headers: dict[str, str]) -> WebSocket:
+async def connect_websocket(
+    url: str,
+    headers: dict[str, str],
+    *,
+    names: Names | None = None,
+    ssl: SSLContext | None = None,
+) -> WebSocket:
+    """Open the tunnel websocket. With ``names`` (the agent's
+    :class:`~.doh.DohResolver`) the TCP connection goes to the address they
+    give for the URL's host; TLS (SNI, the certificate check) and the
+    ``Host`` header stay on the host name. ``ssl`` is for tests."""
+    host = urlsplit(url).hostname or ""
+    address = await names.address(host) if names is not None else None
+    extra: dict[str, Any] = {}
+    if address is not None:
+        extra["host"] = address
+    if ssl is not None:
+        extra["ssl"] = ssl
+    try:
+        return await _connect(url, headers, extra)
+    except (OSError, asyncio.TimeoutError):
+        if address is not None and names is not None:
+            names.forget(host)
+        raise
+
+
+async def _connect(
+    url: str, headers: dict[str, str], extra: dict[str, Any]
+) -> WebSocket:
     return await connect(
         url,
         additional_headers=headers,
@@ -95,6 +126,7 @@ async def connect_websocket(url: str, headers: dict[str, str]) -> WebSocket:
         # IPv4 only: the agent's unit gives it no IPv6 (passed through to
         # the event loop's create_connection, so only A records are used).
         family=socket.AF_INET,
+        **extra,
     )
 
 

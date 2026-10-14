@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable
+import ssl
+from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import TypeVar
+from typing import TypeVar, cast
 from urllib.parse import urlsplit
 
+import httpcore
 import httpx
 from sp_rtk_portal_protocol import (
     CHECK_IN_PATH,
@@ -38,6 +40,8 @@ from sp_rtk_portal_protocol import (
     UpgradeRequired,
 )
 from sp_rtk_portal_protocol.tunnel import signed_url
+
+from sp_rtk_base.portal_agent.doh import Names, SystemNames
 
 TIMEOUT_S = 10.0
 RELEASE_TIMEOUT_S = 5.0
@@ -77,11 +81,81 @@ class UnclaimedError(Exception):
 R = TypeVar("R", PollReply, CheckInReply)
 
 
-def ipv4_transport() -> httpx.AsyncHTTPTransport:
+class _NamedBackend(httpcore.AsyncNetworkBackend):
+    """httpcore's network backend, connecting to the address ``names`` gives
+    for a host instead of resolving it. Only the TCP connection changes:
+    httpcore still does TLS (SNI, the certificate check) and the ``Host``
+    header for the URL's own host."""
+
+    def __init__(self, names: Names) -> None:
+        self._names = names
+        self._inner = cast(httpcore.AsyncNetworkBackend, httpcore.AnyIOBackend())
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        address = await self._names.address(host)
+        try:
+            return await self._inner.connect_tcp(
+                address or host,
+                port,
+                timeout=timeout,
+                local_address=local_address,
+                socket_options=socket_options,
+            )
+        except (httpcore.ConnectError, httpcore.ConnectTimeout):
+            if address is not None:
+                self._names.forget(host)
+            raise
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:  # pragma: no cover - never used
+        return await self._inner.connect_unix_socket(
+            path, timeout=timeout, socket_options=socket_options
+        )
+
+    async def sleep(self, seconds: float) -> None:  # pragma: no cover
+        await self._inner.sleep(seconds)
+
+
+def ipv4_transport(
+    names: Names | None = None, *, verify: ssl.SSLContext | bool = True
+) -> httpx.AsyncHTTPTransport:
     """httpx's transport, on IPv4 only: binding to ``0.0.0.0`` makes it look
     up A records alone. The agent's unit gives it no IPv6, so an AAAA
-    attempt could only fail."""
-    return httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    attempt could only fail.
+
+    With ``names`` (the agent's :class:`~.doh.DohResolver`), it connects to
+    the address they give for the host, still as the host for TLS and
+    HTTP."""
+    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", verify=verify)
+    if names is not None:
+        # httpx has no option for a network backend; its pool takes one.
+        # The same pool httpx makes (its default limits), with that backend.
+        transport._pool = httpcore.AsyncConnectionPool(  # pyright: ignore[reportPrivateUsage]
+            ssl_context=ssl_context(verify),
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=5.0,
+            local_address="0.0.0.0",
+            network_backend=_NamedBackend(names),
+        )
+    return transport
+
+
+def ssl_context(verify: ssl.SSLContext | bool) -> ssl.SSLContext:
+    if isinstance(verify, ssl.SSLContext):
+        return verify
+    return httpx.create_ssl_context(verify=verify)
 
 
 class PortalApi:
@@ -92,8 +166,12 @@ class PortalApi:
         now: Callable[[], datetime],
         transport: httpx.AsyncBaseTransport | None = None,
         protocol_version: int = PROTOCOL_VERSION,
+        names: Names | None = None,
     ) -> None:
+        """``names``: where to connect for the Portal host (the agent passes
+        its :class:`~.doh.DohResolver`); by default, by name."""
         self.base_url = base_url.rstrip("/")
+        self.names: Names = names if names is not None else SystemNames()
         self.protocol_version = protocol_version
         self._now = now
         self._transport = transport
@@ -128,7 +206,8 @@ class PortalApi:
         # Made on first use: an unclaimed, idle agent opens nothing.
         if self._client is None:
             self._client = httpx.AsyncClient(
-                transport=self._transport or ipv4_transport(), timeout=TIMEOUT_S
+                transport=self._transport or ipv4_transport(self.names),
+                timeout=TIMEOUT_S,
             )
         url = self.base_url + path
         body = json.dumps(message.to_json()).encode()

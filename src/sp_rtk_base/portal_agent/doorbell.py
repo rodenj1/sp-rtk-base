@@ -12,9 +12,14 @@ a sign of life.
 host that resolves into the base's LAN and so steer the agent's UDP at it.
 The agent resolves the host before each keepalive and refuses it if any
 answer is not a global address (private, loopback, link-local, carrier-grade
-NAT, ...): it logs that, sends nothing and stays on polling. Re-resolving
+NAT, ...): it logs that, sends nothing and stays on polling. Checking
 every time means a later DNS change can't slip a LAN address in. The unit's
 ``IPAddressDeny`` blocks the LAN ranges as well.
+
+The host is looked up as the Portal host is (:mod:`.doh`): over
+DNS-over-HTTPS, its answer kept for its TTL (only public answers are kept),
+and with the system resolver when DoH fails. So a home DNS that answers the
+Doorbell's name with a LAN address doesn't leave the base on polling.
 
 **Health and wake mode.** ``off`` (no host), ``ignored`` (the host was
 refused), ``unavailable`` (keepalives go out, but the Portal hasn't said it
@@ -33,7 +38,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
 import random
 import socket
@@ -52,6 +56,8 @@ from sp_rtk_portal_protocol import (
     DoorbellError,
 )
 from sp_rtk_portal_protocol import doorbell as packets
+
+from sp_rtk_base.portal_agent.doh import Names, is_public
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,20 @@ async def system_resolve(host: str, port: int) -> list[str]:
         host, port, family=socket.AF_INET, type=socket.SOCK_DGRAM
     )
     return [str(info[4][0]) for info in infos]
+
+
+def resolve_with(names: Names, fallback: Resolve = system_resolve) -> Resolve:
+    """A :data:`Resolve` asking ``names`` first (the agent's DoH), and
+    ``fallback`` when they say to connect by name. :func:`checked_address`
+    checks the answer either way."""
+
+    async def resolve(host: str, port: int) -> list[str]:
+        address = await names.address(host)
+        if address is not None:
+            return [address]
+        return await fallback(host, port)
+
+    return resolve
 
 
 class _Receiver(asyncio.DatagramProtocol):
@@ -118,11 +138,7 @@ async def checked_address(host: str, port: int, resolve: Resolve) -> str | None:
         logger.warning("Ignoring the Doorbell host %s: no addresses", host)
         return None
     for address in addresses:
-        try:
-            ip = ipaddress.ip_address(address.split("%", 1)[0])
-        except ValueError:
-            ip = None
-        if ip is None or not ip.is_global:
+        if not is_public(address):
             logger.warning(
                 "Ignoring the Doorbell host %s: it resolves to %s, which isn't "
                 "a public address (private, loopback or link-local); staying "

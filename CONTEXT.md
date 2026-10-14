@@ -267,7 +267,8 @@ the base's own web UI through `127.0.0.1:8080` only. Installed with the base
 but idle until the base is Claimed: it holds no key, contacts nothing and
 only answers the app on its control socket. The kernel denies it the LAN
 and all IPv6 but loopback, and it resolves names through public resolvers
-rather than the LAN's (usually the router).
+rather than the LAN's (usually the router); the Portal and Doorbell hosts
+over DNS-over-HTTPS, as a LAN can intercept plain DNS.
 _Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
 
 **Claim**:

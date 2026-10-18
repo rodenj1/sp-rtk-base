@@ -22,7 +22,7 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
-from sp_rtk_base.models.signal_quality_models import SignalLevel
+from sp_rtk_base.models.level_models import Level
 
 # Provisional thresholds (rodenj1/rtk_development#107): Good at 0 or
 # above, Marginal from -1 to -5, Poor at -6 or below.  The controller puts
@@ -48,7 +48,7 @@ DISCONNECTED_REASON = "The Bluetooth link is disconnected."
 NO_READING_REASON = "The adapter gave no reading."
 
 # Each level's line: a median at or above it is in that level or better.
-_LINE: dict[SignalLevel, float] = {
+_LINE: dict[Level, float] = {
     "Good": GOOD_DB,
     "Marginal": MARGINAL_DB,
     "Poor": -math.inf,
@@ -74,13 +74,13 @@ def is_bluetooth_input(input_status: InputStatusLike) -> bool:
     return input_status.source_type.lower() == BLUETOOTH_SOURCE_TYPE
 
 
-def _level(median: float) -> SignalLevel:
+def _level(median: float) -> Level:
     if median >= GOOD_DB:
         return "Good"
     return "Marginal" if median >= MARGINAL_DB else "Poor"
 
 
-def _held_level(previous: SignalLevel | None, median: float) -> SignalLevel:
+def _held_level(previous: Level | None, median: float) -> Level:
     """The level for *median*, staying at *previous* until clearly below its line.
 
     Only falling out of a level is held.  Climbing into a better one uses

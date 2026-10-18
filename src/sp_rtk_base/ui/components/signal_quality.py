@@ -35,14 +35,9 @@ from sp_rtk_base.services.signal_quality.monitor import (
     SATELLITES_MARGINAL,
 )
 from sp_rtk_base.services.signal_quality.service import SignalQualityService, View
+from sp_rtk_base.ui.components.level import LEVEL_COLOR
 
 REFRESH_SECONDS = 2.0
-
-LEVEL_COLOR: dict[SignalLevel, str] = {
-    "Good": "positive",
-    "Marginal": "warning",
-    "Poor": "negative",
-}
 
 # Meter scales: wide enough to show clear sky and a failing antenna.
 _DBHZ_SCALE = (30.0, 56.0)

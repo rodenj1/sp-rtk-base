@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from sp_rtk_base.models.signal_quality_models import SignalLevel
+from sp_rtk_base.models.level_models import Level
 
 
 class BluetoothLinkVerdict(BaseModel):
@@ -18,7 +18,7 @@ class BluetoothLinkVerdict(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    level: SignalLevel
+    level: Level
     # The window's median reading, in dB relative to the controller's
     # comfortable range (0 = inside it, negative = that far below it).
     median_db: float

@@ -1,6 +1,6 @@
 """The "Bluetooth link" row of the dashboard's Input Source card.
 
-Shows the Bluetooth link strength verdict in Signal Quality's colours,
+Shows the Bluetooth link strength verdict in the shared level colours,
 with how far below comfortable a weak link is beneath it.  With no
 reading it shows "—" and why.  The row never says "signal": that word
 belongs to Signal Quality.
@@ -13,7 +13,7 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkVerdict,
 )
 from sp_rtk_base.services.bluetooth_link.monitor import NO_READING_REASON
-from sp_rtk_base.ui.components.signal_quality import LEVEL_COLOR
+from sp_rtk_base.ui.components.level import LEVEL_COLOR
 from sp_rtk_base.ui.components.status_card import status_metric
 
 LABEL = "Bluetooth link"

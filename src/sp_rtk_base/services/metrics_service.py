@@ -23,13 +23,11 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
+from sp_rtk_base.models.level_models import LEVEL_VALUE
 from sp_rtk_base.models.signal_quality_models import (
-    SignalLevel,
     SignalQualityReading,
     SignalQualityVerdict,
 )
-
-_LEVEL_VALUE: dict[SignalLevel, int] = {"Good": 0, "Marginal": 1, "Poor": 2}
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +224,7 @@ class MetricsService:
         nan = float("nan")
         if isinstance(reading, SignalQualityVerdict):
             self.signal_available.set(1)
-            self.signal_quality.set(_LEVEL_VALUE[reading.level])
+            self.signal_quality.set(LEVEL_VALUE[reading.level])
             for band, value in (
                 ("L1", reading.l1_strength_dbhz),
                 ("L2", reading.l2_strength_dbhz),
@@ -245,7 +243,7 @@ class MetricsService:
     def update_bluetooth_link(self, reading: BluetoothLinkReading | None) -> None:
         """Set the Bluetooth link gauges from *reading* (``None``: no Bluetooth Input)."""
         if isinstance(reading, BluetoothLinkVerdict):
-            self.bluetooth_link_strength.set(_LEVEL_VALUE[reading.level])
+            self.bluetooth_link_strength.set(LEVEL_VALUE[reading.level])
             self.bluetooth_link_median_db.set(reading.median_db)
             return
         self.bluetooth_link_strength.set(float("nan"))

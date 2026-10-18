@@ -165,12 +165,12 @@ def notes_tabs(status: UpdateCheckStatus) -> list[NotesTab] | None:
     if last is None or not last.available or last.notes is None:
         return None
     return [
-        _tab("SP-Base", last.notes.app, last.target.app),
-        _tab("Relay", last.notes.relay, last.target.relay),
+        _tab("SP-Base", last.notes.app, last.running_app, last.target.app),
+        _tab("Relay", last.notes.relay, last.running_relay, last.target.relay),
     ]
 
 
-def _tab(label: str, notes: PackageNotes, target: str) -> NotesTab:
+def _tab(label: str, notes: PackageNotes, running: str, target: str) -> NotesTab:
     if not notes.loaded:
         return NotesTab(
             label,
@@ -178,8 +178,14 @@ def _tab(label: str, notes: PackageNotes, target: str) -> NotesTab:
             "Update still works.",
             [],
         )
-    if not notes.releases:
+    # Notes cover running < v <= target, so none means the target is the
+    # running release or an older one.
+    if not notes.releases and target == running:
         return NotesTab(label, f"The {label} stays on {target}.", [])
+    if not notes.releases:
+        return NotesTab(
+            label, f"The {label} goes back to {target} (from {running}).", []
+        )
     return NotesTab(label, None, [_release(label, r) for r in notes.releases])
 
 

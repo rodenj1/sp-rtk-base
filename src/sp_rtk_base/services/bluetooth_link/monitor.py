@@ -40,7 +40,9 @@ STALE_AFTER_SECONDS = 10.0
 
 BLUETOOTH_SOURCE_TYPE = "bluetooth"
 
-RELAY_STOPPED_REASON = "The Relay is stopped."
+# The row only shows while the Relay runs, so the reading a stopped Relay
+# leaves is seen only in the gap before the first poll after it starts.
+WAITING_REASON = "Waiting for the first reading."
 DISCONNECTED_REASON = "The Bluetooth link is disconnected."
 NO_READING_REASON = "The adapter gave no reading."
 
@@ -96,7 +98,7 @@ class BluetoothLinkMonitor:
     def observe(self, input_status: InputStatusLike | None, now: float) -> None:
         """Take in the Relay's Input status polled at monotonic time *now*."""
         if input_status is None:
-            self._no_reading(RELAY_STOPPED_REASON)
+            self._no_reading(WAITING_REASON)
         elif not is_bluetooth_input(input_status):
             self._window.clear()
             self._reading = None

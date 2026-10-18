@@ -12,7 +12,7 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
-from sp_rtk_base.services.bluetooth_link.monitor import NO_READING_REASON
+from sp_rtk_base.services.bluetooth_link.monitor import WAITING_REASON
 from sp_rtk_base.ui.components.level import LEVEL_COLOR
 from sp_rtk_base.ui.components.status_card import status_metric
 
@@ -24,7 +24,7 @@ TOOLTIP = (
 
 
 def bluetooth_link_row(reading: BluetoothLinkReading | None) -> None:
-    """Render the row for *reading* (``None`` before the first poll: no reading)."""
+    """Render the row for *reading* (``None`` before the first poll: waiting)."""
     if isinstance(reading, BluetoothLinkVerdict):
         status_metric(
             LABEL,
@@ -40,6 +40,6 @@ def bluetooth_link_row(reading: BluetoothLinkReading | None) -> None:
         LABEL,
         "—",
         "bluetooth",
-        tooltip=reading.reason if reading is not None else NO_READING_REASON,
+        tooltip=reading.reason if reading is not None else WAITING_REASON,
         testid="bluetooth-link-row",
     )

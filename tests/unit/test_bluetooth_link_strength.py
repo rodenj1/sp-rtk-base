@@ -124,7 +124,7 @@ NO_READING = "The adapter gave no reading."
 @pytest.mark.parametrize(
     ("status", "reason"),
     [
-        (None, "The Relay is stopped."),
+        (None, "Waiting for the first reading."),
         (
             FakeInputStatus(connected=False, link_rssi=None),
             "The Bluetooth link is disconnected.",
@@ -140,6 +140,16 @@ def test_no_reading_is_never_a_level(
     monitor, clock = _fed(-9, -9, -9)
     monitor.observe(status, clock.tick())
     assert monitor.current(clock.now) == BluetoothLinkNoReading(reason=reason)
+
+
+def test_after_the_relay_stops_it_waits_for_the_first_reading() -> None:
+    # The row only shows while the Relay runs, so the reading left by the
+    # last poll of a stopped Relay is what shows until the next poll.
+    monitor, clock = BluetoothLinkMonitor(), Clock()
+    monitor.observe(None, clock.tick())
+    assert monitor.current(clock.now) == BluetoothLinkNoReading(
+        reason="Waiting for the first reading."
+    )
 
 
 def test_the_window_does_not_carry_across_a_disconnect() -> None:

@@ -2947,7 +2947,7 @@ requires-dist = [
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyubx2", specifier = ">=1.2.43" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "sp-rtk-base-relay", specifier = ">=4.2.0,<5" },
+    { name = "sp-rtk-base-relay", specifier = ">=4.2.1,<5" },
     { name = "sp-rtk-portal-protocol", specifier = ">=0.9.0,<1" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=14" },
@@ -2972,7 +2972,7 @@ dev = [
 
 [[package]]
 name = "sp-rtk-base-relay"
-version = "4.2.0"
+version = "4.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dbus-fast" },
@@ -2980,9 +2980,9 @@ dependencies = [
     { name = "pyserial" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f4/45/390f9f55638e6be732a94b87b774ddeb5dfd7359fb57ce17da08d53fc58b/sp_rtk_base_relay-4.2.0.tar.gz", hash = "sha256:ba622e0ab491d7cfff948babc1a72081645b05c5db846ba62d68d483450f0dee", size = 124953, upload-time = "2026-10-18T05:33:01.891Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/70/75db2d519673b2ce50b6d48ece469011a0e78c52104d7c14087284b32349/sp_rtk_base_relay-4.2.1.tar.gz", hash = "sha256:28556b5ef72efc154b69f9f88e15ffa615870dec02dd1ba7bc92e28248bd755c", size = 125025, upload-time = "2026-10-18T06:02:18.384Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/47/6b0cc9e2269610d156b776826e7146d4476d8b6fab7ed9fedc3c63d884e5/sp_rtk_base_relay-4.2.0-py3-none-any.whl", hash = "sha256:a77dff351c0eea5783ff36b7633545dc5e5805eb994748f7a529c6ada8fb6a7a", size = 136882, upload-time = "2026-10-18T05:33:00.553Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/7b/ea87041d7c6fc76a7bb586c9440b0235e0b1afde3ab682dc34df686de9e7/sp_rtk_base_relay-4.2.1-py3-none-any.whl", hash = "sha256:a6ff0be63acad5e65dbff6ef9bb3e17ebaf85ab71c2ce6f3d271fd3c1c5afa52", size = 136960, upload-time = "2026-10-18T06:02:16.455Z" },
 ]
 
 [[package]]

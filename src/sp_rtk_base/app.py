@@ -111,6 +111,10 @@ async def startup_services() -> None:
     # connected, so pages (and metrics) see it whether or not one is open.
     services_mod.signal_quality_service.start()
 
+    # Bluetooth link strength polls the Relay status in the background, so
+    # every tab shows the same verdict, already warm when a page opens.
+    services_mod.bluetooth_link_service.start()
+
     # Check PyPI for an Available update now, then every 24 h.
     services_mod.update_check_service.start()
 
@@ -181,6 +185,17 @@ async def shutdown_services() -> None:
         logger.warning("Timed out stopping the Signal Quality poller")
     except Exception:
         logger.exception("Error stopping the Signal Quality poller")
+
+    # 0b. Bluetooth link strength poller — nothing depends on it.
+    try:
+        await asyncio.wait_for(
+            services_mod.bluetooth_link_service.stop(),
+            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out stopping the Bluetooth link strength poller")
+    except Exception:
+        logger.exception("Error stopping the Bluetooth link strength poller")
 
     # 0b'. Update check schedule — nothing depends on it; just stop it.
     try:

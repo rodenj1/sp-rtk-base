@@ -29,6 +29,7 @@ from sp_rtk_base_relay.exceptions import ConfigurationError
 
 from sp_rtk_base.portal_agent.client import read_status
 from sp_rtk_base.portal_agent.protocol import socket_path
+from sp_rtk_base.services.bluetooth_link.service import BluetoothLinkService
 from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.correction_verification import (
@@ -155,6 +156,9 @@ device_service: DeviceService = DeviceService(
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
 signal_quality_service: SignalQualityService = SignalQualityService(device_service)
+bluetooth_link_service: BluetoothLinkService = BluetoothLinkService(
+    relay_service.get_status
+)
 
 
 def _fake_gps_timing(env: str, default: float) -> float:
@@ -328,6 +332,15 @@ def get_signal_quality_service() -> SignalQualityService:
         The application's SignalQualityService instance.
     """
     return signal_quality_service
+
+
+def get_bluetooth_link_service() -> BluetoothLinkService:
+    """Get the singleton BluetoothLinkService instance.
+
+    Returns:
+        The application's BluetoothLinkService instance.
+    """
+    return bluetooth_link_service
 
 
 def get_network_service() -> NetworkService:

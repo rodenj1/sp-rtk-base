@@ -383,15 +383,15 @@ class TestBluetoothLinkGauges:
 
         assert _scrape_bluetooth(service) == {
             "sp_rtk_base_bluetooth_link_strength": 0.0,  # Good
-            "sp_rtk_base_bluetooth_link_median_db": 0.5,
+            "sp_rtk_base_bluetooth_link_median_db": 0.0,  # lower median
         }
 
     @pytest.mark.asyncio()
     @pytest.mark.parametrize(
         ("readings", "strength", "median_db"),
         [
-            ((-1, -3), 1.0, -2.0),  # Marginal
-            ((-6, -8), 2.0, -7.0),  # Poor
+            ((-1, -3), 1.0, -3.0),  # Marginal (lower median)
+            ((-6, -8), 2.0, -8.0),  # Poor (lower median)
         ],
     )
     async def test_the_verdict_level_is_numeric(
@@ -453,8 +453,8 @@ class TestBluetoothLinkGauges:
 
         assert first["sp_rtk_base_bluetooth_link_strength"] == 0.0
         assert second == {
-            "sp_rtk_base_bluetooth_link_strength": 1.0,  # median -4.5: Marginal
-            "sp_rtk_base_bluetooth_link_median_db": -4.5,
+            "sp_rtk_base_bluetooth_link_strength": 2.0,  # lower median -9: Poor
+            "sp_rtk_base_bluetooth_link_median_db": -9.0,
         }
         assert math.isnan(third["sp_rtk_base_bluetooth_link_strength"])
 

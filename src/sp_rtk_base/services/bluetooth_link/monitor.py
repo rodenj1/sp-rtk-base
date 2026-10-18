@@ -12,7 +12,6 @@ it, negative = that many dB below it).
 
 from __future__ import annotations
 
-import math
 import statistics
 from collections import deque
 from typing import Protocol
@@ -25,19 +24,17 @@ from sp_rtk_base.models.bluetooth_link_models import (
 from sp_rtk_base.models.level_models import Level
 
 # Provisional thresholds (rodenj1/rtk_development#107): Good at 0 or
-# above, Marginal from -1 to -5, Poor at -6 or below.  The controller puts
-# the bottom of its comfortable range between -56 dBm and 6 dB above its
-# own sensitivity, so -6 is the edge of reception on the strictest
-# controller and an early warning on a generous one.  Revisit once a
-# measured distance curve exists.
-GOOD_DB, MARGINAL_DB = 0.0, -5.0
+# above, Marginal from -1 to -5, Poor at -6 or below, applied to the
+# window's lower median with no deadband.  Readings are whole dB and Good
+# tops out at 0, so a deadband would shift these lines once a level was
+# held (#112).  The controller puts the bottom of its comfortable range
+# between -56 dBm and 6 dB above its own sensitivity, so -6 is the edge
+# of reception on the strictest controller and an early warning on a
+# generous one.  Revisit once a measured distance curve exists.
+GOOD_DB, MARGINAL_DB = 0, -5
 
-# To leave a level, the median must cross that level's line by this much;
-# entering a level uses the plain line.
-DEADBAND_DB = 1.0
-
-# The verdict is judged from the median of this many seconds of readings,
-# and a verdict with no reading this recent is stale.
+# The verdict is judged from the lower median of this many seconds of
+# readings, and a verdict with no reading this recent is stale.
 WINDOW_SECONDS = 10.0
 STALE_AFTER_SECONDS = 10.0
 
@@ -46,13 +43,6 @@ BLUETOOTH_SOURCE_TYPE = "bluetooth"
 RELAY_STOPPED_REASON = "The Relay is stopped."
 DISCONNECTED_REASON = "The Bluetooth link is disconnected."
 NO_READING_REASON = "The adapter gave no reading."
-
-# Each level's line: a median at or above it is in that level or better.
-_LINE: dict[Level, float] = {
-    "Good": GOOD_DB,
-    "Marginal": MARGINAL_DB,
-    "Poor": -math.inf,
-}
 
 
 class InputStatusLike(Protocol):
@@ -74,24 +64,10 @@ def is_bluetooth_input(input_status: InputStatusLike) -> bool:
     return input_status.source_type.lower() == BLUETOOTH_SOURCE_TYPE
 
 
-def _level(median: float) -> Level:
+def _level(median: int) -> Level:
     if median >= GOOD_DB:
         return "Good"
     return "Marginal" if median >= MARGINAL_DB else "Poor"
-
-
-def _held_level(previous: Level | None, median: float) -> Level:
-    """The level for *median*, staying at *previous* until clearly below its line.
-
-    Only falling out of a level is held.  Climbing into a better one uses
-    the plain line: the reading tops out at 0 on a comfortable link, so a
-    deadband above Good's line would keep a recovered link Marginal.
-    """
-    if previous is not None:
-        line = _LINE[previous]
-        if line - DEADBAND_DB <= median < line:
-            return previous
-    return _level(median)
 
 
 def _link_rssi(input_status: InputStatusLike) -> int | None:
@@ -106,7 +82,9 @@ class BluetoothLinkMonitor:
 
     Fed the Relay's Input status at each poll (``None`` while the Relay is
     stopped).  A connected Bluetooth Input with a reading adds it to a
-    :data:`WINDOW_SECONDS` window judged by its median.  Anything else is
+    :data:`WINDOW_SECONDS` window judged by its lower median (whole dB; an
+    even window leans to the weaker reading), so a lone dip doesn't flip
+    the verdict.  Anything else is
     no reading (or, for a non-Bluetooth Input, no verdict at all), and
     clears the window: a verdict never carries across a gap.
     """
@@ -147,12 +125,8 @@ class BluetoothLinkMonitor:
         self._reading = BluetoothLinkNoReading(reason=reason)
 
     def _judge(self, rssi: int, now: float) -> None:
-        previous = self.current(now)
-        held = previous.level if isinstance(previous, BluetoothLinkVerdict) else None
         self._window.append((now, rssi))
         while self._window[0][0] <= now - WINDOW_SECONDS:
             self._window.popleft()
-        median = float(statistics.median(r for _, r in self._window))
-        self._reading = BluetoothLinkVerdict(
-            level=_held_level(held, median), median_db=median
-        )
+        median = statistics.median_low(r for _, r in self._window)
+        self._reading = BluetoothLinkVerdict(level=_level(median), median_db=median)

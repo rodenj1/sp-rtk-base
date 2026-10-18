@@ -79,8 +79,9 @@ The current metric surface (20 series) covers:
   module on a Bluetooth Input profile, exactly as the dashboard shows it;
   not satellite reception):
   - `sp_rtk_base_bluetooth_link_strength`: verdict, 0 Good, 1 Marginal, 2 Poor
-  - `sp_rtk_base_bluetooth_link_median_db`: the median reading in relative
-    dB, not dBm (0 = comfortable, negative = that many dB below it)
+  - `sp_rtk_base_bluetooth_link_median_db`: the lower median reading in
+    whole relative dB, not dBm (0 = comfortable, negative = that many dB
+    below it)
   - Both are NaN with no reading, while the Relay is stopped, or when the
     Input isn't Bluetooth
 

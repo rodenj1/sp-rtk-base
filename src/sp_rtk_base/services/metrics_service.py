@@ -178,7 +178,7 @@ class MetricsService:
         # Relative dB, not dBm: the controller's offset from its comfortable range.
         self.bluetooth_link_median_db = Gauge(
             f"{ns}_bluetooth_link_median_db",
-            "Bluetooth link strength median reading in relative dB, not dBm "
+            "Bluetooth link strength lower median reading in relative dB, not dBm "
             "(0 = comfortable, negative = dB below it; NaN: no reading)",
             registry=self.registry,
         )

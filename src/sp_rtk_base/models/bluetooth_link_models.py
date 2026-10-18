@@ -19,16 +19,17 @@ class BluetoothLinkVerdict(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     level: Level
-    # The window's median reading, in dB relative to the controller's
-    # comfortable range (0 = inside it, negative = that far below it).
-    median_db: float
+    # The window's lower median reading, in whole dB relative to the
+    # controller's comfortable range (0 = inside it, negative = that far
+    # below it).
+    median_db: int
 
     @property
     def subvalue(self) -> str | None:
         """How far below comfortable the median is, or ``None`` when it isn't."""
         if self.median_db >= 0:
             return None
-        return f"{-self.median_db:g} dB below comfortable"
+        return f"{-self.median_db} dB below comfortable"
 
 
 class BluetoothLinkNoReading(BaseModel):

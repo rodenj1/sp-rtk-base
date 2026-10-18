@@ -75,43 +75,47 @@ def test_threshold_edges(rssi: int, expected: str) -> None:
 
 def test_a_lone_dip_among_zeros_leaves_the_verdict_good() -> None:
     verdict = _verdict(*_fed(0, 0, -1, 0, 0))
-    assert (verdict.level, verdict.median_db) == ("Good", 0.0)
+    assert (verdict.level, verdict.median_db) == ("Good", 0)
 
 
 def test_the_verdict_is_the_median_of_the_last_10_seconds() -> None:
     # 2 s apart, a 10 s window holds five readings: the oldest -9s fall out.
     monitor, clock = _fed(-9, -9, -9, -9, -9, 0, 0)
-    assert _verdict(monitor, clock).median_db == -9.0
+    assert _verdict(monitor, clock).median_db == -9
     monitor.observe(FakeInputStatus(link_rssi=0), clock.tick())
-    assert _verdict(monitor, clock).median_db == 0.0
+    assert _verdict(monitor, clock).median_db == 0
 
 
 @pytest.mark.parametrize(
     ("readings", "expected"),
     [
-        # Good's line is 0: a median sitting at -1 doesn't leave Good ...
-        ((0, -1, -1, -1), "Good"),
-        # ... but one 1 dB further (-2) does.
-        ((0, -2, -2), "Marginal"),
-        # Marginal's line is -5: -6 doesn't leave Marginal, -7 does.
-        ((-3, -6, -6), "Marginal"),
-        ((-3, -7, -7), "Poor"),
+        # No level is held: a median one step past a line changes level.
+        ((0, -1, -1), "Marginal"),
+        ((-3, -6, -6), "Poor"),
+        # Climbing back uses the same lines.
+        ((-2, 0, 0), "Good"),
+        ((-7, -5, -5), "Marginal"),
     ],
 )
-def test_leaving_a_level_needs_crossing_its_line_by_1_db(
+def test_a_level_changes_as_soon_as_the_median_crosses_its_line(
     readings: tuple[int, ...], expected: str
 ) -> None:
     assert _verdict(*_fed(*readings)).level == expected
 
 
 @pytest.mark.parametrize(
-    ("readings", "expected"),
-    [((-2, 0, 0), "Good"), ((-7, -5, -5), "Marginal")],
+    ("readings", "median_db", "expected"),
+    [
+        ((0, -1), -1, "Marginal"),
+        ((-5, -6), -6, "Poor"),
+        ((-1, -2, -3, -4), -3, "Marginal"),
+    ],
 )
-def test_entering_a_level_uses_the_plain_line(
-    readings: tuple[int, ...], expected: str
+def test_an_even_window_is_judged_from_its_lower_median(
+    readings: tuple[int, ...], median_db: int, expected: str
 ) -> None:
-    assert _verdict(*_fed(*readings)).level == expected
+    verdict = _verdict(*_fed(*readings))
+    assert (verdict.median_db, verdict.level) == (median_db, expected)
 
 
 NO_READING = "The adapter gave no reading."
@@ -145,14 +149,6 @@ def test_the_window_does_not_carry_across_a_disconnect() -> None:
     assert _verdict(monitor, clock).median_db == 0.0
 
 
-def test_a_level_is_not_held_across_a_disconnect() -> None:
-    # Held, -1 would stay Good; judged afresh after a gap it is Marginal.
-    monitor, clock = _fed(0, 0)
-    monitor.observe(FakeInputStatus(link_rssi=None), clock.tick())
-    monitor.observe(FakeInputStatus(link_rssi=-1), clock.tick())
-    assert _verdict(monitor, clock).level == "Marginal"
-
-
 @pytest.mark.parametrize("source_type", ["Serial", "TCP", "ntrip"])
 def test_a_non_bluetooth_input_gives_no_verdict(source_type: str) -> None:
     monitor, clock = _fed(-9, -9)
@@ -168,7 +164,7 @@ def test_a_non_bluetooth_input_gives_no_verdict(source_type: str) -> None:
         ((0, 0, -1), None),
         ((-3,), "3 dB below comfortable"),
         ((-7, -7, -8), "7 dB below comfortable"),
-        ((-1, -2), "1.5 dB below comfortable"),
+        ((-1, -2), "2 dB below comfortable"),
     ],
 )
 def test_the_subvalue_says_how_far_below_comfortable_a_negative_median_is(
@@ -183,10 +179,3 @@ def test_a_verdict_no_poll_has_renewed_for_10_seconds_is_no_reading() -> None:
     assert _verdict(monitor, clock).level == "Good"
     clock.tick(0.1)
     assert monitor.current(clock.now) == BluetoothLinkNoReading(reason=NO_READING)
-
-
-def test_a_level_is_not_held_against_a_stale_verdict() -> None:
-    monitor, clock = _fed(0, 0)
-    clock.tick(10.0)
-    monitor.observe(FakeInputStatus(link_rssi=-1), clock.tick())
-    assert _verdict(monitor, clock).level == "Marginal"

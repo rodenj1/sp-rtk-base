@@ -148,6 +148,17 @@ class TestWholeTab:
         assert tabs[1].text == "The Relay stays on 4.1.0."
         assert tabs[1].releases == []
 
+    def test_a_relay_that_goes_back(self) -> None:
+        # rodenj1/rtk_development#117: the target Relay is older than the
+        # running one, so there are no notes, but the Relay doesn't stay.
+        tabs = notes_tabs(
+            _status(ReleaseNotes(app=APP, relay=PackageNotes()), relay="4.0.0")
+        )
+
+        assert tabs is not None
+        assert tabs[1].text == "The Relay goes back to 4.0.0 (from 4.1.0)."
+        assert tabs[1].releases == []
+
 
 class TestRawHtmlIsText:
     """A changelog can't put markup on the page: raw HTML shows as text."""

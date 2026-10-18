@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from importlib.metadata import version as installed_version
 from pathlib import Path
 from typing import Any, cast
 
@@ -73,6 +74,9 @@ def _wait_for_http(url: str, timeout: float = 30.0) -> None:
     )
 
 
+#: The Relay the e2e server runs: the installed distribution, so the tests
+#: hold however the Relay dependency moves.
+E2E_RUNNING_RELAY = installed_version("sp-rtk-base-relay")
 #: The Available update the e2e server finds: far above any real version,
 #: so the tests hold however the running version moves.
 E2E_UPDATE_APP = "99.0.0"
@@ -103,9 +107,13 @@ def fake_pypi_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     check) must put it back.
     """
     pypi = FakePyPI()
+    # The running Relay is on PyPI and every e2e release pins it, so the
+    # Available update leaves the Relay unchanged whatever is installed.
+    pypi.publish_relay(E2E_RUNNING_RELAY)
+    pin = f"=={E2E_RUNNING_RELAY}"
     for version in (E2E_RELEASE_BODY_APP, E2E_NO_NOTES_APP, E2E_UPDATE_APP):
-        pypi.publish_app(version)
-    pypi.publish_app(E2E_NEEDS_PYTHON_APP, requires_python=">=3.99")
+        pypi.publish_app(version, relay_pin=pin)
+    pypi.publish_app(E2E_NEEDS_PYTHON_APP, requires_python=">=3.99", relay_pin=pin)
     github = FakeGitHub()
     github.publish_changelog(
         "sp-rtk-base", E2E_UPDATE_APP, E2E_CHANGELOG, on_top_of="0.9.0"

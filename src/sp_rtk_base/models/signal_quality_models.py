@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from sp_rtk_base.models.device_models import GnssConstellation
+from sp_rtk_base.models.level_models import Level
 
 
 class Band(str, enum.Enum):
@@ -46,7 +46,8 @@ class SignalSnapshot(BaseModel):
     signals: tuple[Signal, ...]
 
 
-SignalLevel = Literal["Good", "Marginal", "Poor"]
+# Signal Quality's name for the shared Good / Marginal / Poor level.
+SignalLevel = Level
 
 
 class SignalQualityVerdict(BaseModel):

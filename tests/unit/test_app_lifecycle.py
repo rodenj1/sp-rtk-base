@@ -79,7 +79,8 @@ class TestStartupServices:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """startup_services calls init_services exactly once, then starts the
-        Signal Quality poller and the update check (at startup, then daily)."""
+        Signal Quality and Bluetooth link strength pollers and the update
+        check (at startup, then daily)."""
         called: list[str] = []
 
         async def _fake_init() -> None:
@@ -88,6 +89,9 @@ class TestStartupServices:
         monkeypatch.setattr(services_mod, "init_services", _fake_init)
         monkeypatch.setattr(
             services_mod.signal_quality_service, "start", lambda: called.append("sq")
+        )
+        monkeypatch.setattr(
+            services_mod.bluetooth_link_service, "start", lambda: called.append("bt")
         )
         monkeypatch.setattr(
             services_mod.update_check_service, "start", lambda: called.append("update")
@@ -106,7 +110,14 @@ class TestStartupServices:
             services_mod.update_service, "refresh_host_setup", _host_setup
         )
         await startup_services()
-        assert called == ["init", "interrupted", "host setup", "sq", "update"]
+        assert called == [
+            "init",
+            "interrupted",
+            "host setup",
+            "sq",
+            "bt",
+            "update",
+        ]
 
 
 # ---------------------------------------------------------------------------

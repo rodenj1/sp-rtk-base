@@ -110,8 +110,9 @@ count, which is a different number)
 **Bluetooth link strength**:
 How well the base station's Bluetooth adapter hears the module at the far
 end of a Bluetooth Input profile, while that link is connected. About the
-radio hop between the base station and the module only. It says nothing
-about the satellites, which is Signal Quality's concern.
+radio hop between the base station and the module only. Its verdict is
+**Good**, **Marginal** or **Poor**. It says nothing about the satellites,
+which is Signal Quality's concern.
 _Avoid_: signal strength, signal, Bluetooth signal, RSSI (a raw reading,
 not the concept)
 

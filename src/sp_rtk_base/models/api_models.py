@@ -32,6 +32,10 @@ class InputStatusResponse(BaseModel):
     seconds_since_last_data: float = 0.0
     reconnect_attempts: int = 0
     reconnect_successes: int = 0
+    # Bluetooth link strength's raw reading: relative dB, never dBm (0 =
+    # inside the adapter's comfortable range, negative = dB below it).
+    # None when there's no reading or the input isn't Bluetooth.
+    link_rssi: int | None = None
 
 
 class DestinationStatusResponse(BaseModel):

@@ -21,11 +21,14 @@ from nicegui import ui
 
 from sp_rtk_base import services as services_mod
 from sp_rtk_base.services import (
+    get_bluetooth_link_service,
     get_config_service,
     get_relay_service,
     get_signal_quality_service,
 )
+from sp_rtk_base.services.bluetooth_link.monitor import is_bluetooth_input
 from sp_rtk_base.services.relay_service import RelayStartRefusedError
+from sp_rtk_base.ui.components.bluetooth_link import bluetooth_link_row
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
 from sp_rtk_base.ui.layout import page_layout
@@ -179,6 +182,7 @@ def dashboard_page() -> None:
     """Render the dashboard page."""
     relay = get_relay_service()
     config_svc = get_config_service()
+    bluetooth_link = get_bluetooth_link_service()
 
     with page_layout("Dashboard"):
         signal_quality_heading(
@@ -365,6 +369,8 @@ def dashboard_page() -> None:
                     status_metric(
                         "Source", getattr(inp, "source_type", "unknown"), "input"
                     )
+                    if is_bluetooth_input(inp):
+                        bluetooth_link_row(bluetooth_link.current())
 
                     # Per-second rate is the primary signal — 0 B/s
                     # reads as "nothing flowing" immediately, where a

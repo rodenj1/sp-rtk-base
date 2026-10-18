@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,11 +21,13 @@ from sp_rtk_base.models.config_models import AppSettings
 from sp_rtk_base.models.device_models import SerialLink
 from sp_rtk_base.models.signal_quality_models import Signal
 from sp_rtk_base.services import (
+    get_bluetooth_link_service,
     get_config_service,
     get_metrics_service,
     get_relay_service,
     get_signal_quality_service,
 )
+from sp_rtk_base.services.bluetooth_link.service import BluetoothLinkService
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.fake import FakeGpsDriver
@@ -303,3 +306,182 @@ class TestSignalQualityGauges:
         assert samples["sp_rtk_base_signal_available"] == 1.0
         assert samples["sp_rtk_base_signal_quality"] == 0.0
         assert samples["sp_rtk_base_signal_usable_satellites"] == 28.0
+
+
+# ---------------------------------------------------------------------------
+# Bluetooth link strength gauges (#115)
+# ---------------------------------------------------------------------------
+
+
+def _input_status(
+    link_rssi: int | None = 0,
+    *,
+    connected: bool = True,
+    source_type: str = "Bluetooth",
+) -> InputStatus:
+    """The Relay's Input status, carrying the ``link_rssi`` reading."""
+    return InputStatus(
+        connected=connected,
+        source_type=source_type,
+        bytes_received=0,
+        messages_received=0,
+        seconds_since_last_data=0.0,
+        reconnect_attempts=0,
+        reconnect_successes=0,
+        connected_since=None,
+        link_rssi=link_rssi,
+    )
+
+
+@dataclass(frozen=True)
+class FakeRelayStatus:
+    input: InputStatus
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def _bluetooth_fed(
+    *statuses: InputStatus | None,
+) -> BluetoothLinkService:
+    """A Bluetooth link service that polled *statuses*, 2 s apart.
+
+    ``None`` is a poll while the Relay is stopped.
+    """
+    clock = _Clock()
+    feed = list(statuses)
+
+    async def relay_status() -> FakeRelayStatus | None:
+        status = feed.pop(0)
+        return None if status is None else FakeRelayStatus(input=status)
+
+    service = BluetoothLinkService(relay_status, clock=clock)
+    for _ in statuses:
+        clock.now += 2.0
+        await service.poll_once()
+    return service
+
+
+def _scrape_bluetooth(bluetooth_link: BluetoothLinkService) -> dict[str, float]:
+    """Scrape /metrics and return the sp_rtk_base_bluetooth_link_* samples."""
+    relay = MagicMock(spec=RelayService)
+    relay.is_running = False
+    client = _create_client(relay, MetricsService())
+    client.app.dependency_overrides[get_bluetooth_link_service] = (  # type: ignore[attr-defined]
+        lambda: bluetooth_link
+    )
+    return {
+        sample.name: sample.value
+        for family in text_string_to_metric_families(client.get("/metrics").text)
+        for sample in family.samples
+        if sample.name.startswith("sp_rtk_base_bluetooth_link_")
+    }
+
+
+class TestBluetoothLinkGauges:
+    """The Bluetooth link strength verdict and median reading, as gauges."""
+
+    @pytest.mark.asyncio()
+    async def test_a_good_link_is_zero_with_its_median_reading(self) -> None:
+        service = await _bluetooth_fed(
+            _input_status(link_rssi=0), _input_status(link_rssi=1)
+        )
+
+        assert _scrape_bluetooth(service) == {
+            "sp_rtk_base_bluetooth_link_strength": 0.0,  # Good
+            "sp_rtk_base_bluetooth_link_median_db": 0.0,  # lower median
+        }
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize(
+        ("readings", "strength", "median_db"),
+        [
+            ((-1, -3), 1.0, -3.0),  # Marginal (lower median)
+            ((-6, -8), 2.0, -8.0),  # Poor (lower median)
+        ],
+    )
+    async def test_the_verdict_level_is_numeric(
+        self, readings: tuple[int, ...], strength: float, median_db: float
+    ) -> None:
+        service = await _bluetooth_fed(
+            *(_input_status(link_rssi=rssi) for rssi in readings)
+        )
+
+        assert _scrape_bluetooth(service) == {
+            "sp_rtk_base_bluetooth_link_strength": strength,
+            "sp_rtk_base_bluetooth_link_median_db": median_db,
+        }
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize(
+        "last_status",
+        [
+            pytest.param(_input_status(link_rssi=None), id="no reading"),
+            pytest.param(_input_status(connected=False), id="disconnected"),
+            pytest.param(None, id="relay stopped"),
+            pytest.param(_input_status(source_type="TCP"), id="not bluetooth"),
+        ],
+    )
+    async def test_both_gauges_are_nan_without_a_reading(
+        self, last_status: InputStatus | None
+    ) -> None:
+        service = await _bluetooth_fed(_input_status(link_rssi=-7), last_status)
+
+        samples = _scrape_bluetooth(service)
+
+        assert set(samples) == {
+            "sp_rtk_base_bluetooth_link_strength",
+            "sp_rtk_base_bluetooth_link_median_db",
+        }
+        assert all(math.isnan(value) for value in samples.values()), samples
+
+    def test_both_gauges_are_nan_before_any_poll(self) -> None:
+        samples = _scrape_bluetooth(BluetoothLinkService(AsyncMock(return_value=None)))
+
+        assert all(math.isnan(value) for value in samples.values()), samples
+
+    @pytest.mark.asyncio()
+    async def test_each_scrape_reads_the_monitor_afresh(self) -> None:
+        clock = _Clock()
+        feed = [_input_status(link_rssi=0), _input_status(link_rssi=-9)]
+
+        async def relay_status() -> FakeRelayStatus:
+            return FakeRelayStatus(input=feed.pop(0))
+
+        service = BluetoothLinkService(relay_status, clock=clock)
+        await service.poll_once()
+        first = _scrape_bluetooth(service)
+        clock.now += 2.0
+        await service.poll_once()
+        second = _scrape_bluetooth(service)
+        clock.now += 30.0  # no poll since: the verdict is stale
+        third = _scrape_bluetooth(service)
+
+        assert first["sp_rtk_base_bluetooth_link_strength"] == 0.0
+        assert second == {
+            "sp_rtk_base_bluetooth_link_strength": 2.0,  # lower median -9: Poor
+            "sp_rtk_base_bluetooth_link_median_db": -9.0,
+        }
+        assert math.isnan(third["sp_rtk_base_bluetooth_link_strength"])
+
+    def test_the_help_text_names_the_levels_and_the_unit(self) -> None:
+        relay = MagicMock(spec=RelayService)
+        relay.is_running = False
+        client = _create_client(relay, MetricsService())
+        help_text = {
+            family.name: family.documentation
+            for family in text_string_to_metric_families(client.get("/metrics").text)
+        }
+
+        assert (
+            "0 Good, 1 Marginal, 2 Poor"
+            in help_text["sp_rtk_base_bluetooth_link_strength"]
+        )
+        assert (
+            "relative dB, not dBm" in help_text["sp_rtk_base_bluetooth_link_median_db"]
+        )

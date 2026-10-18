@@ -22,6 +22,7 @@ class _MockInputStatus:
     reconnect_attempts: int = 0
     reconnect_successes: int = 0
     connected_since: float | None = 100.0
+    link_rssi: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,29 @@ class TestGetRelayStatus:
         data = resp.json()
         assert data["running"] is True
         assert data["bytes_received"] == 5000
+
+    def test_status_carries_the_bluetooth_link_strength_reading(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+    ) -> None:
+        """The input's raw Bluetooth link strength reading, relative dB."""
+        status = _MockRelayStatus(
+            input=_MockInputStatus(source_type="Bluetooth", link_rssi=-3)
+        )
+        mock_relay_service.get_status = AsyncMock(return_value=status)
+        data = api_client_with_services.get("/api/relay/status").json()
+        assert data["input"]["link_rssi"] == -3
+
+    def test_status_without_a_reading_has_a_null_link_rssi(
+        self,
+        api_client_with_services: TestClient,
+        mock_relay_service: MagicMock,
+    ) -> None:
+        """No reading (not Bluetooth, link down, adapter silent) is null."""
+        mock_relay_service.get_status = AsyncMock(return_value=_MockRelayStatus())
+        data = api_client_with_services.get("/api/relay/status").json()
+        assert data["input"]["link_rssi"] is None
 
     def test_status_includes_auto_start_field(
         self,

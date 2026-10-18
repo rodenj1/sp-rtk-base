@@ -11,6 +11,8 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.11.0 (2026-10-18)
+
 ### Portal agent
 
 The groundwork for the remote access Portal (rtk_development#82).
@@ -107,6 +109,40 @@ The groundwork for the remote access Portal (rtk_development#82).
   installer to be re-run once instead of offering Update. `curl -fsSL
   https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
   | sudo bash`. A bare re-run keeps the deployment mode.
+
+### Bluetooth link strength on the dashboard
+
+How well the base station hears its Bluetooth module, when the Input is
+Bluetooth (rtk_development#112). Not satellite reception: that's Signal
+Quality.
+
+- **Dashboard row.** The Input Source card gains a **Bluetooth link** row:
+  **Good**, **Marginal** or **Poor**, with "N dB below comfortable" when
+  the link is weaker than the adapter's comfortable range. Before the
+  first reading it says it is waiting; with no fresh reading it shows "—".
+- **The reading.** The Relay reads the link's RSSI from the Bluetooth
+  adapter every 2 s. It is relative dB, not dBm: 0 is inside the adapter's
+  comfortable range, negative is that many dB below it.
+- **The verdict.** The lower median of the last 10 s of readings: Good at
+  0, Marginal from −1 to −5, Poor at −6 or below (provisional thresholds).
+- **Prometheus.** `/metrics` exports `sp_rtk_base_bluetooth_link_strength`
+  (0 Good, 1 Marginal, 2 Poor, NaN with no reading) and
+  `sp_rtk_base_bluetooth_link_median_db`: 22 series in all.
+- **API.** Each Input in `GET /api/relay/status` carries `link_rssi`: the
+  raw reading, or `null` when there is none or the Input isn't Bluetooth.
+- **Requires `sp_rtk_base_relay>=4.2.1`.** 4.2.0 (yanked) never got a
+  reading on newer kernels.
+
+### Fixed
+
+- **Release notes name a Relay step back** (rtk_development#117). When an
+  Update's target Relay is older than the running one, the Relay notes tab
+  said "The Relay stays on 4.1.0."; it now says "The Relay goes back to
+  4.1.0 (from 4.2.1)."
+- **Behind the Portal, the pages work.** Inside the Portal's sandboxed
+  frame the UI starts (browser storage falls back to memory only when the
+  frame blocks it), and the live Event log connects under the Portal's
+  path prefix.
 
 ## v0.10.0 (2026-10-08)
 

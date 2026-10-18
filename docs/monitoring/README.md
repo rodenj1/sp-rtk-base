@@ -75,6 +75,14 @@ The current metric surface (20 series) covers:
   - `sp_rtk_base_signal_usable_satellites`: satellites with a signal ≥ 35 dB-Hz
   - `sp_rtk_base_signal_available`: 1 with current data; 0 when stale or no
     data, when the other three are NaN (the series never disappear)
+- Bluetooth link strength (how well the base station hears its Bluetooth
+  module on a Bluetooth Input profile, exactly as the dashboard shows it;
+  not satellite reception):
+  - `sp_rtk_base_bluetooth_link_strength`: verdict, 0 Good, 1 Marginal, 2 Poor
+  - `sp_rtk_base_bluetooth_link_median_db`: the median reading in relative
+    dB, not dBm (0 = comfortable, negative = that many dB below it)
+  - Both are NaN with no reading, while the Relay is stopped, or when the
+    Input isn't Bluetooth
 
 These are all gauges that update on each scrape of `/metrics`.
 

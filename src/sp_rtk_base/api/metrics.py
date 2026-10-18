@@ -17,11 +17,13 @@ from fastapi.responses import JSONResponse, Response
 from prometheus_client import generate_latest
 
 from sp_rtk_base.services import (
+    get_bluetooth_link_service,
     get_config_service,
     get_metrics_service,
     get_relay_service,
     get_signal_quality_service,
 )
+from sp_rtk_base.services.bluetooth_link.service import BluetoothLinkService
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.relay_service import RelayService
@@ -45,6 +47,7 @@ async def prometheus_metrics(
     metrics: MetricsService = Depends(get_metrics_service),
     config_svc: ConfigService = Depends(get_config_service),
     signal_quality: SignalQualityService = Depends(get_signal_quality_service),
+    bluetooth_link: BluetoothLinkService = Depends(get_bluetooth_link_service),
 ) -> Response:
     """Serve Prometheus metrics.
 
@@ -72,6 +75,7 @@ async def prometheus_metrics(
         metrics.update_idle()
 
     metrics.update_signal_quality(signal_quality.current(METRICS_SIGNAL_VIEW))
+    metrics.update_bluetooth_link(bluetooth_link.current())
 
     output: bytes = generate_latest(metrics.registry)
     return Response(content=output, media_type=PROMETHEUS_CONTENT_TYPE)

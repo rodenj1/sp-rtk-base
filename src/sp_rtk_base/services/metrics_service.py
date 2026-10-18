@@ -19,6 +19,10 @@ import logging
 from prometheus_client import CollectorRegistry, Gauge
 from sp_rtk_base_relay.core.status import RelayStatus
 
+from sp_rtk_base.models.bluetooth_link_models import (
+    BluetoothLinkReading,
+    BluetoothLinkVerdict,
+)
 from sp_rtk_base.models.signal_quality_models import (
     SignalLevel,
     SignalQualityReading,
@@ -165,6 +169,23 @@ class MetricsService:
         )
         self.update_signal_quality(None)
 
+        # Bluetooth link strength: exactly what the dashboard shows.  NaN
+        # with no reading, the Relay stopped or a non-Bluetooth Input.
+        self.bluetooth_link_strength = Gauge(
+            f"{ns}_bluetooth_link_strength",
+            "Bluetooth link strength verdict: 0 Good, 1 Marginal, 2 Poor "
+            "(NaN: no reading or no Bluetooth Input)",
+            registry=self.registry,
+        )
+        # Relative dB, not dBm: the controller's offset from its comfortable range.
+        self.bluetooth_link_median_db = Gauge(
+            f"{ns}_bluetooth_link_median_db",
+            "Bluetooth link strength median reading in relative dB, not dBm "
+            "(0 = comfortable, negative = dB below it; NaN: no reading)",
+            registry=self.registry,
+        )
+        self.update_bluetooth_link(None)
+
         logger.info("MetricsService initialized (namespace=%s)", ns)
 
     # ──────────────────────────────────────────────────────────────
@@ -220,6 +241,15 @@ class MetricsService:
         for band in ("L1", "L2"):
             self.signal_band_strength_dbhz.labels(band=band).set(nan)
         self.signal_usable_satellites.set(nan)
+
+    def update_bluetooth_link(self, reading: BluetoothLinkReading | None) -> None:
+        """Set the Bluetooth link gauges from *reading* (``None``: no Bluetooth Input)."""
+        if isinstance(reading, BluetoothLinkVerdict):
+            self.bluetooth_link_strength.set(_LEVEL_VALUE[reading.level])
+            self.bluetooth_link_median_db.set(reading.median_db)
+            return
+        self.bluetooth_link_strength.set(float("nan"))
+        self.bluetooth_link_median_db.set(float("nan"))
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

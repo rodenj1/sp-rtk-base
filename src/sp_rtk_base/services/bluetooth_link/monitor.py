@@ -69,6 +69,11 @@ class InputStatusLike(Protocol):
     def source_type(self) -> str: ...
 
 
+def is_bluetooth_input(input_status: InputStatusLike) -> bool:
+    """Whether *input_status* is a Bluetooth Input's."""
+    return input_status.source_type.lower() == BLUETOOTH_SOURCE_TYPE
+
+
 def _level(median: float) -> SignalLevel:
     if median >= GOOD_DB:
         return "Good"
@@ -114,7 +119,7 @@ class BluetoothLinkMonitor:
         """Take in the Relay's Input status polled at monotonic time *now*."""
         if input_status is None:
             self._no_reading(RELAY_STOPPED_REASON)
-        elif input_status.source_type.lower() != BLUETOOTH_SOURCE_TYPE:
+        elif not is_bluetooth_input(input_status):
             self._window.clear()
             self._reading = None
         elif not input_status.connected:

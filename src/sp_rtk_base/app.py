@@ -18,6 +18,7 @@ without going through NiceGUI's ``app.on_shutdown`` machinery.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable
 
 from fastapi import FastAPI
 
@@ -122,6 +123,23 @@ async def startup_services() -> None:
     services_mod.portal_events.start()
 
 
+async def _stop_within(stop: Awaitable[object], timeout: float, label: str) -> None:
+    """Await one shutdown step for at most *timeout* seconds.  Never raises.
+
+    A timeout logs a warning and any other error logs its traceback, both
+    naming *label* ("Timed out stopping <label>", "Error stopping <label>"),
+    so one step's failure can't keep the rest of shutdown from running.
+    """
+    import asyncio
+
+    try:
+        await asyncio.wait_for(stop, timeout=timeout)
+    except TimeoutError:
+        logger.warning("Timed out stopping %s", label)
+    except Exception:
+        logger.exception("Error stopping %s", label)
+
+
 async def shutdown_services() -> None:
     """Gracefully stop the GPS device and the relay engine.
 
@@ -176,59 +194,39 @@ async def shutdown_services() -> None:
 
     # 0b. Signal Quality poller — stop it before the device goes away so
     #     it isn't mid-poll when the driver disconnects.
-    try:
-        await asyncio.wait_for(
-            services_mod.signal_quality_service.stop(),
-            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Timed out stopping the Signal Quality poller")
-    except Exception:
-        logger.exception("Error stopping the Signal Quality poller")
+    await _stop_within(
+        services_mod.signal_quality_service.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the Signal Quality poller",
+    )
 
     # 0b. Bluetooth link strength poller — nothing depends on it.
-    try:
-        await asyncio.wait_for(
-            services_mod.bluetooth_link_service.stop(),
-            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Timed out stopping the Bluetooth link strength poller")
-    except Exception:
-        logger.exception("Error stopping the Bluetooth link strength poller")
+    await _stop_within(
+        services_mod.bluetooth_link_service.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the Bluetooth link strength poller",
+    )
 
     # 0b'. Update check schedule — nothing depends on it; just stop it.
-    try:
-        await asyncio.wait_for(
-            services_mod.update_check_service.stop(),
-            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Timed out stopping the update check")
-    except Exception:
-        logger.exception("Error stopping the update check")
+    await _stop_within(
+        services_mod.update_check_service.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the update check",
+    )
 
     # 0b''. Portal agent's Event log entries — nothing depends on it.
-    try:
-        await asyncio.wait_for(
-            services_mod.portal_events.stop(),
-            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Timed out stopping the Portal agent's Event log entries")
-    except Exception:
-        logger.exception("Error stopping the Portal agent's Event log entries")
+    await _stop_within(
+        services_mod.portal_events.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the Portal agent's Event log entries",
+    )
 
     # 0c. Survey-in — stop the station's averaging before the device goes.
-    try:
-        await asyncio.wait_for(
-            services_mod.survey_service.shutdown(),
-            timeout=AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Timed out stopping the survey-in")
-    except Exception:
-        logger.exception("Error stopping the survey-in")
+    await _stop_within(
+        services_mod.survey_service.shutdown(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the survey-in",
+    )
 
     # 1. Device first — release the GPS handle (Bug B).
     if device_service.is_available and device_service.is_connected:

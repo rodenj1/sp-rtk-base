@@ -51,11 +51,6 @@ class BluetoothLinkService:
         self._monitor = BluetoothLinkMonitor()
         self._task: asyncio.Task[None] | None = None
 
-    @property
-    def monitor(self) -> BluetoothLinkMonitor:
-        """The monitor this service feeds."""
-        return self._monitor
-
     def current(self) -> BluetoothLinkReading | None:
         """The Bluetooth link strength now; ``None`` without a Bluetooth Input."""
         return self._monitor.current(self._clock())

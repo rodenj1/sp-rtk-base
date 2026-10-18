@@ -52,7 +52,7 @@ per base station (location name, callsign, antenna ID, etc.).
 
 ## What's exposed
 
-The current metric surface (20 series) covers:
+The current metric surface (22 series) covers:
 
 - Service state: `sp_rtk_base_relay_running`, `sp_rtk_base_relay_uptime_seconds`
 - Input source: `sp_rtk_base_input_connected`, `sp_rtk_base_input_bytes_received`,

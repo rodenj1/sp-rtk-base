@@ -18,7 +18,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from sp_rtk_base.update.host_setup import PLUMBING_VERSION
-from tests.e2e.conftest import E2E_UPDATE_APP
+from tests.e2e.conftest import E2E_RUNNING_RELAY, E2E_UPDATE_APP
 
 pytestmark = [pytest.mark.e2e, pytest.mark.usefixtures("clean_update")]
 
@@ -198,7 +198,7 @@ def test_the_api_refuses_too(api_base_url: str, host_setup: Path) -> None:
 
     response = httpx.post(
         f"{api_base_url}/api/update",
-        json={"app": E2E_UPDATE_APP, "relay": "4.1.0"},
+        json={"app": E2E_UPDATE_APP, "relay": E2E_RUNNING_RELAY},
         timeout=10.0,
     )
 

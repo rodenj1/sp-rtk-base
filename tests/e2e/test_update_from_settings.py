@@ -18,11 +18,11 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from sp_rtk_base import __version__ as running_app
-from tests.e2e.conftest import E2E_UPDATE_APP
+from tests.e2e.conftest import E2E_RUNNING_RELAY, E2E_UPDATE_APP
 
 pytestmark = pytest.mark.e2e
 
-RELAY = "4.1.0"
+RELAY = E2E_RUNNING_RELAY
 """The Relay the e2e server runs; the Update leaves it unchanged."""
 
 STEPS = [

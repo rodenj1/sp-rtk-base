@@ -15,11 +15,11 @@ from pathlib import Path
 import httpx
 import pytest
 from playwright.sync_api import Locator, Page, expect
-from sp_rtk_base_relay import __version__ as running_relay
 
 from tests.e2e.conftest import (
     E2E_NO_NOTES_APP,
     E2E_RELEASE_BODY_APP,
+    E2E_RUNNING_RELAY,
     E2E_UPDATE_APP,
 )
 
@@ -102,7 +102,7 @@ def test_the_relay_tab(page: Page, base_url: str) -> None:
     notes.get_by_test_id("release-notes-tab-relay").click()
 
     expect(notes.get_by_test_id("release-notes-relay")).to_have_text(
-        f"The Relay stays on {running_relay}."
+        f"The Relay stays on {E2E_RUNNING_RELAY}."
     )
 
 

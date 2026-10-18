@@ -17,7 +17,11 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from sp_rtk_base import __version__ as running_app
-from tests.e2e.conftest import E2E_NEEDS_PYTHON_APP, E2E_UPDATE_APP
+from tests.e2e.conftest import (
+    E2E_NEEDS_PYTHON_APP,
+    E2E_RUNNING_RELAY,
+    E2E_UPDATE_APP,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -68,7 +72,9 @@ def test_the_card_shows_current_to_target(page: Page, base_url: str) -> None:
     app_row = card.get_by_test_id("version-row-sp-base")
     expect(app_row).to_contain_text(running_app)
     expect(app_row).to_contain_text(E2E_UPDATE_APP)
-    expect(card.get_by_test_id("version-row-sp-base-relay")).to_contain_text("4.1.0")
+    expect(card.get_by_test_id("version-row-sp-base-relay")).to_contain_text(
+        E2E_RUNNING_RELAY
+    )
     expect(card.get_by_test_id("update-python-note")).to_have_text(
         f"{E2E_NEEDS_PYTHON_APP} needs Python 3.99; this base runs {RUNNING_PYTHON}. "
         f"Offering {E2E_UPDATE_APP}, the newest release that runs here."

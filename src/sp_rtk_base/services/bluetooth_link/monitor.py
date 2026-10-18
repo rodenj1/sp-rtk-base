@@ -50,8 +50,7 @@ NO_READING_REASON = "The adapter gave no reading."
 class InputStatusLike(Protocol):
     """The fields of the Relay's ``InputStatus`` the monitor reads.
 
-    ``link_rssi`` (sp-rtk-base-relay 4.2+) is read when present: an older
-    Relay without it reads as no reading.
+    ``link_rssi`` is ``None`` when the adapter gave no reading.
     """
 
     @property
@@ -59,6 +58,9 @@ class InputStatusLike(Protocol):
 
     @property
     def source_type(self) -> str: ...
+
+    @property
+    def link_rssi(self) -> int | None: ...
 
 
 def is_bluetooth_input(input_status: InputStatusLike) -> bool:
@@ -70,13 +72,6 @@ def _level(median: int) -> Level:
     if median >= GOOD_DB:
         return "Good"
     return "Marginal" if median >= MARGINAL_DB else "Poor"
-
-
-def _link_rssi(input_status: InputStatusLike) -> int | None:
-    rssi: object = getattr(input_status, "link_rssi", None)
-    if isinstance(rssi, int) and not isinstance(rssi, bool):
-        return rssi
-    return None
 
 
 class BluetoothLinkMonitor:
@@ -104,7 +99,7 @@ class BluetoothLinkMonitor:
             self._reading = None
         elif not input_status.connected:
             self._no_reading(DISCONNECTED_REASON)
-        elif (rssi := _link_rssi(input_status)) is None:
+        elif (rssi := input_status.link_rssi) is None:
             self._no_reading(NO_READING_REASON)
         else:
             self._judge(rssi, now)

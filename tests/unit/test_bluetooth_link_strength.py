@@ -3,41 +3,40 @@
 The seam is the monitor: tests feed it a sequence of Input statuses (as
 the Relay status reports them, ``None`` while the Relay is stopped) at
 times from a fake clock, and assert on ``current()``.  The Input
-statuses are fakes carrying ``link_rssi``, the relative dB reading the
-Relay reports on a Bluetooth Input.
+statuses are the Relay's own ``InputStatus``, carrying ``link_rssi``, the
+relative dB reading the Relay reports on a Bluetooth Input.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
+from sp_rtk_base_relay import InputStatus
 
 from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkNoReading,
     BluetoothLinkVerdict,
 )
-from sp_rtk_base.services.bluetooth_link.monitor import (
-    BluetoothLinkMonitor,
-    InputStatusLike,
-)
+from sp_rtk_base.services.bluetooth_link.monitor import BluetoothLinkMonitor
 
 
-@dataclass(frozen=True)
-class FakeInputStatus:
-    """The fields of the Relay's Input status the monitor reads."""
-
-    link_rssi: int | None = 0
-    connected: bool = True
-    source_type: str = "Bluetooth"
-
-
-@dataclass(frozen=True)
-class FakeRelay41InputStatus:
-    """An Input status from a Relay too old to report ``link_rssi`` at all."""
-
-    connected: bool = True
-    source_type: str = "Bluetooth"
+def _input_status(
+    link_rssi: int | None = 0,
+    *,
+    connected: bool = True,
+    source_type: str = "Bluetooth",
+) -> InputStatus:
+    """The Relay's Input status; only the fields the monitor reads vary."""
+    return InputStatus(
+        connected=connected,
+        source_type=source_type,
+        bytes_received=0,
+        messages_received=0,
+        seconds_since_last_data=0.0,
+        reconnect_attempts=0,
+        reconnect_successes=0,
+        connected_since=None,
+        link_rssi=link_rssi,
+    )
 
 
 class Clock:
@@ -55,7 +54,7 @@ def _fed(*readings: int | None) -> tuple[BluetoothLinkMonitor, Clock]:
     """A monitor fed one Bluetooth Input status per reading, 2 s apart."""
     monitor, clock = BluetoothLinkMonitor(), Clock()
     for rssi in readings:
-        monitor.observe(FakeInputStatus(link_rssi=rssi), clock.tick())
+        monitor.observe(_input_status(link_rssi=rssi), clock.tick())
     return monitor, clock
 
 
@@ -82,7 +81,7 @@ def test_the_verdict_is_the_median_of_the_last_10_seconds() -> None:
     # 2 s apart, a 10 s window holds five readings: the oldest -9s fall out.
     monitor, clock = _fed(-9, -9, -9, -9, -9, 0, 0)
     assert _verdict(monitor, clock).median_db == -9
-    monitor.observe(FakeInputStatus(link_rssi=0), clock.tick())
+    monitor.observe(_input_status(link_rssi=0), clock.tick())
     assert _verdict(monitor, clock).median_db == 0
 
 
@@ -126,17 +125,14 @@ NO_READING = "The adapter gave no reading."
     [
         (None, "Waiting for the first reading."),
         (
-            FakeInputStatus(connected=False, link_rssi=None),
+            _input_status(connected=False, link_rssi=None),
             "The Bluetooth link is disconnected.",
         ),
-        (FakeInputStatus(link_rssi=None), NO_READING),
-        (FakeRelay41InputStatus(), NO_READING),
+        (_input_status(link_rssi=None), NO_READING),
     ],
-    ids=["relay stopped", "disconnected", "no reading", "relay without link_rssi"],
+    ids=["relay stopped", "disconnected", "no reading"],
 )
-def test_no_reading_is_never_a_level(
-    status: InputStatusLike | None, reason: str
-) -> None:
+def test_no_reading_is_never_a_level(status: InputStatus | None, reason: str) -> None:
     monitor, clock = _fed(-9, -9, -9)
     monitor.observe(status, clock.tick())
     assert monitor.current(clock.now) == BluetoothLinkNoReading(reason=reason)
@@ -154,15 +150,15 @@ def test_after_the_relay_stops_it_waits_for_the_first_reading() -> None:
 
 def test_the_window_does_not_carry_across_a_disconnect() -> None:
     monitor, clock = _fed(-9, -9, -9, -9)
-    monitor.observe(FakeInputStatus(connected=False, link_rssi=None), clock.tick())
-    monitor.observe(FakeInputStatus(link_rssi=0), clock.tick())
+    monitor.observe(_input_status(connected=False, link_rssi=None), clock.tick())
+    monitor.observe(_input_status(link_rssi=0), clock.tick())
     assert _verdict(monitor, clock).median_db == 0.0
 
 
 @pytest.mark.parametrize("source_type", ["Serial", "TCP", "ntrip"])
 def test_a_non_bluetooth_input_gives_no_verdict(source_type: str) -> None:
     monitor, clock = _fed(-9, -9)
-    monitor.observe(FakeInputStatus(source_type=source_type), clock.tick())
+    monitor.observe(_input_status(source_type=source_type), clock.tick())
     assert monitor.current(clock.now) is None
 
 

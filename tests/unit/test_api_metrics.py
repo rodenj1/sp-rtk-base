@@ -313,18 +313,29 @@ class TestSignalQualityGauges:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class FakeInputStatus:
+def _input_status(
+    link_rssi: int | None = 0,
+    *,
+    connected: bool = True,
+    source_type: str = "Bluetooth",
+) -> InputStatus:
     """The Relay's Input status, carrying the ``link_rssi`` reading."""
-
-    link_rssi: int | None = 0
-    connected: bool = True
-    source_type: str = "Bluetooth"
+    return InputStatus(
+        connected=connected,
+        source_type=source_type,
+        bytes_received=0,
+        messages_received=0,
+        seconds_since_last_data=0.0,
+        reconnect_attempts=0,
+        reconnect_successes=0,
+        connected_since=None,
+        link_rssi=link_rssi,
+    )
 
 
 @dataclass(frozen=True)
 class FakeRelayStatus:
-    input: FakeInputStatus
+    input: InputStatus
 
 
 class _Clock:
@@ -336,7 +347,7 @@ class _Clock:
 
 
 async def _bluetooth_fed(
-    *statuses: FakeInputStatus | None,
+    *statuses: InputStatus | None,
 ) -> BluetoothLinkService:
     """A Bluetooth link service that polled *statuses*, 2 s apart.
 
@@ -378,7 +389,7 @@ class TestBluetoothLinkGauges:
     @pytest.mark.asyncio()
     async def test_a_good_link_is_zero_with_its_median_reading(self) -> None:
         service = await _bluetooth_fed(
-            FakeInputStatus(link_rssi=0), FakeInputStatus(link_rssi=1)
+            _input_status(link_rssi=0), _input_status(link_rssi=1)
         )
 
         assert _scrape_bluetooth(service) == {
@@ -398,7 +409,7 @@ class TestBluetoothLinkGauges:
         self, readings: tuple[int, ...], strength: float, median_db: float
     ) -> None:
         service = await _bluetooth_fed(
-            *(FakeInputStatus(link_rssi=rssi) for rssi in readings)
+            *(_input_status(link_rssi=rssi) for rssi in readings)
         )
 
         assert _scrape_bluetooth(service) == {
@@ -410,16 +421,16 @@ class TestBluetoothLinkGauges:
     @pytest.mark.parametrize(
         "last_status",
         [
-            pytest.param(FakeInputStatus(link_rssi=None), id="no reading"),
-            pytest.param(FakeInputStatus(connected=False), id="disconnected"),
+            pytest.param(_input_status(link_rssi=None), id="no reading"),
+            pytest.param(_input_status(connected=False), id="disconnected"),
             pytest.param(None, id="relay stopped"),
-            pytest.param(FakeInputStatus(source_type="TCP"), id="not bluetooth"),
+            pytest.param(_input_status(source_type="TCP"), id="not bluetooth"),
         ],
     )
     async def test_both_gauges_are_nan_without_a_reading(
-        self, last_status: FakeInputStatus | None
+        self, last_status: InputStatus | None
     ) -> None:
-        service = await _bluetooth_fed(FakeInputStatus(link_rssi=-7), last_status)
+        service = await _bluetooth_fed(_input_status(link_rssi=-7), last_status)
 
         samples = _scrape_bluetooth(service)
 
@@ -437,7 +448,7 @@ class TestBluetoothLinkGauges:
     @pytest.mark.asyncio()
     async def test_each_scrape_reads_the_monitor_afresh(self) -> None:
         clock = _Clock()
-        feed = [FakeInputStatus(link_rssi=0), FakeInputStatus(link_rssi=-9)]
+        feed = [_input_status(link_rssi=0), _input_status(link_rssi=-9)]
 
         async def relay_status() -> FakeRelayStatus:
             return FakeRelayStatus(input=feed.pop(0))

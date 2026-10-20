@@ -48,6 +48,25 @@ def _align(length: int) -> int:
     return (length + 3) & ~3
 
 
+def _parse(datagram: bytes) -> Iterator[Message]:
+    """The netlink messages in one received datagram, error replies too."""
+    offset = 0
+    while offset + _HEADER.size <= len(datagram):
+        length, kind, flags, seq, _pid = _HEADER.unpack_from(datagram, offset)
+        if length < _HEADER.size:
+            break
+        payload = datagram[offset + _HEADER.size : offset + length]
+        yield Message(type=kind, flags=flags, seq=seq, payload=payload)
+        offset += _align(length)
+
+
+def _raise_if_error(message: Message) -> None:
+    if message.type == NLMSG_ERROR:
+        (error,) = struct.unpack_from("i", message.payload)
+        if error < 0:
+            raise OSError(-error, f"netlink error: {errno.errorcode.get(-error)}")
+
+
 def messages(datagram: bytes) -> Iterator[Message]:
     """The netlink messages in one received datagram.
 
@@ -55,18 +74,9 @@ def messages(datagram: bytes) -> Iterator[Message]:
         OSError: for an ``NLMSG_ERROR`` carrying a negative errno (an
             error reply; error 0 is an ACK, which is yielded).
     """
-    offset = 0
-    while offset + _HEADER.size <= len(datagram):
-        length, kind, flags, seq, _pid = _HEADER.unpack_from(datagram, offset)
-        if length < _HEADER.size:
-            break
-        payload = datagram[offset + _HEADER.size : offset + length]
-        if kind == NLMSG_ERROR:
-            (error,) = struct.unpack_from("i", payload)
-            if error < 0:
-                raise OSError(-error, f"netlink error: {errno.errorcode.get(-error)}")
-        yield Message(type=kind, flags=flags, seq=seq, payload=payload)
-        offset += _align(length)
+    for message in _parse(datagram):
+        _raise_if_error(message)
+        yield message
 
 
 def attributes(buffer: bytes) -> dict[int, bytes]:
@@ -87,18 +97,38 @@ def request(kind: int, flags: int, seq: int, body: bytes) -> bytes:
     return _HEADER.pack(_HEADER.size + len(body), kind, flags, seq, 0) + body
 
 
-def is_last(datagram: bytes) -> bool:
-    """Whether *datagram* ends a reply: it holds ``NLMSG_DONE``, an error or
-    ACK, or a message that isn't part of a multipart dump."""
-    return any(
-        message.type in (NLMSG_DONE, NLMSG_ERROR) or not message.flags & NLM_F_MULTI
-        for message in messages(datagram)
-    )
+def _ends_reply(message: Message) -> bool:
+    """Whether *message* ends a reply: ``NLMSG_DONE``, an error or ACK, or
+    a message that isn't part of a multipart dump."""
+    return message.type in (NLMSG_DONE, NLMSG_ERROR) or not message.flags & NLM_F_MULTI
+
+
+def reply(datagrams: Iterator[bytes], seq: int) -> list[bytes]:
+    """Request *seq*'s reply: every datagram of it from *datagrams*, up to
+    its end.  Datagrams for any other request (a late reply to an earlier,
+    timed-out one, error replies included) are skipped.
+
+    Raises:
+        OSError: the reply is a netlink error, or *datagrams* ran out
+            before its end.
+    """
+    replies: list[bytes] = []
+    for datagram in datagrams:
+        ours = [message for message in _parse(datagram) if message.seq == seq]
+        if not ours:
+            continue
+        for message in ours:
+            _raise_if_error(message)
+        replies.append(datagram)
+        if any(_ends_reply(message) for message in ours):
+            return replies
+    raise OSError(errno.EIO, "netlink reply ended early")
 
 
 class NetlinkSocket:  # pragma: no cover - host I/O; parsing is tested
     """One long-lived netlink socket, opened on first use and reopened after
-    any failure.  Blocking, with a timeout: call it off the event loop."""
+    any failure, until :meth:`close`.  Blocking, with a timeout: call it off
+    the event loop, and never :meth:`close` it during an :meth:`exchange`."""
 
     TIMEOUT_SECONDS = 1.0
     RECEIVE_BYTES = 65536
@@ -107,13 +137,20 @@ class NetlinkSocket:  # pragma: no cover - host I/O; parsing is tested
         self._protocol = protocol
         self._socket: socket.socket | None = None
         self._seq = itertools.count(1)
+        self._closed = False
 
     def exchange(self, kind: int, flags: int, body: bytes) -> list[bytes]:
-        """Send one request; return every reply datagram up to its end."""
+        """Send one request; return every reply datagram up to its end.
+
+        Raises:
+            OSError: the request failed, or the socket is closed.
+        """
+        if self._closed:
+            raise OSError(errno.EBADF, "netlink socket closed")
         try:
             return self._exchange(kind, flags, body)
         except Exception:
-            self.close()
+            self._drop()
             raise
 
     def _exchange(self, kind: int, flags: int, body: bytes) -> list[bytes]:
@@ -122,18 +159,18 @@ class NetlinkSocket:  # pragma: no cover - host I/O; parsing is tested
             sock.settimeout(self.TIMEOUT_SECONDS)
             sock.bind((0, 0))
             self._socket = sock
+        sock = self._socket
         seq = next(self._seq) & 0xFFFFFFFF
-        self._socket.send(request(kind, flags, seq, body))
-        replies: list[bytes] = []
-        while True:
-            datagram = self._socket.recv(self.RECEIVE_BYTES)
-            if not any(message.seq == seq for message in messages(datagram)):
-                continue  # a late reply to an earlier, timed-out request
-            replies.append(datagram)
-            if is_last(datagram):
-                return replies
+        sock.send(request(kind, flags, seq, body))
+        return reply(iter(lambda: sock.recv(self.RECEIVE_BYTES), b""), seq)
 
-    def close(self) -> None:
+    def _drop(self) -> None:
+        """Close the socket; the next exchange opens a new one."""
         sock, self._socket = self._socket, None
         if sock is not None:
             sock.close()
+
+    def close(self) -> None:
+        """Close the socket for good: it never reopens."""
+        self._closed = True
+        self._drop()

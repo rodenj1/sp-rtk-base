@@ -19,6 +19,8 @@ from sp_rtk_base.models.network_link_models import (
     EgressReading,
     HostReading,
     InterfaceReading,
+    StationReading,
+    WifiReading,
 )
 
 # Two samples and a refresh, with room to spare.
@@ -38,6 +40,20 @@ ETH0 = InterfaceReading(
     ),
 )
 WLAN0 = InterfaceReading(name="wlan0", kind="wifi", operstate="up")
+WLAN0_ASSOCIATED = WifiReading(
+    interface="wlan0",
+    mode="station",
+    wiphy=0,
+    frequency_mhz=5745,
+    ssid="Test",
+    station=StationReading(
+        bssid="02:00:00:00:00:01",
+        signal_dbm=-55,
+        tx_bitrate_bps=325_000_000,
+        rx_bitrate_bps=433_300_000,
+        tx_failed=11,
+    ),
+)
 ADDRESSES = (
     AddressReading(interface="eth0", address="192.0.2.10", prefixlen=24),
     AddressReading(interface="eth0", address="2001:db8::10", prefixlen=64),
@@ -47,6 +63,19 @@ ADDRESSES = (
 
 def _write(path: Path, reading: HostReading) -> None:
     path.write_text(reading.model_dump_json())
+
+
+def _expect_wifi_details_dashed(page: Page) -> None:
+    """wlan0's network, band and bitrate read "—", with no stale value."""
+    card = page.get_by_test_id("network-card")
+    for field, old_value in (
+        ("network", "Test"),
+        ("band", "GHz"),
+        ("bitrate", "Mbit/s"),
+    ):
+        metric = card.get_by_test_id(f"network-link-wlan0-{field}")
+        expect(metric).to_contain_text("—")
+        expect(metric).not_to_contain_text(old_value)
 
 
 @pytest.mark.e2e
@@ -59,6 +88,7 @@ def test_both_links_with_the_wifi_uplink_listed_first(
             interfaces=(ETH0, WLAN0),
             addresses=ADDRESSES,
             egress=EgressReading(source="192.0.2.20"),
+            wifi=(WLAN0_ASSOCIATED,),
         ),
     )
     page.goto(f"{base_url}/")
@@ -87,6 +117,19 @@ def test_both_links_with_the_wifi_uplink_listed_first(
         "192.0.2.20/24"
     )
     expect(wlan0.get_by_test_id("network-link-wlan0-speed")).to_have_count(0)
+    expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text("Test")
+    expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text(
+        "02:00:00:00:00:01"
+    )
+    expect(wlan0.get_by_test_id("network-link-wlan0-band")).to_contain_text("5 GHz")
+    expect(wlan0.get_by_test_id("network-link-wlan0-band")).to_contain_text("5745 MHz")
+    expect(wlan0.get_by_test_id("network-link-wlan0-bitrate")).to_contain_text(
+        "↑325 ↓433.3 Mbit/s"
+    )
+    expect(wlan0.get_by_test_id("network-link-wlan0-counters")).to_contain_text(
+        "11 failed sends"
+    )
+    expect(eth0.get_by_test_id("network-link-eth0-network")).to_have_count(0)
     expect(eth0).to_contain_text("Ethernet · eth0")
     expect(eth0.get_by_test_id("network-link-eth0-state")).to_have_text("Connected")
     expect(eth0.get_by_test_id("network-link-eth0-speed")).to_contain_text("100 Mbit/s")
@@ -117,6 +160,7 @@ def test_no_uplink_when_links_are_up_but_nothing_routes(
             interfaces=(ETH0, WLAN0),
             addresses=ADDRESSES,
             egress=EgressReading(source=None),
+            wifi=(WLAN0_ASSOCIATED,),
         ),
     )
     page.goto(f"{base_url}/")
@@ -137,13 +181,17 @@ def test_a_stale_sampler_shows_every_value_as_a_dash_except_the_counters(
     _write(
         network_links,
         HostReading(
-            interfaces=(ETH0,),
+            interfaces=(ETH0, WLAN0),
             addresses=ADDRESSES,
             egress=EgressReading(source="192.0.2.10"),
+            wifi=(WLAN0_ASSOCIATED,),
         ),
     )
     page.goto(f"{base_url}/")
     card = page.get_by_test_id("network-card")
+    expect(card.get_by_test_id("network-link-wlan0-band")).to_contain_text(
+        "5 GHz", timeout=SOON_MS
+    )
     expect(card.get_by_test_id("network-link-eth0-traffic")).to_contain_text(
         "↓0 B/s", timeout=SOON_MS
     )
@@ -165,4 +213,41 @@ def test_a_stale_sampler_shows_every_value_as_a_dash_except_the_counters(
     )
     expect(card.get_by_test_id("network-link-eth0-counters")).to_contain_text(
         "3 / 1,234"
+    )
+    _expect_wifi_details_dashed(page)
+    expect(card.get_by_test_id("network-link-wlan0-counters")).to_contain_text(
+        "11 failed sends"
+    )
+
+
+@pytest.mark.e2e
+def test_the_setup_access_point_shows_wifi_disconnected_with_its_reason(
+    page: Page, base_url: str, network_links: Path
+) -> None:
+    def reading(wifi: WifiReading) -> HostReading:
+        return HostReading(
+            interfaces=(WLAN0,),
+            addresses=ADDRESSES,
+            egress=EgressReading(source=None),
+            wifi=(wifi,),
+        )
+
+    _write(network_links, reading(WLAN0_ASSOCIATED))
+    page.goto(f"{base_url}/")
+    card = page.get_by_test_id("network-card")
+    expect(card.get_by_test_id("network-link-wlan0-network")).to_contain_text(
+        "Test", timeout=SOON_MS
+    )
+
+    _write(
+        network_links,
+        reading(WLAN0_ASSOCIATED.model_copy(update={"mode": "ap", "station": None})),
+    )
+
+    state = card.get_by_test_id("network-link-wlan0-state")
+    expect(state).to_contain_text("Disconnected", timeout=SOON_MS)
+    expect(state).to_contain_text("The setup access point is on.")
+    _expect_wifi_details_dashed(page)
+    expect(card.get_by_test_id("network-link-wlan0-counters")).to_contain_text(
+        "1 link change · 11 failed sends"
     )

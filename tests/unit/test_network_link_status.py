@@ -11,6 +11,7 @@ from sp_rtk_base.models.network_link_models import (
     NetworkLinkSnapshot,
     Supported,
     Throughput,
+    WifiDetails,
 )
 from sp_rtk_base.ui.network_link_status import (
     Shown,
@@ -22,6 +23,9 @@ from sp_rtk_base.ui.network_link_status import (
     state,
     traffic,
     uplink,
+    wifi_band,
+    wifi_bitrate,
+    wifi_network,
 )
 from sp_rtk_base.uplink import Uplink
 
@@ -163,3 +167,73 @@ def test_counters_total_errors_and_drops_with_link_changes_beneath() -> None:
     assert counters(ETH0) == Shown("0 / 0", sub="0 link changes")
     one = ETH0.model_copy(update={"link_changes": 1})
     assert counters(one).sub == "1 link change"
+
+
+def _wlan(**fields: Supported[str] | Supported[int] | str | None) -> NetworkLink:
+    return WLAN0.model_copy(update={"wifi": WifiDetails.model_validate(fields)})
+
+
+ASSOCIATED = _wlan(
+    ssid=Supported(value="Test"),
+    bssid=Supported(value="02:00:00:00:00:01"),
+    frequency_mhz=Supported(value=5745),
+    tx_bitrate_bps=Supported(value=325_000_000),
+    rx_bitrate_bps=Supported(value=433_300_000),
+    tx_failed=Supported(value=11),
+)
+DISCONNECTED = _wlan(
+    ssid=Supported(),
+    bssid=Supported(),
+    frequency_mhz=Supported(),
+    tx_bitrate_bps=Supported(),
+    rx_bitrate_bps=Supported(),
+    tx_failed=Supported(value=11),
+)
+
+
+def test_the_wifi_network_shows_the_ssid_with_the_bssid_beneath() -> None:
+    assert wifi_network(ASSOCIATED) == Shown("Test", sub="02:00:00:00:00:01")
+    assert wifi_network(DISCONNECTED) == Shown("—", sub="—")
+
+
+@pytest.mark.parametrize(
+    ("mhz", "expected"),
+    [
+        (2412, Shown("2.4 GHz", sub="2412 MHz")),
+        (5745, Shown("5 GHz", sub="5745 MHz")),
+        (5955, Shown("6 GHz", sub="5955 MHz")),
+        (None, Shown("—", sub="—")),
+    ],
+)
+def test_the_wifi_band_shows_the_frequency_beneath(
+    mhz: int | None, expected: Shown
+) -> None:
+    assert wifi_band(_wlan(frequency_mhz=Supported(value=mhz))) == expected
+
+
+def test_the_wifi_bitrate_is_sent_then_received_in_mbit_per_s() -> None:
+    assert wifi_bitrate(ASSOCIATED) == Shown("↑325 ↓433.3 Mbit/s")
+    assert wifi_bitrate(DISCONNECTED) == Shown("—")
+    assert wifi_bitrate(_wlan(tx_bitrate_bps=Supported(value=6_000_000))) == Shown(
+        "↑6 Mbit/s"
+    )
+
+
+def test_wifi_details_are_not_shown_when_not_supported_or_for_ethernet() -> None:
+    for show in (wifi_network, wifi_band, wifi_bitrate):
+        assert show(_wlan()) is None
+        assert show(ETH0) is None
+
+
+def test_failed_sends_show_beneath_the_errors_and_drops_with_link_changes() -> None:
+    assert counters(ASSOCIATED).sub == "0 link changes · 11 failed sends"
+    one = _wlan(tx_failed=Supported(value=1))
+    assert counters(one).sub == "0 link changes · 1 failed send"
+
+
+def test_a_wifi_adapter_with_no_reading_says_so_under_the_state() -> None:
+    link = _wlan(no_reading_reason="The Wi-Fi adapter gave no reading.")
+
+    assert state(link) == Shown(
+        "Connected", "positive", "The Wi-Fi adapter gave no reading."
+    )

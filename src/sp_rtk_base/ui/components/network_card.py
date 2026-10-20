@@ -4,7 +4,8 @@ Lays out what ``ui/network_link_status.py`` decides.  Redrawn from the
 Network link snapshot on each status refresh; it never samples.
 
 Test ids: ``network-card``, ``network-uplink`` (the Uplink's value), ``network-freshness``,
-and per link ``network-link-{name}`` with ``-state``, ``-speed``,
+and per link ``network-link-{name}`` with ``-state``, ``-network``,
+``-band``, ``-bitrate`` (Wi-Fi), ``-speed`` (Ethernet),
 ``-address``, ``-traffic`` and ``-counters``.
 """
 
@@ -50,7 +51,13 @@ def _link_column(link: NetworkLink) -> None:
             if state.sub:
                 ui.label(f"— {state.sub}").classes("text-caption text-grey-6")
         with ui.grid(columns=2).classes("gap-x-6 gap-y-2"):
-            # Wi-Fi details (#136) go first here, for a Wi-Fi link.
+            for label, value, suffix in (
+                ("Network", shown.wifi_network(link), "network"),
+                ("Band", shown.wifi_band(link), "band"),
+                ("Bitrate", shown.wifi_bitrate(link), "bitrate"),
+            ):
+                if value is not None:
+                    _metric(label, value, f"{testid}-{suffix}")
             if (speed := shown.speed(link)) is not None:
                 _metric("Speed", speed, f"{testid}-speed")
             _metric("Address", shown.address(link), f"{testid}-address")

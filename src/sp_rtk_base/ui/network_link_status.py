@@ -78,8 +78,12 @@ def heading(link: NetworkLink) -> str:
 
 
 def state(link: NetworkLink) -> Shown:
-    """Connected / Disconnected / No reading, with the reason beneath."""
-    return Shown(link.state, _STATE_COLOR[link.state], link.reason)
+    """Connected / Disconnected / No reading, with the reason beneath (or
+    why the Wi-Fi details have no value)."""
+    reason = link.reason
+    if reason is None and link.wifi is not None:
+        reason = link.wifi.no_reading_reason
+    return Shown(link.state, _STATE_COLOR[link.state], reason)
 
 
 def speed(link: NetworkLink) -> Shown | None:
@@ -98,6 +102,56 @@ def speed(link: NetworkLink) -> Shown | None:
     return Shown(NONE if mbps is None else f"{mbps} Mbit/s", sub=sub)
 
 
+def wifi_network(link: NetworkLink) -> Shown | None:
+    """The Wi-Fi network's SSID, with the BSSID beneath; ``None`` when Not
+    supported."""
+    if link.wifi is None or (link.wifi.ssid is None and link.wifi.bssid is None):
+        return None
+    ssid, bssid = link.wifi.ssid, link.wifi.bssid
+    return Shown(
+        NONE if ssid is None or ssid.value is None else ssid.value,
+        sub=None if bssid is None else bssid.value or NONE,
+    )
+
+
+def _band(mhz: int) -> str:
+    if mhz < 3000:
+        return "2.4 GHz"
+    if mhz < 5925:
+        return "5 GHz"
+    return "6 GHz"
+
+
+def wifi_band(link: NetworkLink) -> Shown | None:
+    """The Wi-Fi band, with the frequency beneath; ``None`` when Not
+    supported."""
+    if link.wifi is None or link.wifi.frequency_mhz is None:
+        return None
+    mhz = link.wifi.frequency_mhz.value
+    if mhz is None:
+        return Shown(NONE, sub=NONE)
+    return Shown(_band(mhz), sub=f"{mhz} MHz")
+
+
+def _mbits(bps: int) -> str:
+    return f"{bps / 1_000_000:.1f}".removesuffix(".0")
+
+
+def wifi_bitrate(link: NetworkLink) -> Shown | None:
+    """↑ sent and ↓ received bitrate in Mbit/s; ``None`` when Not supported."""
+    if link.wifi is None:
+        return None
+    rates = (("↑", link.wifi.tx_bitrate_bps), ("↓", link.wifi.rx_bitrate_bps))
+    if all(rate is None for _, rate in rates):
+        return None
+    shown = [
+        f"{arrow}{_mbits(rate.value)}"
+        for arrow, rate in rates
+        if rate is not None and rate.value is not None
+    ]
+    return Shown(f"{' '.join(shown)} Mbit/s" if shown else NONE)
+
+
 def address(link: NetworkLink) -> Shown:
     """IPv4 address, with IPv6 beneath."""
     return Shown(link.ipv4 or NONE, sub=link.ipv6)
@@ -112,11 +166,18 @@ def traffic(link: NetworkLink) -> Shown:
     return Shown(f"↓{down} ↑{up}")
 
 
+def _count(number: int, noun: str) -> str:
+    return f"{number:,} {noun}{'' if number == 1 else 's'}"
+
+
 def counters(link: NetworkLink) -> Shown:
-    """Errors / drops totals, with link changes beneath."""
+    """Errors / drops totals, with link changes (and, for Wi-Fi, failed
+    sends) beneath."""
     c = link.counters
-    changes = link.link_changes
+    sub = _count(link.link_changes, "link change")
+    failed = None if link.wifi is None else link.wifi.tx_failed
+    if failed is not None and failed.value is not None:
+        sub += f" · {_count(failed.value, 'failed send')}"
     return Shown(
-        f"{c.rx_errors + c.tx_errors:,} / {c.rx_drops + c.tx_drops:,}",
-        sub=f"{changes:,} link change{'' if changes == 1 else 's'}",
+        f"{c.rx_errors + c.tx_errors:,} / {c.rx_drops + c.tx_drops:,}", sub=sub
     )

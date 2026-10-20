@@ -89,9 +89,13 @@ class NetworkService:
             self._adapter = self._adapter_factory(config)
         return self._adapter
 
-    def is_configured(self) -> bool:
+    async def is_configured(self) -> bool:
         """Whether a net-provisioning config exists. Loads it, nothing more:
-        no nmcli runs."""
+        no nmcli runs.  The YAML load runs off the event loop (the Network
+        page asks every 2 s); once it has loaded, it isn't read again."""
+        return await asyncio.to_thread(self._configured)
+
+    def _configured(self) -> bool:
         try:
             self._get_adapter()
         except NetworkNotConfiguredError:

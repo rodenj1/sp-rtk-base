@@ -60,7 +60,7 @@ async def get_network_status(
     and never runs nmcli (in particular, never a Wi-Fi scan).
     """
     return NetworkStatusResponse(
-        configured=svc.is_configured(),
+        configured=await svc.is_configured(),
         uplink=NetworkUplinkResponse.from_snapshot(network_link.current()),
     )
 

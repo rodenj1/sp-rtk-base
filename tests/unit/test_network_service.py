@@ -11,6 +11,7 @@ error mapping, adapter caching, awaiting the sync adapter calls via
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,17 +52,38 @@ def _service_unconfigured() -> NetworkService:
 
 
 class TestIsConfigured:
-    def test_configured_when_the_config_loads(self) -> None:
-        assert _service_with_adapter(_fake_adapter()).is_configured() is True
+    @pytest.mark.asyncio()
+    async def test_configured_when_the_config_loads(self) -> None:
+        assert await _service_with_adapter(_fake_adapter()).is_configured() is True
 
-    def test_not_configured_when_the_config_is_missing(self) -> None:
-        assert _service_unconfigured().is_configured() is False
+    @pytest.mark.asyncio()
+    async def test_not_configured_when_the_config_is_missing(self) -> None:
+        assert await _service_unconfigured().is_configured() is False
 
-    def test_runs_no_nmcli(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_runs_no_nmcli(self) -> None:
         """It only loads the config: the adapter is built but never used."""
         adapter = _fake_adapter()
-        _service_with_adapter(adapter).is_configured()
+        await _service_with_adapter(adapter).is_configured()
         assert adapter.method_calls == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_loads_the_config_off_the_event_loop(self) -> None:
+        """The Network page asks every 2 s: the YAML load must never block
+        the event loop."""
+        loop_thread = threading.get_ident()
+        loaded_on: list[int] = []
+
+        def _load() -> NetProvisionConfig:
+            loaded_on.append(threading.get_ident())
+            return _config()
+
+        svc = NetworkService(
+            config_loader=_load, adapter_factory=lambda _cfg: _fake_adapter()
+        )
+        assert await svc.is_configured() is True
+        assert loaded_on
+        assert loop_thread not in loaded_on
 
 
 class TestScanNetworks:
@@ -272,6 +294,6 @@ class TestAdapterCaching:
         svc = NetworkService(
             config_loader=config_loader, adapter_factory=lambda _cfg: adapter
         )
-        svc.is_configured()
+        await svc.is_configured()
         await svc.scan_networks()
         config_loader.assert_called_once()

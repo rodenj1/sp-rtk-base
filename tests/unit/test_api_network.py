@@ -133,7 +133,7 @@ def _status(
 def mock_network_service() -> NetworkService:
     """Create a mock NetworkService."""
     svc = MagicMock(spec=NetworkService)
-    svc.is_configured = MagicMock(return_value=True)
+    svc.is_configured = AsyncMock(return_value=True)
     svc.scan_networks = AsyncMock(return_value=[])
     svc.get_ap_fallback_info = AsyncMock(
         return_value=ApFallbackInfo(
@@ -266,7 +266,7 @@ class TestGetNetworkStatus:
     ) -> None:
         """The Uplink needs no net-provisioning config, so it agrees with
         the dashboard even on a box that was never provisioned."""
-        mock_network_service.is_configured = MagicMock(return_value=False)
+        mock_network_service.is_configured = AsyncMock(return_value=False)
         sampler = await _sampled(_reading(ETH0))
         data = _status(mock_network_service, mock_config_service, sampler)
         assert data["configured"] is False

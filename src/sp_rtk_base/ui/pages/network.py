@@ -128,9 +128,10 @@ def network_page() -> None:
                     ).classes("text-caption text-grey-6 q-mt-sm")
 
         async def _do_refresh_status() -> None:
+            configured = await svc.is_configured()
             status_container.clear()
             with status_container:
-                _render_status_card(svc.is_configured(), network_link.current())
+                _render_status_card(configured, network_link.current())
 
         async def _refresh_status() -> None:
             try:

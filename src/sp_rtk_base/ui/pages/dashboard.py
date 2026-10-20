@@ -23,14 +23,17 @@ from sp_rtk_base import services as services_mod
 from sp_rtk_base.services import (
     get_bluetooth_link_service,
     get_config_service,
+    get_network_link_service,
     get_relay_service,
     get_signal_quality_service,
 )
 from sp_rtk_base.services.bluetooth_link.monitor import is_bluetooth_input
 from sp_rtk_base.services.relay_service import RelayStartRefusedError
 from sp_rtk_base.ui.components.bluetooth_link import bluetooth_link_row
+from sp_rtk_base.ui.components.network_card import network_card
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
 from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
+from sp_rtk_base.ui.formatting import format_byte_rate as _format_byte_rate
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
 
@@ -117,24 +120,6 @@ def _format_bytes(n: int) -> str:
     return f"{n / (1024 * 1024 * 1024):.2f} GB"
 
 
-def _format_byte_rate(per_second: float) -> str:
-    """Format a byte-rate value as '12.3 KB/s' (or B/s, MB/s, GB/s).
-
-    Rate is the primary 'is data flowing right now' signal — totals
-    keep climbing for days and stop being informative once the
-    instance has been up long enough that everything looks like a
-    big number.  0 B/s reads as 'nothing flowing' immediately;
-    a stuck total reads as 'don't know'.
-    """
-    if per_second < 1024:
-        return f"{per_second:.0f} B/s"
-    if per_second < 1024 * 1024:
-        return f"{per_second / 1024:.1f} KB/s"
-    if per_second < 1024 * 1024 * 1024:
-        return f"{per_second / (1024 * 1024):.1f} MB/s"
-    return f"{per_second / (1024 * 1024 * 1024):.2f} GB/s"
-
-
 def _format_count_rate(per_second: float, unit: str = "/s") -> str:
     """Format a count-per-second value (messages, frames, chunks)."""
     if per_second >= 100:
@@ -183,6 +168,7 @@ def dashboard_page() -> None:
     relay = get_relay_service()
     config_svc = get_config_service()
     bluetooth_link = get_bluetooth_link_service()
+    network_link = get_network_link_service()
 
     with page_layout("Dashboard"):
         signal_quality_heading(
@@ -228,6 +214,13 @@ def dashboard_page() -> None:
             input_card = ui.card().classes("flex-1 q-pa-md")
             throughput_card = ui.card().classes("flex-1 q-pa-md")
             dest_card = ui.card().classes("flex-1 q-pa-md")
+
+        # --- Network card: the Network links and the Uplink ---
+        net_card = (
+            ui.card()
+            .classes("w-full q-pa-md q-mt-md")
+            .props("data-testid=network-card")
+        )
 
         # --- Destination details ---
         dest_details_container = ui.column().classes("w-full gap-2 q-mt-md")
@@ -354,6 +347,12 @@ def dashboard_page() -> None:
                     ui.label(
                         f"Uptime: {_format_uptime(status.uptime_seconds)}"
                     ).classes("text-grey-4")
+
+            # Network card: the sampler's snapshot, so every viewer sees the
+            # same throughput (never this page's own rate tracking).
+            net_card.clear()
+            with net_card:
+                network_card(network_link.current())
 
             # Input card
             input_card.clear()

@@ -159,6 +159,23 @@ def host_setup(host_setup_file: Path) -> Iterator[Path]:
     host_setup_file.unlink(missing_ok=True)
 
 
+@pytest.fixture(scope="session")
+def network_links_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The e2e server's fake host for the Network link sampler: a JSON
+    ``HostReading``, read every 2 s sample. No file is a sample in which
+    every source failed (No reading)."""
+    return tmp_path_factory.mktemp("network-links") / "network-links.json"
+
+
+@pytest.fixture()
+def network_links(network_links_file: Path) -> Iterator[Path]:
+    """The test plays the host by writing ``network_links_file``; no reading
+    before and after."""
+    network_links_file.unlink(missing_ok=True)
+    yield network_links_file
+    network_links_file.unlink(missing_ok=True)
+
+
 @pytest.fixture()
 def clean_update(update_dir: Path) -> Iterator[Path]:
     """No Update before or after the test: an Update left running would
@@ -206,6 +223,7 @@ def sp_rtk_base_server(
     update_dir: Path,
     host_setup_file: Path,
     portal_agent_socket: Path,
+    network_links_file: Path,
 ) -> Iterator[str]:
     """Launch the SP-Base server in a subprocess for the test session.
 
@@ -218,6 +236,7 @@ def sp_rtk_base_server(
         update_dir,
         host_setup_file,
         portal_agent_socket,
+        network_links_file=network_links_file,
     ) as url:
         yield url
 
@@ -229,6 +248,8 @@ def running_server(
     update_dir: Path,
     host_setup_file: Path,
     portal_agent_socket: Path,
+    *,
+    network_links_file: Path | None = None,
 ) -> Iterator[str]:
     """An SP-Base server in a subprocess, until the block ends. A module
     whose tests leave state the rest can't share (e.g. Event log entries)
@@ -267,6 +288,12 @@ def running_server(
     env["SP_RTK_BASE_UPDATE_DIR"] = str(update_dir)
     # The fake Host setup: the units' state comes from this file, not systemd.
     env["SP_RTK_BASE_FAKE_HOST_SETUP"] = str(host_setup_file)
+    # The Network link sampler reads this fake host, never the runner's NICs.
+    if network_links_file is None:
+        network_links_file = (
+            tmp_path_factory.mktemp("network-links") / "network-links.json"
+        )
+    env["SP_RTK_BASE_FAKE_NETWORK_LINKS"] = str(network_links_file)
     # The Portal page asks this (real, idle) agent, not /run's.
     env["SP_RTK_BASE_PORTAL_AGENT_SOCKET"] = str(portal_agent_socket)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects

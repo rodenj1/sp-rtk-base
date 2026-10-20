@@ -17,9 +17,12 @@ its counter totals, which keep their last value.
 from __future__ import annotations
 
 import ipaddress
+import statistics
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
+from sp_rtk_base.models.level_models import Level
 from sp_rtk_base.models.network_link_models import (
     AddressReading,
     Counters,
@@ -44,6 +47,17 @@ NO_CABLE_REASON = "No cable."
 WIFI_DISCONNECTED_REASON = "Wi-Fi is disconnected."
 SETUP_AP_REASON = "The setup access point is on."
 WIFI_NO_READING_REASON = "The Wi-Fi adapter gave no reading."
+
+# Wi-Fi link strength thresholds (rodenj1/rtk_development#132), provisional:
+# Good at -67 dBm or above, Marginal from -68 to -77, Poor at -78 or
+# below, applied to the window's lower median with no deadband, like
+# Bluetooth link strength.  -67 is the usual floor for a reliable link;
+# the bench-Pi weak-signal readings may retune these.
+GOOD_DBM, MARGINAL_DBM = -67, -77
+
+# Wi-Fi link strength is judged from the lower median of this many
+# seconds of readings.
+STRENGTH_WINDOW_SECONDS = 10.0
 
 # Readings a link may not support, by kind: each is Not supported until
 # a successful read gives it while the link is up.
@@ -87,6 +101,14 @@ def _wifi_values(wifi: WifiReading | None) -> dict[str, object]:
         "signal_dbm": station.signal_dbm,
         "tx_failed": station.tx_failed,
     }
+
+
+def _level(dbm: int) -> Level:
+    if dbm >= GOOD_DBM:
+        return "Good"
+    if dbm >= MARGINAL_DBM:
+        return "Marginal"
+    return "Poor"
 
 
 def _excluded(wifi: tuple[WifiReading, ...]) -> frozenset[str]:
@@ -156,6 +178,26 @@ class _History:
     wifi: WifiReading | None = None
     bssid: str | None = None
     tx_failed: int | None = None
+    # Wi-Fi link strength: (time, dBm) readings of the last 10 s while
+    # associated in station mode, cleared on any gap.
+    strength: deque[tuple[float, int]] = field(
+        default_factory=lambda: deque[tuple[float, int]]()
+    )
+
+    def judge(self, dbm: int | None, now: float) -> None:
+        """Add one dBm reading to the window, or clear it on a gap."""
+        if dbm is None:
+            self.strength.clear()
+            return
+        self.strength.append((now, dbm))
+        while self.strength[0][0] <= now - STRENGTH_WINDOW_SECONDS:
+            self.strength.popleft()
+
+    def level(self) -> Level | None:
+        """The window's verdict: its lower median, so ties lean weaker."""
+        if not self.strength:
+            return None
+        return _level(statistics.median_low(dbm for _, dbm in self.strength))
 
 
 def _addresses_of(
@@ -204,9 +246,11 @@ class NetworkLinkMonitor:
             self._egress.value, self._egress.at = reading.egress.source, now
             self._egress.failed = False
         if reading.interfaces is None:
-            # Throughput never spans a gap in the readings.
+            # Throughput and Wi-Fi link strength never span a gap in the
+            # readings.
             for history in self._history.values():
                 history.previous = history.throughput = None
+                history.judge(None, now)
         else:
             self._track(reading.interfaces, reading.wifi, now)
         if None not in (
@@ -264,18 +308,22 @@ class NetworkLinkMonitor:
                     if getattr(interface, name) is not None
                 )
             if interface.kind == "wifi":
-                self._track_wifi(history, wifi_reading, up=up)
+                self._track_wifi(history, wifi_reading, now, up=up)
             history.throughput = _throughput(history.previous, now, interface.counters)
             history.previous = (now, interface.counters)
             histories[interface.name] = history
         self._history = histories
 
     @staticmethod
-    def _track_wifi(history: _History, wifi: WifiReading | None, *, up: bool) -> None:
+    def _track_wifi(
+        history: _History, wifi: WifiReading | None, now: float, *, up: bool
+    ) -> None:
         history.wifi = wifi
         values = _wifi_values(wifi) if up else {}
         history.supported.update(n for n, v in values.items() if v is not None)
         station = wifi.station if up and wifi is not None else None
+        # Judged in station mode only: the setup access point is never up.
+        history.judge(None if station is None else station.signal_dbm, now)
         if station is not None and station.tx_failed is not None:
             history.tx_failed = station.tx_failed
         if not up:
@@ -401,6 +449,14 @@ class NetworkLinkMonitor:
             ),
             signal_dbm=supported(
                 "signal_dbm", None if station is None else station.signal_dbm
+            ),
+            # Supported with the dBm reading it is judged from.
+            link_strength=(
+                None
+                if "signal_dbm" not in history.supported
+                else Supported[Level](
+                    value=None if station is None else history.level()
+                )
             ),
             tx_failed=supported("tx_failed", history.tx_failed),
         )

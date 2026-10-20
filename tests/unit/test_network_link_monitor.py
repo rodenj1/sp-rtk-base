@@ -11,6 +11,7 @@ from typing import Literal, cast
 
 import pytest
 
+from sp_rtk_base.models.level_models import Level
 from sp_rtk_base.models.network_link_models import (
     AddressReading,
     Counters,
@@ -490,6 +491,7 @@ def test_an_associated_wifi_link_reads_its_network_frequency_and_bitrates() -> N
         "tx_bitrate_bps": 325_000_000,
         "rx_bitrate_bps": 433_300_000,
         "signal_dbm": -55,
+        "link_strength": "Good",
         "tx_failed": 11,
     }
 
@@ -531,6 +533,7 @@ def test_a_disconnect_leaves_no_wifi_values_but_the_failed_sends_total() -> None
         "tx_bitrate_bps": None,
         "rx_bitrate_bps": None,
         "signal_dbm": None,
+        "link_strength": None,
         "tx_failed": 11,
     }
 
@@ -599,6 +602,7 @@ def test_a_failing_nl80211_leaves_the_sysfs_fields_and_counters_current() -> Non
         "tx_bitrate_bps": None,
         "rx_bitrate_bps": None,
         "signal_dbm": None,
+        "link_strength": None,
         "tx_failed": 11,
     }
     assert snapshot.last_sample_age_seconds == 2.0
@@ -661,3 +665,88 @@ def test_an_excluded_interface_stays_excluded_while_nl80211_fails() -> None:
     )
 
     assert [link.name for link in snapshot.links] == ["wlan0"]
+
+
+# ---------------------------------------------------------------------------
+# Wi-Fi link strength: the verdict from the lower median of 10 s of dBm
+# ---------------------------------------------------------------------------
+
+
+def _at(dbm: int | None) -> HostReading:
+    """An associated wlan0 whose station reads *dbm*."""
+    return _reading(_wifi(), wifi=(_nl80211(station=_station(signal_dbm=dbm)),))
+
+
+def _strength(snapshot: NetworkLinkSnapshot) -> Level | None:
+    """wlan0's Wi-Fi link strength verdict; None when it has no value."""
+    details = _details(_link(snapshot, "wlan0"))
+    assert details.link_strength is not None, "Wi-Fi link strength not supported"
+    return details.link_strength.value
+
+
+@pytest.mark.parametrize(
+    ("dbm", "expected"),
+    [(-40, "Good"), (-67, "Good"), (-68, "Marginal"), (-77, "Marginal"), (-78, "Poor")],
+)
+def test_wifi_link_strength_is_judged_at_the_threshold_edges(
+    dbm: int, expected: Level
+) -> None:
+    assert _strength(_snapshot(_at(dbm))) == expected
+
+
+def test_a_lone_dip_does_not_flip_wifi_link_strength() -> None:
+    assert _strength(_snapshot(_at(-55), _at(-55), _at(-85))) == "Good"
+
+
+def test_wifi_link_strength_leans_weaker_on_a_tie() -> None:
+    # Lower median of {-60, -70}: -70, Marginal.
+    assert _strength(_snapshot(_at(-60), _at(-70))) == "Marginal"
+
+
+def test_wifi_link_strength_follows_a_sustained_drop() -> None:
+    assert _strength(_snapshot(_at(-55), _at(-85), _at(-85))) == "Poor"
+
+
+def test_readings_older_than_10_s_leave_the_wifi_link_strength_window() -> None:
+    # Five Poor readings, then five Good ones 2 s apart: the window is
+    # the last 10 s, so only the Good ones count.
+    snapshot = _snapshot(*[_at(-85)] * 5, *[_at(-55)] * 5)
+
+    assert _strength(snapshot) == "Good"
+
+
+@pytest.mark.parametrize(
+    "gap",
+    [
+        pytest.param(_reading(_wifi(operstate="dormant")), id="disconnected"),
+        pytest.param(_reading(_wifi(), wifi=None), id="nl80211 failed"),
+        pytest.param(
+            HostReading(
+                interfaces=None,
+                addresses=(WIFI_ADDR,),
+                egress=EgressReading(source=None),
+                wifi=(_nl80211(station=_station()),),
+            ),
+            id="sysfs failed",
+        ),
+        pytest.param(_at(None), id="no dBm"),
+        pytest.param(
+            _reading(_wifi(), wifi=(_nl80211(mode="ap"),)), id="setup access point"
+        ),
+    ],
+)
+def test_a_gap_has_no_wifi_link_strength_and_clears_the_window(
+    gap: HostReading,
+) -> None:
+    monitor, clock = _fed(_at(-85), _at(-85), gap)
+    assert _strength(monitor.snapshot(clock.now)) is None
+
+    # The Poor readings before the gap no longer count.
+    monitor.observe(_at(-55), clock.tick())
+    assert _strength(monitor.snapshot(clock.now)) == "Good"
+
+
+def test_a_stale_wifi_link_has_no_wifi_link_strength() -> None:
+    monitor, clock = _fed(_at(-55))
+
+    assert _strength(monitor.snapshot(clock.tick(7.0))) is None

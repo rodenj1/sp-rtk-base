@@ -21,6 +21,7 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from sp_rtk_base.models.level_models import Level
 from sp_rtk_base.uplink import Uplink
 
 LinkKind = Literal["ethernet", "wifi"]
@@ -172,6 +173,10 @@ class WifiDetails(_Frozen):
     rx_bitrate_bps: Supported[int] | None = None
     # The latest reading, in dBm: what Wi-Fi link strength is judged from.
     signal_dbm: Supported[int] | None = None
+    # Wi-Fi link strength: the verdict on the lower median of the last
+    # 10 s of dBm readings, in station mode only.  Supported with the dBm
+    # reading; it has a value only while ``signal_dbm`` does.
+    link_strength: Supported[Level] | None = None
     tx_failed: Supported[int] | None = None
 
 

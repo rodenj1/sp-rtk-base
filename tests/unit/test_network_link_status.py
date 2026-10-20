@@ -257,7 +257,8 @@ def test_wifi_link_shows_the_level_in_its_colour_with_the_dbm_beneath(
         signal_dbm=Supported[int](value=-54),
     )
 
-    assert wifi_strength(link) == Shown(level, color, "-54 dBm")
+    # A true minus sign (U+2212), not a hyphen.
+    assert wifi_strength(link) == Shown(level, color, "\u221254 dBm")
 
 
 @pytest.mark.parametrize(

@@ -89,7 +89,7 @@ def test_a_wifi_uplink_shows_its_link_strength_even_with_a_cable_in(
         "Wi-Fi (wlan0)", timeout=SOON_MS
     )
     expect(page.get_by_test_id("network-page-strength")).to_have_text(
-        "Wi-Fi link: Good (-55 dBm)"
+        "Wi-Fi link: Good (\u221255 dBm)"
     )
     expect(page.get_by_test_id("network-page-network")).to_have_text("Network: Test")
     expect(page.get_by_test_id("network-page-address")).to_have_text(

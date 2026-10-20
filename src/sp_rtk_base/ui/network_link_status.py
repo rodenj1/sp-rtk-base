@@ -26,6 +26,8 @@ from sp_rtk_base.ui.components.level import LEVEL_COLOR
 from sp_rtk_base.ui.formatting import format_byte_rate
 
 NONE = "—"
+# A true minus sign (U+2212) for dBm, as typeset.
+MINUS = "\u2212"
 
 REACHABILITY_NOTE = (
     "Link health only: whether the caster and Portal are reachable "
@@ -129,7 +131,7 @@ def wifi_strength(link: NetworkLink) -> Shown | None:
         reason = link.reason or link.wifi.no_reading_reason or WIFI_NO_READING_REASON
         return Shown(NONE, tooltip=reason)
     dbm = None if link.wifi.signal_dbm is None else link.wifi.signal_dbm.value
-    sub = None if dbm is None else f"{dbm} dBm"
+    sub = None if dbm is None else f"{MINUS if dbm < 0 else ''}{abs(dbm)} dBm"
     return Shown(level, LEVEL_COLOR[level], sub)
 
 

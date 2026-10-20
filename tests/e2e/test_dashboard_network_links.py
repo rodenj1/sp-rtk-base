@@ -27,6 +27,8 @@ from sp_rtk_base.models.network_link_models import (
 SOON_MS = 8000
 # Past the 6 s No reading limit, plus a sample and a refresh.
 NO_READING_MS = 15000
+# dBm is shown with a true minus sign (U+2212).
+MINUS = "\u2212"
 
 ETH0 = InterfaceReading(
     name="eth0",
@@ -122,7 +124,7 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     strength = wlan0.get_by_test_id("network-link-wlan0-strength")
     expect(strength).to_contain_text("Wi-Fi link")
     expect(strength).to_contain_text("Good")
-    expect(strength).to_contain_text("-55 dBm")
+    expect(strength).to_contain_text(f"{MINUS}55 dBm")
     expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text("Test")
     expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text(
         "02:00:00:00:00:01"

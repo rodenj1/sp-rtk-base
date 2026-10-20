@@ -96,7 +96,7 @@ update on each scrape of `/metrics`.
 A background sampler reads every Network link every 2 s; each scrape
 exports its latest snapshot and never reads the host itself. Labels are
 `interface` (such as `eth0`, `wlan0`) and `kind` (`ethernet` or `wifi`);
-the `ethernet_*` metrics carry only `interface`. No SSID, BSSID, MAC or IP
+the `ethernet_*` and `wifi_*` metrics carry only `interface`. No SSID, BSSID, MAC or IP
 address appears in any label.
 
 | Metric | Type | Unit | Labels | Value |
@@ -111,6 +111,10 @@ address appears in any label.
 | `sp_rtk_base_network_{receive,transmit}_drops_total` | counter | packets | `interface`, `kind` | kernel totals |
 | `sp_rtk_base_network_ethernet_speed_bits_per_second` | gauge | bits/s | `interface` | negotiated speed; NaN when Disconnected or No reading |
 | `sp_rtk_base_network_ethernet_full_duplex` | gauge | 0/1 | `interface` | 1 full, 0 half duplex; NaN when unknown, Disconnected or No reading |
+| `sp_rtk_base_wifi_frequency_hertz` | gauge | Hz | `interface` | channel frequency while associated; NaN when Disconnected or No reading (never read unassociated: it hops while scanning) |
+| `sp_rtk_base_wifi_tx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames sent; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_rx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames received; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_tx_failed_total` | counter | frames | `interface` | frames the access point never acknowledged, as the driver counts them; resets with each association |
 | `sp_rtk_base_network_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every source read; NaN before the first |
 
 **Missing values.**
@@ -120,7 +124,10 @@ address appears in any label.
 - **Not supported:** a reading the hardware never gives (such as Ethernet
   speed on an adapter that doesn't report it) has no series at all. It
   appears once a successful read gives it while the link is up.
-- **Counters never go NaN.** During No reading they hold their last value.
+- **Counters never go NaN.** During No reading (and, for
+  `wifi_tx_failed_total`, while Disconnected) they hold their last value.
+- **Wi-Fi details come from nl80211 on their own.** If it fails, only the
+  `wifi_*` gauges go NaN; the link's state and kernel counters stay current.
 - **Interfaces coming and going:** when an interface vanishes (say a USB
   adapter is unplugged), every series for it disappears with it.
 
@@ -128,7 +135,9 @@ address appears in any label.
 reports them, with no accumulation on our side. When an interface
 reappears, its kernel counters (and `link_changes_total`) start again at
 zero: that is an ordinary counter reset, which `rate()` and `increase()`
-already handle.
+already handle. `wifi_tx_failed_total` also resets with every
+association (the driver counts per association), likewise an ordinary
+reset.
 
 Example queries:
 
@@ -142,6 +151,12 @@ increase(sp_rtk_base_network_receive_errors_total[1h])
 
 # Links that keep dropping: more than 3 up/down transitions in 15 min
 increase(sp_rtk_base_network_link_changes_total[15m]) > 3
+
+# Wi-Fi sends failing, per minute
+rate(sp_rtk_base_wifi_tx_failed_total[5m]) * 60
+
+# Wi-Fi fallen back to slow rates: under 20 Mbit/s sent for 10 min
+max_over_time(sp_rtk_base_wifi_tx_bitrate_bits_per_second[10m]) < 20e6
 
 # Which link is the Uplink
 sp_rtk_base_network_link_uplink == 1

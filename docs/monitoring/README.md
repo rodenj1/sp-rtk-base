@@ -94,7 +94,9 @@ update on each scrape of `/metrics`.
 ### Network links
 
 A background sampler reads every Network link every 2 s; each scrape
-exports its latest snapshot and never reads the host itself. Labels are
+exports its latest snapshot and never reads the host itself. What the
+dashboard's Network card shows, and the sampler's limitations, are in
+[`docs/network-links.md`](../network-links.md). Labels are
 `interface` (such as `eth0`, `wlan0`) and `kind` (`ethernet` or `wifi`);
 the `ethernet_*` and `wifi_*` metrics carry only `interface`. No SSID, BSSID, MAC or IP
 address appears in any label.

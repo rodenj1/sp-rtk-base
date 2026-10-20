@@ -11,6 +11,35 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### Network link health
+
+Network link health on the dashboard and in Prometheus
+(rtk_development#132).
+
+- **Documentation.** [`docs/network-links.md`](docs/network-links.md)
+  explains the dashboard's Network card: the Uplink, Wi-Fi link strength,
+  the Not supported / Disconnected / No reading states, why link health
+  isn't reachability (that shows under Destinations), and the limitations:
+  drops shorter than about 2 s may go uncounted, the Uplink is judged for
+  IPv4 only, the Pi's built-in Wi-Fi gives no tx retries, beacon loss or
+  noise, and the Wi-Fi link strength thresholds are provisional. The README
+  now links to it and to the metric reference in
+  [`docs/monitoring/README.md`](docs/monitoring/README.md).
+- **Unit comments.** `sp-rtk-base.service` now warns that any future
+  `RestrictAddressFamilies=` must include `AF_NETLINK` and that
+  `PrivateNetwork=` must never be added, since either silently breaks the
+  Network link sampler. Nothing in the unit's behaviour changes.
+
+### Breaking (deploy)
+
+- **One-time `install.sh` re-run.** The comments above change
+  `sp-rtk-base.service`, which is Host setup an Update doesn't rewrite
+  (ADR 0005), so this release raises the plumbing version to 3: the base
+  asks for the installer to be re-run once instead of offering Update.
+  `curl -fsSL
+  https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
+  | sudo bash`. A bare re-run keeps the deployment mode.
+
 ## v0.11.0 (2026-10-18)
 
 ### Portal agent

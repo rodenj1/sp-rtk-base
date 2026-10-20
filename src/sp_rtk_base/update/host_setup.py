@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sp_rtk_base.update.release import APP_PACKAGE, Fetch, github_raw_url
 
-PLUMBING_VERSION = 2
+PLUMBING_VERSION = 3
 """The Host setup this version of SP-Base needs; ``deploy/plumbing-version``
 (a unit test keeps the two equal)."""
 

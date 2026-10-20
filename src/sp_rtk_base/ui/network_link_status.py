@@ -20,6 +20,7 @@ from sp_rtk_base.models.network_link_models import (
 from sp_rtk_base.services.network_link.monitor import (
     WAITING_REASON,
     WIFI_NO_READING_REASON,
+    no_reading_reason,
 )
 from sp_rtk_base.ui.components.level import LEVEL_COLOR
 from sp_rtk_base.ui.formatting import format_byte_rate
@@ -60,10 +61,8 @@ def uplink(snapshot: NetworkLinkSnapshot) -> Shown:
     name = snapshot.uplink.interface
     if not snapshot.uplink.network_link:
         return Shown(f"{name} (not a Network link)")
-    label = next(
-        (KIND_LABEL[link.kind] for link in snapshot.links if link.name == name),
-        "Network link",
-    )
+    link = snapshot.uplink_link()
+    label = "Network link" if link is None else KIND_LABEL[link.kind]
     return Shown(f"{label} ({name})")
 
 
@@ -72,8 +71,8 @@ def freshness(snapshot: NetworkLinkSnapshot) -> Shown:
     age = snapshot.last_sample_age_seconds
     if age is None:
         return Shown(WAITING_REASON, "warning")
-    if snapshot.stale:
-        return Shown(f"No reading for {age:.0f} s", "warning")
+    if snapshot.no_reading:
+        return Shown(no_reading_reason(age), "warning")
     return Shown(f"Updated {age:.0f} s ago", "grey-6")
 
 

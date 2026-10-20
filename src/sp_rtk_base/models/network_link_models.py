@@ -215,5 +215,12 @@ class NetworkLinkSnapshot(_Frozen):
     # Seconds since the last sample in which every source read; None
     # before the first.
     last_sample_age_seconds: float | None = None
-    # Whether that sample is too old to trust (No reading).
-    stale: bool = True
+    # Whether that sample is too old to trust: No reading.
+    no_reading: bool = True
+
+    def uplink_link(self) -> NetworkLink | None:
+        """The Network link the Uplink is, if it is one."""
+        if self.uplink is None:
+            return None
+        name = self.uplink.interface
+        return next((link for link in self.links if link.name == name), None)

@@ -25,8 +25,8 @@ from sp_rtk_base.models.network_link_models import (
 
 # Two samples and a refresh, with room to spare.
 SOON_MS = 8000
-# Past the 6 s stale limit, plus a sample and a refresh.
-STALE_MS = 15000
+# Past the 6 s No reading limit, plus a sample and a refresh.
+NO_READING_MS = 15000
 
 ETH0 = InterfaceReading(
     name="eth0",
@@ -67,7 +67,7 @@ def _write(path: Path, reading: HostReading) -> None:
 
 def _expect_wifi_details_dashed(page: Page) -> None:
     """wlan0's Wi-Fi link, network, band and bitrate read "—", with no
-    stale value."""
+    old value left showing."""
     card = page.get_by_test_id("network-card")
     for field, old_value in (
         ("strength", "Good"),
@@ -181,7 +181,7 @@ def test_no_uplink_when_links_are_up_but_nothing_routes(
 
 
 @pytest.mark.e2e
-def test_a_stale_sampler_shows_every_value_as_a_dash_except_the_counters(
+def test_a_sampler_with_no_reading_shows_every_value_as_a_dash_but_the_counters(
     page: Page, base_url: str, network_links: Path
 ) -> None:
     _write(
@@ -206,7 +206,7 @@ def test_a_stale_sampler_shows_every_value_as_a_dash_except_the_counters(
     network_links.unlink()
 
     expect(card.get_by_test_id("network-freshness")).to_contain_text(
-        "No reading for", timeout=STALE_MS
+        "No reading for", timeout=NO_READING_MS
     )
     expect(card.get_by_test_id("network-uplink")).to_have_text("No reading")
     expect(card.get_by_test_id("network-link-eth0-state")).to_contain_text("No reading")

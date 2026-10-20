@@ -30,7 +30,7 @@ trigger a read.
   reachability](#link-health-isnt-reachability).
 - **Top right:** "Updated N s ago". Once the last full sample is more than
   6 s old (three missed samples) it turns into a warning, "No reading for
-  N s". Before the first sample it reads "Waiting for the first reading.".
+  N s.". Before the first sample it reads "Waiting for the first reading.".
 
 **One column per Network link,** listed Uplink first, then Ethernet, then
 Wi-Fi, each by name. The heading names the kind and the interface
@@ -152,8 +152,8 @@ points at the base station's own network.
   signs of a struggling radio it does give. Measuring noise would need a
   survey that retunes the radio, which the sampler never does.
 - **The Wi-Fi link strength thresholds are provisional.** -67 dBm is the
-  usual floor for a reliable link; they may be retuned once weak-signal
-  readings from a bench Pi are in.
+  usual floor for a reliable link; they may be retuned once readings at
+  weak Wi-Fi link strength from a bench Pi are in.
 
 ## For whoever maintains the systemd unit
 

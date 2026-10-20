@@ -9,7 +9,7 @@ the order the links are listed in.
 No reading is judged per source (sysfs, addresses, the Uplink probe,
 nl80211, the last per Wi-Fi interface): a
 source is No reading after a failed read, or once its last success is
-more than :data:`STALE_AFTER_SECONDS` old, so one failing source doesn't
+more than :data:`NO_READING_AFTER_SECONDS` old, so one failing source doesn't
 blank the others.  In No reading every value of a link is empty except
 its counter totals, which keep their last value.
 """
@@ -40,7 +40,7 @@ from sp_rtk_base.uplink import Uplink, uplink
 
 SAMPLE_INTERVAL_SECONDS = 2.0
 # A source whose last success is older than this is No reading.
-STALE_AFTER_SECONDS = 3 * SAMPLE_INTERVAL_SECONDS
+NO_READING_AFTER_SECONDS = 3 * SAMPLE_INTERVAL_SECONDS
 
 WAITING_REASON = "Waiting for the first reading."
 NO_CABLE_REASON = "No cable."
@@ -52,7 +52,7 @@ WIFI_NO_READING_REASON = "The Wi-Fi adapter gave no reading."
 # Good at -67 dBm or above, Marginal from -68 to -77, Poor at -78 or
 # below, applied to the window's lower median with no deadband, like
 # Bluetooth link strength.  -67 is the usual floor for a reliable link;
-# the bench-Pi weak-signal readings may retune these.
+# bench-Pi readings at weak Wi-Fi link strength may retune these.
 GOOD_DBM, MARGINAL_DBM = -67, -77
 
 # Wi-Fi link strength is judged from the lower median of this many
@@ -174,7 +174,7 @@ class _Source(Generic[T]):
 
     def fresh(self, now: float) -> bool:
         age = self.age(now)
-        return not self.failed and age is not None and age <= STALE_AFTER_SECONDS
+        return not self.failed and age is not None and age <= NO_READING_AFTER_SECONDS
 
 
 @dataclass
@@ -196,6 +196,13 @@ class _History:
     strength: deque[tuple[float, int]] = field(
         default_factory=lambda: deque[tuple[float, int]]()
     )
+
+    def supported_value(self, name: str, value: T | None) -> Supported[T] | None:
+        """*value* as a Supported reading, or ``None`` if the link has never
+        given the reading *name* while up (Not supported)."""
+        if name not in self.supported:
+            return None
+        return Supported[T](value=value)
 
     def judge(self, dbm: int | None, now: float) -> None:
         """Add one dBm reading to the window, or clear it on a gap."""
@@ -285,7 +292,7 @@ class NetworkLinkMonitor:
             uplink=the_uplink,
             uplink_no_reading=uplink_no_reading,
             last_sample_age_seconds=age,
-            stale=age is None or age > STALE_AFTER_SECONDS,
+            no_reading=age is None or age > NO_READING_AFTER_SECONDS,
         )
 
     def _track(
@@ -408,15 +415,13 @@ class NetworkLinkMonitor:
         given while up, empty unless *current*."""
         if interface.kind != "ethernet":
             return None
-
-        def supported(name: str, value: T | None) -> Supported[T] | None:
-            if name not in history.supported:
-                return None
-            return Supported[T](value=value if current else None)
-
         return EthernetDetails(
-            speed_mbps=supported("speed_mbps", interface.speed_mbps),
-            full_duplex=supported("full_duplex", interface.full_duplex),
+            speed_mbps=history.supported_value(
+                "speed_mbps", interface.speed_mbps if current else None
+            ),
+            full_duplex=history.supported_value(
+                "full_duplex", interface.full_duplex if current else None
+            ),
         )
 
     @staticmethod
@@ -431,12 +436,7 @@ class NetworkLinkMonitor:
             return None
         wifi = history.wifi if fresh and history.up else None
         station = None if wifi is None else wifi.station
-
-        def supported(name: str, value: T | None) -> Supported[T] | None:
-            if name not in history.supported:
-                return None
-            return Supported[T](value=value)
-
+        supported = history.supported_value
         return WifiDetails(
             no_reading_reason=(
                 WIFI_NO_READING_REASON if fresh and history.wifi is None else None

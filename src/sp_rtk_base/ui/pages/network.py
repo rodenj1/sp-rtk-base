@@ -84,8 +84,7 @@ def network_page() -> None:
             configured: bool, snapshot: NetworkLinkSnapshot
         ) -> None:
             uplink = shown.uplink(snapshot)
-            name = None if snapshot.uplink is None else snapshot.uplink.interface
-            link = next((link for link in snapshot.links if link.name == name), None)
+            link = snapshot.uplink_link()
             if link is not None:
                 icon = shown.KIND_ICON[link.kind]
             elif snapshot.uplink is not None:

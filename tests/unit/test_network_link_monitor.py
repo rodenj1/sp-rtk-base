@@ -204,6 +204,9 @@ def test_with_both_links_connected_the_uplink_is_where_traffic_leaves_and_listed
     snapshot = _snapshot(_reading(_wifi(), _eth(), source=source))
 
     assert snapshot.uplink == Uplink(interface=uplink_name, network_link=True)
+    uplink_link = snapshot.uplink_link()
+    assert uplink_link is not None
+    assert uplink_link.name == uplink_name
     assert [link.name for link in snapshot.links] == order
     assert [link.uplink for link in snapshot.links] == [True, False]
     assert {link.state for link in snapshot.links} == {"Connected"}
@@ -221,6 +224,7 @@ def test_no_uplink_when_links_are_up_but_the_network_is_unreachable() -> None:
     snapshot = _snapshot(_reading(_wifi(), _eth(), source=None))
 
     assert snapshot.uplink is None
+    assert snapshot.uplink_link() is None
     assert snapshot.uplink_no_reading is False
     assert not any(link.uplink for link in snapshot.links)
     assert {link.state for link in snapshot.links} == {"Connected"}
@@ -231,6 +235,7 @@ def test_a_vpn_uplink_is_not_a_network_link() -> None:
     snapshot = _snapshot(_reading(_eth(), addresses=(ETH_ADDR, vpn), source="10.8.0.2"))
 
     assert snapshot.uplink == Uplink(interface="wg0", network_link=False)
+    assert snapshot.uplink_link() is None
     assert [link.name for link in snapshot.links] == ["eth0"]
     assert snapshot.links[0].uplink is False
 
@@ -338,33 +343,33 @@ def test_before_the_first_reading_there_are_no_links_and_no_reading() -> None:
     assert snapshot.links == ()
     assert snapshot.uplink_no_reading is True
     assert snapshot.last_sample_age_seconds is None
-    assert snapshot.stale is True
+    assert snapshot.no_reading is True
 
 
-def test_a_fresh_sample_is_not_stale_and_says_how_old_it_is() -> None:
+def test_a_fresh_sample_says_how_old_it_is() -> None:
     monitor, clock = _fed(_reading(_eth(), source="192.0.2.10"))
 
     snapshot = monitor.snapshot(clock.tick(1.5))
 
     assert snapshot.last_sample_age_seconds == 1.5
-    assert snapshot.stale is False
+    assert snapshot.no_reading is False
 
 
-def test_a_stopped_sampler_goes_stale_after_6_s_keeping_only_the_counters() -> None:
+def test_a_stopped_sampler_is_no_reading_after_6_s_keeping_only_the_counters() -> None:
     monitor, clock = _fed(
         _reading(_eth(rx_bytes=100, rx_errors=3), source="192.0.2.10"),
         _reading(_eth(rx_bytes=900, rx_errors=4), source="192.0.2.10"),
     )
     still_fresh = monitor.snapshot(clock.tick(6.0))
-    stale = monitor.snapshot(clock.tick(1.0))
+    no_reading = monitor.snapshot(clock.tick(1.0))
 
     assert still_fresh.links[0].state == "Connected"
-    assert still_fresh.stale is False
-    assert stale.stale is True
-    assert stale.last_sample_age_seconds == 7.0
-    assert stale.uplink is None
-    assert stale.uplink_no_reading is True
-    (link,) = stale.links
+    assert still_fresh.no_reading is False
+    assert no_reading.no_reading is True
+    assert no_reading.last_sample_age_seconds == 7.0
+    assert no_reading.uplink is None
+    assert no_reading.uplink_no_reading is True
+    (link,) = no_reading.links
     _blank_but_counters(link)
     assert link.reason == "No reading for 7 s."
     assert (link.counters.rx_bytes, link.counters.rx_errors) == (900, 4)
@@ -646,7 +651,7 @@ def test_a_wifi_reading_missing_while_associated_is_not_supported() -> None:
     assert details.bssid is not None
 
 
-def test_a_stale_wifi_link_keeps_only_its_failed_sends_total() -> None:
+def test_a_wifi_link_with_no_reading_keeps_only_its_failed_sends_total() -> None:
     monitor, clock = _fed(_reading(_wifi()))
 
     (link,) = monitor.snapshot(clock.tick(7.0)).links
@@ -763,7 +768,7 @@ def test_a_gap_has_no_wifi_link_strength_and_clears_the_window(
     assert _strength(monitor.snapshot(clock.now)) == "Good"
 
 
-def test_a_stale_wifi_link_has_no_wifi_link_strength() -> None:
+def test_a_wifi_link_with_no_reading_has_no_wifi_link_strength() -> None:
     monitor, clock = _fed(_at(-55))
 
     assert _strength(monitor.snapshot(clock.tick(7.0))) is None

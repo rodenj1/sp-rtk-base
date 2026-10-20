@@ -342,7 +342,7 @@ class NetworkUplinkResponse(BaseModel):
         if snapshot.uplink is None:
             return cls(state="No Uplink")
         name = snapshot.uplink.interface
-        link = next((link for link in snapshot.links if link.name == name), None)
+        link = snapshot.uplink_link()
         if link is None:
             return cls(state="Uplink", interface=name)
         wifi = link.wifi

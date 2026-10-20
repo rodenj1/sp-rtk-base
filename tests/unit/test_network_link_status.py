@@ -40,7 +40,7 @@ def _snapshot(**fields: object) -> NetworkLinkSnapshot:
         "links": (ETH0, WLAN0),
         "uplink_no_reading": False,
         "last_sample_age_seconds": 1.0,
-        "stale": False,
+        "no_reading": False,
     }
     return NetworkLinkSnapshot.model_validate(defaults | fields)
 
@@ -64,16 +64,18 @@ def test_the_uplink_line(
 
 
 @pytest.mark.parametrize(
-    ("age", "stale", "expected"),
+    ("age", "no_reading", "expected"),
     [
         (None, True, Shown("Waiting for the first reading.", "warning")),
         (1.4, False, Shown("Updated 1 s ago", "grey-6")),
         (6.0, False, Shown("Updated 6 s ago", "grey-6")),
-        (45.2, True, Shown("No reading for 45 s", "warning")),
+        (45.2, True, Shown("No reading for 45 s.", "warning")),
     ],
 )
-def test_the_freshness_line(age: float | None, stale: bool, expected: Shown) -> None:
-    snapshot = _snapshot(last_sample_age_seconds=age, stale=stale)
+def test_the_freshness_line(
+    age: float | None, no_reading: bool, expected: Shown
+) -> None:
+    snapshot = _snapshot(last_sample_age_seconds=age, no_reading=no_reading)
 
     assert freshness(snapshot) == expected
 

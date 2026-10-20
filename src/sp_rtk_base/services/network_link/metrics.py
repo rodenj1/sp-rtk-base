@@ -185,7 +185,7 @@ LINK_METRICS: tuple[LinkMetric, ...] = (
     ),
     LinkMetric(
         "network_ethernet_full_duplex",
-        "1 for full duplex, 0 for half (NaN: unknown, Disconnected or No reading)",
+        "1 for full duplex, 0 for half (NaN: Disconnected or No reading)",
         _ethernet_full_duplex,
         kind_label=False,
     ),

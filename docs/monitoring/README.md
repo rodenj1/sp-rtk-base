@@ -112,7 +112,7 @@ address appears in any label.
 | `sp_rtk_base_network_{receive,transmit}_errors_total` | counter | packets | `interface`, `kind` | kernel totals |
 | `sp_rtk_base_network_{receive,transmit}_drops_total` | counter | packets | `interface`, `kind` | kernel totals |
 | `sp_rtk_base_network_ethernet_speed_bits_per_second` | gauge | bits/s | `interface` | negotiated speed; NaN when Disconnected or No reading |
-| `sp_rtk_base_network_ethernet_full_duplex` | gauge | 0/1 | `interface` | 1 full, 0 half duplex; NaN when unknown, Disconnected or No reading |
+| `sp_rtk_base_network_ethernet_full_duplex` | gauge | 0/1 | `interface` | 1 full, 0 half duplex; NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_link_strength` | gauge | level | `interface` | Wi-Fi link strength verdict, 0 Good (≥ -67 dBm), 1 Marginal (-68 to -77), 2 Poor (≤ -78), on the lower median of the last 10 s of readings; station mode only; NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_link_strength_dbm` | gauge | dBm | `interface` | the latest Wi-Fi link strength reading (not the median); NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_frequency_hertz` | gauge | Hz | `interface` | channel frequency while associated; NaN when Disconnected or No reading (never read unassociated: it hops while scanning) |

@@ -298,10 +298,10 @@ async def test_ethernet_speed_and_duplex_are_nan_when_disconnected() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_unknown_duplex_on_a_connected_link_is_nan() -> None:
-    unknown = ETH0.model_copy(update={"full_duplex": None})
+async def test_a_connected_link_with_no_duplex_reading_is_nan() -> None:
+    no_duplex = ETH0.model_copy(update={"full_duplex": None})
 
-    samples = _scrape(await _fed(_reading(ETH0), _reading(unknown)))
+    samples = _scrape(await _fed(_reading(ETH0), _reading(no_duplex)))
 
     assert math.isnan(_value(samples, DUPLEX, "eth0"))
     assert _value(samples, SPEED, "eth0") == 100_000_000.0

@@ -250,9 +250,11 @@ def running_server(
     portal_agent_socket: Path,
     *,
     network_links_file: Path | None = None,
+    deployment_mode: str | None = None,
 ) -> Iterator[str]:
     """An SP-Base server in a subprocess, until the block ends. A module
-    whose tests leave state the rest can't share (e.g. Event log entries)
+    whose tests leave state the rest can't share (e.g. Event log entries),
+    or that needs ``deployment_mode="appliance"`` (the Network page),
     starts its own with this."""
     port = _find_free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -262,6 +264,10 @@ def running_server(
     fake_home = tmp_path_factory.mktemp("e2e-home")
     config_dir = fake_home / ".config" / "sp-rtk-base"
     config_dir.mkdir(parents=True, exist_ok=True)
+    if deployment_mode is not None:
+        (config_dir / "config.yaml").write_text(
+            f"deployment:\n  mode: {deployment_mode}\n"
+        )
 
     env = os.environ.copy()
     env["HOME"] = str(fake_home)

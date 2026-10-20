@@ -13,10 +13,16 @@ from sp_rtk_base.models.api_models import (
     NetworkConnectResponse,
     NetworkFallbackInfoResponse,
     NetworkStatusResponse,
+    NetworkUplinkResponse,
 )
 from sp_rtk_base.models.net_provision_models import SavedWifiConnection, WifiNetwork
-from sp_rtk_base.services import get_config_service, get_network_service
+from sp_rtk_base.services import (
+    get_config_service,
+    get_network_link_service,
+    get_network_service,
+)
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
     NetworkNotConfiguredError,
     NetworkService,
@@ -46,19 +52,17 @@ router = APIRouter(
 @router.get("/status", response_model=NetworkStatusResponse)
 async def get_network_status(
     svc: NetworkService = Depends(get_network_service),
+    network_link: NetworkLinkService = Depends(get_network_link_service),
 ) -> NetworkStatusResponse:
-    """Return the device's current wired/WiFi link.
+    """Return the Uplink from the Network link snapshot.
 
-    ``configured=False`` (with ``link=None``) means this device has no
-    net-provisioning config yet — not an error, just nothing to show.
+    Reads the sampler's latest snapshot, so it agrees with the dashboard
+    and never runs nmcli (in particular, never a Wi-Fi scan).
     """
-    try:
-        link = await svc.get_active_link()
-    except NetworkNotConfiguredError:
-        return NetworkStatusResponse(configured=False)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return NetworkStatusResponse(configured=True, link=link)
+    return NetworkStatusResponse(
+        configured=svc.is_configured(),
+        uplink=NetworkUplinkResponse.from_snapshot(network_link.current()),
+    )
 
 
 @router.get("/scan", response_model=list[WifiNetwork])

@@ -7,15 +7,22 @@ They are separate from config_models.py which handles YAML persistence.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
 
 from sp_rtk_base.models.config_models import SignalDisplay
 from sp_rtk_base.models.device_models import DEFAULT_BAUD, ConsoleLink, SerialLink
 from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
-from sp_rtk_base.models.net_provision_models import ActiveLink
+from sp_rtk_base.models.level_models import Level
+from sp_rtk_base.models.network_link_models import (
+    LinkKind,
+    NetworkLinkSnapshot,
+    Supported,
+)
 from sp_rtk_base.models.profile_models import Profile
+
+T = TypeVar("T")
 
 # ---------------------------------------------------------------------------
 # Relay status response models
@@ -296,19 +303,78 @@ class DeviceActionResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class NetworkUplinkResponse(BaseModel):
+    """The Uplink, from the Network link snapshot: the link outbound IPv4
+    traffic actually leaves by, as the dashboard's Network card shows it."""
+
+    state: Literal["Uplink", "No Uplink", "No reading"] = Field(
+        description=(
+            "'Uplink' when traffic has a way out; 'No Uplink' when nothing "
+            "routes to the internet; 'No reading' when it can't be told now"
+        )
+    )
+    interface: str | None = Field(
+        default=None, description="The Uplink's interface (eth0, wlan0, wg0)"
+    )
+    kind: LinkKind | None = Field(
+        default=None,
+        description="ethernet or wifi; None when the Uplink isn't a Network link",
+    )
+    ipv4: str | None = Field(
+        default=None, description="The Uplink's IPv4 address, as address/prefix"
+    )
+    wifi_network: str | None = Field(
+        default=None, description="The Wi-Fi Uplink's SSID, while it has one"
+    )
+    wifi_link_strength: Level | None = Field(
+        default=None,
+        description="The Wi-Fi Uplink's Wi-Fi link strength, while it has one",
+    )
+    wifi_link_strength_dbm: int | None = Field(
+        default=None, description="The Wi-Fi Uplink's latest reading, in dBm"
+    )
+
+    @classmethod
+    def from_snapshot(cls, snapshot: NetworkLinkSnapshot) -> NetworkUplinkResponse:
+        """The Uplink as *snapshot* shows it."""
+        if snapshot.uplink_no_reading:
+            return cls(state="No reading")
+        if snapshot.uplink is None:
+            return cls(state="No Uplink")
+        name = snapshot.uplink.interface
+        link = next((link for link in snapshot.links if link.name == name), None)
+        if link is None:
+            return cls(state="Uplink", interface=name)
+        wifi = link.wifi
+        return cls(
+            state="Uplink",
+            interface=name,
+            kind=link.kind,
+            ipv4=link.ipv4,
+            wifi_network=None if wifi is None else _value(wifi.ssid),
+            wifi_link_strength=None if wifi is None else _value(wifi.link_strength),
+            wifi_link_strength_dbm=None if wifi is None else _value(wifi.signal_dbm),
+        )
+
+
+def _value(reading: Supported[T] | None) -> T | None:
+    """A reading's current value; ``None`` when it has none or is Not
+    supported."""
+    return None if reading is None else reading.value
+
+
 class NetworkStatusResponse(BaseModel):
-    """Snapshot of the device's current network link, for the console."""
+    """The device's current network status, for the console."""
 
     configured: bool = Field(
         description=(
             "Whether net-provisioning config exists on this device. False "
             "means the box was never set up for headless provisioning "
-            "(issue #6+) and no live network data is available."
+            "(issue #6+), so the Wi-Fi picker has nothing to work with."
         )
     )
-    link: ActiveLink | None = Field(
-        default=None,
-        description="Current wired or WiFi link, or None if neither is active",
+    uplink: NetworkUplinkResponse = Field(
+        description="The Uplink, from the Network link snapshot"
     )
 
 

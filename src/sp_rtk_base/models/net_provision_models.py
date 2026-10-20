@@ -208,29 +208,6 @@ class SavedWifiConnection(BaseModel):
     active: bool = Field(description="True if this is the currently active connection")
 
 
-class LinkType(str, enum.Enum):
-    """The kind of link a device's active connection runs over."""
-
-    WIRED = "wired"
-    WIFI = "wifi"
-
-
-class ActiveLink(BaseModel):
-    """The device's current non-AP network link, for the console status view."""
-
-    link_type: LinkType = Field(description="Wired or WiFi")
-    name: str = Field(description="Connection name (the SSID, for WiFi)")
-    ip_address: str | None = Field(
-        default=None, description="IPv4 address without the CIDR suffix, if assigned"
-    )
-    signal: int | None = Field(
-        default=None,
-        ge=0,
-        le=100,
-        description="Signal strength percent; None for a wired link",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------

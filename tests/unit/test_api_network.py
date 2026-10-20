@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,13 +12,27 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
-    LinkType,
+    NetProvisionConfig,
     SavedWifiConnection,
     WifiNetwork,
 )
-from sp_rtk_base.services import get_config_service, get_network_service
+from sp_rtk_base.models.network_link_models import (
+    AddressReading,
+    Counters,
+    EgressReading,
+    HostReading,
+    InterfaceReading,
+    StationReading,
+    WifiReading,
+)
+from sp_rtk_base.services import (
+    get_config_service,
+    get_network_link_service,
+    get_network_service,
+)
 from sp_rtk_base.services.config_service import ConfigService
+from sp_rtk_base.services.net_provision.nmcli_adapter import NmcliAdapter
+from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
     ApFallbackInfo,
     NetworkNotConfiguredError,
@@ -27,12 +43,97 @@ from sp_rtk_base.services.network_service import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+ETH0 = InterfaceReading(
+    name="eth0",
+    kind="ethernet",
+    operstate="up",
+    carrier=True,
+    speed_mbps=100,
+    full_duplex=True,
+    counters=Counters(rx_bytes=5000),
+)
+WLAN0 = InterfaceReading(name="wlan0", kind="wifi", operstate="up")
+ADDRESSES = (
+    AddressReading(interface="eth0", address="192.0.2.10", prefixlen=24),
+    AddressReading(interface="wlan0", address="192.0.2.20", prefixlen=24),
+    AddressReading(interface="wg0", address="10.8.0.2", prefixlen=24),
+)
+
+
+def _associated(signal_dbm: int) -> WifiReading:
+    return WifiReading(
+        interface="wlan0",
+        mode="station",
+        wiphy=0,
+        frequency_mhz=5745,
+        ssid="SiteWiFi",
+        station=StationReading(bssid="02:00:00:00:00:01", signal_dbm=signal_dbm),
+    )
+
+
+def _reading(
+    *interfaces: InterfaceReading,
+    source: str | None = "192.0.2.10",
+    wifi: tuple[WifiReading, ...] | None = (),
+) -> HostReading:
+    return HostReading(
+        interfaces=interfaces,
+        addresses=ADDRESSES,
+        egress=EgressReading(source=source),
+        wifi=wifi,
+    )
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _FakeHost:
+    """Serves one reading per sample."""
+
+    def __init__(self, *readings: HostReading) -> None:
+        self.readings = list(readings)
+
+    def read(self) -> HostReading:
+        return self.readings.pop(0)
+
+    def close(self) -> None:
+        pass
+
+
+async def _sampled(*readings: HostReading) -> NetworkLinkService:
+    """The real Network link sampler after one sample per reading, 2 s apart."""
+    clock = _Clock()
+    sampler = NetworkLinkService(_FakeHost(*readings), clock=clock)
+    for _ in readings:
+        clock.now += 2.0
+        await sampler.sample_once()
+    return sampler
+
+
+def _status(
+    network: NetworkService, config: ConfigService, sampler: NetworkLinkService
+) -> dict[str, Any]:
+    """GET /api/network/status against *sampler*'s snapshot."""
+    app = create_api_app()
+    app.dependency_overrides[get_network_service] = lambda: network
+    app.dependency_overrides[get_config_service] = lambda: config
+    app.dependency_overrides[get_network_link_service] = lambda: sampler
+    resp = TestClient(app).get("/api/network/status")
+    assert resp.status_code == 200
+    data: dict[str, Any] = resp.json()
+    return data
+
 
 @pytest.fixture()
 def mock_network_service() -> NetworkService:
     """Create a mock NetworkService."""
     svc = MagicMock(spec=NetworkService)
-    svc.get_active_link = AsyncMock(return_value=None)
+    svc.is_configured = MagicMock(return_value=True)
     svc.scan_networks = AsyncMock(return_value=[])
     svc.get_ap_fallback_info = AsyncMock(
         return_value=ApFallbackInfo(
@@ -79,73 +180,119 @@ def client(
 
 
 class TestGetNetworkStatus:
-    def test_not_configured(
-        self, client: TestClient, mock_network_service: MagicMock
+    """The active-link block reads the Network link snapshot, never nmcli."""
+
+    @pytest.mark.asyncio()
+    async def test_an_ethernet_uplink_is_reported_with_its_address(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
     ) -> None:
-        mock_network_service.get_active_link = AsyncMock(
-            side_effect=NetworkNotConfiguredError("no config file"),
+        sampler = await _sampled(_reading(ETH0))
+        data = _status(mock_network_service, mock_config_service, sampler)
+        assert data["uplink"] == {
+            "state": "Uplink",
+            "interface": "eth0",
+            "kind": "ethernet",
+            "ipv4": "192.0.2.10/24",
+            "wifi_network": None,
+            "wifi_link_strength": None,
+            "wifi_link_strength_dbm": None,
+        }
+
+    @pytest.mark.asyncio()
+    async def test_a_wifi_uplink_carries_its_link_strength_and_dbm(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
+    ) -> None:
+        sampler = await _sampled(
+            _reading(WLAN0, source="192.0.2.20", wifi=(_associated(-71),))
         )
-        resp = client.get("/api/network/status")
-        assert resp.status_code == 200
-        data = resp.json()
+        data = _status(mock_network_service, mock_config_service, sampler)
+        assert data["uplink"] == {
+            "state": "Uplink",
+            "interface": "wlan0",
+            "kind": "wifi",
+            "ipv4": "192.0.2.20/24",
+            "wifi_network": "SiteWiFi",
+            "wifi_link_strength": "Marginal",
+            "wifi_link_strength_dbm": -71,
+        }
+
+    @pytest.mark.asyncio()
+    async def test_a_vpn_uplink_is_not_a_network_link(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
+    ) -> None:
+        sampler = await _sampled(_reading(ETH0, source="10.8.0.2"))
+        uplink = _status(mock_network_service, mock_config_service, sampler)["uplink"]
+        assert (uplink["state"], uplink["interface"], uplink["kind"]) == (
+            "Uplink",
+            "wg0",
+            None,
+        )
+
+    @pytest.mark.asyncio()
+    async def test_no_uplink_when_the_network_is_unreachable(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
+    ) -> None:
+        sampler = await _sampled(_reading(ETH0, source=None))
+        uplink = _status(mock_network_service, mock_config_service, sampler)["uplink"]
+        assert uplink["state"] == "No Uplink"
+        assert uplink["interface"] is None
+
+    @pytest.mark.asyncio()
+    async def test_no_reading_before_the_first_sample(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
+    ) -> None:
+        sampler = await _sampled()
+        uplink = _status(mock_network_service, mock_config_service, sampler)["uplink"]
+        assert uplink["state"] == "No reading"
+        assert uplink["interface"] is None
+
+    @pytest.mark.asyncio()
+    async def test_a_wifi_uplink_without_a_current_reading_has_no_strength(
+        self, mock_network_service: NetworkService, mock_config_service: ConfigService
+    ) -> None:
+        """nl80211 failed: the Uplink still shows, its strength never stale."""
+        sampler = await _sampled(
+            _reading(WLAN0, source="192.0.2.20", wifi=(_associated(-55),)),
+            _reading(WLAN0, source="192.0.2.20", wifi=None),
+        )
+        uplink = _status(mock_network_service, mock_config_service, sampler)["uplink"]
+        assert uplink["interface"] == "wlan0"
+        assert uplink["wifi_link_strength"] is None
+        assert uplink["wifi_link_strength_dbm"] is None
+
+    @pytest.mark.asyncio()
+    async def test_the_uplink_shows_without_net_provisioning_config(
+        self, mock_network_service: MagicMock, mock_config_service: ConfigService
+    ) -> None:
+        """The Uplink needs no net-provisioning config, so it agrees with
+        the dashboard even on a box that was never provisioned."""
+        mock_network_service.is_configured = MagicMock(return_value=False)
+        sampler = await _sampled(_reading(ETH0))
+        data = _status(mock_network_service, mock_config_service, sampler)
         assert data["configured"] is False
-        assert data["link"] is None
+        assert data["uplink"]["interface"] == "eth0"
 
-    def test_configured_no_active_link(
-        self, client: TestClient, mock_network_service: MagicMock
+    @pytest.mark.asyncio()
+    async def test_the_status_runs_no_nmcli_and_so_no_wifi_scan(
+        self, mock_config_service: ConfigService
     ) -> None:
-        mock_network_service.get_active_link = AsyncMock(return_value=None)
-        resp = client.get("/api/network/status")
-        assert resp.status_code == 200
-        data = resp.json()
+        nmcli_calls: list[list[str]] = []
+
+        def runner(args: list[str]) -> subprocess.CompletedProcess[str]:
+            nmcli_calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        network = NetworkService(
+            config_loader=lambda: NetProvisionConfig(ap_password="sticker-secret"),
+            adapter_factory=lambda config: NmcliAdapter(config, runner=runner),
+        )
+        sampler = await _sampled(
+            _reading(WLAN0, source="192.0.2.20", wifi=(_associated(-55),))
+        )
+        data = _status(network, mock_config_service, sampler)
         assert data["configured"] is True
-        assert data["link"] is None
-
-    def test_wired_link(
-        self, client: TestClient, mock_network_service: MagicMock
-    ) -> None:
-        mock_network_service.get_active_link = AsyncMock(
-            return_value=ActiveLink(
-                link_type=LinkType.WIRED,
-                name="Wired connection 1",
-                ip_address="192.168.1.50",
-            ),
-        )
-        resp = client.get("/api/network/status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["configured"] is True
-        assert data["link"]["link_type"] == "wired"
-        assert data["link"]["name"] == "Wired connection 1"
-        assert data["link"]["ip_address"] == "192.168.1.50"
-        assert data["link"]["signal"] is None
-
-    def test_wifi_link(
-        self, client: TestClient, mock_network_service: MagicMock
-    ) -> None:
-        mock_network_service.get_active_link = AsyncMock(
-            return_value=ActiveLink(
-                link_type=LinkType.WIFI,
-                name="SiteWiFi",
-                ip_address="192.168.1.60",
-                signal=77,
-            ),
-        )
-        resp = client.get("/api/network/status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["link"]["link_type"] == "wifi"
-        assert data["link"]["signal"] == 77
-
-    def test_unexpected_error_returns_502(
-        self, client: TestClient, mock_network_service: MagicMock
-    ) -> None:
-        mock_network_service.get_active_link = AsyncMock(
-            side_effect=RuntimeError("nmcli exploded"),
-        )
-        resp = client.get("/api/network/status")
-        assert resp.status_code == 502
-        assert "nmcli exploded" in resp.json()["detail"]
+        assert data["uplink"]["wifi_link_strength"] == "Good"
+        assert nmcli_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -313,11 +460,6 @@ class TestConnectNetwork:
         """Configuring WiFi while wired (so the cable can later be
         removed) is not gated on the current link type — the endpoint
         doesn't consult status at all."""
-        mock_network_service.get_active_link = AsyncMock(
-            return_value=ActiveLink(
-                link_type=LinkType.WIRED, name="Wired connection 1"
-            ),
-        )
         resp = client.post(
             "/api/network/connect",
             json={"ssid": "SiteWiFi", "password": "hunter22"},
@@ -508,4 +650,4 @@ class TestManagedHostModeDisablesNetworkApi:
         """The 404 gate must short-circuit before the network service is
         touched at all."""
         client.get("/api/network/status")
-        mock_network_service.get_active_link.assert_not_called()
+        mock_network_service.is_configured.assert_not_called()

@@ -16,8 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
-    LinkType,
     NetProvisionConfig,
     SavedWifiConnection,
     WifiNetwork,
@@ -52,27 +50,18 @@ def _service_unconfigured() -> NetworkService:
     )
 
 
-class TestGetActiveLink:
-    @pytest.mark.asyncio()
-    async def test_returns_the_adapter_reading(self) -> None:
-        adapter = _fake_adapter()
-        link = ActiveLink(link_type=LinkType.WIRED, name="Wired connection 1")
-        adapter.read_active_link.return_value = link  # type: ignore[attr-defined]
-        svc = _service_with_adapter(adapter)
-        assert await svc.get_active_link() is link
+class TestIsConfigured:
+    def test_configured_when_the_config_loads(self) -> None:
+        assert _service_with_adapter(_fake_adapter()).is_configured() is True
 
-    @pytest.mark.asyncio()
-    async def test_returns_none_when_nothing_is_connected(self) -> None:
-        adapter = _fake_adapter()
-        adapter.read_active_link.return_value = None  # type: ignore[attr-defined]
-        svc = _service_with_adapter(adapter)
-        assert await svc.get_active_link() is None
+    def test_not_configured_when_the_config_is_missing(self) -> None:
+        assert _service_unconfigured().is_configured() is False
 
-    @pytest.mark.asyncio()
-    async def test_raises_not_configured_when_config_is_missing(self) -> None:
-        svc = _service_unconfigured()
-        with pytest.raises(NetworkNotConfiguredError):
-            await svc.get_active_link()
+    def test_runs_no_nmcli(self) -> None:
+        """It only loads the config: the adapter is built but never used."""
+        adapter = _fake_adapter()
+        _service_with_adapter(adapter).is_configured()
+        assert adapter.method_calls == []  # type: ignore[attr-defined]
 
 
 class TestScanNetworks:
@@ -278,12 +267,11 @@ class TestAdapterCaching:
         and re-validating the YAML config on every status poll would be
         wasteful, and the config never changes without a restart anyway."""
         adapter = _fake_adapter()
-        adapter.read_active_link.return_value = None  # type: ignore[attr-defined]
         adapter.scan_networks.return_value = []  # type: ignore[attr-defined]
         config_loader = MagicMock(return_value=_config())
         svc = NetworkService(
             config_loader=config_loader, adapter_factory=lambda _cfg: adapter
         )
-        await svc.get_active_link()
+        svc.is_configured()
         await svc.scan_networks()
         config_loader.assert_called_once()

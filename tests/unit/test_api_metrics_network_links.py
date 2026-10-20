@@ -23,6 +23,8 @@ from sp_rtk_base.models.network_link_models import (
     EgressReading,
     HostReading,
     InterfaceReading,
+    StationReading,
+    WifiReading,
 )
 from sp_rtk_base.services import (
     get_config_service,
@@ -53,11 +55,13 @@ def _reading(
     *interfaces: InterfaceReading,
     addresses: tuple[AddressReading, ...] = (ETH0_ADDRESS,),
     source: str | None = "192.0.2.10",
+    wifi: tuple[WifiReading, ...] | None = (),
 ) -> HostReading:
     return HostReading(
         interfaces=interfaces,
         addresses=addresses,
         egress=EgressReading(source=source),
+        wifi=wifi,
     )
 
 
@@ -321,7 +325,7 @@ TIMESTAMP = "sp_rtk_base_network_last_sample_timestamp_seconds"
 async def test_the_timestamp_is_the_unix_time_of_the_last_full_sample() -> None:
     clock = _Clock()
     failed_probe = HostReading(
-        interfaces=(ETH0,), addresses=(ETH0_ADDRESS,), egress=None
+        interfaces=(ETH0,), addresses=(ETH0_ADDRESS,), egress=None, wifi=()
     )
     service = await _fed(_reading(ETH0), failed_probe, clock=clock)
     clock.now += 1.5
@@ -388,3 +392,82 @@ async def test_an_interface_reappearing_at_zero_is_a_plain_counter_reset() -> No
     assert _value(samples, "sp_rtk_base_network_receive_bytes_total", "eth0") == 0
     assert _value(samples, "sp_rtk_base_network_link_changes_total", "eth0") == 0
     assert not any(name.endswith("_created") for name in samples)
+
+
+# ---------------------------------------------------------------------------
+# Wi-Fi details
+# ---------------------------------------------------------------------------
+
+WLAN0 = InterfaceReading(name="wlan0", kind="wifi", operstate="up")
+WLAN0_DORMANT = WLAN0.model_copy(update={"operstate": "dormant"})
+ASSOCIATED = WifiReading(
+    interface="wlan0",
+    mode="station",
+    wiphy=0,
+    frequency_mhz=5745,
+    ssid="Test",
+    station=StationReading(
+        bssid="02:00:00:00:00:01",
+        signal_dbm=-55,
+        tx_bitrate_bps=325_000_000,
+        rx_bitrate_bps=433_300_000,
+        tx_failed=11,
+    ),
+)
+UNASSOCIATED = ASSOCIATED.model_copy(update={"station": None})
+FREQUENCY = "sp_rtk_base_wifi_frequency_hertz"
+TX_BITRATE = "sp_rtk_base_wifi_tx_bitrate_bits_per_second"
+RX_BITRATE = "sp_rtk_base_wifi_rx_bitrate_bits_per_second"
+TX_FAILED = "sp_rtk_base_wifi_tx_failed_total"
+WIFI_GAUGES = (FREQUENCY, TX_BITRATE, RX_BITRATE)
+
+
+@pytest.mark.asyncio()
+async def test_wifi_frequency_and_bitrates_are_gauges_in_si_units() -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(ASSOCIATED,))))
+
+    assert samples[FREQUENCY] == [Sample("gauge", {"interface": "wlan0"}, 5.745e9)]
+    assert samples[TX_BITRATE] == [
+        Sample("gauge", {"interface": "wlan0"}, 325_000_000.0)
+    ]
+    assert samples[RX_BITRATE] == [
+        Sample("gauge", {"interface": "wlan0"}, 433_300_000.0)
+    ]
+
+
+@pytest.mark.asyncio()
+async def test_wifi_failed_sends_are_a_counter() -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(ASSOCIATED,))))
+
+    assert samples[TX_FAILED] == [Sample("counter", {"interface": "wlan0"}, 11.0)]
+
+
+@pytest.mark.asyncio()
+async def test_wifi_gauges_are_nan_when_disconnected_and_failed_sends_hold() -> None:
+    samples = _scrape(
+        await _fed(
+            _reading(WLAN0, wifi=(ASSOCIATED,)),
+            _reading(WLAN0_DORMANT, wifi=(UNASSOCIATED,)),
+        )
+    )
+
+    assert all(math.isnan(_value(samples, name, "wlan0")) for name in WIFI_GAUGES)
+    assert _value(samples, TX_FAILED, "wlan0") == 11.0
+
+
+@pytest.mark.asyncio()
+async def test_wifi_gauges_are_nan_while_nl80211_gives_no_reading() -> None:
+    samples = _scrape(
+        await _fed(_reading(WLAN0, wifi=(ASSOCIATED,)), _reading(WLAN0, wifi=None))
+    )
+
+    assert all(math.isnan(_value(samples, name, "wlan0")) for name in WIFI_GAUGES)
+    assert _value(samples, TX_FAILED, "wlan0") == 11.0
+
+
+@pytest.mark.asyncio()
+async def test_wifi_readings_never_given_have_no_series() -> None:
+    samples = _scrape(await _fed(_reading(ETH0, WLAN0_DORMANT, wifi=(UNASSOCIATED,))))
+
+    for name in (*WIFI_GAUGES, TX_FAILED):
+        assert name not in samples

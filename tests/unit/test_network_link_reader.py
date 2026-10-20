@@ -11,7 +11,7 @@ from __future__ import annotations
 import errno
 import socket
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ from sp_rtk_base.models.network_link_models import (
     EgressReading,
     HostReading,
     InterfaceReading,
+    WifiReading,
 )
 from sp_rtk_base.services.network_link.reader import (
     FAKE_NETWORK_LINKS_ENV,
@@ -297,6 +298,37 @@ def test_a_host_read_gives_every_source(sysfs: Path) -> None:
     assert [i.name for i in reading.interfaces] == ["eth0"]
     assert reading.addresses == rows
     assert reading.egress == EgressReading(source="192.0.2.10")
+
+
+def test_nl80211_is_asked_about_the_wifi_interfaces_only(sysfs: Path) -> None:
+    _interface(sysfs, "eth0", files={"operstate": "up", "carrier": "1"})
+    _interface(sysfs, "wlan0", files={"operstate": "up"}, wifi=True)
+    asked: list[list[str]] = []
+
+    def wifi(names: Iterable[str]) -> tuple[WifiReading, ...]:
+        asked.append(list(names))
+        return (WifiReading(interface="wlan0"),)
+
+    reading = HostReader(
+        sysfs_root=sysfs, addresses=lambda: (), picked_source=lambda: None, wifi=wifi
+    ).read()
+
+    assert asked == [["wlan0"]]
+    assert reading.wifi == (WifiReading(interface="wlan0"),)
+
+
+def test_a_failing_nl80211_is_no_reading_for_wifi_only(sysfs: Path) -> None:
+    _interface(sysfs, "wlan0", files={"operstate": "up"}, wifi=True)
+
+    def wifi(names: Iterable[str]) -> tuple[WifiReading, ...]:
+        raise OSError(errno.EAFNOSUPPORT, "netlink blocked")
+
+    reading = HostReader(
+        sysfs_root=sysfs, addresses=lambda: (), picked_source=lambda: None, wifi=wifi
+    ).read()
+
+    assert reading.interfaces is not None
+    assert reading.wifi is None
 
 
 def test_an_unreachable_network_is_a_successful_uplink_probe(sysfs: Path) -> None:

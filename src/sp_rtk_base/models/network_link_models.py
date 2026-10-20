@@ -25,6 +25,8 @@ from sp_rtk_base.uplink import Uplink
 
 LinkKind = Literal["ethernet", "wifi"]
 LinkState = Literal["Connected", "Disconnected", "No reading"]
+# A Wi-Fi interface's nl80211 interface type, as far as Network links care.
+WifiMode = Literal["station", "ap", "p2p", "monitor", "other"]
 
 T = TypeVar("T")
 
@@ -83,12 +85,46 @@ class EgressReading(_Frozen):
     source: str | None
 
 
+class StationReading(_Frozen):
+    """The access point a Wi-Fi interface is associated with, as nl80211
+    reports it.  A value the driver didn't give is ``None``."""
+
+    bssid: str
+    signal_dbm: int | None = None
+    tx_bitrate_bps: int | None = None
+    rx_bitrate_bps: int | None = None
+    # Resets with each association.
+    tx_failed: int | None = None
+
+
+class WifiReading(_Frozen):
+    """One Wi-Fi interface as nl80211 shows it.
+
+    ``frequency_mhz`` hops while the interface scans, so only an
+    associated reading's is meaningful.
+    """
+
+    interface: str
+    mode: WifiMode = "station"
+    # The radio (nl80211 wiphy) the interface is on.
+    wiphy: int | None = None
+    frequency_mhz: int | None = None
+    ssid: str | None = None
+    # None: not associated.
+    station: StationReading | None = None
+
+
 class HostReading(_Frozen):
-    """One sample of every source.  ``None`` is a source whose read failed."""
+    """One sample of every source.  ``None`` is a source whose read failed.
+
+    ``wifi`` has a reading for each Wi-Fi interface nl80211 answered for:
+    one it failed for is missing (No reading for that interface only).
+    """
 
     interfaces: tuple[InterfaceReading, ...] | None = None
     addresses: tuple[AddressReading, ...] | None = None
     egress: EgressReading | None = None
+    wifi: tuple[WifiReading, ...] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +154,27 @@ class EthernetDetails(_Frozen):
     full_duplex: Supported[bool] | None = None
 
 
+class WifiDetails(_Frozen):
+    """Wi-Fi-only readings, from nl80211.  ``None`` fields are Not supported.
+
+    Everything but ``tx_failed`` has a value only while associated and
+    nl80211 reads.  ``tx_failed`` is a counter total, so like the other
+    counters it keeps its last value through Disconnected and No reading.
+    """
+
+    # Why the Wi-Fi details have no value while the rest of the link
+    # reads (nl80211 failed); None otherwise.
+    no_reading_reason: str | None = None
+    ssid: Supported[str] | None = None
+    bssid: Supported[str] | None = None
+    frequency_mhz: Supported[int] | None = None
+    tx_bitrate_bps: Supported[int] | None = None
+    rx_bitrate_bps: Supported[int] | None = None
+    # The latest reading, in dBm: what Wi-Fi link strength is judged from.
+    signal_dbm: Supported[int] | None = None
+    tx_failed: Supported[int] | None = None
+
+
 class NetworkLink(_Frozen):
     """One Network link as the snapshot shows it."""
 
@@ -130,7 +187,8 @@ class NetworkLink(_Frozen):
     uplink: bool = False
     # Ethernet only.
     ethernet: EthernetDetails | None = None
-    # Wi-Fi details (#136) go in a ``wifi: WifiDetails | None`` here.
+    # Wi-Fi only.
+    wifi: WifiDetails | None = None
     ipv4: str | None = None
     ipv6: str | None = None
     # None until there are two samples, and during No reading.

@@ -24,6 +24,7 @@ from sp_rtk_base.models.network_link_models import (
     NetworkLink,
     NetworkLinkSnapshot,
     Supported,
+    WifiDetails,
 )
 
 NAN = math.nan
@@ -118,6 +119,23 @@ def _ethernet_full_duplex(link: NetworkLink, _: NetworkLinkSnapshot) -> float | 
     return _supported_value(link.ethernet.full_duplex, _flag)
 
 
+def _wifi_metric(
+    name: str,
+    documentation: str,
+    field: Callable[[WifiDetails], Supported[int] | None],
+    scale: float = 1.0,
+    type: Literal["gauge", "counter"] = "gauge",
+) -> LinkMetric:
+    """A ``wifi_*`` metric from one Wi-Fi details field, times *scale*."""
+
+    def value(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
+        if link.wifi is None:
+            return None
+        return _supported_value(field(link.wifi), lambda v: v * scale)
+
+    return LinkMetric(name, documentation, value, type=type, kind_label=False)
+
+
 def _uplink_other(snapshot: NetworkLinkSnapshot, _: float) -> float:
     if snapshot.uplink_no_reading:
         return NAN
@@ -163,6 +181,32 @@ LINK_METRICS: tuple[LinkMetric, ...] = (
         "1 for full duplex, 0 for half (NaN: unknown, Disconnected or No reading)",
         _ethernet_full_duplex,
         kind_label=False,
+    ),
+    _wifi_metric(
+        "wifi_frequency_hertz",
+        "Wi-Fi channel frequency in hertz while associated "
+        "(NaN: Disconnected or No reading)",
+        lambda wifi: wifi.frequency_mhz,
+        scale=1_000_000.0,
+    ),
+    _wifi_metric(
+        "wifi_tx_bitrate_bits_per_second",
+        "Wi-Fi bitrate of the last frames sent, in bits per second "
+        "(NaN: Disconnected or No reading)",
+        lambda wifi: wifi.tx_bitrate_bps,
+    ),
+    _wifi_metric(
+        "wifi_rx_bitrate_bits_per_second",
+        "Wi-Fi bitrate of the last frames received, in bits per second "
+        "(NaN: Disconnected or No reading)",
+        lambda wifi: wifi.rx_bitrate_bps,
+    ),
+    _wifi_metric(
+        "wifi_tx_failed",
+        "Wi-Fi frames the access point never acknowledged, as the driver "
+        "counts them (resets with each association)",
+        lambda wifi: wifi.tx_failed,
+        type="counter",
     ),
 )
 

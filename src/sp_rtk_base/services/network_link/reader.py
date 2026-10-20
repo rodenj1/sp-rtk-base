@@ -1,7 +1,8 @@
 """The Network link sampler's host reads: one :class:`HostReading` per sample.
 
 Read-only and standard library only: sysfs for the interfaces, a route
-netlink address dump, and the shared Uplink probe (a UDP ``connect()``
+netlink address dump, nl80211 for the Wi-Fi interfaces
+(:mod:`.nl80211`), and the shared Uplink probe (a UDP ``connect()``
 that sends nothing).  No subprocesses, scans or NetworkManager calls.
 Every read is blocking but quick, so the sampler runs it off the event
 loop.  Each source is read on its own: one that raises is ``None`` in the
@@ -33,8 +34,10 @@ from sp_rtk_base.models.network_link_models import (
     HostReading,
     InterfaceReading,
     LinkKind,
+    WifiReading,
 )
 from sp_rtk_base.services.network_link import netlink
+from sp_rtk_base.services.network_link.nl80211 import WifiReader
 from sp_rtk_base.uplink import picked_source as probe_picked_source
 
 logger = logging.getLogger(__name__)
@@ -273,6 +276,7 @@ class HostReader:
         sysfs_root: Path = SYSFS_NET,
         addresses: Callable[[], tuple[AddressReading, ...]] | None = None,
         picked_source: Callable[[], str | None] = probe_picked_source,
+        wifi: Callable[[Iterable[str]], tuple[WifiReading, ...]] | None = None,
     ) -> None:
         self._sysfs_root = sysfs_root
         self._address_reader: AddressReader | None = None
@@ -280,6 +284,10 @@ class HostReader:
             addresses = self._address_reader = AddressReader()
         self._addresses = addresses
         self._picked_source = picked_source
+        self._wifi_reader: WifiReader | None = None
+        if wifi is None:
+            wifi = self._wifi_reader = WifiReader()
+        self._wifi = wifi
 
     def read(self) -> HostReading:
         """One sample of every source.  Blocking: call it off the event loop."""
@@ -288,12 +296,20 @@ class HostReader:
         egress = _attempt(
             "the Uplink", lambda: EgressReading(source=self._picked_source())
         )
-        return HostReading(interfaces=interfaces, addresses=addresses, egress=egress)
+        wifi = None
+        if interfaces is not None:
+            names = [i.name for i in interfaces if i.kind == "wifi"]
+            wifi = _attempt("nl80211", lambda: self._wifi(names))
+        return HostReading(
+            interfaces=interfaces, addresses=addresses, egress=egress, wifi=wifi
+        )
 
     def close(self) -> None:
-        """Close the netlink socket, if one was opened."""
+        """Close the netlink sockets, if any were opened."""
         if self._address_reader is not None:  # pragma: no cover - host I/O
             self._address_reader.close()
+        if self._wifi_reader is not None:  # pragma: no cover - host I/O
+            self._wifi_reader.close()
 
 
 class FileHostReader:

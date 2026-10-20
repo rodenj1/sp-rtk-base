@@ -18,6 +18,7 @@ READING = HostReading(
     interfaces=(InterfaceReading(name="eth0", kind="ethernet", carrier=True),),
     addresses=(AddressReading(interface="eth0", address="192.0.2.10", prefixlen=24),),
     egress=EgressReading(source="192.0.2.10"),
+    wifi=(),
 )
 
 

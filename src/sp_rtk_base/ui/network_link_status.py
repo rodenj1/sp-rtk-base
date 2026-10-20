@@ -17,7 +17,11 @@ from sp_rtk_base.models.network_link_models import (
     NetworkLink,
     NetworkLinkSnapshot,
 )
-from sp_rtk_base.services.network_link.monitor import WAITING_REASON
+from sp_rtk_base.services.network_link.monitor import (
+    WAITING_REASON,
+    WIFI_NO_READING_REASON,
+)
+from sp_rtk_base.ui.components.level import LEVEL_COLOR
 from sp_rtk_base.ui.formatting import format_byte_rate
 
 NONE = "—"
@@ -38,12 +42,13 @@ _STATE_COLOR: dict[LinkState, str] = {
 
 @dataclass(frozen=True)
 class Shown:
-    """A value as the card shows it: its text, Quasar colour and the
-    smaller line beneath it, if any."""
+    """A value as the card shows it: its text, Quasar colour, the
+    smaller line beneath it and its tooltip, if any."""
 
     text: str
     color: str = "white"
     sub: str | None = None
+    tooltip: str | None = None
 
 
 def uplink(snapshot: NetworkLinkSnapshot) -> Shown:
@@ -112,6 +117,21 @@ def wifi_network(link: NetworkLink) -> Shown | None:
         NONE if ssid is None or ssid.value is None else ssid.value,
         sub=None if bssid is None else bssid.value or NONE,
     )
+
+
+def wifi_strength(link: NetworkLink) -> Shown | None:
+    """Wi-Fi link strength in its level colour, with the latest dBm
+    beneath; "—" with the reason as a tooltip while it has no value, and
+    ``None`` when Not supported."""
+    if link.wifi is None or link.wifi.link_strength is None:
+        return None
+    level = link.wifi.link_strength.value
+    if level is None:
+        reason = link.reason or link.wifi.no_reading_reason or WIFI_NO_READING_REASON
+        return Shown(NONE, tooltip=reason)
+    dbm = None if link.wifi.signal_dbm is None else link.wifi.signal_dbm.value
+    sub = None if dbm is None else f"{dbm} dBm"
+    return Shown(level, LEVEL_COLOR[level], sub)
 
 
 def _band(mhz: int) -> str:

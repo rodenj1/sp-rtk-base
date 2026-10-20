@@ -4,7 +4,7 @@ Lays out what ``ui/network_link_status.py`` decides.  Redrawn from the
 Network link snapshot on each status refresh; it never samples.
 
 Test ids: ``network-card``, ``network-uplink`` (the Uplink's value), ``network-freshness``,
-and per link ``network-link-{name}`` with ``-state``, ``-network``,
+and per link ``network-link-{name}`` with ``-state``, ``-strength``, ``-network``,
 ``-band``, ``-bitrate`` (Wi-Fi), ``-speed`` (Ethernet),
 ``-address``, ``-traffic`` and ``-counters``.
 """
@@ -27,6 +27,7 @@ def _metric(label: str, value: shown.Shown, testid: str) -> None:
         value.text,
         subvalue=value.sub,
         value_color=value.color,
+        tooltip=value.tooltip,
         testid=testid,
     )
 
@@ -52,6 +53,7 @@ def _link_column(link: NetworkLink) -> None:
                 ui.label(f"— {state.sub}").classes("text-caption text-grey-6")
         with ui.grid(columns=2).classes("gap-x-6 gap-y-2"):
             for label, value, suffix in (
+                ("Wi-Fi link", shown.wifi_strength(link), "strength"),
                 ("Network", shown.wifi_network(link), "network"),
                 ("Band", shown.wifi_band(link), "band"),
                 ("Bitrate", shown.wifi_bitrate(link), "bitrate"),

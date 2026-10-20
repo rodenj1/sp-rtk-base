@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from sp_rtk_base.models.level_models import Level
 from sp_rtk_base.models.network_link_models import (
     Counters,
     EthernetDetails,
@@ -26,6 +27,7 @@ from sp_rtk_base.ui.network_link_status import (
     wifi_band,
     wifi_bitrate,
     wifi_network,
+    wifi_strength,
 )
 from sp_rtk_base.uplink import Uplink
 
@@ -169,7 +171,9 @@ def test_counters_total_errors_and_drops_with_link_changes_beneath() -> None:
     assert counters(one).sub == "1 link change"
 
 
-def _wlan(**fields: Supported[str] | Supported[int] | str | None) -> NetworkLink:
+def _wlan(
+    **fields: Supported[str] | Supported[int] | Supported[Level] | str | None,
+) -> NetworkLink:
     return WLAN0.model_copy(update={"wifi": WifiDetails.model_validate(fields)})
 
 
@@ -237,3 +241,71 @@ def test_a_wifi_adapter_with_no_reading_says_so_under_the_state() -> None:
     assert state(link) == Shown(
         "Connected", "positive", "The Wi-Fi adapter gave no reading."
     )
+
+
+@pytest.mark.parametrize(
+    ("level", "color"),
+    [("Good", "positive"), ("Marginal", "warning"), ("Poor", "negative")],
+)
+def test_wifi_link_shows_the_level_in_its_colour_with_the_dbm_beneath(
+    level: Level, color: str
+) -> None:
+    link = _wlan(
+        link_strength=Supported[Level](value=level),
+        signal_dbm=Supported[int](value=-54),
+    )
+
+    assert wifi_strength(link) == Shown(level, color, "-54 dBm")
+
+
+@pytest.mark.parametrize(
+    ("link", "reason"),
+    [
+        (
+            WLAN0.model_copy(
+                update={
+                    "state": "Disconnected",
+                    "reason": "Wi-Fi is disconnected.",
+                    "wifi": WifiDetails(
+                        link_strength=Supported[Level](), signal_dbm=Supported()
+                    ),
+                }
+            ),
+            "Wi-Fi is disconnected.",
+        ),
+        (
+            WLAN0.model_copy(
+                update={
+                    "state": "No reading",
+                    "reason": "Waiting for the first reading.",
+                    "wifi": WifiDetails(
+                        link_strength=Supported[Level](), signal_dbm=Supported()
+                    ),
+                }
+            ),
+            "Waiting for the first reading.",
+        ),
+        (
+            _wlan(
+                no_reading_reason="The Wi-Fi adapter gave no reading.",
+                link_strength=Supported[Level](),
+                signal_dbm=Supported[int](),
+            ),
+            "The Wi-Fi adapter gave no reading.",
+        ),
+        (
+            # Associated, but the station gave no dBm.
+            _wlan(link_strength=Supported[Level](), signal_dbm=Supported()),
+            "The Wi-Fi adapter gave no reading.",
+        ),
+    ],
+)
+def test_wifi_link_with_no_value_shows_a_dash_with_the_reason_as_its_tooltip(
+    link: NetworkLink, reason: str
+) -> None:
+    assert wifi_strength(link) == Shown("—", tooltip=reason)
+
+
+def test_wifi_link_is_not_shown_when_not_supported_or_for_ethernet() -> None:
+    assert wifi_strength(_wlan()) is None
+    assert wifi_strength(ETH0) is None

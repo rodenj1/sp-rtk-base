@@ -66,9 +66,11 @@ def _write(path: Path, reading: HostReading) -> None:
 
 
 def _expect_wifi_details_dashed(page: Page) -> None:
-    """wlan0's network, band and bitrate read "—", with no stale value."""
+    """wlan0's Wi-Fi link, network, band and bitrate read "—", with no
+    stale value."""
     card = page.get_by_test_id("network-card")
     for field, old_value in (
+        ("strength", "Good"),
         ("network", "Test"),
         ("band", "GHz"),
         ("bitrate", "Mbit/s"),
@@ -117,6 +119,10 @@ def test_both_links_with_the_wifi_uplink_listed_first(
         "192.0.2.20/24"
     )
     expect(wlan0.get_by_test_id("network-link-wlan0-speed")).to_have_count(0)
+    strength = wlan0.get_by_test_id("network-link-wlan0-strength")
+    expect(strength).to_contain_text("Wi-Fi link")
+    expect(strength).to_contain_text("Good")
+    expect(strength).to_contain_text("-55 dBm")
     expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text("Test")
     expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text(
         "02:00:00:00:00:01"
@@ -251,3 +257,34 @@ def test_the_setup_access_point_shows_wifi_disconnected_with_its_reason(
     expect(card.get_by_test_id("network-link-wlan0-counters")).to_contain_text(
         "1 link change · 11 failed sends"
     )
+
+
+@pytest.mark.e2e
+def test_a_disconnected_wifi_link_shows_a_dash_with_why_on_hover(
+    page: Page, base_url: str, network_links: Path
+) -> None:
+    def reading(interface: InterfaceReading, wifi: WifiReading) -> HostReading:
+        return HostReading(
+            interfaces=(interface,),
+            addresses=ADDRESSES,
+            egress=EgressReading(source=None),
+            wifi=(wifi,),
+        )
+
+    _write(network_links, reading(WLAN0, WLAN0_ASSOCIATED))
+    page.goto(f"{base_url}/")
+    strength = page.get_by_test_id("network-link-wlan0-strength")
+    expect(strength).to_contain_text("Good", timeout=SOON_MS)
+
+    _write(
+        network_links,
+        reading(
+            WLAN0.model_copy(update={"operstate": "dormant"}),
+            WLAN0_ASSOCIATED.model_copy(update={"station": None}),
+        ),
+    )
+
+    expect(strength).to_contain_text("—", timeout=SOON_MS)
+    expect(strength).not_to_contain_text("dBm")
+    strength.hover()
+    expect(page.locator(".q-tooltip")).to_have_text("Wi-Fi is disconnected.")

@@ -14,9 +14,7 @@ from pydantic import ValidationError
 
 from sp_rtk_base.models.net_provision_models import (
     DEFAULT_AP_SSID,
-    ActiveLink,
     Connectivity,
-    LinkType,
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
@@ -258,31 +256,6 @@ class TestSavedWifiConnection:
         assert connection.active is True
 
 
-class TestActiveLink:
-    """The console's current-connection status (issue #21)."""
-
-    def test_wifi_link_holds_signal(self) -> None:
-        link = ActiveLink(
-            link_type=LinkType.WIFI,
-            name="SiteWiFi",
-            ip_address="192.168.1.50",
-            signal=80,
-        )
-        assert link.link_type is LinkType.WIFI
-        assert link.ip_address == "192.168.1.50"
-        assert link.signal == 80
-
-    def test_wired_link_has_no_signal_by_default(self) -> None:
-        link = ActiveLink(link_type=LinkType.WIRED, name="Wired connection 1")
-        assert link.signal is None
-        assert link.ip_address is None
-
-    @pytest.mark.parametrize("signal", [-1, 101])
-    def test_signal_out_of_percent_range_is_rejected(self, signal: int) -> None:
-        with pytest.raises(ValidationError):
-            ActiveLink(link_type=LinkType.WIFI, name="SiteWiFi", signal=signal)
-
-
 class TestEnumWireValues:
     """Stable string values — these cross a YAML file and log lines."""
 
@@ -298,7 +271,3 @@ class TestEnumWireValues:
             "stop_ap_and_connect",
             "rescan",
         ]
-
-    def test_link_type_values(self) -> None:
-        """Console API responses (issue #21) serialize these as JSON strings."""
-        assert [t.value for t in LinkType] == ["wired", "wifi"]

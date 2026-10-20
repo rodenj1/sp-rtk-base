@@ -10,8 +10,8 @@ next".
 
 The operator console (issue #21) is a second consumer of this same
 class, deliberately: :meth:`NmcliAdapter.list_saved_connections`,
-:meth:`NmcliAdapter.read_active_link`, :meth:`NmcliAdapter.activate_connection`,
-and :meth:`NmcliAdapter.forget_connection` don't serve the decision
+:meth:`NmcliAdapter.activate_connection` and
+:meth:`NmcliAdapter.forget_connection` don't serve the decision
 loop at all, but living here keeps there being exactly one nmcli
 boundary in the codebase rather than a second, console-only one.
 
@@ -34,9 +34,7 @@ import subprocess
 from collections.abc import Callable
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
     Connectivity,
-    LinkType,
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
@@ -57,14 +55,6 @@ _WIRELESS_TYPE = "802-11-wireless"
 # is correctly recognized as "no other uplink" (issue #8's Rule 1)
 # instead of loopback's permanent presence defeating that check.
 _LOOPBACK_CONNECTION_NAME = "lo"
-
-# `nmcli device show`'s GENERAL.TYPE uses short names ("wifi", "ethernet"),
-# distinct from `nmcli connection show`'s TYPE column format above
-# ("802-11-wireless") — the two commands describe different objects
-# (devices vs. connection profiles) and don't share a vocabulary.
-_DEVICE_TYPE_WIFI = "wifi"
-_DEVICE_TYPE_ETHERNET = "ethernet"
-_DEVICE_SHOW_FIELDS = "GENERAL.TYPE,GENERAL.CONNECTION,IP4.ADDRESS"
 
 
 def _run_nmcli(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -222,84 +212,6 @@ class NmcliAdapter:
                 continue
             connections.append(SavedWifiConnection(name=name, active=name in active))
         return connections
-
-    def read_active_link(self) -> ActiveLink | None:
-        """The device's current non-AP link, for the console status view (issue #21).
-
-        Returns:
-            The active ethernet or WiFi link, or ``None`` if neither is
-            connected. When both are active (e.g. an installer plugging in
-            a cable mid-reconfiguration), wired wins — this mirrors the
-            package's Ethernet-first philosophy and gives an unambiguous
-            single answer.
-        """
-        wired: ActiveLink | None = None
-        wifi: ActiveLink | None = None
-        for block in self._read_device_blocks():
-            conn_type = block.get("GENERAL.TYPE", "")
-            name = block.get("GENERAL.CONNECTION", "")
-            if not name or name == "--" or name == self._config.ap_ssid:
-                continue
-            ip_address = self._parse_ip_address(block.get("IP4.ADDRESS", ""))
-            if conn_type == _DEVICE_TYPE_ETHERNET:
-                wired = ActiveLink(
-                    link_type=LinkType.WIRED, name=name, ip_address=ip_address
-                )
-            elif conn_type == _DEVICE_TYPE_WIFI:
-                wifi = ActiveLink(
-                    link_type=LinkType.WIFI,
-                    name=name,
-                    ip_address=ip_address,
-                    signal=self._active_wifi_signal(),
-                )
-        return wired if wired is not None else wifi
-
-    def _read_device_blocks(self) -> list[dict[str, str]]:
-        """Parse ``nmcli device show``'s blank-line-separated device blocks."""
-        result = self._run(["nmcli", "-t", "-f", _DEVICE_SHOW_FIELDS, "device", "show"])
-        blocks: list[dict[str, str]] = []
-        current: dict[str, str] = {}
-        for line in result.stdout.splitlines():
-            if not line:
-                if current:
-                    blocks.append(current)
-                    current = {}
-                continue
-            key, _, value = line.partition(":")
-            # Multi-value fields print as e.g. IP4.ADDRESS[1] — only the
-            # first entry (the primary address) is wanted here.
-            base_key = key.split("[", 1)[0]
-            current.setdefault(base_key, value)
-        if current:
-            blocks.append(current)
-        return blocks
-
-    @staticmethod
-    def _parse_ip_address(raw: str) -> str | None:
-        if not raw:
-            return None
-        return raw.split("/", 1)[0]
-
-    def _active_wifi_signal(self) -> int | None:
-        """Signal strength of the currently-connected AP, if any."""
-        result = self._run(
-            ["nmcli", "-t", "-f", "ACTIVE,SIGNAL", "device", "wifi", "list"]
-        )
-        for line in result.stdout.splitlines():
-            if not line:
-                continue
-            # Split from the right for the same reason scan_networks does:
-            # SIGNAL never contains a colon, but an SSID theoretically
-            # could, so anchoring on the last colon keeps it intact.
-            active_flag, _, rest = line.partition(":")
-            if active_flag != "yes":
-                continue
-            _, _, signal_str = rest.rpartition(":")
-            try:
-                return int(signal_str)
-            except ValueError:
-                return None
-        return None
 
     def scan_networks(self) -> list[WifiNetwork]:
         """Scan for nearby WiFi networks, for the WiFi-picker portal (issue #10).

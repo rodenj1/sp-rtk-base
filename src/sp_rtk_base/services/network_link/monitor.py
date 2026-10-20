@@ -124,6 +124,19 @@ def _excluded(wifi: tuple[WifiReading, ...]) -> frozenset[str]:
     )
 
 
+def _fully_successful(reading: HostReading) -> bool:
+    """Whether every source read, nl80211 for every Wi-Fi interface too."""
+    if (
+        reading.interfaces is None
+        or reading.addresses is None
+        or reading.egress is None
+        or reading.wifi is None
+    ):
+        return False
+    answered = {wifi.interface for wifi in reading.wifi}
+    return all(i.name in answered for i in reading.interfaces if i.kind == "wifi")
+
+
 def _throughput(
     previous: tuple[float, Counters] | None, now: float, counters: Counters
 ) -> Throughput | None:
@@ -253,12 +266,7 @@ class NetworkLinkMonitor:
                 history.judge(None, now)
         else:
             self._track(reading.interfaces, reading.wifi, now)
-        if None not in (
-            reading.interfaces,
-            reading.addresses,
-            reading.egress,
-            reading.wifi,
-        ):
+        if _fully_successful(reading):
             self._last_full_sample = now
 
     def snapshot(self, now: float) -> NetworkLinkSnapshot:

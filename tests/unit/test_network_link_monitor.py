@@ -619,6 +619,23 @@ def test_nl80211_failing_for_one_interface_is_no_reading_for_that_one_only() -> 
     assert _details(_link(snapshot, "wlan1")).no_reading_reason is None
 
 
+@pytest.mark.parametrize(
+    "nl80211",
+    [(), (_nl80211("wlan1", station=_station()),)],
+    ids=["for every interface", "for one interface"],
+)
+def test_a_sample_nl80211_failed_in_is_not_a_fully_successful_sample(
+    nl80211: tuple[WifiReading, ...],
+) -> None:
+    snapshot = _snapshot(
+        _reading(_wifi(), _wifi("wlan1")),
+        _reading(_wifi(), _wifi("wlan1"), wifi=nl80211),
+    )
+
+    # The last fully successful sample is the first one.
+    assert snapshot.last_sample_age_seconds == 2.0
+
+
 def test_a_wifi_reading_missing_while_associated_is_not_supported() -> None:
     snapshot = _snapshot(
         _reading(_wifi(), wifi=(_nl80211(station=_station(signal_dbm=None)),))

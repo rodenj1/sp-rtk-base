@@ -32,6 +32,10 @@ from sp_rtk_base.services.network_link.reader import HostReaderLike
 logger = logging.getLogger(__name__)
 
 
+class _StoppedError(Exception):
+    """The sampler is stopped: its host is closed."""
+
+
 class NetworkLinkService:
     """Network link health for the UI: one monitor, fed by the host reader."""
 
@@ -57,13 +61,11 @@ class NetworkLinkService:
         A read that raises is a sample in which every source failed.  After
         :meth:`stop` it reads nothing.
         """
-        if self._closed:
-            return
         try:
             reading = await asyncio.to_thread(self._read)
+        except _StoppedError:
+            return
         except Exception:
-            if self._closed:
-                return
             logger.debug("Network link read failed", exc_info=True)
             reading = HostReading()
         self._monitor.observe(reading, self._clock())
@@ -88,7 +90,7 @@ class NetworkLinkService:
     def _read(self) -> HostReading:
         with self._host_lock:
             if self._closed:
-                raise RuntimeError("the Network link sampler is stopped")
+                raise _StoppedError
             return self._host.read()
 
     def _close(self) -> None:

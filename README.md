@@ -18,6 +18,7 @@ SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay
 
 ### Relay Control
 - **Dashboard** — real-time relay status, input metrics, throughput stats, GPS device summary, live event log
+- **Network links** — a dashboard Network card for each Ethernet and Wi-Fi link: state, the Uplink, Wi-Fi link strength (Good / Marginal / Poor with dBm), speed, addresses, traffic, errors, drops and link changes; read-only, it never scans. See [`docs/network-links.md`](docs/network-links.md)
 - **Destination Management** — add/edit/delete/hot-toggle SurePath, NTRIP, and TCP Server outputs (zero-downtime)
 - **Input Sources** — configure TCP, serial, or Bluetooth RTCM input (serial port auto-detect with GPS flagging, Bluetooth scan + pair + test-connection)
 - **Config Import/Export** — YAML download/upload with validation
@@ -38,7 +39,7 @@ SP-Base wraps the [sp-rtk-base-relay](https://pypi.org/project/sp-rtk-base-relay
 
 ### Monitoring & API
 - **REST API** — full programmatic control (relay, destinations, settings, events, device, config)
-- **Prometheus Metrics** — `GET /metrics` endpoint for Grafana / Prometheus monitoring
+- **Prometheus Metrics** — `GET /metrics` endpoint for Grafana / Prometheus monitoring; metric reference in [`docs/monitoring/README.md`](docs/monitoring/README.md#whats-exposed)
 - **WebSocket Events** — real-time event streaming at `WS /api/events/ws`
 - **Responsive UI** — mobile-first layout, 44 px touch targets, tablet/desktop breakpoints
 
@@ -172,7 +173,7 @@ In addition to the main `sp-rtk-base` server, the package installs:
 
 | Route | Page | Purpose |
 |-------|------|---------|
-| `/` | **Dashboard** | Relay status, input/output metrics, GPS device summary, event log |
+| `/` | **Dashboard** | Relay status, input/output metrics, Network links, GPS device summary, event log |
 | `/input` | **Input** | Input source config (TCP / serial / Bluetooth) with discovery helpers |
 | `/outputs` | **Outputs** | Destination CRUD + enable/disable toggles |
 | `/survey` | **Survey-In** | Connect to GPS, run survey-in with live chart, fixed-base config, position profiles |
@@ -281,6 +282,11 @@ Key metrics include:
 - `sp_rtk_base_active_destinations` / `sp_rtk_base_total_destinations`
 - `sp_rtk_base_dest_connected{destination="name"}` — per-destination status
 - `sp_rtk_base_dest_bytes_sent{destination="name"}` — per-destination throughput
+- `sp_rtk_base_network_*` and `sp_rtk_base_wifi_*` — Network link state, the Uplink, counters and Wi-Fi link strength
+
+The full metric reference, including the Network link metrics and when a
+value is NaN or its series absent, is in
+[`docs/monitoring/README.md`](docs/monitoring/README.md#whats-exposed).
 
 ## Development
 

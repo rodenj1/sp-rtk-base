@@ -79,7 +79,8 @@ class TestStartupServices:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """startup_services calls init_services exactly once, then starts the
-        Signal Quality and Bluetooth link strength pollers and the update
+        Signal Quality and Bluetooth link strength pollers, the Network link
+        sampler and the update
         check (at startup, then daily)."""
         called: list[str] = []
 
@@ -92,6 +93,9 @@ class TestStartupServices:
         )
         monkeypatch.setattr(
             services_mod.bluetooth_link_service, "start", lambda: called.append("bt")
+        )
+        monkeypatch.setattr(
+            services_mod.network_link_service, "start", lambda: called.append("net")
         )
         monkeypatch.setattr(
             services_mod.update_check_service, "start", lambda: called.append("update")
@@ -116,6 +120,7 @@ class TestStartupServices:
             "host setup",
             "sq",
             "bt",
+            "net",
             "update",
         ]
 
@@ -157,6 +162,19 @@ class TestShutdownServicesOrdering:
 
         await shutdown_services()
         assert order.index("device") < order.index("relay")
+
+    @pytest.mark.asyncio()
+    async def test_the_network_link_sampler_is_stopped(
+        self,
+        patched_services: tuple[MagicMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stop = AsyncMock()
+        monkeypatch.setattr(services_mod.network_link_service, "stop", stop)
+
+        await shutdown_services()
+
+        stop.assert_awaited_once()
 
     @pytest.mark.asyncio()
     async def test_the_update_check_schedule_is_stopped(

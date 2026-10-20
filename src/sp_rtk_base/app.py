@@ -116,6 +116,10 @@ async def startup_services() -> None:
     # every tab shows the same verdict, already warm when a page opens.
     services_mod.bluetooth_link_service.start()
 
+    # The Network link sampler reads the host every 2 s in the background,
+    # so every tab (and /metrics) sees the same snapshot.
+    services_mod.network_link_service.start()
+
     # Check PyPI for an Available update now, then every 24 h.
     services_mod.update_check_service.start()
 
@@ -205,6 +209,13 @@ async def shutdown_services() -> None:
         services_mod.bluetooth_link_service.stop(),
         AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
         "the Bluetooth link strength poller",
+    )
+
+    # 0b. Network link sampler — nothing depends on it.
+    await _stop_within(
+        services_mod.network_link_service.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the Network link sampler",
     )
 
     # 0b'. Update check schedule — nothing depends on it; just stop it.

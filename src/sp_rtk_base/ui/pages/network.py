@@ -1,7 +1,8 @@
 """Network page — status, scan, join, switch, and forget (issues #22-24).
 
-Shows the device's current link (wired/WiFi, SSID, signal, IP), a list
-of saved WiFi profiles with switch/forget actions, and a scan list of
+Shows the Uplink from the Network link snapshot (with Wi-Fi link
+strength for a Wi-Fi Uplink, the same readings as the dashboard's
+Network card), a list of saved WiFi profiles with switch/forget actions, and a scan list of
 nearby networks the operator can join (or a hidden SSID typed
 manually).
 """
@@ -17,28 +18,31 @@ import logging
 from nicegui import ui
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
-    LinkType,
     SavedWifiConnection,
     WifiNetwork,
 )
-from sp_rtk_base.services import get_network_service
+from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
+from sp_rtk_base.services import get_network_link_service, get_network_service
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
+from sp_rtk_base.ui import network_link_status as shown
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import is_non_empty
 
 logger = logging.getLogger(__name__)
 
-# Live link status is a cheap `nmcli device show` read; polling it
-# regularly keeps the card current if e.g. an installer unplugs a
-# cable. The scan list is NOT auto-polled at this interval — a WiFi
-# scan takes real radio time, so it's loaded once on page entry and
+# The Uplink block redraws from the Network link sampler's snapshot,
+# which is in memory and refreshed every 2 s, so it runs no nmcli at all
+# (in particular no Wi-Fi scan).  The saved list is a cheap
+# `nmcli connection show` read.  The scan list is NOT auto-polled — a
+# WiFi scan takes real radio time, so it's loaded once on page entry and
 # otherwise left to the manual Rescan button.
-_STATUS_POLL_INTERVAL_SECONDS = 5.0
+_STATUS_POLL_INTERVAL_SECONDS = 2.0
+_SAVED_POLL_INTERVAL_SECONDS = 5.0
 
 
 def _signal_icon(signal: int) -> str:
-    """Material icon matching a 0-100 signal strength."""
+    """Material icon matching a 0-100 signal strength (the Wi-Fi picker's
+    scan list)."""
     if signal >= 75:
         return "signal_wifi_4_bar"
     if signal >= 50:
@@ -52,6 +56,7 @@ def _signal_icon(signal: int) -> str:
 def network_page() -> None:
     """Render the network status, WiFi scan, and join dialog."""
     svc = get_network_service()
+    network_link = get_network_link_service()
 
     with page_layout("Network"):
         ui.label("Network").classes("text-h4 text-white q-mb-md")
@@ -76,66 +81,56 @@ def network_page() -> None:
         scan_list = ui.column().classes("w-full gap-2")
 
         def _render_status_card(
-            configured: bool, error: str | None, link: ActiveLink | None
+            configured: bool, snapshot: NetworkLinkSnapshot
         ) -> None:
+            uplink = shown.uplink(snapshot)
+            link = snapshot.uplink_link()
+            if link is not None:
+                icon = shown.KIND_ICON[link.kind]
+            elif snapshot.uplink is not None:
+                icon = "vpn_lock"
+            else:
+                icon = "wifi_off"
             with ui.card().classes("w-full q-pa-md"):
+                with ui.row().classes("items-center gap-3"):
+                    ui.icon(icon).classes("text-grey-4 text-3xl")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Uplink").classes("text-caption text-grey-5")
+                        ui.label(uplink.text).classes(
+                            f"text-body1 text-{uplink.color} font-bold"
+                        ).props("data-testid=network-page-uplink")
+                if link is not None:
+                    with ui.row().classes("q-mt-sm gap-6"):
+                        address = shown.address(link)
+                        ui.label(f"IP: {address.text}").classes(
+                            "text-caption text-grey-5"
+                        ).props("data-testid=network-page-address")
+                        network = shown.wifi_network(link)
+                        if network is not None:
+                            ui.label(f"Network: {network.text}").classes(
+                                "text-caption text-grey-5"
+                            ).props("data-testid=network-page-network")
+                        strength = shown.wifi_strength(link)
+                        if strength is not None:
+                            text = f"Wi-Fi link: {strength.text}"
+                            if strength.sub:
+                                text += f" ({strength.sub})"
+                            label = ui.label(text).classes(
+                                f"text-caption text-{strength.color}"
+                            )
+                            label.props("data-testid=network-page-strength")
+                            if strength.tooltip:
+                                label.tooltip(strength.tooltip)
                 if not configured:
                     ui.label(
                         "Network provisioning is not configured on this device."
-                    ).classes("text-grey-6")
-                    return
-                if error is not None:
-                    ui.label(f"Could not read network status: {error}").classes(
-                        "text-red-4"
-                    )
-                    return
-                if link is None:
-                    with ui.row().classes("items-center gap-3"):
-                        ui.icon("wifi_off").classes("text-grey-5 text-3xl")
-                        ui.label("No active network connection").classes(
-                            "text-body1 text-white"
-                        )
-                    return
-
-                is_wired = link.link_type is LinkType.WIRED
-                with ui.row().classes("items-center gap-3"):
-                    ui.icon("lan" if is_wired else "wifi").classes(
-                        "text-green-4 text-3xl"
-                    )
-                    with ui.column().classes("gap-0"):
-                        ui.label("Wired (Ethernet)" if is_wired else "WiFi").classes(
-                            "text-body1 text-white font-bold"
-                        )
-                        ui.label(link.name).classes("text-caption text-grey-5")
-                with ui.row().classes("q-mt-sm gap-6"):
-                    if link.ip_address:
-                        ui.label(f"IP: {link.ip_address}").classes(
-                            "text-caption text-grey-5"
-                        )
-                    if link.signal is not None:
-                        ui.label(f"Signal: {link.signal}%").classes(
-                            "text-caption text-grey-5"
-                        )
-                if is_wired:
-                    ui.label("On Ethernet — WiFi is not active.").classes(
-                        "text-caption text-blue-3 q-mt-sm"
-                    )
+                    ).classes("text-caption text-grey-6 q-mt-sm")
 
         async def _do_refresh_status() -> None:
-            configured = True
-            error: str | None = None
-            link: ActiveLink | None = None
-            try:
-                link = await svc.get_active_link()
-            except NetworkNotConfiguredError:
-                configured = False
-            except Exception as exc:
-                logger.exception("Failed to get network status")
-                error = str(exc)
-
+            configured = await svc.is_configured()
             status_container.clear()
             with status_container:
-                _render_status_card(configured, error, link)
+                _render_status_card(configured, network_link.current())
 
         async def _refresh_status() -> None:
             try:
@@ -415,7 +410,7 @@ def network_page() -> None:
                 return  # Elements deleted — user navigated away
 
         ui.timer(_STATUS_POLL_INTERVAL_SECONDS, _refresh_status)
-        ui.timer(_STATUS_POLL_INTERVAL_SECONDS, _refresh_saved)
+        ui.timer(_SAVED_POLL_INTERVAL_SECONDS, _refresh_saved)
         ui.timer(0.1, _refresh_status, once=True)
         ui.timer(0.1, _refresh_saved, once=True)
         ui.timer(0.1, _refresh_scan, once=True)

@@ -242,7 +242,11 @@ Restart=on-failure
 Hardening directives (`NoNewPrivileges`, `ProtectSystem=strict`,
 `ProtectHome`, `PrivateTmp`, `ReadWritePaths=…`) are enabled by default
 and tested on Raspberry Pi OS Bookworm.  If you hit permission errors
-during bring-up, comment them out one at a time.
+during bring-up, comment them out one at a time.  Don't add
+`PrivateNetwork=`, and if you add `RestrictAddressFamilies=`, include
+`AF_NETLINK`: the dashboard's Network card reads the Network links over
+netlink, and either change silently leaves it with no reading (see
+[Network links](network-links.md#for-whoever-maintains-the-systemd-unit)).
 
 ### Update units (`sp-rtk-base-update.service`, `sp-rtk-base-update.path`)
 

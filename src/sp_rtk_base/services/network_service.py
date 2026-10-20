@@ -18,7 +18,6 @@ from collections.abc import Callable, Coroutine
 from typing import NamedTuple
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
     NetProvisionConfig,
     SavedWifiConnection,
     WifiNetwork,
@@ -90,14 +89,18 @@ class NetworkService:
             self._adapter = self._adapter_factory(config)
         return self._adapter
 
-    async def get_active_link(self) -> ActiveLink | None:
-        """The device's current wired/WiFi link, or None if neither is up.
+    async def is_configured(self) -> bool:
+        """Whether a net-provisioning config exists. Loads it, nothing more:
+        no nmcli runs.  The YAML load runs off the event loop (the Network
+        page asks every 2 s); once it has loaded, it isn't read again."""
+        return await asyncio.to_thread(self._configured)
 
-        Raises:
-            NetworkNotConfiguredError: No net-provisioning config exists.
-        """
-        adapter = self._get_adapter()
-        return await asyncio.to_thread(adapter.read_active_link)
+    def _configured(self) -> bool:
+        try:
+            self._get_adapter()
+        except NetworkNotConfiguredError:
+            return False
+        return True
 
     async def scan_networks(self) -> list[WifiNetwork]:
         """Nearby WiFi networks, strongest signal first.

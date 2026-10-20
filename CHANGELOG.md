@@ -11,6 +11,91 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### Network link health
+
+Network link health on the dashboard and in Prometheus
+(rtk_development#132): whether each of the base station's own Ethernet and
+Wi-Fi links is up and healthy, and which one its traffic leaves by. Link
+health only: whether the caster and Portal are reachable still shows under
+Destinations.
+
+- **Network card.** The dashboard gains a **Network** card. Its header
+  names the **Uplink**, the link outbound IPv4 traffic actually leaves by
+  ("Wi-Fi (wlan0)", "Ethernet (eth0)", "wg0 (not a Network link)" for a
+  VPN, or **No Uplink**), and how old the readings are. Each Network link
+  gets a column, the Uplink first: **Connected**, **Disconnected** (with
+  why, such as "No cable." or "The setup access point is on.") or **No
+  reading**, then speed and duplex (Ethernet), the IPv4 and IPv6
+  addresses, traffic per second, error and drop totals and link changes.
+  A value the base can't read now shows "—", never an old value or 0; one
+  the hardware never gives isn't shown at all.
+- **The sampler.** A background task reads every Network link every 2 s,
+  off the event loop, from sysfs, a route netlink address dump, nl80211
+  for Wi-Fi and the same Uplink probe the Portal agent uses. No
+  subprocesses, nmcli calls or Wi-Fi scans. A source that fails is No
+  reading for that source only; after 6 s without a full sample every
+  link reads No reading, keeping only its totals.
+- **Wi-Fi details.** For an associated Wi-Fi link the card shows the
+  network (SSID, with the BSSID beneath), band and frequency, sent and
+  received bitrates, and failed sends. Roaming to another access point
+  counts as a link change.
+- **Wi-Fi link strength.** A **Wi-Fi link** row: **Good** (−67 dBm or
+  above), **Marginal** (−68 to −77) or **Poor** (−78 or below), judged on
+  the lower median of the last 10 s of readings, with the latest dBm
+  beneath (provisional thresholds). Station mode only, never the setup
+  access point. Not Signal Quality, nor Bluetooth link strength.
+- **Prometheus.** `/metrics` exports the Network links: up, Uplink,
+  link changes, the kernel byte, packet, error and drop totals, Ethernet
+  speed and duplex, Wi-Fi link strength and its dBm, frequency, bitrates
+  and failed sends, and `sp_rtk_base_network_last_sample_timestamp_seconds`.
+  Labels are `interface` and `kind`, never an SSID, MAC or address. See
+  [`docs/monitoring/README.md`](docs/monitoring/README.md).
+- **Network page from the sampler.** The Network page's Uplink block and
+  `GET /api/network/status` now read the same snapshot as the dashboard,
+  so they agree with the Network card, showing the Uplink by the same
+  rule and, for a Wi-Fi Uplink, its Wi-Fi link strength and dBm. The
+  nmcli 0-100 signal and "wired wins" ordering are gone, and viewing the
+  page no longer runs `nmcli device wifi list`, so it never triggers a
+  Wi-Fi scan (supersedes rtk_development#130). The Uplink shows even
+  without net-provisioning config. The Wi-Fi picker's own scans are
+  unchanged.
+- **Portal agent's primary address follows the Uplink.** The LAN address
+  the Check-in marks primary is now the one on the Uplink, where IPv4
+  traffic actually leaves (policy-routed VPNs included), instead of the
+  lowest-metric default route (rtk_development#133).
+- **Documentation.** [`docs/network-links.md`](docs/network-links.md)
+  explains the dashboard's Network card: the Uplink, Wi-Fi link strength,
+  the Not supported / Disconnected / No reading states, why link health
+  isn't reachability (that shows under Destinations), and the limitations:
+  drops shorter than about 2 s may go uncounted, the Uplink is judged for
+  IPv4 only, the Pi's built-in Wi-Fi gives no tx retries, beacon loss or
+  noise, and the Wi-Fi link strength thresholds are provisional. The README
+  now links to it and to the metric reference in
+  [`docs/monitoring/README.md`](docs/monitoring/README.md).
+- **Unit comments.** `sp-rtk-base.service` now warns that any future
+  `RestrictAddressFamilies=` must include `AF_NETLINK` and that
+  `PrivateNetwork=` must never be added, since either silently breaks the
+  Network link sampler. Nothing in the unit's behaviour changes.
+
+### Breaking
+
+- **`GET /api/network/status` replaces `link` with `uplink`.** The old
+  `link` object (the nmcli active link, with its 0-100 signal) is gone.
+  `uplink` carries `state` (`Uplink`, `No Uplink` or `No reading`),
+  `interface`, `kind`, `ipv4`, and for a Wi-Fi Uplink `wifi_network`,
+  `wifi_link_strength` and `wifi_link_strength_dbm`. `configured` is
+  still reported.
+
+### Breaking (deploy)
+
+- **One-time `install.sh` re-run.** The unit comments above change
+  `sp-rtk-base.service`, which is Host setup an Update doesn't rewrite
+  (ADR 0005), so this release raises the plumbing version to 3: the base
+  asks for the installer to be re-run once instead of offering Update.
+  `curl -fsSL
+  https://raw.githubusercontent.com/rodenj1/sp-rtk-base/main/deploy/install.sh
+  | sudo bash`. A bare re-run keeps the deployment mode.
+
 ## v0.11.0 (2026-10-18)
 
 ### Portal agent

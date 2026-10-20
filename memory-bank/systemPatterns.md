@@ -154,6 +154,19 @@ def get_relay_service() -> RelayService:
 - Daemon thread for consuming EventSubscription (blocking) → asyncio.Queue (async)
 - `ui.timer()` for periodic status polling in NiceGUI
 
+### Network link sampler (rtk_development#132)
+`NetworkLinkService` (`services/network_link/`) is a background asyncio task
+started and stopped with the app. Every 2 s it reads the host off the loop
+(`asyncio.to_thread(HostReader.read)`: sysfs, a route netlink address dump,
+nl80211 over generic netlink, and the shared Uplink probe; no subprocesses or
+scans) and feeds the pure `NetworkLinkMonitor`, which keeps one
+`NetworkLinkSnapshot`. Readers never sample: the dashboard's Network card,
+`/metrics`, the Network page and `GET /api/network/status` all read
+`current()`, so every viewer sees the same snapshot. The host is read and
+closed under one lock, so `stop()` waits for a read in flight before closing
+the netlink sockets. The e2e fake (`SP_RTK_BASE_FAKE_NETWORK_LINKS`) swaps the
+host for a JSON `HostReading` file.
+
 ## Component Relationships
 
 ### Dependency Graph

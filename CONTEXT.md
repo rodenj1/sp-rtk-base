@@ -116,6 +116,41 @@ which is Signal Quality's concern.
 _Avoid_: signal strength, signal, Bluetooth signal, RSSI (a raw reading,
 not the concept)
 
+### Network links
+
+**Network link**:
+One of the base station's own network interfaces and its local connection:
+a Wi-Fi association with an access point, or carrier on an Ethernet cable.
+A Network link being up says nothing about whether the internet, the
+caster or the Portal can be reached.
+_Avoid_: connection, network status, internet (unqualified)
+
+**Uplink**:
+The interface the base station's outbound internet traffic actually leaves
+by, judged for IPv4. Usually a Network link, but it can be a VPN, which is
+not one. An Ethernet cable being plugged in doesn't make it the Uplink. A
+base station can have Network links up and still no Uplink.
+_Avoid_: active link, primary interface
+
+**Wi-Fi link strength**:
+How strongly the base station's Wi-Fi interface hears the access point it
+is associated with, in dBm, while that Network link is connected. Its
+verdict is **Good**, **Marginal** or **Poor**. Unlike Bluetooth link
+strength, the raw reading is an absolute power, not a relative one.
+_Avoid_: Wi-Fi signal, signal strength, signal, RSSI (a raw reading, not
+the concept)
+
+**Not supported** / **Disconnected** / **No reading**:
+The three reasons a Network link reading has no current value. **Not
+supported**: the hardware or its driver never gives this reading (for
+example noise on the Pi's built-in Wi-Fi), so it isn't shown at all.
+**Disconnected**: the Network link is down, so readings that only exist
+while connected (Wi-Fi link strength, speed) have nothing to report.
+**No reading**: the base station can't currently take the reading, or its
+last one is too old to trust; the same meaning as Bluetooth link strength's
+"no reading". None of them is ever shown as a value, old or zero.
+_Avoid_: unavailable, stale, N/A, unknown, 0
+
 ### Bluetooth pairing
 
 **Bond**:

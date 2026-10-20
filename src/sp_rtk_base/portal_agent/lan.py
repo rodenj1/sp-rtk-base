@@ -1,13 +1,14 @@
 """The base's private IPv4 addresses, for the Check-in.
 
 Every RFC 1918 address on an interface that is up, with the one on the
-default route's interface marked primary. The Portal uses them for Local
-access (opening the base on its own LAN).
+Uplink marked primary (:mod:`sp_rtk_base.uplink`: where IPv4 traffic
+actually leaves, VPNs included). The Portal uses them for Local access
+(opening the base on its own LAN).
 
-Read with ``SIOCGIFCONF``/``SIOCGIFFLAGS`` ioctls on an ``AF_INET`` socket
-and ``/proc/net/route``: the agent's unit allows only ``AF_INET`` and
-``AF_UNIX`` sockets, so netlink (``ip addr``) is out.
-Opening a datagram socket sends nothing.
+Read with ``SIOCGIFCONF``/``SIOCGIFFLAGS`` ioctls on an ``AF_INET`` socket,
+and the Uplink with a connected ``AF_INET`` datagram socket: the agent's
+unit allows only ``AF_INET`` and ``AF_UNIX`` sockets, so netlink
+(``ip addr``) is out. Opening or connecting a datagram socket sends nothing.
 """
 
 from __future__ import annotations
@@ -18,9 +19,10 @@ import ipaddress
 import logging
 import socket
 import struct
-from pathlib import Path
 
 from sp_rtk_portal_protocol import LanAddress
+
+from sp_rtk_base.uplink import picked_source, uplink
 
 logger = logging.getLogger(__name__)
 
@@ -35,28 +37,17 @@ PRIVATE = tuple(
 )
 
 
-def default_route_interface(route_table: str) -> str | None:
-    """The interface of the IPv4 default route, from ``/proc/net/route``."""
-    best: tuple[int, str] | None = None
-    for line in route_table.splitlines()[1:]:
-        fields = line.split()
-        if len(fields) < 8 or fields[1] != "00000000" or fields[7] != "00000000":
-            continue
-        try:
-            metric = int(fields[6])
-        except ValueError:
-            continue
-        if best is None or metric < best[0]:
-            best = (metric, fields[0])
-    return best[1] if best else None
-
-
 def select(
-    interfaces: list[tuple[str, str, bool]], default_interface: str | None
+    interfaces: list[tuple[str, str, bool]], source: str | None
 ) -> list[LanAddress]:
     """From ``(interface, address, up)`` rows: the private addresses on up
-    interfaces, each once. The first on the default route's interface is
+    interfaces, each once. The first on the Uplink, judged from the
+    ``source`` address the kernel picked (``None``: unreachable), is
     primary and comes first."""
+    # Only the Uplink's interface matters here, not whether it is a
+    # Network link, so no Network links are named.
+    egress = uplink(source, [(name, a) for name, a, _ in interfaces], ())
+    uplink_interface = egress.interface if egress else None
     found: dict[str, str] = {}  # address -> interface, in order
     for name, address, up in interfaces:
         try:
@@ -65,7 +56,7 @@ def select(
             continue
         if up and any(ip in net for net in PRIVATE):
             found.setdefault(address, name.split(":", 1)[0])  # eth0:1 -> eth0
-    primary = next((a for a, name in found.items() if name == default_interface), None)
+    primary = next((a for a, name in found.items() if name == uplink_interface), None)
     ordered = sorted(found.items(), key=lambda item: item[0] != primary)
     return [
         LanAddress(address=a, interface=name, primary=a == primary)
@@ -103,12 +94,13 @@ def _interfaces() -> list[tuple[str, str, bool]]:  # pragma: no cover - host ioc
 def lan_addresses() -> list[LanAddress]:
     """This host's private IPv4 addresses (empty if they can't be read)."""
     try:
-        route = Path("/proc/net/route").read_text(encoding="ascii")
-    except OSError:
-        route = ""
+        source = picked_source()
+    except OSError as exc:  # pragma: no cover - host routes
+        logger.warning("Couldn't judge the Uplink: %s", exc)
+        source = None
     try:
         rows = _interfaces()
     except OSError as exc:  # pragma: no cover - host ioctls
         logger.warning("Couldn't list network interfaces: %s", exc)
         return []
-    return select(rows, default_route_interface(route))
+    return select(rows, source)

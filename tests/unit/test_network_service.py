@@ -11,13 +11,12 @@ error mapping, adapter caching, awaiting the sync adapter calls via
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import MagicMock
 
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
-    LinkType,
     NetProvisionConfig,
     SavedWifiConnection,
     WifiNetwork,
@@ -52,27 +51,39 @@ def _service_unconfigured() -> NetworkService:
     )
 
 
-class TestGetActiveLink:
+class TestIsConfigured:
     @pytest.mark.asyncio()
-    async def test_returns_the_adapter_reading(self) -> None:
-        adapter = _fake_adapter()
-        link = ActiveLink(link_type=LinkType.WIRED, name="Wired connection 1")
-        adapter.read_active_link.return_value = link  # type: ignore[attr-defined]
-        svc = _service_with_adapter(adapter)
-        assert await svc.get_active_link() is link
+    async def test_configured_when_the_config_loads(self) -> None:
+        assert await _service_with_adapter(_fake_adapter()).is_configured() is True
 
     @pytest.mark.asyncio()
-    async def test_returns_none_when_nothing_is_connected(self) -> None:
-        adapter = _fake_adapter()
-        adapter.read_active_link.return_value = None  # type: ignore[attr-defined]
-        svc = _service_with_adapter(adapter)
-        assert await svc.get_active_link() is None
+    async def test_not_configured_when_the_config_is_missing(self) -> None:
+        assert await _service_unconfigured().is_configured() is False
 
     @pytest.mark.asyncio()
-    async def test_raises_not_configured_when_config_is_missing(self) -> None:
-        svc = _service_unconfigured()
-        with pytest.raises(NetworkNotConfiguredError):
-            await svc.get_active_link()
+    async def test_runs_no_nmcli(self) -> None:
+        """It only loads the config: the adapter is built but never used."""
+        adapter = _fake_adapter()
+        await _service_with_adapter(adapter).is_configured()
+        assert adapter.method_calls == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_loads_the_config_off_the_event_loop(self) -> None:
+        """The Network page asks every 2 s: the YAML load must never block
+        the event loop."""
+        loop_thread = threading.get_ident()
+        loaded_on: list[int] = []
+
+        def _load() -> NetProvisionConfig:
+            loaded_on.append(threading.get_ident())
+            return _config()
+
+        svc = NetworkService(
+            config_loader=_load, adapter_factory=lambda _cfg: _fake_adapter()
+        )
+        assert await svc.is_configured() is True
+        assert loaded_on
+        assert loop_thread not in loaded_on
 
 
 class TestScanNetworks:
@@ -278,12 +289,11 @@ class TestAdapterCaching:
         and re-validating the YAML config on every status poll would be
         wasteful, and the config never changes without a restart anyway."""
         adapter = _fake_adapter()
-        adapter.read_active_link.return_value = None  # type: ignore[attr-defined]
         adapter.scan_networks.return_value = []  # type: ignore[attr-defined]
         config_loader = MagicMock(return_value=_config())
         svc = NetworkService(
             config_loader=config_loader, adapter_factory=lambda _cfg: adapter
         )
-        await svc.get_active_link()
+        await svc.is_configured()
         await svc.scan_networks()
         config_loader.assert_called_once()

@@ -17,9 +17,7 @@ from typing import Any
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
-    ActiveLink,
     Connectivity,
-    LinkType,
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
@@ -52,15 +50,6 @@ SCAN = [
 AP_UP = ["nmcli", "connection", "up", "id", AP_SSID]
 AP_DOWN = ["nmcli", "connection", "down", "id", AP_SSID]
 SAVED_UP = ["nmcli", "connection", "up", "id", SAVED_SSID]
-DEVICE_SHOW = [
-    "nmcli",
-    "-t",
-    "-f",
-    "GENERAL.TYPE,GENERAL.CONNECTION,IP4.ADDRESS",
-    "device",
-    "show",
-]
-WIFI_SIGNAL_LIST = ["nmcli", "-t", "-f", "ACTIVE,SIGNAL", "device", "wifi", "list"]
 
 
 def _scan_line(ssid: str, signal: int = 50, security: str = "WPA2") -> str:
@@ -634,113 +623,6 @@ class TestListSavedConnections:
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{AP_SSID}\n")
         fake.set_response(ACTIVE_CONNECTIONS, stdout="")
         assert _adapter(fake).list_saved_connections() == []
-
-
-# ---------------------------------------------------------------------------
-# read_active_link() — console current-connection status (issue #21)
-# ---------------------------------------------------------------------------
-
-
-def _device_block(conn_type: str, connection: str, ip: str | None = None) -> str:
-    lines = [f"GENERAL.TYPE:{conn_type}", f"GENERAL.CONNECTION:{connection}"]
-    if ip is not None:
-        lines.append(f"IP4.ADDRESS[1]:{ip}")
-    return "\n".join(lines)
-
-
-class TestReadActiveLink:
-    def test_wired_link_reports_type_name_and_ip(self) -> None:
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=_device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
-            + "\n",
-        )
-        link = _adapter(fake).read_active_link()
-        assert link == ActiveLink(
-            link_type=LinkType.WIRED,
-            name="Wired connection 1",
-            ip_address="192.168.1.50",
-            signal=None,
-        )
-
-    def test_wifi_link_includes_signal_from_the_active_scan_row(self) -> None:
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=_device_block("wifi", SAVED_SSID, "192.168.1.60/24") + "\n",
-        )
-        fake.set_response(WIFI_SIGNAL_LIST, stdout="no:40\nyes:77\n")
-        link = _adapter(fake).read_active_link()
-        assert link == ActiveLink(
-            link_type=LinkType.WIFI,
-            name=SAVED_SSID,
-            ip_address="192.168.1.60",
-            signal=77,
-        )
-
-    def test_excludes_the_setup_ap_connection(self) -> None:
-        """An operator's console session cannot itself be running over the
-        provisioning hotspot in normal operation — reporting the AP as
-        'the active link' would be nonsensical."""
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=(
-                _device_block("wifi", AP_SSID, "10.42.0.1/24")
-                + "\n\n"
-                + _device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
-                + "\n"
-            ),
-        )
-        link = _adapter(fake).read_active_link()
-        assert link is not None
-        assert link.name == "Wired connection 1"
-
-    def test_prefers_wired_when_both_wired_and_wifi_are_active(self) -> None:
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=(
-                _device_block("wifi", SAVED_SSID, "192.168.1.60/24")
-                + "\n\n"
-                + _device_block("ethernet", "Wired connection 1", "192.168.1.50/24")
-                + "\n"
-            ),
-        )
-        link = _adapter(fake).read_active_link()
-        assert link is not None
-        assert link.link_type is LinkType.WIRED
-
-    def test_returns_none_when_nothing_is_connected(self) -> None:
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=_device_block("ethernet", "")
-            + "\n\n"
-            + _device_block("wifi", "")
-            + "\n",
-        )
-        assert _adapter(fake).read_active_link() is None
-
-    def test_ignores_non_physical_device_types(self) -> None:
-        """Bridges/loopback/etc. can report a 'connected' state on a dev
-        box; only ethernet and wifi are real links a console cares about."""
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW,
-            stdout=_device_block("bridge", "docker0", "172.17.0.1/16") + "\n",
-        )
-        assert _adapter(fake).read_active_link() is None
-
-    def test_missing_ip_address_is_none(self) -> None:
-        fake = FakeNmcli()
-        fake.set_response(
-            DEVICE_SHOW, stdout=_device_block("ethernet", "Wired connection 1") + "\n"
-        )
-        link = _adapter(fake).read_active_link()
-        assert link is not None
-        assert link.ip_address is None
 
 
 # ---------------------------------------------------------------------------

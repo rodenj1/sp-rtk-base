@@ -42,6 +42,11 @@ PrivateTmp=true
 ReadWritePaths=/var/lib/sp-rtk-base /etc/sp-rtk-base
 # Allow access to /dev/ttyUSB*, /dev/ttyACM* etc. (GPS serial).
 DevicePolicy=auto
+# The Network link sampler reads Wi-Fi and addresses over netlink. Any
+# future RestrictAddressFamilies= here must include AF_NETLINK, and
+# PrivateNetwork= must never be added: either silently leaves every
+# Network link with No reading. The sampler must not move into the Portal
+# agent, whose unit blocks netlink (docs/network-links.md).
 
 [Install]
 WantedBy=multi-user.target

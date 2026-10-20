@@ -52,7 +52,7 @@ per base station (location name, callsign, antenna ID, etc.).
 
 ## What's exposed
 
-The current metric surface (22 series) covers:
+The current metric surface covers:
 
 - Service state: `sp_rtk_base_relay_running`, `sp_rtk_base_relay_uptime_seconds`
 - Input source: `sp_rtk_base_input_connected`, `sp_rtk_base_input_bytes_received`,
@@ -84,8 +84,98 @@ The current metric surface (22 series) covers:
     below it)
   - Both are NaN with no reading, while the Relay is stopped, or when the
     Input isn't Bluetooth
+- Network links (the base station's own Ethernet and Wi-Fi links and its
+  Uplink, exactly as the dashboard's Network card shows them): see
+  [Network links](#network-links) below.
 
-These are all gauges that update on each scrape of `/metrics`.
+Apart from the Network link counters below, these are all gauges that
+update on each scrape of `/metrics`.
+
+### Network links
+
+A background sampler reads every Network link every 2 s; each scrape
+exports its latest snapshot and never reads the host itself. What the
+dashboard's Network card shows, and the sampler's limitations, are in
+[`docs/network-links.md`](../network-links.md). Labels are
+`interface` (such as `eth0`, `wlan0`) and `kind` (`ethernet` or `wifi`);
+the `ethernet_*` and `wifi_*` metrics carry only `interface`. No SSID, BSSID, MAC or IP
+address appears in any label.
+
+| Metric | Type | Unit | Labels | Value |
+|---|---|---|---|---|
+| `sp_rtk_base_network_link_up` | gauge | 0/1 | `interface`, `kind` | 1 Connected, 0 Disconnected; NaN with No reading |
+| `sp_rtk_base_network_link_uplink` | gauge | 0/1 | `interface`, `kind` | 1 on the link that is the Uplink; NaN while the Uplink has no reading |
+| `sp_rtk_base_network_uplink_other` | gauge | 0/1 | none | 1 when the Uplink isn't a Network link (a VPN such as `wg0`); NaN while the Uplink has no reading |
+| `sp_rtk_base_network_link_changes_total` | counter | transitions | `interface`, `kind` | up/down transitions the sampler has seen since the app started |
+| `sp_rtk_base_network_{receive,transmit}_bytes_total` | counter | bytes | `interface`, `kind` | kernel totals (`/sys/class/net/*/statistics`) |
+| `sp_rtk_base_network_{receive,transmit}_packets_total` | counter | packets | `interface`, `kind` | kernel totals |
+| `sp_rtk_base_network_{receive,transmit}_errors_total` | counter | packets | `interface`, `kind` | kernel totals |
+| `sp_rtk_base_network_{receive,transmit}_drops_total` | counter | packets | `interface`, `kind` | kernel totals |
+| `sp_rtk_base_network_ethernet_speed_bits_per_second` | gauge | bits/s | `interface` | negotiated speed; NaN when Disconnected or No reading |
+| `sp_rtk_base_network_ethernet_full_duplex` | gauge | 0/1 | `interface` | 1 full, 0 half duplex; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_link_strength` | gauge | level | `interface` | Wi-Fi link strength verdict, 0 Good (≥ -67 dBm), 1 Marginal (-68 to -77), 2 Poor (≤ -78), on the lower median of the last 10 s of readings; station mode only; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_link_strength_dbm` | gauge | dBm | `interface` | the latest Wi-Fi link strength reading (not the median); NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_frequency_hertz` | gauge | Hz | `interface` | channel frequency while associated; NaN when Disconnected or No reading (never read unassociated: it hops while scanning) |
+| `sp_rtk_base_wifi_tx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames sent; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_rx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames received; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_tx_failed_total` | counter | frames | `interface` | frames the access point never acknowledged, as the driver counts them; resets with each association |
+| `sp_rtk_base_network_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every source read (nl80211 for every Wi-Fi interface too); NaN before the first |
+
+**Missing values.**
+
+- **No reading** (a failed read, or the last good one over 6 s old) and
+  **Disconnected** make a gauge NaN; its series stays.
+- **Not supported:** a reading the hardware never gives (such as Ethernet
+  speed on an adapter that doesn't report it) has no series at all. It
+  appears once a successful read gives it while the link is up.
+- **Counters never go NaN.** During No reading (and, for
+  `wifi_tx_failed_total`, while Disconnected) they hold their last value.
+- **Wi-Fi details come from nl80211 on their own.** If it fails, only the
+  `wifi_*` gauges go NaN; the link's state and kernel counters stay current.
+- **Interfaces coming and going:** when an interface vanishes (say a USB
+  adapter is unplugged), every series for it disappears with it.
+
+**Counter resets.** The counters are exported exactly as the kernel
+reports them, with no accumulation on our side. When an interface
+reappears, its kernel counters (and `link_changes_total`) start again at
+zero: that is an ordinary counter reset, which `rate()` and `increase()`
+already handle. `wifi_tx_failed_total` also resets with every
+association (the driver counts per association), likewise an ordinary
+reset.
+
+Example queries:
+
+```promql
+# Receive throughput per link, bytes/s
+rate(sp_rtk_base_network_receive_bytes_total[5m])
+
+# Errors and drops per link over the last hour
+increase(sp_rtk_base_network_receive_errors_total[1h])
+  + increase(sp_rtk_base_network_receive_drops_total[1h])
+
+# Links that keep dropping: more than 3 up/down transitions in 15 min
+increase(sp_rtk_base_network_link_changes_total[15m]) > 3
+
+# Wi-Fi sends failing, per minute
+rate(sp_rtk_base_wifi_tx_failed_total[5m]) * 60
+
+# Weak Wi-Fi: Poor link strength for 5 min
+min_over_time(sp_rtk_base_wifi_link_strength[5m]) == 2
+
+# Wi-Fi fallen back to slow rates: under 20 Mbit/s sent for 10 min
+max_over_time(sp_rtk_base_wifi_tx_bitrate_bits_per_second[10m]) < 20e6
+
+# Which link is the Uplink
+sp_rtk_base_network_link_uplink == 1
+
+# The sampler has stopped: no full sample for over a minute
+time() - sp_rtk_base_network_last_sample_timestamp_seconds > 60
+```
+
+NaN compares false, so the last query (like any threshold on a NaN gauge)
+doesn't fire before the first full sample. To catch that too, add
+`or sp_rtk_base_network_last_sample_timestamp_seconds != sp_rtk_base_network_last_sample_timestamp_seconds`,
+which is true only for NaN.
 
 ## Alerts
 

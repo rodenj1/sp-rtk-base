@@ -11,6 +11,8 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.12.0 (2026-10-20)
+
 ### Network link health
 
 Network link health on the dashboard and in Prometheus

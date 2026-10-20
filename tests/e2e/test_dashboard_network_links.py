@@ -159,6 +159,38 @@ def test_both_links_with_the_wifi_uplink_listed_first(
 
 
 @pytest.mark.e2e
+def test_wifi_only_shows_the_one_link_as_the_uplink(
+    page: Page, base_url: str, network_links: Path
+) -> None:
+    _write(
+        network_links,
+        HostReading(
+            interfaces=(WLAN0,),
+            addresses=ADDRESSES,
+            egress=EgressReading(source="192.0.2.20"),
+            wifi=(WLAN0_ASSOCIATED,),
+        ),
+    )
+    page.goto(f"{base_url}/")
+
+    card = page.get_by_test_id("network-card")
+    expect(card.get_by_test_id("network-uplink")).to_have_text(
+        "Wi-Fi (wlan0)", timeout=SOON_MS
+    )
+    expect(card.get_by_test_id("network-link-eth0")).to_have_count(0)
+    wlan0 = card.get_by_test_id("network-link-wlan0")
+    expect(wlan0.get_by_test_id("network-link-wlan0-uplink")).to_have_text("Uplink")
+    expect(wlan0.get_by_test_id("network-link-wlan0-state")).to_have_text("Connected")
+    strength = wlan0.get_by_test_id("network-link-wlan0-strength")
+    expect(strength).to_contain_text("Good")
+    expect(strength).to_contain_text(f"{MINUS}55 dBm")
+    expect(wlan0.get_by_test_id("network-link-wlan0-network")).to_contain_text("Test")
+    expect(wlan0.get_by_test_id("network-link-wlan0-address")).to_contain_text(
+        "192.0.2.20/24"
+    )
+
+
+@pytest.mark.e2e
 def test_no_uplink_when_links_are_up_but_nothing_routes(
     page: Page, base_url: str, network_links: Path
 ) -> None:

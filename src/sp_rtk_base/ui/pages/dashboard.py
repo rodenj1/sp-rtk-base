@@ -178,8 +178,13 @@ def _format_uptime(seconds: float | None) -> str:
 
 
 @ui.page("/", dark=True)
-def dashboard_page() -> None:
+def dashboard_page(variant: str | None = None, scenario: str | None = None) -> None:
     """Render the dashboard page."""
+    from sp_rtk_base.ui import prototype_network_links as proto  # PROTOTYPE
+
+    proto_on = proto.enabled()  # PROTOTYPE
+    variant, scenario = proto.resolve(variant, scenario)  # PROTOTYPE
+    proto_sc = proto.SCENARIOS[scenario]  # PROTOTYPE
     relay = get_relay_service()
     config_svc = get_config_service()
     bluetooth_link = get_bluetooth_link_service()
@@ -228,6 +233,16 @@ def dashboard_page() -> None:
             input_card = ui.card().classes("flex-1 q-pa-md")
             throughput_card = ui.card().classes("flex-1 q-pa-md")
             dest_card = ui.card().classes("flex-1 q-pa-md")
+            if proto_on and variant == "C":  # PROTOTYPE
+                with ui.card().classes("flex-1 q-pa-md"):
+                    proto.variant_c_card(proto_sc)
+
+        if proto_on and variant == "A":  # PROTOTYPE
+            proto.variant_a(proto_sc)
+        if proto_on and variant == "B":  # PROTOTYPE
+            proto.variant_b(proto_sc)
+        if proto_on:  # PROTOTYPE
+            proto.switcher(variant, scenario)
 
         # --- Destination details ---
         dest_details_container = ui.column().classes("w-full gap-2 q-mt-md")

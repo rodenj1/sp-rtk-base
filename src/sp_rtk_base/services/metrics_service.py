@@ -15,6 +15,8 @@ scrape so values are always fresh.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 
 from prometheus_client import CollectorRegistry, Gauge
 from sp_rtk_base_relay.core.status import RelayStatus
@@ -24,10 +26,12 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkVerdict,
 )
 from sp_rtk_base.models.level_models import LEVEL_VALUE
+from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
 from sp_rtk_base.models.signal_quality_models import (
     SignalQualityReading,
     SignalQualityVerdict,
 )
+from sp_rtk_base.services.network_link.metrics import NetworkLinkCollector
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,7 @@ class MetricsService:
         self,
         namespace: str = "sp_rtk_base",
         registry: CollectorRegistry | None = None,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self.registry = registry or CollectorRegistry(auto_describe=True)
         ns = namespace
@@ -184,6 +189,11 @@ class MetricsService:
         )
         self.update_bluetooth_link(None)
 
+        # Network links: a collector that builds its series from the
+        # latest snapshot, so a vanished interface's series disappear.
+        self.network_links = NetworkLinkCollector(ns, wall_clock=wall_clock)
+        self.registry.register(self.network_links)
+
         logger.info("MetricsService initialized (namespace=%s)", ns)
 
     # ──────────────────────────────────────────────────────────────
@@ -248,6 +258,10 @@ class MetricsService:
             return
         self.bluetooth_link_strength.set(float("nan"))
         self.bluetooth_link_median_db.set(float("nan"))
+
+    def update_network_links(self, snapshot: NetworkLinkSnapshot) -> None:
+        """Export the Network link *snapshot* (it never samples)."""
+        self.network_links.update(snapshot)
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

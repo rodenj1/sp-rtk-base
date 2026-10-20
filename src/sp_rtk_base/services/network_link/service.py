@@ -6,6 +6,11 @@ the Relay) and feeds the reading to one :class:`NetworkLinkMonitor`.
 Sampling in the background, rather than per page, means every viewer
 sees the same snapshot, already warm.  ``current()`` is what the
 dashboard (and metrics) read; it never samples.
+
+Cancelling the task can't stop a read already running in its worker
+thread, so the host is only read and closed under one lock: ``stop()``
+waits for a read in flight before closing, and a closed host is never
+read (or reopened) again.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 import time
 from collections.abc import Callable
 
@@ -38,6 +44,8 @@ class NetworkLinkService:
         self._clock = clock
         self._monitor = NetworkLinkMonitor()
         self._task: asyncio.Task[None] | None = None
+        self._host_lock = threading.Lock()
+        self._closed = False
 
     def current(self) -> NetworkLinkSnapshot:
         """The Network link snapshot now."""
@@ -46,11 +54,16 @@ class NetworkLinkService:
     async def sample_once(self) -> None:
         """Read the host once, off the event loop, and feed the monitor.
 
-        A read that raises is a sample in which every source failed.
+        A read that raises is a sample in which every source failed.  After
+        :meth:`stop` it reads nothing.
         """
+        if self._closed:
+            return
         try:
-            reading = await asyncio.to_thread(self._host.read)
+            reading = await asyncio.to_thread(self._read)
         except Exception:
+            if self._closed:
+                return
             logger.debug("Network link read failed", exc_info=True)
             reading = HostReading()
         self._monitor.observe(reading, self._clock())
@@ -63,13 +76,26 @@ class NetworkLinkService:
             )
 
     async def stop(self) -> None:
-        """Cancel the background sampler and close the host reader."""
+        """Cancel the background sampler and close the host reader, once
+        any read in flight has finished."""
         task, self._task = self._task, None
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        self._host.close()
+        await asyncio.to_thread(self._close)
+
+    def _read(self) -> HostReading:
+        with self._host_lock:
+            if self._closed:
+                raise RuntimeError("the Network link sampler is stopped")
+            return self._host.read()
+
+    def _close(self) -> None:
+        with self._host_lock:
+            if not self._closed:
+                self._closed = True
+                self._host.close()
 
     async def _run(self) -> None:
         while True:

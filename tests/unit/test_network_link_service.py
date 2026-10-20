@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -92,3 +93,55 @@ async def test_the_sampler_runs_in_the_background_until_stopped() -> None:
     assert host.reads == 1
     assert host.closed is True
     assert service.current().links[0].name == "eth0"
+
+
+class SlowHost(FakeHost):
+    """A host whose read blocks until released, recording whether it was
+    closed while a read was in flight."""
+
+    def __init__(self) -> None:
+        super().__init__(READING)
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.reading = False
+        self.closed_mid_read = False
+
+    def read(self) -> HostReading:
+        self.reading = True
+        self.started.set()
+        self.release.wait(5.0)
+        self.reading = False
+        return super().read()
+
+    def close(self) -> None:
+        self.closed_mid_read = self.reading
+        super().close()
+
+
+@pytest.mark.asyncio()
+async def test_stopping_waits_for_a_read_in_flight_before_closing_the_host() -> None:
+    host = SlowHost()
+    service = NetworkLinkService(host, clock=Clock())
+    service.start()
+    assert await asyncio.to_thread(host.started.wait, 5.0)
+
+    stopping = asyncio.create_task(service.stop())
+    await asyncio.sleep(0.05)
+    assert host.closed is False
+    host.release.set()
+    await asyncio.wait_for(stopping, 5.0)
+
+    assert host.closed is True
+    assert host.closed_mid_read is False
+
+
+@pytest.mark.asyncio()
+async def test_a_stopped_sampler_never_reads_the_closed_host_again() -> None:
+    host = FakeHost(READING)
+    service = NetworkLinkService(host, clock=Clock())
+    await service.sample_once()
+    await service.stop()
+
+    await service.sample_once()
+
+    assert host.reads == 1

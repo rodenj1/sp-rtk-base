@@ -20,6 +20,7 @@ from typing import Literal, TypeVar
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.metrics_core import Metric
 
+from sp_rtk_base.models.level_models import LEVEL_VALUE
 from sp_rtk_base.models.network_link_models import (
     NetworkLink,
     NetworkLinkSnapshot,
@@ -136,6 +137,12 @@ def _wifi_metric(
     return LinkMetric(name, documentation, value, type=type, kind_label=False)
 
 
+def _wifi_link_strength(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
+    if link.wifi is None:
+        return None
+    return _supported_value(link.wifi.link_strength, lambda level: LEVEL_VALUE[level])
+
+
 def _uplink_other(snapshot: NetworkLinkSnapshot, _: float) -> float:
     if snapshot.uplink_no_reading:
         return NAN
@@ -181,6 +188,18 @@ LINK_METRICS: tuple[LinkMetric, ...] = (
         "1 for full duplex, 0 for half (NaN: unknown, Disconnected or No reading)",
         _ethernet_full_duplex,
         kind_label=False,
+    ),
+    LinkMetric(
+        "wifi_link_strength",
+        "Wi-Fi link strength: 0 Good, 1 Marginal, 2 Poor, judged from the "
+        "lower median of the last 10 s of dBm (NaN: no current reading)",
+        _wifi_link_strength,
+        kind_label=False,
+    ),
+    _wifi_metric(
+        "wifi_link_strength_dbm",
+        "The latest Wi-Fi link strength reading, in dBm (NaN: no current reading)",
+        lambda wifi: wifi.signal_dbm,
     ),
     _wifi_metric(
         "wifi_frequency_hertz",

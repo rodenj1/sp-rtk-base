@@ -111,6 +111,8 @@ address appears in any label.
 | `sp_rtk_base_network_{receive,transmit}_drops_total` | counter | packets | `interface`, `kind` | kernel totals |
 | `sp_rtk_base_network_ethernet_speed_bits_per_second` | gauge | bits/s | `interface` | negotiated speed; NaN when Disconnected or No reading |
 | `sp_rtk_base_network_ethernet_full_duplex` | gauge | 0/1 | `interface` | 1 full, 0 half duplex; NaN when unknown, Disconnected or No reading |
+| `sp_rtk_base_wifi_link_strength` | gauge | level | `interface` | Wi-Fi link strength verdict, 0 Good (≥ -67 dBm), 1 Marginal (-68 to -77), 2 Poor (≤ -78), on the lower median of the last 10 s of readings; station mode only; NaN when Disconnected or No reading |
+| `sp_rtk_base_wifi_link_strength_dbm` | gauge | dBm | `interface` | the latest Wi-Fi link strength reading (not the median); NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_frequency_hertz` | gauge | Hz | `interface` | channel frequency while associated; NaN when Disconnected or No reading (never read unassociated: it hops while scanning) |
 | `sp_rtk_base_wifi_tx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames sent; NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_rx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames received; NaN when Disconnected or No reading |
@@ -154,6 +156,9 @@ increase(sp_rtk_base_network_link_changes_total[15m]) > 3
 
 # Wi-Fi sends failing, per minute
 rate(sp_rtk_base_wifi_tx_failed_total[5m]) * 60
+
+# Weak Wi-Fi: Poor link strength for 5 min
+min_over_time(sp_rtk_base_wifi_link_strength[5m]) == 2
 
 # Wi-Fi fallen back to slow rates: under 20 Mbit/s sent for 10 min
 max_over_time(sp_rtk_base_wifi_tx_bitrate_bits_per_second[10m]) < 20e6

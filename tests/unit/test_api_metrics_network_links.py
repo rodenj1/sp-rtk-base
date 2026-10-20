@@ -419,7 +419,9 @@ FREQUENCY = "sp_rtk_base_wifi_frequency_hertz"
 TX_BITRATE = "sp_rtk_base_wifi_tx_bitrate_bits_per_second"
 RX_BITRATE = "sp_rtk_base_wifi_rx_bitrate_bits_per_second"
 TX_FAILED = "sp_rtk_base_wifi_tx_failed_total"
-WIFI_GAUGES = (FREQUENCY, TX_BITRATE, RX_BITRATE)
+STRENGTH = "sp_rtk_base_wifi_link_strength"
+STRENGTH_DBM = "sp_rtk_base_wifi_link_strength_dbm"
+WIFI_GAUGES = (FREQUENCY, TX_BITRATE, RX_BITRATE, STRENGTH, STRENGTH_DBM)
 
 
 @pytest.mark.asyncio()
@@ -433,6 +435,41 @@ async def test_wifi_frequency_and_bitrates_are_gauges_in_si_units() -> None:
     assert samples[RX_BITRATE] == [
         Sample("gauge", {"interface": "wlan0"}, 433_300_000.0)
     ]
+
+
+def _station_at(dbm: int) -> WifiReading:
+    station = ASSOCIATED.station
+    assert station is not None
+    return ASSOCIATED.model_copy(
+        update={"station": station.model_copy(update={"signal_dbm": dbm})}
+    )
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(("dbm", "verdict"), [(-55, 0.0), (-70, 1.0), (-85, 2.0)])
+async def test_wifi_link_strength_is_the_verdict_and_the_latest_dbm(
+    dbm: int, verdict: float
+) -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(_station_at(dbm),))))
+
+    assert samples[STRENGTH] == [Sample("gauge", {"interface": "wlan0"}, verdict)]
+    assert samples[STRENGTH_DBM] == [
+        Sample("gauge", {"interface": "wlan0"}, float(dbm))
+    ]
+
+
+@pytest.mark.asyncio()
+async def test_wifi_link_strength_dbm_is_the_latest_reading_not_the_median() -> None:
+    samples = _scrape(
+        await _fed(
+            _reading(WLAN0, wifi=(_station_at(-55),)),
+            _reading(WLAN0, wifi=(_station_at(-55),)),
+            _reading(WLAN0, wifi=(_station_at(-85),)),
+        )
+    )
+
+    assert _value(samples, STRENGTH, "wlan0") == 0.0
+    assert _value(samples, STRENGTH_DBM, "wlan0") == -85.0
 
 
 @pytest.mark.asyncio()

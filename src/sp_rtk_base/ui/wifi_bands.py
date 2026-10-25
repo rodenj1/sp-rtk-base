@@ -15,6 +15,7 @@ from sp_rtk_base.models.net_provision_models import (
     SavedWifiConnection,
     WifiBand,
     WifiNetwork,
+    band_join_security,
 )
 
 # The bands a network can be heard on, in the order the console lists them.
@@ -105,9 +106,13 @@ def join_band_choices(
 
     ``network`` is the scanned network being joined, or ``None`` for a
     hidden one, which has no scan data and so no hints. Empty without a
-    5 GHz adapter: the form then shows no select and joins on Auto.
+    5 GHz adapter, or for a network whose security a band join can't
+    build (see :func:`band_join_security`): the form then shows no
+    select and joins on Auto.
     """
     if not shows_band_control(has_5ghz=has_5ghz):
+        return {}
+    if network is not None and band_join_security(network.security) is None:
         return {}
     choices = {WifiBand.AUTO: WifiBand.AUTO.label}
     for band in _HEARD_ORDER:

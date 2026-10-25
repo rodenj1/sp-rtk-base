@@ -242,6 +242,18 @@ class TestJoinBandChoices:
         choices = wifi_bands.join_band_choices(BOTH, has_5ghz=True)
         assert next(iter(choices)) is WifiBand.AUTO
 
+    @pytest.mark.parametrize("security", ["WEP", "WPA2 802.1X", "OWE"])
+    def test_no_select_for_security_a_band_join_cant_build(self, security: str) -> None:
+        """Such a network joins on Auto, where NetworkManager works the
+        security out itself."""
+        network = BOTH.model_copy(update={"security": security})
+        assert wifi_bands.join_band_choices(network, has_5ghz=True) == {}
+
+    @pytest.mark.parametrize("security", ["", "WPA2 WPA3", "WPA3"])
+    def test_open_and_wpa_personal_networks_get_the_select(self, security: str) -> None:
+        network = BOTH.model_copy(update={"security": security})
+        assert wifi_bands.join_band_choices(network, has_5ghz=True) != {}
+
 
 def _active(band: WifiBand = WifiBand.AUTO) -> SavedWifiConnection:
     return SavedWifiConnection(name="FarmShop", active=True, band=band)

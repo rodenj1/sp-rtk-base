@@ -235,6 +235,30 @@ _BAND_NM: dict[WifiBand, str] = {
 }
 
 
+BandJoinSecurity = Literal["open", "wpa-psk", "sae"]
+"""How a join with a Wi-Fi band secures the profile it builds (issue #153)."""
+
+_PSK_TOKENS = frozenset({"WPA1", "WPA2", "WPA3"})
+
+
+def band_join_security(security: str) -> BandJoinSecurity | None:
+    """The security a band join builds for a network nmcli's scan lists
+    with SECURITY ``security``; ``None`` for one it can't build.
+
+    Open (``""``) stays open. A WPA personal network joins with WPA-PSK
+    when it offers WPA1 or WPA2 (so WPA2/WPA3 transition networks too),
+    and with SAE when it is WPA3 only. Anything else, such as WEP,
+    802.1X (enterprise) or OWE, is ``None``: a join with a band can't
+    build it, while a join on Auto lets NetworkManager work it out.
+    """
+    tokens = set(security.split())
+    if not tokens:
+        return "open"
+    if not tokens <= _PSK_TOKENS:
+        return None
+    return "wpa-psk" if tokens & {"WPA1", "WPA2"} else "sae"
+
+
 # ---------------------------------------------------------------------------
 # WiFi scan results
 # ---------------------------------------------------------------------------

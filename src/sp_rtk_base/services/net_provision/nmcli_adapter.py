@@ -49,6 +49,7 @@ from sp_rtk_base.models.net_provision_models import (
     SavedWifiConnection,
     WifiBand,
     WifiNetwork,
+    band_join_security,
 )
 
 logger = logging.getLogger(__name__)
@@ -242,21 +243,24 @@ class NmcliAdapter:
             One entry per saved WiFi profile, flagged with whether it is
             the currently active connection.
         """
-        result = self._run(["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"])
+        names = self._saved_wifi_names()
         active = self._active_connection_names()
-        connections: list[SavedWifiConnection] = []
-        for line in result.stdout.splitlines():
-            if not line:
-                continue
-            conn_type, _, name = line.partition(":")
-            if conn_type != _WIRELESS_TYPE or name == self._config.ap_ssid:
-                continue
-            connections.append(
-                SavedWifiConnection(
-                    name=name, active=name in active, band=self._band_of(name)
-                )
+        return [
+            SavedWifiConnection(
+                name=name, active=name in active, band=self._band_of(name)
             )
-        return connections
+            for name in names
+        ]
+
+    def _saved_wifi_names(self) -> list[str]:
+        """The saved Wi-Fi profiles' names, the setup AP's excluded."""
+        result = self._run(["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"])
+        names: list[str] = []
+        for line in result.stdout.splitlines():
+            conn_type, _, name = line.partition(":")
+            if conn_type == _WIRELESS_TYPE and name != self._config.ap_ssid:
+                names.append(name)
+        return names
 
     def _band_of(self, name: str) -> WifiBand:
         """The Wi-Fi band saved in profile ``name``.
@@ -652,20 +656,34 @@ class NmcliAdapter:
     def _connect_with_band(
         self, ssid: str, password: str, *, hidden: bool, band: WifiBand
     ) -> None:
-        """Create a profile locked to ``band``, then bring it up.
+        """Lock the profile for ``ssid`` to ``band``, then bring it up.
 
         ``nmcli device wifi connect`` takes no band, and setting it with
         ``connection modify`` afterwards would make the first join an
-        unlocked one, so the profile is built with ``connection add``.
-        That means naming the security ourselves: a password means
-        WPA-PSK (which also joins WPA2/WPA3 transition networks), none
-        means open. A failed join deletes the new profile again, the
-        way ``nmcli device wifi connect`` does, so a failed join leaves
-        nothing the decision loop would mistake for the saved network.
-        The profile is brought up and deleted by the UUID ``connection
-        add`` reports, so an older profile of the same name is never
-        touched; failing that, by name.
+        unlocked one, so the band goes into the profile before it comes
+        up. That means naming the security ourselves, from what a fresh
+        scan lists for ``ssid`` (see :func:`band_join_security`): one a
+        band join can't build is refused before anything is written.
+        A hidden network, or one the scan doesn't hear, is WPA-PSK with
+        a password and open without.
+
+        A saved profile of that name is modified (its band, and its
+        password if one was typed) rather than duplicated. Otherwise the
+        profile is built with ``connection add``, and a failed join
+        deletes it again, the way ``nmcli device wifi connect`` does, so
+        nothing is left that the decision loop would mistake for the
+        saved network. It is brought up and deleted by the UUID
+        ``connection add`` reports; failing that, by name.
         """
+        security = self._join_security(ssid, password, hidden=hidden)
+        settings = ["802-11-wireless.band", band.nm_value]
+        if hidden:
+            settings += ["802-11-wireless.hidden", "yes"]
+        if security != "open" and password:
+            settings += ["wifi-sec.key-mgmt", security, "wifi-sec.psk", password]
+        if ssid in self._saved_wifi_names():
+            self._join_saved_with_band(ssid, settings)
+            return
         add = [
             "nmcli",
             "connection",
@@ -676,13 +694,8 @@ class NmcliAdapter:
             ssid,
             "ssid",
             ssid,
-            "802-11-wireless.band",
-            band.nm_value,
+            *settings,
         ]
-        if hidden:
-            add += ["802-11-wireless.hidden", "yes"]
-        if password:
-            add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
         added = self._run(add)
         if added.returncode != 0:
             raise WifiConnectError(
@@ -696,3 +709,40 @@ class NmcliAdapter:
             raise WifiConnectError(
                 ssid, result.stderr.strip() or "nmcli connection up failed"
             )
+
+    def _join_security(self, ssid: str, password: str, *, hidden: bool) -> str:
+        """The key management a band join of ``ssid`` uses, or ``"open"``.
+
+        Raises:
+            WifiConnectError: The scan lists ``ssid`` with security a
+                band join can't build.
+        """
+        heard = None if hidden else self._scanned_security(ssid)
+        if heard is None:
+            return "wpa-psk" if password else "open"
+        security = band_join_security(heard)
+        if security is None:
+            raise WifiConnectError(
+                ssid,
+                f"a Wi-Fi band can't be set when joining a {heard} network; "
+                "join it on Auto instead",
+            )
+        return security
+
+    def _scanned_security(self, ssid: str) -> str | None:
+        """What a fresh scan lists as ``ssid``'s security; ``None`` unheard."""
+        for network in self.scan_networks():
+            if network.ssid == ssid:
+                return network.security
+        return None
+
+    def _join_saved_with_band(self, name: str, settings: list[str]) -> None:
+        """Write ``settings`` into saved profile ``name`` and bring it up.
+        A failed join leaves the profile in place: it was saved before."""
+        modify = ["nmcli", "connection", "modify", "id", name, *settings]
+        modified = self._run(modify)
+        if modified.returncode != 0:
+            raise WifiConnectError(
+                name, modified.stderr.strip() or "nmcli connection modify failed"
+            )
+        self.activate_connection(name)

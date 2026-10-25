@@ -858,6 +858,7 @@ def _join_add(
     *,
     password: str | None = "hunter22",
     hidden: bool = False,
+    key_mgmt: str = "wpa-psk",
 ) -> list[str]:
     """The `connection add` argv a join with a Wi-Fi band issues."""
     args = [
@@ -876,7 +877,7 @@ def _join_add(
     if hidden:
         args += ["802-11-wireless.hidden", "yes"]
     if password:
-        args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+        args += ["wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password]
     return args
 
 
@@ -914,14 +915,14 @@ class TestConnectToNetworkWithBand:
         add = _join_add("SiteWiFi", nm_value)
         _added(fake, add, "SiteWiFi")
         _adapter(fake).connect_to_network("SiteWiFi", "hunter22", band=band)
-        assert fake.calls == [add, JOIN_UP]
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add, JOIN_UP]
 
     def test_an_open_network_gets_no_security_settings(self) -> None:
         fake = FakeNmcli()
         add = _join_add("OpenNet", "bg", password="")
         _added(fake, add, "OpenNet")
         _adapter(fake).connect_to_network("OpenNet", "", band=WifiBand.GHZ_2_4)
-        assert fake.calls == [add, JOIN_UP]
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add, JOIN_UP]
 
     def test_a_hidden_network_is_marked_hidden(self) -> None:
         fake = FakeNmcli()
@@ -930,7 +931,8 @@ class TestConnectToNetworkWithBand:
         _adapter(fake).connect_to_network(
             "HiddenNet", "hunter22", hidden=True, band=WifiBand.GHZ_5
         )
-        assert fake.calls == [add, JOIN_UP]
+        # A hidden network isn't in a scan by name, so none is taken.
+        assert fake.calls == [ALL_CONNECTIONS, add, JOIN_UP]
 
     def test_a_failed_join_deletes_the_new_profile_and_raises(self) -> None:
         """A join that fails because of the band is an ordinary join
@@ -951,7 +953,7 @@ class TestConnectToNetworkWithBand:
             )
         assert exc_info.value.ssid == "SiteWiFi"
         assert "No network with SSID" in str(exc_info.value)
-        assert fake.calls == [add, JOIN_UP, JOIN_DELETE]
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add, JOIN_UP, JOIN_DELETE]
 
     def test_a_failed_profile_add_raises_without_bringing_anything_up(
         self,
@@ -964,7 +966,7 @@ class TestConnectToNetworkWithBand:
                 "SiteWiFi", "hunter22", band=WifiBand.GHZ_2_4
             )
         assert exc_info.value.ssid == "SiteWiFi"
-        assert fake.calls == [add]
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add]
 
     def test_an_unreadable_add_output_falls_back_to_the_profile_name(
         self,
@@ -972,7 +974,110 @@ class TestConnectToNetworkWithBand:
         fake = FakeNmcli()
         add = _join_add("SiteWiFi", "bg")
         _adapter(fake).connect_to_network("SiteWiFi", "hunter22", band=WifiBand.GHZ_2_4)
-        assert fake.calls == [add, ["nmcli", "connection", "up", "id", "SiteWiFi"]]
+        assert fake.calls == [
+            SCAN,
+            ALL_CONNECTIONS,
+            add,
+            ["nmcli", "connection", "up", "id", "SiteWiFi"],
+        ]
+
+    @pytest.mark.parametrize(
+        ("security", "key_mgmt"),
+        [
+            ("WPA2", "wpa-psk"),
+            ("WPA1 WPA2", "wpa-psk"),
+            ("WPA2 WPA3", "wpa-psk"),
+            ("WPA3", "sae"),
+        ],
+    )
+    def test_the_security_comes_from_the_scan(
+        self, security: str, key_mgmt: str
+    ) -> None:
+        """A WPA3-only network takes SAE; anything that also offers WPA2
+        (or WPA1) joins with WPA-PSK."""
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=_scan_line("SiteWiFi", 70, security, 5180))
+        add = _join_add("SiteWiFi", "a", key_mgmt=key_mgmt)
+        _added(fake, add, "SiteWiFi")
+        _adapter(fake).connect_to_network("SiteWiFi", "hunter22", band=WifiBand.GHZ_5)
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add, JOIN_UP]
+
+    def test_an_open_network_in_the_scan_ignores_a_typed_password(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout="OpenNet:60:--:2412 MHz\n")
+        add = _join_add("OpenNet", "bg", password="")
+        _added(fake, add, "OpenNet")
+        _adapter(fake).connect_to_network("OpenNet", "oops", band=WifiBand.GHZ_2_4)
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, add, JOIN_UP]
+
+    @pytest.mark.parametrize("security", ["WEP", "WPA2 802.1X", "WPA3 802.1X", "OWE"])
+    def test_security_a_band_join_cant_build_is_refused_untouched(
+        self, security: str
+    ) -> None:
+        """No profile is built with the wrong security: the join fails
+        with a reason, and nothing is added."""
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=_scan_line("Corp", 70, security, 5180))
+        with pytest.raises(WifiConnectError) as exc_info:
+            _adapter(fake).connect_to_network("Corp", "hunter22", band=WifiBand.GHZ_5)
+        assert exc_info.value.ssid == "Corp"
+        assert "Auto" in str(exc_info.value)
+        assert fake.calls == [SCAN]
+
+    def test_an_existing_profile_is_modified_not_duplicated(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(SCAN, stdout=_scan_line("SiteWiFi", 70, "WPA2", 5180))
+        fake.set_response(ALL_CONNECTIONS, stdout="802-11-wireless:SiteWiFi\n")
+        _adapter(fake).connect_to_network("SiteWiFi", "hunter22", band=WifiBand.GHZ_5)
+        assert fake.calls == [
+            SCAN,
+            ALL_CONNECTIONS,
+            [
+                *_set_band("SiteWiFi", "a"),
+                "wifi-sec.key-mgmt",
+                "wpa-psk",
+                "wifi-sec.psk",
+                "hunter22",
+            ],
+            ["nmcli", "connection", "up", "id", "SiteWiFi"],
+        ]
+
+    def test_an_existing_profile_without_a_password_keeps_its_secret(
+        self,
+    ) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout="802-11-wireless:SiteWiFi\n")
+        _adapter(fake).connect_to_network("SiteWiFi", "", band=WifiBand.GHZ_2_4)
+        assert fake.calls == [
+            SCAN,
+            ALL_CONNECTIONS,
+            _set_band("SiteWiFi", "bg"),
+            ["nmcli", "connection", "up", "id", "SiteWiFi"],
+        ]
+
+    def test_an_existing_profile_that_fails_to_come_up_is_kept(self) -> None:
+        """It was the operator's saved network before this join; a
+        failed join mustn't delete it."""
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout="802-11-wireless:SiteWiFi\n")
+        fake.set_response(
+            ["nmcli", "connection", "up", "id", "SiteWiFi"],
+            stderr="Error: Connection activation failed.",
+            returncode=4,
+        )
+        with pytest.raises(WifiConnectError):
+            _adapter(fake).connect_to_network("SiteWiFi", "", band=WifiBand.GHZ_2_4)
+        assert not any("delete" in call for call in fake.calls)
+
+    def test_a_failed_modify_of_an_existing_profile_raises(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout="802-11-wireless:SiteWiFi\n")
+        fake.set_response(
+            _set_band("SiteWiFi", "bg"), stderr="Error: bad.", returncode=2
+        )
+        with pytest.raises(WifiConnectError):
+            _adapter(fake).connect_to_network("SiteWiFi", "", band=WifiBand.GHZ_2_4)
+        assert fake.calls == [SCAN, ALL_CONNECTIONS, _set_band("SiteWiFi", "bg")]
 
 
 # ---------------------------------------------------------------------------

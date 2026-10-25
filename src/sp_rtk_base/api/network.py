@@ -5,17 +5,25 @@ No authentication, consistent with the rest of the console.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from sp_rtk_base.models.api_models import (
     NetworkActionResponse,
+    NetworkBandChangeRequest,
+    NetworkCapabilitiesResponse,
     NetworkConnectRequest,
     NetworkConnectResponse,
     NetworkFallbackInfoResponse,
     NetworkStatusResponse,
     NetworkUplinkResponse,
 )
-from sp_rtk_base.models.net_provision_models import SavedWifiConnection, WifiNetwork
+from sp_rtk_base.models.net_provision_models import (
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeSaved,
+    SavedWifiConnection,
+    WifiNetwork,
+)
 from sp_rtk_base.services import (
     get_config_service,
     get_network_link_service,
@@ -24,6 +32,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
+    BandChangeInProgressError,
     NetworkNotConfiguredError,
     NetworkService,
 )
@@ -78,6 +87,20 @@ async def scan_networks(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/capabilities", response_model=NetworkCapabilitiesResponse)
+async def get_network_capabilities(
+    svc: NetworkService = Depends(get_network_service),
+) -> NetworkCapabilitiesResponse:
+    """Whether the Wi-Fi adapter has 5 GHz (``null`` when unknown)."""
+    try:
+        has_5ghz = await svc.has_5ghz()
+    except NetworkNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return NetworkCapabilitiesResponse(has_5ghz=has_5ghz)
+
+
 @router.get("/fallback-info", response_model=NetworkFallbackInfoResponse)
 async def get_fallback_info(
     svc: NetworkService = Depends(get_network_service),
@@ -109,7 +132,10 @@ async def connect_network(
     """
     try:
         await svc.connect_to_network(
-            request.ssid, request.password, hidden=request.hidden
+            request.ssid,
+            request.password,
+            hidden=request.hidden,
+            band=request.band,
         )
     except NetworkNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -134,6 +160,43 @@ async def list_saved_networks(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.put(
+    "/saved/{name}/band",
+    response_model=BandChangeSaved | BandChangePending,
+    responses={
+        202: {"description": "Accepted: the active network reconnects on it"},
+        422: {"description": "Refused: the scan doesn't hear it on that band"},
+    },
+)
+async def change_band(
+    name: str,
+    request: NetworkBandChangeRequest,
+    response: Response,
+    svc: NetworkService = Depends(get_network_service),
+) -> BandChangeSaved | BandChangePending:
+    """Lock a saved network to a Wi-Fi band, or set it back to Auto.
+
+    200 with Saved for a network that isn't active: the band is in its
+    profile by the time this returns. 202 with Pending for the active
+    network: the reconnect runs in the background, fire-and-acknowledge,
+    and the saved list later shows if it was undone. 422 when Refused, with
+    the Refused outcome as ``detail`` (an object, where a body validation
+    error's is a list). 409 means there's no provisioning config, or
+    another band change is still being applied.
+    """
+    try:
+        reply = await svc.change_band(name, request.band)
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if isinstance(reply, BandChangeRefused):
+        raise HTTPException(status_code=422, detail=reply.model_dump(mode="json"))
+    if isinstance(reply, BandChangePending):
+        response.status_code = 202
+    return reply
+
+
 @router.post(
     "/saved/{name}/activate", response_model=NetworkActionResponse, status_code=202
 )
@@ -146,12 +209,13 @@ async def switch_network(
     Returns as soon as NetworkManager has been instructed to activate
     ``name``, not once the device is confirmed connected — see
     :meth:`NetworkService.switch_to_network`. 409 means there's no
-    provisioning config; it does not mean the switch itself failed,
-    since that outcome isn't known yet.
+    provisioning config, or a band change is still being applied; it
+    does not mean the switch itself failed, since that outcome isn't
+    known yet.
     """
     try:
         await svc.switch_to_network(name)
-    except NetworkNotConfiguredError as exc:
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -175,7 +239,7 @@ async def forget_network(
     """
     try:
         await svc.forget_network(name)
-    except NetworkNotConfiguredError as exc:
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

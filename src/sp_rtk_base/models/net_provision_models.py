@@ -13,6 +13,8 @@ function of observable state.
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -119,6 +121,15 @@ class NetworkState(BaseModel):
             "nmcli round trip alongside this one."
         ),
     )
+    saved_wifi_band: WifiBand | None = Field(
+        default=None,
+        description=(
+            "The saved WiFi profile's Wi-Fi band, or None without a saved "
+            "profile. Bookkeeping only, like saved_wifi_name: the "
+            "supervisor keys its connect-failure count on the name and "
+            "the band, so changing the band resets it (issue #152)."
+        ),
+    )
     consecutive_connect_failures: int = Field(
         default=0,
         ge=0,
@@ -160,6 +171,96 @@ class NetworkState(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Wi-Fi band (spec rodenj1/rtk_development#147)
+# ---------------------------------------------------------------------------
+
+
+class WifiBand(str, enum.Enum):
+    """Which radio band the base may use to join one saved Wi-Fi network.
+
+    A hard lock, not a hint (see ``CONTEXT.md``).  This is the only place
+    that knows NetworkManager's ``802-11-wireless.band`` spelling
+    (:attr:`nm_value`, :meth:`from_nm`), and the only frequency-to-band
+    rule (:meth:`from_frequency`).
+    """
+
+    AUTO = "auto"
+    GHZ_2_4 = "2.4ghz"
+    GHZ_5 = "5ghz"
+
+    @property
+    def label(self) -> str:
+        """The glossary word the console shows: Auto, 2.4 GHz or 5 GHz."""
+        return _BAND_LABEL[self]
+
+    @property
+    def nm_value(self) -> str:
+        """NetworkManager's ``802-11-wireless.band`` value: empty, bg or a."""
+        return _BAND_NM[self]
+
+    @classmethod
+    def from_nm(cls, value: str) -> WifiBand:
+        """The band for an ``802-11-wireless.band`` value read from nmcli.
+
+        An unset property reads as empty (``-g``) or ``--`` (``-t``),
+        which is Auto.  Anything else unknown raises :class:`ValueError`.
+        """
+        value = value.strip()
+        if value in ("", "--"):
+            return cls.AUTO
+        for band, nm in _BAND_NM.items():
+            if nm == value:
+                return band
+        raise ValueError(f"unknown 802-11-wireless.band value: {value!r}")
+
+    @classmethod
+    def from_frequency(cls, mhz: int) -> WifiBand | None:
+        """The band a channel frequency is in: 2401-2495 MHz is 2.4 GHz,
+        5150-5949 MHz is 5 GHz, and anything else is ``None``."""
+        if 2401 <= mhz <= 2495:
+            return cls.GHZ_2_4
+        if 5150 <= mhz <= 5949:
+            return cls.GHZ_5
+        return None
+
+
+_BAND_LABEL: dict[WifiBand, str] = {
+    WifiBand.AUTO: "Auto",
+    WifiBand.GHZ_2_4: "2.4 GHz",
+    WifiBand.GHZ_5: "5 GHz",
+}
+_BAND_NM: dict[WifiBand, str] = {
+    WifiBand.AUTO: "",
+    WifiBand.GHZ_2_4: "bg",
+    WifiBand.GHZ_5: "a",
+}
+
+
+BandJoinSecurity = Literal["open", "wpa-psk", "sae"]
+"""How a join with a Wi-Fi band secures the profile it builds (issue #153)."""
+
+_PSK_TOKENS = frozenset({"WPA1", "WPA2", "WPA3"})
+
+
+def band_join_security(security: str) -> BandJoinSecurity | None:
+    """The security a band join builds for a network nmcli's scan lists
+    with SECURITY ``security``; ``None`` for one it can't build.
+
+    Open (``""``) stays open. A WPA personal network joins with WPA-PSK
+    when it offers WPA1 or WPA2 (so WPA2/WPA3 transition networks too),
+    and with SAE when it is WPA3 only. Anything else, such as WEP,
+    802.1X (enterprise) or OWE, is ``None``: a join with a band can't
+    build it, while a join on Auto lets NetworkManager work it out.
+    """
+    tokens = set(security.split())
+    if not tokens:
+        return "open"
+    if not tokens <= _PSK_TOKENS:
+        return None
+    return "wpa-psk" if tokens & {"WPA1", "WPA2"} else "sae"
+
+
+# ---------------------------------------------------------------------------
 # WiFi scan results
 # ---------------------------------------------------------------------------
 
@@ -184,11 +285,103 @@ class WifiNetwork(BaseModel):
             "rather than relying on callers to know that invariant."
         ),
     )
+    band_signals: dict[WifiBand, int] = Field(
+        default_factory=lambda: dict[WifiBand, int](),
+        description=(
+            "The strongest signal percent heard on each Wi-Fi band, from "
+            "each BSS's frequency. A band the network isn't heard on is "
+            "absent, so is Auto. ``signal`` stays the strongest overall."
+        ),
+    )
+
+
+def band_signals_of(
+    ssid: str, scan: Iterable[WifiNetwork]
+) -> dict[WifiBand, int] | None:
+    """The bands ``scan`` hears ``ssid`` on, each with its strongest
+    signal; ``None`` when it isn't heard at all. Empty when it's heard
+    only outside both bands, such as on 6 GHz."""
+    for network in scan:
+        if network.ssid == ssid:
+            return network.band_signals
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Console network operations (issue #21)
 # ---------------------------------------------------------------------------
+
+
+class BandChangeSaved(BaseModel):
+    """A band change to a saved network that isn't active: the band was
+    written to its profile, with no reconnect and no scan check."""
+
+    outcome: Literal["saved"] = "saved"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band now saved in its profile")
+
+
+class BandChangeRefused(BaseModel):
+    """A band change to the active network that a fresh scan ruled out: the
+    network isn't heard on that band, so nothing was written and the link
+    was left alone."""
+
+    outcome: Literal["refused"] = "refused"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band that was asked for")
+    reason: str = Field(description="Why the change was refused, for the operator")
+
+
+class BandChangePending(BaseModel):
+    """A band change to the active network that passed the scan check.
+
+    Not an outcome yet: nothing has been written. Applying it reconnects
+    the link (``NmcliAdapter.apply_band_change``), so the console runs that
+    in the background and acknowledges this straight away.
+    """
+
+    outcome: Literal["pending"] = "pending"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band about to be applied")
+
+
+class BandChangeApplied(BaseModel):
+    """A band change to the active network that took: the band was written
+    and the network came back up on it."""
+
+    outcome: Literal["applied"] = "applied"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band now in use")
+
+
+class BandChangeReverted(BaseModel):
+    """A band change to the active network that didn't take: the network
+    couldn't come up on the new band, so the previous band was written back
+    and the network brought up on it again.
+
+    Still Reverted when that second reconnect fails too; the decision loop
+    then recovers the base.
+    """
+
+    outcome: Literal["reverted"] = "reverted"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band put back")
+    tried: WifiBand = Field(description="The Wi-Fi band that was tried")
+
+
+# What a band change came to. Each outcome is its own model, told apart by
+# its ``outcome`` literal.
+BandChangeOutcome = Annotated[
+    BandChangeSaved | BandChangeRefused | BandChangeApplied | BandChangeReverted,
+    Field(discriminator="outcome"),
+]
+
+# The immediate answer to a band change request: Saved or Refused, which are
+# final, or Pending, whose reconnect is still to run.
+BandChangeReply = Annotated[
+    BandChangeSaved | BandChangeRefused | BandChangePending,
+    Field(discriminator="outcome"),
+]
 
 
 class SavedWifiConnection(BaseModel):
@@ -200,12 +393,33 @@ class SavedWifiConnection(BaseModel):
 
     name: str = Field(
         description=(
-            "The nmcli connection id, which also serves as the SSID under "
-            "this codebase's existing convention (see "
-            "NmcliAdapter._saved_wifi_connection_name)."
+            "The nmcli connection id. Not always the SSID: netplan, for one, "
+            "names its profiles netplan-<device>-<ssid>."
+        )
+    )
+    ssid: str = Field(
+        description=(
+            "The network's SSID, read from its profile's "
+            "802-11-wireless.ssid; the profile name when that can't be read. "
+            "Scan results are matched on this, never on the name."
         )
     )
     active: bool = Field(description="True if this is the currently active connection")
+    band: WifiBand = Field(
+        default=WifiBand.AUTO,
+        description=(
+            "The Wi-Fi band this network is locked to, read from its "
+            "profile's 802-11-wireless.band. Auto means either band."
+        ),
+    )
+    last_band_change: BandChangeReverted | None = Field(
+        default=None,
+        description=(
+            "The last band change to this network, when it was Reverted: "
+            "the base couldn't join on the band tried and put the old one "
+            "back. Kept in memory until the next band change to it."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

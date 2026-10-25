@@ -18,8 +18,13 @@ from collections.abc import Callable, Coroutine
 from typing import NamedTuple
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReply,
+    BandChangeReverted,
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.services.net_provision.config_loader import (
@@ -51,6 +56,15 @@ class NetworkNotConfiguredError(RuntimeError):
     """
 
 
+class BandChangeInProgressError(RuntimeError):
+    """A Wi-Fi band change is still being applied to the active network.
+
+    Raised by a band change, switch or forget asked for in the meantime:
+    each would fight the reconnect for the radio. Raised synchronously,
+    before anything is scheduled.
+    """
+
+
 class NetworkService:
     """Console-facing wrapper around :class:`NmcliAdapter`.
 
@@ -72,12 +86,21 @@ class NetworkService:
         self._adapter_factory = adapter_factory
         self._adapter: NmcliAdapter | None = None
         self._config: NetProvisionConfig | None = None
+        self._has_5ghz: bool | None = None
+        # The last Reverted band change per saved network, so the console can
+        # tell the operator after they rejoin. Memory only: a restart forgets
+        # it, which was accepted (#151).
+        self._last_reverted_band_change: dict[str, BandChangeReverted] = {}
+        # Set from a band change being accepted until its reconnect (if any)
+        # finishes, so only one runs at a time.
+        self._band_change_running = False
         # Exposed only so tests can synchronize on a background connect/
         # switch/forget attempt — production callers never need to await
         # these, that's the whole point of fire-and-acknowledge.
         self.last_connect_task: asyncio.Task[None] | None = None
         self.last_switch_task: asyncio.Task[None] | None = None
         self.last_forget_task: asyncio.Task[None] | None = None
+        self.last_band_change_task: asyncio.Task[None] | None = None
 
     def _get_adapter(self) -> NmcliAdapter:
         if self._adapter is None:
@@ -111,6 +134,21 @@ class NetworkService:
         adapter = self._get_adapter()
         return await asyncio.to_thread(adapter.scan_networks)
 
+    async def has_5ghz(self) -> bool | None:
+        """Whether the Wi-Fi adapter has 5 GHz; ``None`` when unknown.
+
+        The hardware, not the regulatory country (see
+        :meth:`NmcliAdapter.has_5ghz`). A definite answer is read once
+        and kept; unknown is asked again next time.
+
+        Raises:
+            NetworkNotConfiguredError: No net-provisioning config exists.
+        """
+        adapter = self._get_adapter()
+        if self._has_5ghz is None:
+            self._has_5ghz = await asyncio.to_thread(adapter.has_5ghz)
+        return self._has_5ghz
+
     async def get_ap_fallback_info(self) -> ApFallbackInfo:
         """AP SSID + fallback window, for the console's pre-apply warning.
 
@@ -125,7 +163,12 @@ class NetworkService:
         )
 
     async def connect_to_network(
-        self, ssid: str, password: str, *, hidden: bool = False
+        self,
+        ssid: str,
+        password: str,
+        *,
+        hidden: bool = False,
+        band: WifiBand = WifiBand.AUTO,
     ) -> None:
         """Join a WiFi network — fire-and-acknowledge (issue #23).
 
@@ -141,6 +184,8 @@ class NetworkService:
             hidden: The SSID is not broadcast, so nmcli must attempt
                 the association blind rather than matching a scan
                 result.
+            band: The Wi-Fi band the new network is locked to from its
+                first join (issue #153); Auto leaves it unlocked.
 
         Raises:
             NetworkNotConfiguredError: No net-provisioning config
@@ -152,7 +197,11 @@ class NetworkService:
         adapter = self._get_adapter()
         self.last_connect_task = self._run_in_background(
             asyncio.to_thread(
-                adapter.connect_to_network, ssid, password, hidden=hidden
+                adapter.connect_to_network,
+                ssid,
+                password,
+                hidden=hidden,
+                band=band,
             ),
             name="sp_rtk_base.network_connect",
             action="WiFi connect",
@@ -165,7 +214,77 @@ class NetworkService:
             NetworkNotConfiguredError: No net-provisioning config exists.
         """
         adapter = self._get_adapter()
-        return await asyncio.to_thread(adapter.list_saved_connections)
+        saved = await asyncio.to_thread(adapter.list_saved_connections)
+        return [
+            conn.model_copy(update={"last_band_change": reverted})
+            if (reverted := self._last_reverted_band_change.get(conn.name)) is not None
+            else conn
+            for conn in saved
+        ]
+
+    async def change_band(self, name: str, band: WifiBand) -> BandChangeReply:
+        """Lock a saved network to a Wi-Fi band, or set it back to Auto.
+
+        For a network that isn't active this completes before returning,
+        with Saved: only the profile is written, so the link carrying this
+        request is never touched.
+
+        For the active network the scan check runs first, so a Refused
+        comes back before the link is touched. Otherwise the answer is
+        Pending and the reconnect runs in the background —
+        fire-and-acknowledge, like :meth:`switch_to_network` — since it
+        drops the very link carrying this request.
+
+        Raises:
+            NetworkNotConfiguredError: No net-provisioning config exists.
+            BandChangeInProgressError: Another band change is still
+                being applied.
+            NmcliError: The adapter couldn't make the change.
+        """
+        adapter = self._get_adapter()
+        self._refuse_during_band_change()
+        self._band_change_running = True
+        try:
+            reply = await asyncio.to_thread(adapter.change_band, name, band)
+        except BaseException:
+            self._band_change_running = False
+            raise
+        if not isinstance(reply, BandChangeRefused):
+            self._last_reverted_band_change.pop(name, None)
+        if not isinstance(reply, BandChangePending):
+            self._band_change_running = False
+            return reply
+        task = self._run_in_background(
+            self._apply_band_change(adapter, name, band),
+            name="sp_rtk_base.network_band_change",
+            action="Wi-Fi band change",
+        )
+        task.add_done_callback(lambda _task: self._end_band_change())
+        self.last_band_change_task = task
+        return reply
+
+    def _refuse_during_band_change(self) -> None:
+        if self._band_change_running:
+            raise BandChangeInProgressError(
+                "A Wi-Fi band change is still being applied; try again once "
+                "it has finished."
+            )
+
+    def _end_band_change(self) -> None:
+        self._band_change_running = False
+
+    async def _apply_band_change(
+        self, adapter: NmcliAdapter, name: str, band: WifiBand
+    ) -> None:
+        outcome = await asyncio.to_thread(adapter.apply_band_change, name, band)
+        if isinstance(outcome, BandChangeReverted):
+            logger.warning(
+                "Band change of %r to %s was undone; it's back on %s",
+                name,
+                outcome.tried.label,
+                outcome.band.label,
+            )
+            self._last_reverted_band_change[name] = outcome
 
     async def switch_to_network(self, name: str) -> None:
         """Activate an already-saved WiFi profile — fire-and-acknowledge (issue #24).
@@ -180,8 +299,11 @@ class NetworkService:
             NetworkNotConfiguredError: No net-provisioning config
                 exists. Raised synchronously, same rationale as
                 connect_to_network.
+            BandChangeInProgressError: A band change is still being
+                applied.
         """
         adapter = self._get_adapter()
+        self._refuse_during_band_change()
         self.last_switch_task = self._run_in_background(
             asyncio.to_thread(adapter.activate_connection, name),
             name="sp_rtk_base.network_switch",
@@ -201,13 +323,21 @@ class NetworkService:
             NetworkNotConfiguredError: No net-provisioning config
                 exists. Raised synchronously, same rationale as
                 connect_to_network.
+            BandChangeInProgressError: A band change is still being
+                applied.
         """
         adapter = self._get_adapter()
+        self._refuse_during_band_change()
         self.last_forget_task = self._run_in_background(
-            asyncio.to_thread(adapter.forget_connection, name),
+            self._forget(adapter, name),
             name="sp_rtk_base.network_forget",
             action="WiFi forget",
         )
+
+    async def _forget(self, adapter: NmcliAdapter, name: str) -> None:
+        await asyncio.to_thread(adapter.forget_connection, name)
+        # A network saved again under the same name starts with no note.
+        self._last_reverted_band_change.pop(name, None)
 
     @staticmethod
     def _run_in_background(

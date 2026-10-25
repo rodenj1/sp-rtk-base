@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,8 +13,13 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReverted,
+    BandChangeSaved,
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.models.network_link_models import (
@@ -35,6 +41,7 @@ from sp_rtk_base.services.net_provision.nmcli_adapter import NmcliAdapter
 from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
     ApFallbackInfo,
+    BandChangeInProgressError,
     NetworkNotConfiguredError,
     NetworkService,
 )
@@ -135,6 +142,7 @@ def mock_network_service() -> NetworkService:
     svc = MagicMock(spec=NetworkService)
     svc.is_configured = AsyncMock(return_value=True)
     svc.scan_networks = AsyncMock(return_value=[])
+    svc.has_5ghz = AsyncMock(return_value=True)
     svc.get_ap_fallback_info = AsyncMock(
         return_value=ApFallbackInfo(
             ap_ssid="sp-rtk-base-setup", fallback_window_seconds=300.0
@@ -144,6 +152,9 @@ def mock_network_service() -> NetworkService:
     svc.list_saved_networks = AsyncMock(return_value=[])
     svc.switch_to_network = AsyncMock(return_value=None)
     svc.forget_network = AsyncMock(return_value=None)
+    svc.change_band = AsyncMock(
+        return_value=BandChangeSaved(name="Barn-AP", band=WifiBand.GHZ_2_4)
+    )
     return svc
 
 
@@ -318,6 +329,31 @@ class TestScanNetworks:
         assert data[0]["signal"] == 80
         assert data[1]["security"] == ""
 
+    def test_returns_the_signal_on_each_band(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.scan_networks = AsyncMock(
+            return_value=[
+                WifiNetwork(
+                    ssid="FarmShop",
+                    signal=82,
+                    security="WPA2",
+                    band_signals={WifiBand.GHZ_2_4: 82, WifiBand.GHZ_5: 41},
+                ),
+                WifiNetwork(
+                    ssid="Neighbour-5G",
+                    signal=55,
+                    security="WPA2",
+                    band_signals={WifiBand.GHZ_5: 55},
+                ),
+            ],
+        )
+        resp = client.get("/api/network/scan")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data[0]["band_signals"] == {"2.4ghz": 82, "5ghz": 41}
+        assert data[1]["band_signals"] == {"5ghz": 55}
+
     def test_empty_scan(
         self, client: TestClient, mock_network_service: MagicMock
     ) -> None:
@@ -343,6 +379,41 @@ class TestScanNetworks:
         )
         resp = client.get("/api/network/scan")
         assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# GET /api/network/capabilities
+# ---------------------------------------------------------------------------
+
+
+class TestGetCapabilities:
+    @pytest.mark.parametrize("answer", [True, False, None])
+    def test_reports_whether_the_adapter_has_5ghz(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        answer: bool | None,
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(return_value=answer)
+        resp = client.get("/api/network/capabilities")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_5ghz": answer}
+
+    def test_not_configured_returns_409(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(
+            side_effect=NetworkNotConfiguredError("no config file"),
+        )
+        assert client.get("/api/network/capabilities").status_code == 409
+
+    def test_unexpected_error_returns_502(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(
+            side_effect=RuntimeError("nmcli exploded"),
+        )
+        assert client.get("/api/network/capabilities").status_code == 502
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +473,7 @@ class TestConnectNetwork:
         assert data["status"] == "accepted"
         assert "SiteWiFi" in data["message"]
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
     def test_hidden_network_is_forwarded(
@@ -414,7 +485,7 @@ class TestConnectNetwork:
         )
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "HiddenNet", "hunter22", hidden=True
+            "HiddenNet", "hunter22", hidden=True, band=WifiBand.AUTO
         )
 
     def test_open_network_defaults_password_to_empty(
@@ -423,8 +494,43 @@ class TestConnectNetwork:
         resp = client.post("/api/network/connect", json={"ssid": "OpenNet"})
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "OpenNet", "", hidden=False
+            "OpenNet", "", hidden=False, band=WifiBand.AUTO
         )
+
+    @pytest.mark.parametrize(
+        ("band", "expected"),
+        [
+            ("2.4ghz", WifiBand.GHZ_2_4),
+            ("5ghz", WifiBand.GHZ_5),
+            ("auto", WifiBand.AUTO),
+        ],
+    )
+    def test_the_wifi_band_is_forwarded(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        band: str,
+        expected: WifiBand,
+    ) -> None:
+        """issue #153: the join can lock the new network to a band."""
+        resp = client.post(
+            "/api/network/connect",
+            json={"ssid": "SiteWiFi", "password": "hunter22", "band": band},
+        )
+        assert resp.status_code == 202
+        mock_network_service.connect_to_network.assert_awaited_once_with(
+            "SiteWiFi", "hunter22", hidden=False, band=expected
+        )
+
+    def test_an_unknown_wifi_band_is_rejected(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.post(
+            "/api/network/connect",
+            json={"ssid": "SiteWiFi", "password": "hunter22", "band": "6ghz"},
+        )
+        assert resp.status_code == 422
+        mock_network_service.connect_to_network.assert_not_awaited()
 
     def test_not_configured_returns_409(
         self, client: TestClient, mock_network_service: MagicMock
@@ -466,7 +572,7 @@ class TestConnectNetwork:
         )
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
 
@@ -481,8 +587,8 @@ class TestListSavedNetworks:
     ) -> None:
         mock_network_service.list_saved_networks = AsyncMock(
             return_value=[
-                SavedWifiConnection(name="SiteWiFi", active=True),
-                SavedWifiConnection(name="OldWiFi", active=False),
+                SavedWifiConnection(name="SiteWiFi", ssid="SiteWiFi", active=True),
+                SavedWifiConnection(name="OldWiFi", ssid="OldWiFi", active=False),
             ],
         )
         resp = client.get("/api/network/saved")
@@ -492,6 +598,51 @@ class TestListSavedNetworks:
         assert data[0]["name"] == "SiteWiFi"
         assert data[0]["active"] is True
         assert data[1]["active"] is False
+
+    def test_a_reverted_band_change_comes_with_its_network(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.list_saved_networks = AsyncMock(
+            return_value=[
+                SavedWifiConnection(
+                    name="FarmShop",
+                    ssid="FarmShop",
+                    active=True,
+                    last_band_change=BandChangeReverted(
+                        name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+                    ),
+                ),
+                SavedWifiConnection(name="Barn-AP", ssid="Barn-AP", active=False),
+            ],
+        )
+        data = client.get("/api/network/saved").json()
+        assert data[0]["last_band_change"] == {
+            "outcome": "reverted",
+            "name": "FarmShop",
+            "band": "auto",
+            "tried": "5ghz",
+        }
+        assert data[1]["last_band_change"] is None
+
+    def test_each_saved_network_carries_its_band(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.list_saved_networks = AsyncMock(
+            return_value=[
+                SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
+                SavedWifiConnection(
+                    name="Barn-AP", ssid="Barn-AP", active=False, band=WifiBand.GHZ_2_4
+                ),
+                SavedWifiConnection(
+                    name="Office-5G",
+                    ssid="Office-5G",
+                    active=False,
+                    band=WifiBand.GHZ_5,
+                ),
+            ],
+        )
+        resp = client.get("/api/network/saved")
+        assert [c["band"] for c in resp.json()] == ["auto", "2.4ghz", "5ghz"]
 
     def test_empty_list(
         self, client: TestClient, mock_network_service: MagicMock
@@ -517,6 +668,86 @@ class TestListSavedNetworks:
             side_effect=RuntimeError("nmcli exploded"),
         )
         resp = client.get("/api/network/saved")
+        assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/network/saved/{name}/band
+# ---------------------------------------------------------------------------
+
+
+class TestChangeBand:
+    def test_a_network_that_isnt_active_returns_200_with_saved(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "2.4ghz"})
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "outcome": "saved",
+            "name": "Barn-AP",
+            "band": "2.4ghz",
+        }
+        mock_network_service.change_band.assert_awaited_once_with(
+            "Barn-AP", WifiBand.GHZ_2_4
+        )
+
+    def test_the_active_network_returns_202_once_accepted(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            return_value=BandChangePending(name="FarmShop", band=WifiBand.GHZ_2_4)
+        )
+        resp = client.put("/api/network/saved/FarmShop/band", json={"band": "2.4ghz"})
+        assert resp.status_code == 202
+        assert resp.json() == {
+            "outcome": "pending",
+            "name": "FarmShop",
+            "band": "2.4ghz",
+        }
+
+    def test_a_refused_change_returns_422_with_the_reason(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        """Told apart from a body validation error, whose detail is a list."""
+        mock_network_service.change_band = AsyncMock(
+            return_value=BandChangeRefused(
+                name="FarmShop", band=WifiBand.GHZ_5, reason="not heard on 5 GHz"
+            )
+        )
+        resp = client.put("/api/network/saved/FarmShop/band", json={"band": "5ghz"})
+        assert resp.status_code == 422
+        assert resp.json() == {
+            "detail": {
+                "outcome": "refused",
+                "name": "FarmShop",
+                "band": "5ghz",
+                "reason": "not heard on 5 GHz",
+            }
+        }
+
+    def test_an_unknown_band_is_rejected_before_the_service(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "6ghz"})
+        assert resp.status_code == 422
+        mock_network_service.change_band.assert_not_awaited()
+
+    def test_not_configured_returns_409(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            side_effect=NetworkNotConfiguredError("no config file"),
+        )
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "auto"})
+        assert resp.status_code == 409
+
+    def test_unexpected_error_returns_502(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            side_effect=RuntimeError("nmcli exploded"),
+        )
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "5ghz"})
         assert resp.status_code == 502
 
 
@@ -600,6 +831,43 @@ class TestForgetNetwork:
         assert resp.status_code == 502
 
 
+class TestWhileABandChangeApplies:
+    """A band change, switch or forget asked for while a band change is
+    still applying is a conflict, not an nmcli fault."""
+
+    @pytest.mark.parametrize(
+        ("method", "call"),
+        [
+            (
+                "change_band",
+                lambda c: c.put(
+                    "/api/network/saved/Barn-AP/band", json={"band": "5ghz"}
+                ),
+            ),
+            (
+                "switch_to_network",
+                lambda c: c.post("/api/network/saved/Barn-AP/activate"),
+            ),
+            ("forget_network", lambda c: c.delete("/api/network/saved/Barn-AP")),
+        ],
+    )
+    def test_returns_409(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        method: str,
+        call: Callable[[TestClient], Any],
+    ) -> None:
+        setattr(
+            mock_network_service,
+            method,
+            AsyncMock(side_effect=BandChangeInProgressError("still applying")),
+        )
+        resp = call(client)
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "still applying"
+
+
 # ---------------------------------------------------------------------------
 # managed-host mode disables the whole /api/network/* surface (issue #28)
 # ---------------------------------------------------------------------------
@@ -625,6 +893,9 @@ class TestManagedHostModeDisablesNetworkApi:
     def test_scan_is_404(self, client: TestClient) -> None:
         assert client.get("/api/network/scan").status_code == 404
 
+    def test_capabilities_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/capabilities").status_code == 404
+
     def test_fallback_info_is_404(self, client: TestClient) -> None:
         assert client.get("/api/network/fallback-info").status_code == 404
 
@@ -643,6 +914,10 @@ class TestManagedHostModeDisablesNetworkApi:
 
     def test_forget_is_404(self, client: TestClient) -> None:
         assert client.delete("/api/network/saved/SiteWiFi").status_code == 404
+
+    def test_band_change_is_404(self, client: TestClient) -> None:
+        resp = client.put("/api/network/saved/SiteWiFi/band", json={"band": "auto"})
+        assert resp.status_code == 404
 
     def test_network_service_is_never_reached(
         self, client: TestClient, mock_network_service: MagicMock

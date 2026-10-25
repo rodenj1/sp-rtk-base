@@ -207,7 +207,9 @@ def test_the_wifi_network_shows_the_ssid_with_the_bssid_beneath() -> None:
     [
         (2412, Shown("2.4 GHz", sub="2412 MHz")),
         (5745, Shown("5 GHz", sub="5745 MHz")),
-        (5955, Shown("6 GHz", sub="5955 MHz")),
+        (5949, Shown("5 GHz", sub="5949 MHz")),
+        # Outside 2.4 and 5 GHz (6 GHz is out of scope): no band, MHz kept.
+        (5955, Shown("—", sub="5955 MHz")),
         (None, Shown("—", sub="—")),
     ],
 )

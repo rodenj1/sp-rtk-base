@@ -251,11 +251,12 @@ def running_server(
     *,
     network_links_file: Path | None = None,
     deployment_mode: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> Iterator[str]:
     """An SP-Base server in a subprocess, until the block ends. A module
     whose tests leave state the rest can't share (e.g. Event log entries),
     or that needs ``deployment_mode="appliance"`` (the Network page),
-    starts its own with this."""
+    starts its own with this. ``extra_env`` is set last, over the rest."""
     port = _find_free_port()
     base_url = f"http://127.0.0.1:{port}"
 
@@ -308,6 +309,7 @@ def running_server(
     # subprocess, NOT as a pytest fixture, so strip them before
     # spawning so NiceGUI binds to our configured port instead of
     # raising ``KeyError: 'NICEGUI_SCREEN_TEST_PORT'``.
+    env.update(extra_env or {})
     for var in (
         "PYTEST_CURRENT_TEST",
         "PYTEST_VERSION",

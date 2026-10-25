@@ -17,13 +17,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeApplied,
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReverted,
+    BandChangeSaved,
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
+from sp_rtk_base.services.net_provision import NmcliError
 from sp_rtk_base.services.net_provision.config_loader import NetProvisionConfigError
 from sp_rtk_base.services.net_provision.nmcli_adapter import NmcliAdapter
 from sp_rtk_base.services.network_service import (
+    BandChangeInProgressError,
     NetworkNotConfiguredError,
     NetworkService,
 )
@@ -102,6 +110,40 @@ class TestScanNetworks:
             await svc.scan_networks()
 
 
+class TestHas5Ghz:
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("answer", [True, False, None])
+    async def test_returns_the_adapter_answer(self, answer: bool | None) -> None:
+        adapter = _fake_adapter()
+        adapter.has_5ghz.return_value = answer  # type: ignore[attr-defined]
+        assert await _service_with_adapter(adapter).has_5ghz() is answer
+
+    @pytest.mark.asyncio()
+    async def test_a_definite_answer_is_read_once(self) -> None:
+        """The hardware doesn't change while the app runs, and the Network
+        page asks on every visit."""
+        adapter = _fake_adapter()
+        adapter.has_5ghz.return_value = True  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        await svc.has_5ghz()
+        assert await svc.has_5ghz() is True
+        adapter.has_5ghz.assert_called_once_with()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_unknown_is_asked_again(self) -> None:
+        """Unknown may be a transient nmcli failure, so it isn't kept."""
+        adapter = _fake_adapter()
+        adapter.has_5ghz.side_effect = [None, True]  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        assert await svc.has_5ghz() is None
+        assert await svc.has_5ghz() is True
+
+    @pytest.mark.asyncio()
+    async def test_raises_not_configured_when_config_is_missing(self) -> None:
+        with pytest.raises(NetworkNotConfiguredError):
+            await _service_unconfigured().has_5ghz()
+
+
 class TestGetApFallbackInfo:
     @pytest.mark.asyncio()
     async def test_returns_ap_ssid_and_window_from_config(self) -> None:
@@ -131,7 +173,7 @@ class TestConnectToNetwork:
         assert svc.last_connect_task is not None
         await svc.last_connect_task
         adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
     @pytest.mark.asyncio()
@@ -142,7 +184,20 @@ class TestConnectToNetwork:
         assert svc.last_connect_task is not None
         await svc.last_connect_task
         adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
-            "HiddenNet", "hunter22", hidden=True
+            "HiddenNet", "hunter22", hidden=True, band=WifiBand.AUTO
+        )
+
+    @pytest.mark.asyncio()
+    async def test_the_wifi_band_is_forwarded(self) -> None:
+        """issue #153: the join form's band reaches the adapter, so the
+        new profile is locked from its very first join."""
+        adapter = _fake_adapter()
+        svc = _service_with_adapter(adapter)
+        await svc.connect_to_network("SiteWiFi", "hunter22", band=WifiBand.GHZ_2_4)
+        assert svc.last_connect_task is not None
+        await svc.last_connect_task
+        adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.GHZ_2_4
         )
 
     @pytest.mark.asyncio()
@@ -177,18 +232,233 @@ class TestListSavedNetworks:
     async def test_returns_the_adapter_listing(self) -> None:
         adapter = _fake_adapter()
         connections = [
-            SavedWifiConnection(name="SiteWiFi", active=True),
-            SavedWifiConnection(name="OldWiFi", active=False),
+            SavedWifiConnection(name="SiteWiFi", ssid="SiteWiFi", active=True),
+            SavedWifiConnection(name="OldWiFi", ssid="OldWiFi", active=False),
         ]
         adapter.list_saved_connections.return_value = connections  # type: ignore[attr-defined]
         svc = _service_with_adapter(adapter)
         assert await svc.list_saved_networks() == connections
 
     @pytest.mark.asyncio()
+    async def test_each_saved_network_carries_its_band(self) -> None:
+        adapter = _fake_adapter()
+        adapter.list_saved_connections.return_value = [  # type: ignore[attr-defined]
+            SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
+            SavedWifiConnection(
+                name="Barn-AP", ssid="Barn-AP", active=False, band=WifiBand.GHZ_2_4
+            ),
+        ]
+        saved = await _service_with_adapter(adapter).list_saved_networks()
+        assert [(c.name, c.band) for c in saved] == [
+            ("FarmShop", WifiBand.AUTO),
+            ("Barn-AP", WifiBand.GHZ_2_4),
+        ]
+
+    @pytest.mark.asyncio()
     async def test_raises_not_configured_when_config_is_missing(self) -> None:
         svc = _service_unconfigured()
         with pytest.raises(NetworkNotConfiguredError):
             await svc.list_saved_networks()
+
+
+class TestChangeBand:
+    @pytest.mark.asyncio()
+    async def test_a_network_that_isnt_active_is_saved_before_returning(
+        self,
+    ) -> None:
+        adapter = _fake_adapter()
+        saved = BandChangeSaved(name="Barn-AP", band=WifiBand.GHZ_2_4)
+        adapter.change_band.return_value = saved  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        assert await svc.change_band("Barn-AP", WifiBand.GHZ_2_4) == saved
+        adapter.change_band.assert_called_once_with(  # type: ignore[attr-defined]
+            "Barn-AP", WifiBand.GHZ_2_4
+        )
+
+    @pytest.mark.asyncio()
+    async def test_a_refusal_comes_back_before_the_link_is_touched(self) -> None:
+        adapter = _fake_adapter()
+        refused = BandChangeRefused(
+            name="FarmShop", band=WifiBand.GHZ_5, reason="not heard"
+        )
+        adapter.change_band.return_value = refused  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        assert await svc.change_band("FarmShop", WifiBand.GHZ_5) == refused
+        assert svc.last_band_change_task is None
+        adapter.apply_band_change.assert_not_called()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_the_active_network_is_reconnected_in_the_background(
+        self,
+    ) -> None:
+        """Fire-and-acknowledge, like switch: the reconnect may drop the
+        link carrying this very request."""
+        adapter = _fake_adapter()
+        pending = BandChangePending(name="FarmShop", band=WifiBand.GHZ_2_4)
+        adapter.change_band.return_value = pending  # type: ignore[attr-defined]
+        adapter.apply_band_change.return_value = BandChangeApplied(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_2_4
+        )
+        svc = _service_with_adapter(adapter)
+        assert await svc.change_band("FarmShop", WifiBand.GHZ_2_4) == pending
+        adapter.apply_band_change.assert_not_called()  # type: ignore[attr-defined]
+        assert svc.last_band_change_task is not None
+        await svc.last_band_change_task
+        adapter.apply_band_change.assert_called_once_with(  # type: ignore[attr-defined]
+            "FarmShop", WifiBand.GHZ_2_4
+        )
+
+    @staticmethod
+    async def _reverted_service() -> tuple[NetworkService, NmcliAdapter]:
+        """A service whose change of FarmShop to 5 GHz was undone."""
+        adapter = _fake_adapter()
+        adapter.list_saved_connections.return_value = [  # type: ignore[attr-defined]
+            SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
+            SavedWifiConnection(name="Barn-AP", ssid="Barn-AP", active=False),
+        ]
+        adapter.change_band.return_value = BandChangePending(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_5
+        )
+        adapter.apply_band_change.return_value = BandChangeReverted(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+        )
+        svc = _service_with_adapter(adapter)
+        await svc.change_band("FarmShop", WifiBand.GHZ_5)
+        assert svc.last_band_change_task is not None
+        await svc.last_band_change_task
+        return svc, adapter
+
+    @pytest.mark.asyncio()
+    async def test_a_reverted_change_is_kept_with_its_saved_network(self) -> None:
+        svc, _adapter = await self._reverted_service()
+        saved = await svc.list_saved_networks()
+        assert [(c.name, c.last_band_change) for c in saved] == [
+            (
+                "FarmShop",
+                BandChangeReverted(
+                    name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+                ),
+            ),
+            ("Barn-AP", None),
+        ]
+
+    @pytest.mark.asyncio()
+    async def test_a_later_change_clears_the_reverted_outcome(self) -> None:
+        svc, adapter = await self._reverted_service()
+        adapter.change_band.return_value = BandChangePending(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_2_4
+        )
+        adapter.apply_band_change.return_value = BandChangeApplied(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_2_4
+        )
+        await svc.change_band("FarmShop", WifiBand.GHZ_2_4)
+        saved = await svc.list_saved_networks()
+        assert [c.last_band_change for c in saved] == [None, None]
+
+    @pytest.mark.asyncio()
+    async def test_a_refused_change_leaves_the_reverted_outcome(self) -> None:
+        """Nothing changed, so the earlier undo still stands."""
+        svc, adapter = await self._reverted_service()
+        adapter.change_band.return_value = BandChangeRefused(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_5, reason="not heard"
+        )
+        await svc.change_band("FarmShop", WifiBand.GHZ_5)
+        saved = await svc.list_saved_networks()
+        assert saved[0].last_band_change is not None
+
+    @pytest.mark.asyncio()
+    async def test_an_adapter_fault_reaches_the_caller(self) -> None:
+        adapter = _fake_adapter()
+        adapter.change_band.side_effect = NmcliError("modify failed")  # type: ignore[attr-defined]
+        with pytest.raises(NmcliError):
+            await _service_with_adapter(adapter).change_band("Barn-AP", WifiBand.GHZ_5)
+
+    @pytest.mark.asyncio()
+    async def test_raises_not_configured_when_config_is_missing(self) -> None:
+        with pytest.raises(NetworkNotConfiguredError):
+            await _service_unconfigured().change_band("Barn-AP", WifiBand.GHZ_5)
+
+
+class TestOneBandChangeAtATime:
+    """While the active network reconnects on a new band, another band
+    change, a switch or a forget would fight it for the radio."""
+
+    @staticmethod
+    async def _applying() -> tuple[NetworkService, NmcliAdapter, threading.Event]:
+        """A service whose band change of FarmShop is still applying."""
+        adapter = _fake_adapter()
+        adapter.change_band.return_value = BandChangePending(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_5
+        )
+        release = threading.Event()
+
+        def slow_apply(name: str, band: WifiBand) -> BandChangeApplied:
+            release.wait(5)
+            return BandChangeApplied(name=name, band=band)
+
+        adapter.apply_band_change.side_effect = slow_apply  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        await svc.change_band("FarmShop", WifiBand.GHZ_5)
+        return svc, adapter, release
+
+    @pytest.mark.asyncio()
+    async def test_another_band_change_is_refused_while_one_applies(self) -> None:
+        svc, adapter, release = await self._applying()
+        try:
+            with pytest.raises(BandChangeInProgressError):
+                await svc.change_band("Barn-AP", WifiBand.GHZ_2_4)
+            adapter.change_band.assert_called_once()  # type: ignore[attr-defined]
+        finally:
+            release.set()
+            assert svc.last_band_change_task is not None
+            await svc.last_band_change_task
+
+    @pytest.mark.asyncio()
+    async def test_switch_and_forget_are_refused_while_one_applies(self) -> None:
+        svc, adapter, release = await self._applying()
+        try:
+            with pytest.raises(BandChangeInProgressError):
+                await svc.switch_to_network("Barn-AP")
+            with pytest.raises(BandChangeInProgressError):
+                await svc.forget_network("Barn-AP")
+            assert svc.last_switch_task is None
+            assert svc.last_forget_task is None
+        finally:
+            release.set()
+            assert svc.last_band_change_task is not None
+            await svc.last_band_change_task
+
+    @pytest.mark.asyncio()
+    async def test_changes_are_accepted_again_once_it_finishes(self) -> None:
+        svc, adapter, release = await self._applying()
+        release.set()
+        assert svc.last_band_change_task is not None
+        await svc.last_band_change_task
+        await svc.switch_to_network("Barn-AP")
+        await svc.change_band("FarmShop", WifiBand.AUTO)
+        assert adapter.change_band.call_count == 2  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_a_failed_apply_frees_the_radio_too(self) -> None:
+        adapter = _fake_adapter()
+        adapter.change_band.return_value = BandChangePending(  # type: ignore[attr-defined]
+            name="FarmShop", band=WifiBand.GHZ_5
+        )
+        adapter.apply_band_change.side_effect = NmcliError("write failed")  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        await svc.change_band("FarmShop", WifiBand.GHZ_5)
+        assert svc.last_band_change_task is not None
+        await asyncio.wait([svc.last_band_change_task])
+        await svc.change_band("FarmShop", WifiBand.GHZ_5)
+
+    @pytest.mark.asyncio()
+    async def test_a_failed_check_frees_the_radio(self) -> None:
+        adapter = _fake_adapter()
+        adapter.change_band.side_effect = NmcliError("couldn't read")  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        with pytest.raises(NmcliError):
+            await svc.change_band("FarmShop", WifiBand.GHZ_5)
+        await svc.switch_to_network("Barn-AP")
 
 
 class TestSwitchToNetwork:
@@ -259,6 +529,25 @@ class TestForgetNetwork:
         adapter.forget_connection.assert_called_once_with(  # type: ignore[attr-defined]
             "SiteWiFi"
         )
+
+    @pytest.mark.asyncio()
+    async def test_forgetting_a_network_drops_its_reverted_note(self) -> None:
+        svc, adapter = await TestChangeBand._reverted_service()
+        await svc.forget_network("FarmShop")
+        assert svc.last_forget_task is not None
+        await svc.last_forget_task
+        saved = await svc.list_saved_networks()
+        assert [c.last_band_change for c in saved] == [None, None]
+
+    @pytest.mark.asyncio()
+    async def test_a_failed_forget_keeps_the_reverted_note(self) -> None:
+        svc, adapter = await TestChangeBand._reverted_service()
+        adapter.forget_connection.side_effect = NmcliError("delete failed")  # type: ignore[attr-defined]
+        await svc.forget_network("FarmShop")
+        assert svc.last_forget_task is not None
+        await asyncio.wait([svc.last_forget_task])
+        saved = await svc.list_saved_networks()
+        assert saved[0].last_band_change is not None
 
     @pytest.mark.asyncio()
     async def test_raises_not_configured_synchronously_when_config_is_missing(

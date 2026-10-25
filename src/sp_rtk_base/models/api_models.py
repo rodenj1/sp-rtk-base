@@ -15,6 +15,7 @@ from sp_rtk_base.models.config_models import SignalDisplay
 from sp_rtk_base.models.device_models import DEFAULT_BAUD, ConsoleLink, SerialLink
 from sp_rtk_base.models.hardware_identity import HardwareConfidence, HardwareTarget
 from sp_rtk_base.models.level_models import Level
+from sp_rtk_base.models.net_provision_models import WifiBand
 from sp_rtk_base.models.network_link_models import (
     LinkKind,
     NetworkLinkSnapshot,
@@ -378,6 +379,18 @@ class NetworkStatusResponse(BaseModel):
     )
 
 
+class NetworkCapabilitiesResponse(BaseModel):
+    """What this base's Wi-Fi adapter can do, for the console (spec #147)."""
+
+    has_5ghz: bool | None = Field(
+        description=(
+            "Whether the Wi-Fi adapter has 5 GHz, from NetworkManager's "
+            "WIFI-PROPERTIES.5GHZ. The hardware, not whether 5 GHz is "
+            "usable in the current WLAN country. null when unknown."
+        )
+    )
+
+
 class NetworkFallbackInfoResponse(BaseModel):
     """AP-fallback config values for the console's pre-apply session-drop warning.
 
@@ -413,6 +426,13 @@ class NetworkConnectRequest(BaseModel):
             "association blind rather than matching a scan result"
         ),
     )
+    band: WifiBand = Field(
+        default=WifiBand.AUTO,
+        description=(
+            "The Wi-Fi band the new network is locked to from its first "
+            "join; left out, it uses auto"
+        ),
+    )
 
 
 class NetworkConnectResponse(BaseModel):
@@ -438,6 +458,12 @@ class NetworkActionResponse(BaseModel):
 
     status: str
     message: str
+
+
+class NetworkBandChangeRequest(BaseModel):
+    """Body for changing a saved network's Wi-Fi band (spec #147)."""
+
+    band: WifiBand = Field(description="auto, 2.4ghz or 5ghz")
 
 
 # ---------------------------------------------------------------------------

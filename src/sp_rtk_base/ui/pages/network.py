@@ -1,8 +1,9 @@
 """Network page — status, scan, join, switch, and forget (issues #22-24).
 
-Shows the Uplink from the Network link snapshot (with Wi-Fi link
-strength for a Wi-Fi Uplink, the same readings as the dashboard's
-Network card), a list of saved WiFi profiles with switch/forget actions, and a scan list of
+Shows the Uplink from the Network link snapshot (for a Network link
+Uplink: Wi-Fi link strength, network, Wi-Fi band with its MHz, and
+address as separate readings, the same as the dashboard's Network
+card), a list of saved WiFi profiles with switch/forget actions, and a scan list of
 nearby networks the operator can join (or a hidden SSID typed
 manually).
 """
@@ -25,6 +26,7 @@ from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
 from sp_rtk_base.services import get_network_link_service, get_network_service
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
 from sp_rtk_base.ui import network_link_status as shown
+from sp_rtk_base.ui.components.status_card import status_metric
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import is_non_empty
 
@@ -100,27 +102,23 @@ def network_page() -> None:
                             f"text-body1 text-{uplink.color} font-bold"
                         ).props("data-testid=network-page-uplink")
                 if link is not None:
-                    with ui.row().classes("q-mt-sm gap-6"):
-                        address = shown.address(link)
-                        ui.label(f"IP: {address.text}").classes(
-                            "text-caption text-grey-5"
-                        ).props("data-testid=network-page-address")
-                        network = shown.wifi_network(link)
-                        if network is not None:
-                            ui.label(f"Network: {network.text}").classes(
-                                "text-caption text-grey-5"
-                            ).props("data-testid=network-page-network")
-                        strength = shown.wifi_strength(link)
-                        if strength is not None:
-                            text = f"Wi-Fi link: {strength.text}"
-                            if strength.sub:
-                                text += f" ({strength.sub})"
-                            label = ui.label(text).classes(
-                                f"text-caption text-{strength.color}"
-                            )
-                            label.props("data-testid=network-page-strength")
-                            if strength.tooltip:
-                                label.tooltip(strength.tooltip)
+                    # Separate readings, as on the dashboard's Network card.
+                    with ui.row().classes("q-mt-sm gap-x-8 gap-y-2"):
+                        for label, value, suffix in (
+                            ("Wi-Fi link", shown.wifi_strength(link), "strength"),
+                            ("Network", shown.wifi_network(link), "network"),
+                            ("Band", shown.wifi_band(link), "band"),
+                            ("Address", shown.address(link), "address"),
+                        ):
+                            if value is not None:
+                                status_metric(
+                                    label,
+                                    value.text,
+                                    subvalue=value.sub,
+                                    value_color=value.color,
+                                    tooltip=value.tooltip,
+                                    testid=f"network-page-{suffix}",
+                                )
                 if not configured:
                     ui.label(
                         "Network provisioning is not configured on this device."

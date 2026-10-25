@@ -78,7 +78,7 @@ def _write(path: Path, source: str | None) -> None:
 
 
 @pytest.mark.e2e
-def test_a_wifi_uplink_shows_its_link_strength_even_with_a_cable_in(
+def test_a_wifi_uplink_shows_its_link_strength_and_band_even_with_a_cable_in(
     page: Page, appliance_server: str, network_links: Path
 ) -> None:
     """Traffic leaves by Wi-Fi, so a plugged-in cable doesn't win."""
@@ -88,13 +88,18 @@ def test_a_wifi_uplink_shows_its_link_strength_even_with_a_cable_in(
     expect(page.get_by_test_id("network-page-uplink")).to_have_text(
         "Wi-Fi (wlan0)", timeout=SOON_MS
     )
-    expect(page.get_by_test_id("network-page-strength")).to_have_text(
-        "Wi-Fi link: Good (\u221255 dBm)"
-    )
-    expect(page.get_by_test_id("network-page-network")).to_have_text("Network: Test")
-    expect(page.get_by_test_id("network-page-address")).to_have_text(
-        "IP: 192.0.2.20/24"
-    )
+    strength = page.get_by_test_id("network-page-strength")
+    expect(strength).to_contain_text("Wi-Fi link")
+    expect(strength).to_contain_text("Good")
+    expect(strength).to_contain_text("\u221255 dBm")
+    band = page.get_by_test_id("network-page-band")
+    expect(band).to_contain_text("Band")
+    expect(band).to_contain_text("5 GHz")
+    expect(band).to_contain_text("5745 MHz")
+    expect(page.get_by_test_id("network-page-network")).to_contain_text("Test")
+    address = page.get_by_test_id("network-page-address")
+    expect(address).to_contain_text("Address")
+    expect(address).to_contain_text("192.0.2.20/24")
     expect(page.get_by_text("Signal:")).to_have_count(0)
 
 
@@ -109,6 +114,8 @@ def test_an_ethernet_uplink_has_no_link_strength(
         "Ethernet (eth0)", timeout=SOON_MS
     )
     expect(page.get_by_test_id("network-page-strength")).to_have_count(0)
+    expect(page.get_by_test_id("network-page-band")).to_have_count(0)
+    expect(page.get_by_test_id("network-page-address")).to_contain_text("192.0.2.10/24")
 
 
 @pytest.mark.e2e

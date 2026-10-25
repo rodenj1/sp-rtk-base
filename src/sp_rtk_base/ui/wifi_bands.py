@@ -165,5 +165,65 @@ def reverted_note(saved: SavedWifiConnection) -> str | None:
     )
 
 
+# How much more strongly, in points of scan signal, the active network must
+# be heard on the other band before the status card suggests switching.
+# NetworkManager maps -100..-40 dBm linearly onto 0..100%, so 20 points is
+# about 12 dB: wider than one Wi-Fi link strength level (Marginal spans
+# -68..-77 dBm) and well clear of the few dB one scan differs from the
+# next.  A smaller gap rarely changes the level, and isn't worth giving up
+# 5 GHz's faster link or a console session for.
+STRONGER_BAND_MARGIN = 20
+
+
+@dataclass(frozen=True)
+class BandSuggestion:
+    """The status card's suggestion to switch the active network's band."""
+
+    band: WifiBand
+    text: str
+    button: str
+
+
+def stronger_band(
+    active: SavedWifiConnection,
+    frequency_mhz: int | None,
+    scan: Sequence[WifiNetwork],
+    *,
+    has_5ghz: bool | None,
+) -> BandSuggestion | None:
+    """A suggestion to switch the ``active`` network to the band the page's
+    last ``scan`` hears it on more strongly, by more than
+    ``STRONGER_BAND_MARGIN``, than the band it's on; ``None`` otherwise.
+
+    The band it's on comes from the link's ``frequency_mhz``.  Without a
+    frequency reading, a locked network is on its lock; an Auto one is on
+    an unknown band and gets no suggestion.
+    """
+    if not shows_band_control(has_5ghz=has_5ghz):
+        return None
+    on_band = None if frequency_mhz is None else WifiBand.from_frequency(frequency_mhz)
+    if on_band is None and active.band is not WifiBand.AUTO:
+        on_band = active.band
+    if on_band is None:
+        return None
+    heard = next(
+        (n.band_signals for n in scan if n.ssid == active.name), dict[WifiBand, int]()
+    )
+    other = WifiBand.GHZ_5 if on_band is WifiBand.GHZ_2_4 else WifiBand.GHZ_2_4
+    on_signal, other_signal = heard.get(on_band), heard.get(other)
+    if on_signal is None or other_signal is None:
+        return None
+    if other_signal <= on_signal + STRONGER_BAND_MARGIN:
+        return None
+    return BandSuggestion(
+        band=other,
+        text=(
+            f"'{active.name}' is heard more strongly on {other.label} "
+            f"({other_signal}% vs {on_signal}%)."
+        ),
+        button=f"Use {other.label}",
+    )
+
+
 _AUTO_HINT = "Either band; the base picks."
 _NOT_HEARD_HINT = "Not heard right now."

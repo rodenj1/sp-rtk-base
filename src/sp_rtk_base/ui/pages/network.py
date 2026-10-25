@@ -27,7 +27,7 @@ from sp_rtk_base.models.net_provision_models import (
     WifiBand,
     WifiNetwork,
 )
-from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
+from sp_rtk_base.models.network_link_models import NetworkLink, NetworkLinkSnapshot
 from sp_rtk_base.services import get_network_link_service, get_network_service
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
 from sp_rtk_base.ui import network_link_status as shown
@@ -94,6 +94,11 @@ def network_page() -> None:
         # The page's last scan, which the Band dialog's hints read from.
         # Filled on page entry and by Rescan, never polled.
         last_scan: list[WifiNetwork] = []
+        # The latest saved list and 5 GHz capability, from the saved-list
+        # poll, so the status card's stronger-band suggestion can name the
+        # active network and open its Band dialog without asking again.
+        last_saved: list[SavedWifiConnection] = []
+        last_has_5ghz: list[bool | None] = [None]
 
         def _render_status_card(
             configured: bool, snapshot: NetworkLinkSnapshot
@@ -132,10 +137,37 @@ def network_page() -> None:
                                     tooltip=value.tooltip,
                                     testid=f"network-page-{suffix}",
                                 )
+                    _render_stronger_band(link)
                 if not configured:
                     ui.label(
                         "Network provisioning is not configured on this device."
                     ).classes("text-caption text-grey-6 q-mt-sm")
+
+        def _render_stronger_band(link: NetworkLink) -> None:
+            """Suggest the band the page's last scan hears the active network
+            on more strongly; never scans by itself."""
+            active = next((c for c in last_saved if c.active), None)
+            if active is None or link.wifi is None:
+                return  # Not on Wi-Fi: an Ethernet uplink has no band
+            mhz = None
+            if link.wifi.frequency_mhz is not None:
+                mhz = link.wifi.frequency_mhz.value
+            suggestion = wifi_bands.stronger_band(
+                active, mhz, last_scan, has_5ghz=last_has_5ghz[0]
+            )
+            if suggestion is None:
+                return
+            with ui.row().classes("items-center gap-2 q-mt-sm no-wrap"):
+                ui.icon("lightbulb").classes("text-amber-4")
+                ui.label(suggestion.text).classes("text-caption text-amber-4").props(
+                    'data-testid="network-page-stronger-band"'
+                )
+                ui.button(
+                    suggestion.button, on_click=lambda: _open_band_dialog(active)
+                ).props(
+                    "flat dense color=amber no-caps "
+                    'data-testid="network-page-stronger-band-use"'
+                )
 
         async def _do_refresh_status() -> None:
             configured = await svc.is_configured()
@@ -429,6 +461,8 @@ def network_page() -> None:
                 logger.exception("Failed to list saved networks")
                 error = f"Could not load saved networks: {exc}"
 
+            last_saved[:] = connections
+            last_has_5ghz[0] = has_5ghz
             saved_list.clear()
             if error is not None:
                 saved_status_label.text = error

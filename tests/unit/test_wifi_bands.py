@@ -11,7 +11,7 @@ from sp_rtk_base.models.net_provision_models import (
     WifiNetwork,
 )
 from sp_rtk_base.ui import wifi_bands
-from sp_rtk_base.ui.wifi_bands import BandHeard, BandOption
+from sp_rtk_base.ui.wifi_bands import BandHeard, BandOption, BandSuggestion
 
 
 def _network(band_signals: dict[WifiBand, int]) -> WifiNetwork:
@@ -241,3 +241,97 @@ class TestJoinBandChoices:
     def test_auto_comes_first_so_the_select_defaults_to_it(self) -> None:
         choices = wifi_bands.join_band_choices(BOTH, has_5ghz=True)
         assert next(iter(choices)) is WifiBand.AUTO
+
+
+def _active(band: WifiBand = WifiBand.AUTO) -> SavedWifiConnection:
+    return SavedWifiConnection(name="FarmShop", active=True, band=band)
+
+
+_ON_5GHZ_MHZ = 5180
+_ON_2_4GHZ_MHZ = 2437
+
+
+class TestStrongerBand:
+    """The status card's suggestion to switch the active network's band
+    (issue #154)."""
+
+    def test_suggests_the_band_heard_noticeably_more_strongly(self) -> None:
+        suggestion = wifi_bands.stronger_band(
+            _active(), _ON_5GHZ_MHZ, [BOTH], has_5ghz=True
+        )
+        assert suggestion == BandSuggestion(
+            band=WifiBand.GHZ_2_4,
+            text="'FarmShop' is heard more strongly on 2.4 GHz (82% vs 41%).",
+            button="Use 2.4 GHz",
+        )
+
+    def test_no_suggestion_at_exactly_the_margin(self) -> None:
+        """20 points is the margin: 61% vs 41% isn't enough."""
+        heard = _network({WifiBand.GHZ_2_4: 61, WifiBand.GHZ_5: 41})
+        assert (
+            wifi_bands.stronger_band(_active(), _ON_5GHZ_MHZ, [heard], has_5ghz=True)
+            is None
+        )
+
+    def test_suggested_just_above_the_margin(self) -> None:
+        heard = _network({WifiBand.GHZ_2_4: 62, WifiBand.GHZ_5: 41})
+        suggestion = wifi_bands.stronger_band(
+            _active(), _ON_5GHZ_MHZ, [heard], has_5ghz=True
+        )
+        assert suggestion is not None
+        assert suggestion.text == (
+            "'FarmShop' is heard more strongly on 2.4 GHz (62% vs 41%)."
+        )
+
+    def test_suggests_5ghz_when_that_is_the_stronger_band(self) -> None:
+        heard = _network({WifiBand.GHZ_2_4: 30, WifiBand.GHZ_5: 75})
+        suggestion = wifi_bands.stronger_band(
+            _active(), _ON_2_4GHZ_MHZ, [heard], has_5ghz=True
+        )
+        assert suggestion is not None
+        assert (suggestion.band, suggestion.button) == (WifiBand.GHZ_5, "Use 5 GHz")
+
+    def test_no_suggestion_when_the_band_its_on_is_the_stronger(self) -> None:
+        assert (
+            wifi_bands.stronger_band(_active(), _ON_2_4GHZ_MHZ, [BOTH], has_5ghz=True)
+            is None
+        )
+
+    def test_a_locked_network_is_suggested_the_other_band_too(self) -> None:
+        suggestion = wifi_bands.stronger_band(
+            _active(WifiBand.GHZ_5), _ON_5GHZ_MHZ, [BOTH], has_5ghz=True
+        )
+        assert suggestion is not None
+        assert suggestion.band is WifiBand.GHZ_2_4
+
+    def test_without_a_frequency_a_locked_network_is_on_its_lock(self) -> None:
+        suggestion = wifi_bands.stronger_band(
+            _active(WifiBand.GHZ_5), None, [BOTH], has_5ghz=True
+        )
+        assert suggestion is not None
+        assert suggestion.band is WifiBand.GHZ_2_4
+
+    def test_without_a_frequency_an_auto_network_gets_no_suggestion(self) -> None:
+        assert wifi_bands.stronger_band(_active(), None, [BOTH], has_5ghz=True) is None
+
+    def test_no_suggestion_when_heard_on_only_one_band(self) -> None:
+        assert (
+            wifi_bands.stronger_band(_active(), _ON_2_4GHZ_MHZ, [ONLY_5], has_5ghz=True)
+            is None
+        )
+
+    def test_no_suggestion_when_the_scan_doesnt_hear_the_network(self) -> None:
+        other = _named("Neighbour-5G", {WifiBand.GHZ_2_4: 90, WifiBand.GHZ_5: 10})
+        assert (
+            wifi_bands.stronger_band(_active(), _ON_5GHZ_MHZ, [other], has_5ghz=True)
+            is None
+        )
+
+    @pytest.mark.parametrize("has_5ghz", [False, None])
+    def test_no_suggestion_unless_the_adapter_has_5ghz(
+        self, has_5ghz: bool | None
+    ) -> None:
+        assert (
+            wifi_bands.stronger_band(_active(), _ON_5GHZ_MHZ, [BOTH], has_5ghz=has_5ghz)
+            is None
+        )

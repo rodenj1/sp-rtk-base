@@ -30,6 +30,7 @@ Two things this adapter deliberately does **not** own:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable
 
@@ -82,6 +83,13 @@ def _band_of_freq(freq: str) -> WifiBand | None:
     except (IndexError, ValueError):
         return None
     return WifiBand.from_frequency(mhz)
+
+
+def _added_connection_uuid(stdout: str) -> str | None:
+    """The UUID in ``connection add``'s ``Connection 'X' (<uuid>) successfully
+    added.``, or ``None`` if the output doesn't read that way."""
+    match = re.search(r"\(([0-9a-fA-F-]{36})\) successfully added", stdout)
+    return match.group(1) if match else None
 
 
 class NmcliError(RuntimeError):
@@ -504,7 +512,12 @@ class NmcliAdapter:
         return BandChangeSaved(name=name, band=band)
 
     def connect_to_network(
-        self, ssid: str, password: str, *, hidden: bool = False
+        self,
+        ssid: str,
+        password: str,
+        *,
+        hidden: bool = False,
+        band: WifiBand = WifiBand.AUTO,
     ) -> None:
         """Connect to an installer-submitted SSID+password (issue #10).
 
@@ -527,10 +540,17 @@ class NmcliAdapter:
             hidden: The SSID is not broadcast, so nmcli must be told to
                 attempt an association blind rather than rely on a scan
                 result (issue #21's console hidden-SSID entry).
+            band: The Wi-Fi band to lock the new profile to from its
+                very first join (issue #153). Auto keeps the plain
+                ``nmcli device wifi connect``; see
+                :meth:`_connect_with_band` for the rest.
 
         Raises:
             WifiConnectError: The connect failed, e.g. a wrong password.
         """
+        if band is not WifiBand.AUTO:
+            self._connect_with_band(ssid, password, hidden=hidden, band=band)
+            return
         args = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
         if hidden:
             args += ["hidden", "yes"]
@@ -538,4 +558,52 @@ class NmcliAdapter:
         if result.returncode != 0:
             raise WifiConnectError(
                 ssid, result.stderr.strip() or "nmcli device wifi connect failed"
+            )
+
+    def _connect_with_band(
+        self, ssid: str, password: str, *, hidden: bool, band: WifiBand
+    ) -> None:
+        """Create a profile locked to ``band``, then bring it up.
+
+        ``nmcli device wifi connect`` takes no band, and setting it with
+        ``connection modify`` afterwards would make the first join an
+        unlocked one, so the profile is built with ``connection add``.
+        That means naming the security ourselves: a password means
+        WPA-PSK (which also joins WPA2/WPA3 transition networks), none
+        means open. A failed join deletes the new profile again, the
+        way ``nmcli device wifi connect`` does, so a failed join leaves
+        nothing the decision loop would mistake for the saved network.
+        The profile is brought up and deleted by the UUID ``connection
+        add`` reports, so an older profile of the same name is never
+        touched; failing that, by name.
+        """
+        add = [
+            "nmcli",
+            "connection",
+            "add",
+            "type",
+            "wifi",
+            "con-name",
+            ssid,
+            "ssid",
+            ssid,
+            "802-11-wireless.band",
+            band.nm_value,
+        ]
+        if hidden:
+            add += ["802-11-wireless.hidden", "yes"]
+        if password:
+            add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+        added = self._run(add)
+        if added.returncode != 0:
+            raise WifiConnectError(
+                ssid, added.stderr.strip() or "nmcli connection add failed"
+            )
+        uuid = _added_connection_uuid(added.stdout)
+        selector = ["uuid", uuid] if uuid is not None else ["id", ssid]
+        result = self._run(["nmcli", "connection", "up", *selector])
+        if result.returncode != 0:
+            self._run(["nmcli", "connection", "delete", *selector])
+            raise WifiConnectError(
+                ssid, result.stderr.strip() or "nmcli connection up failed"
             )

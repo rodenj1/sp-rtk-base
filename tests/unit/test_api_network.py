@@ -468,7 +468,7 @@ class TestConnectNetwork:
         assert data["status"] == "accepted"
         assert "SiteWiFi" in data["message"]
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
     def test_hidden_network_is_forwarded(
@@ -480,7 +480,7 @@ class TestConnectNetwork:
         )
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "HiddenNet", "hunter22", hidden=True
+            "HiddenNet", "hunter22", hidden=True, band=WifiBand.AUTO
         )
 
     def test_open_network_defaults_password_to_empty(
@@ -489,8 +489,43 @@ class TestConnectNetwork:
         resp = client.post("/api/network/connect", json={"ssid": "OpenNet"})
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "OpenNet", "", hidden=False
+            "OpenNet", "", hidden=False, band=WifiBand.AUTO
         )
+
+    @pytest.mark.parametrize(
+        ("band", "expected"),
+        [
+            ("2.4ghz", WifiBand.GHZ_2_4),
+            ("5ghz", WifiBand.GHZ_5),
+            ("auto", WifiBand.AUTO),
+        ],
+    )
+    def test_the_wifi_band_is_forwarded(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        band: str,
+        expected: WifiBand,
+    ) -> None:
+        """issue #153: the join can lock the new network to a band."""
+        resp = client.post(
+            "/api/network/connect",
+            json={"ssid": "SiteWiFi", "password": "hunter22", "band": band},
+        )
+        assert resp.status_code == 202
+        mock_network_service.connect_to_network.assert_awaited_once_with(
+            "SiteWiFi", "hunter22", hidden=False, band=expected
+        )
+
+    def test_an_unknown_wifi_band_is_rejected(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.post(
+            "/api/network/connect",
+            json={"ssid": "SiteWiFi", "password": "hunter22", "band": "6ghz"},
+        )
+        assert resp.status_code == 422
+        mock_network_service.connect_to_network.assert_not_awaited()
 
     def test_not_configured_returns_409(
         self, client: TestClient, mock_network_service: MagicMock
@@ -532,7 +567,7 @@ class TestConnectNetwork:
         )
         assert resp.status_code == 202
         mock_network_service.connect_to_network.assert_awaited_once_with(
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
 

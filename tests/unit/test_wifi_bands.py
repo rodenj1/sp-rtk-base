@@ -125,3 +125,37 @@ class TestBandOptions:
 
 def _named(ssid: str, band_signals: dict[WifiBand, int]) -> WifiNetwork:
     return _network(band_signals).model_copy(update={"ssid": ssid})
+
+
+class TestJoinBandChoices:
+    """issue #153: the join form's Wi-Fi band select."""
+
+    def test_each_band_carries_what_the_scan_hears(self) -> None:
+        assert wifi_bands.join_band_choices(BOTH, has_5ghz=True) == {
+            WifiBand.AUTO: "Auto",
+            WifiBand.GHZ_2_4: "2.4 GHz (82%)",
+            WifiBand.GHZ_5: "5 GHz (41%)",
+        }
+
+    def test_a_band_the_scan_doesnt_hear_says_so(self) -> None:
+        assert wifi_bands.join_band_choices(ONLY_5, has_5ghz=True) == {
+            WifiBand.AUTO: "Auto",
+            WifiBand.GHZ_2_4: "2.4 GHz (not heard)",
+            WifiBand.GHZ_5: "5 GHz (55%)",
+        }
+
+    def test_a_hidden_network_has_no_scan_data_so_no_hints(self) -> None:
+        assert wifi_bands.join_band_choices(None, has_5ghz=True) == {
+            WifiBand.AUTO: "Auto",
+            WifiBand.GHZ_2_4: "2.4 GHz",
+            WifiBand.GHZ_5: "5 GHz",
+        }
+
+    @pytest.mark.parametrize("has_5ghz", [False, None])
+    def test_no_select_without_a_5ghz_adapter(self, has_5ghz: bool | None) -> None:
+        assert wifi_bands.join_band_choices(BOTH, has_5ghz=has_5ghz) == {}
+        assert wifi_bands.join_band_choices(None, has_5ghz=has_5ghz) == {}
+
+    def test_auto_comes_first_so_the_select_defaults_to_it(self) -> None:
+        choices = wifi_bands.join_band_choices(BOTH, has_5ghz=True)
+        assert next(iter(choices)) is WifiBand.AUTO

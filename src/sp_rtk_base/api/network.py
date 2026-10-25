@@ -129,7 +129,10 @@ async def connect_network(
     """
     try:
         await svc.connect_to_network(
-            request.ssid, request.password, hidden=request.hidden
+            request.ssid,
+            request.password,
+            hidden=request.hidden,
+            band=request.band,
         )
     except NetworkNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

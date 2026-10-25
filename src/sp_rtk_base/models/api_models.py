@@ -426,6 +426,13 @@ class NetworkConnectRequest(BaseModel):
             "association blind rather than matching a scan result"
         ),
     )
+    band: WifiBand = Field(
+        default=WifiBand.AUTO,
+        description=(
+            "The Wi-Fi band the new network is locked to from its first "
+            "join; left out, it uses auto"
+        ),
+    )
 
 
 class NetworkConnectResponse(BaseModel):

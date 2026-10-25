@@ -78,7 +78,7 @@ def network_page() -> None:
                 ui.button(
                     "Add Hidden Network",
                     icon="add",
-                    on_click=lambda: _open_connect_dialog(None, hidden=True),
+                    on_click=lambda: _open_connect_dialog(None),
                 ).props("flat color=white")
                 ui.button(
                     "Rescan", icon="refresh", on_click=lambda: _refresh_scan()
@@ -399,15 +399,22 @@ def network_page() -> None:
                                 ui.label(heard.text).classes("text-caption text-grey-4")
                     ui.button(
                         "Join",
-                        on_click=lambda _e, ssid=network.ssid: _open_connect_dialog(
-                            ssid, hidden=False
+                        on_click=lambda _e, network=network: _open_connect_dialog(
+                            network
                         ),
                     ).props("flat dense color=primary")
 
-        async def _open_connect_dialog(ssid: str | None, *, hidden: bool) -> None:
-            """Show the join dialog: SSID (fixed or typed), password, and
-            the honest session-drop warning (issue #23)."""
+        async def _open_connect_dialog(network: WifiNetwork | None) -> None:
+            """Show the join dialog for a scanned ``network``, or for a
+            hidden one when ``None``: SSID (fixed or typed), password, the
+            Wi-Fi band select (issue #153) and the honest session-drop
+            warning (issue #23)."""
+            hidden = network is None
+            ssid = network.ssid if network is not None else None
             warning = await _session_drop_warning_text("connect")
+            band_choices = wifi_bands.join_band_choices(
+                network, has_5ghz=await _read_has_5ghz()
+            )
 
             with (
                 ui.dialog() as dialog,
@@ -426,6 +433,13 @@ def network_page() -> None:
                 password_input = ui.input(
                     "Password", password=True, password_toggle_button=True
                 ).classes("w-full")
+                band_select = (
+                    ui.select(band_choices, value=WifiBand.AUTO, label="Wi-Fi band")
+                    .classes("w-full")
+                    .props('data-testid="network-join-band"')
+                    if band_choices
+                    else None
+                )
                 ui.label(warning).classes("text-caption text-orange-4 q-mt-sm")
                 with ui.row().classes("justify-end gap-2 q-mt-md"):
                     ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -435,19 +449,26 @@ def network_page() -> None:
                             ssid_input.value if ssid_input is not None else ssid,
                             password_input.value or "",
                             hidden,
+                            band_select.value
+                            if band_select is not None
+                            else WifiBand.AUTO,
                             dialog,
                         ),
                     ).props("color=primary")
             dialog.open()
 
         async def _submit_connect(
-            ssid: str | None, password: str, hidden: bool, dialog: ui.dialog
+            ssid: str | None,
+            password: str,
+            hidden: bool,
+            band: WifiBand,
+            dialog: ui.dialog,
         ) -> None:
             if not ssid or not ssid.strip():
                 ui.notify("SSID is required", type="warning")
                 return
             try:
-                await svc.connect_to_network(ssid, password, hidden=hidden)
+                await svc.connect_to_network(ssid, password, hidden=hidden, band=band)
             except NetworkNotConfiguredError:
                 ui.notify(
                     "Network provisioning is not configured on this device.",

@@ -87,5 +87,29 @@ def band_options(name: str, scan: Sequence[WifiNetwork]) -> list[BandOption]:
     return options
 
 
+def join_band_choices(
+    network: WifiNetwork | None, *, has_5ghz: bool | None
+) -> dict[WifiBand, str]:
+    """The join form's Wi-Fi band select, Auto first (its default), each
+    band labelled with what the page's scan hears, such as "5 GHz (41%)"
+    or "5 GHz (not heard)" (issue #153).
+
+    ``network`` is the scanned network being joined, or ``None`` for a
+    hidden one, which has no scan data and so no hints. Empty without a
+    5 GHz adapter: the form then shows no select and joins on Auto.
+    """
+    if not shows_band_control(has_5ghz=has_5ghz):
+        return {}
+    choices = {WifiBand.AUTO: WifiBand.AUTO.label}
+    for band in _HEARD_ORDER:
+        if network is None:
+            choices[band] = band.label
+        elif (signal := network.band_signals.get(band)) is None:
+            choices[band] = f"{band.label} (not heard)"
+        else:
+            choices[band] = f"{band.label} ({signal}%)"
+    return choices
+
+
 _AUTO_HINT = "Either band; the base picks."
 _NOT_HEARD_HINT = "Not heard right now."

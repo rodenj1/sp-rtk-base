@@ -143,7 +143,12 @@ class NetworkService:
         )
 
     async def connect_to_network(
-        self, ssid: str, password: str, *, hidden: bool = False
+        self,
+        ssid: str,
+        password: str,
+        *,
+        hidden: bool = False,
+        band: WifiBand = WifiBand.AUTO,
     ) -> None:
         """Join a WiFi network — fire-and-acknowledge (issue #23).
 
@@ -159,6 +164,8 @@ class NetworkService:
             hidden: The SSID is not broadcast, so nmcli must attempt
                 the association blind rather than matching a scan
                 result.
+            band: The Wi-Fi band the new network is locked to from its
+                first join (issue #153); Auto leaves it unlocked.
 
         Raises:
             NetworkNotConfiguredError: No net-provisioning config
@@ -170,7 +177,11 @@ class NetworkService:
         adapter = self._get_adapter()
         self.last_connect_task = self._run_in_background(
             asyncio.to_thread(
-                adapter.connect_to_network, ssid, password, hidden=hidden
+                adapter.connect_to_network,
+                ssid,
+                password,
+                hidden=hidden,
+                band=band,
             ),
             name="sp_rtk_base.network_connect",
             action="WiFi connect",

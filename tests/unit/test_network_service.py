@@ -168,7 +168,7 @@ class TestConnectToNetwork:
         assert svc.last_connect_task is not None
         await svc.last_connect_task
         adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
-            "SiteWiFi", "hunter22", hidden=False
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.AUTO
         )
 
     @pytest.mark.asyncio()
@@ -179,7 +179,20 @@ class TestConnectToNetwork:
         assert svc.last_connect_task is not None
         await svc.last_connect_task
         adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
-            "HiddenNet", "hunter22", hidden=True
+            "HiddenNet", "hunter22", hidden=True, band=WifiBand.AUTO
+        )
+
+    @pytest.mark.asyncio()
+    async def test_the_wifi_band_is_forwarded(self) -> None:
+        """issue #153: the join form's band reaches the adapter, so the
+        new profile is locked from its very first join."""
+        adapter = _fake_adapter()
+        svc = _service_with_adapter(adapter)
+        await svc.connect_to_network("SiteWiFi", "hunter22", band=WifiBand.GHZ_2_4)
+        assert svc.last_connect_task is not None
+        await svc.last_connect_task
+        adapter.connect_to_network.assert_called_once_with(  # type: ignore[attr-defined]
+            "SiteWiFi", "hunter22", hidden=False, band=WifiBand.GHZ_2_4
         )
 
     @pytest.mark.asyncio()

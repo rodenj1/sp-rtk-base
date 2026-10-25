@@ -17,10 +17,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeSaved,
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
+from sp_rtk_base.services.net_provision import NmcliError
 from sp_rtk_base.services.net_provision.config_loader import NetProvisionConfigError
 from sp_rtk_base.services.net_provision.nmcli_adapter import NmcliAdapter
 from sp_rtk_base.services.network_service import (
@@ -219,10 +222,50 @@ class TestListSavedNetworks:
         assert await svc.list_saved_networks() == connections
 
     @pytest.mark.asyncio()
+    async def test_each_saved_network_carries_its_band(self) -> None:
+        adapter = _fake_adapter()
+        adapter.list_saved_connections.return_value = [  # type: ignore[attr-defined]
+            SavedWifiConnection(name="FarmShop", active=True),
+            SavedWifiConnection(name="Barn-AP", active=False, band=WifiBand.GHZ_2_4),
+        ]
+        saved = await _service_with_adapter(adapter).list_saved_networks()
+        assert [(c.name, c.band) for c in saved] == [
+            ("FarmShop", WifiBand.AUTO),
+            ("Barn-AP", WifiBand.GHZ_2_4),
+        ]
+
+    @pytest.mark.asyncio()
     async def test_raises_not_configured_when_config_is_missing(self) -> None:
         svc = _service_unconfigured()
         with pytest.raises(NetworkNotConfiguredError):
             await svc.list_saved_networks()
+
+
+class TestChangeBand:
+    @pytest.mark.asyncio()
+    async def test_a_network_that_isnt_active_is_saved_before_returning(
+        self,
+    ) -> None:
+        adapter = _fake_adapter()
+        saved = BandChangeSaved(name="Barn-AP", band=WifiBand.GHZ_2_4)
+        adapter.change_band.return_value = saved  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        assert await svc.change_band("Barn-AP", WifiBand.GHZ_2_4) == saved
+        adapter.change_band.assert_called_once_with(  # type: ignore[attr-defined]
+            "Barn-AP", WifiBand.GHZ_2_4
+        )
+
+    @pytest.mark.asyncio()
+    async def test_an_adapter_fault_reaches_the_caller(self) -> None:
+        adapter = _fake_adapter()
+        adapter.change_band.side_effect = NmcliError("modify failed")  # type: ignore[attr-defined]
+        with pytest.raises(NmcliError):
+            await _service_with_adapter(adapter).change_band("Barn-AP", WifiBand.GHZ_5)
+
+    @pytest.mark.asyncio()
+    async def test_raises_not_configured_when_config_is_missing(self) -> None:
+        with pytest.raises(NetworkNotConfiguredError):
+            await _service_unconfigured().change_band("Barn-AP", WifiBand.GHZ_5)
 
 
 class TestSwitchToNetwork:

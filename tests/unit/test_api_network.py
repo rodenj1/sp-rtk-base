@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeSaved,
     NetProvisionConfig,
     SavedWifiConnection,
     WifiBand,
@@ -146,6 +147,9 @@ def mock_network_service() -> NetworkService:
     svc.list_saved_networks = AsyncMock(return_value=[])
     svc.switch_to_network = AsyncMock(return_value=None)
     svc.forget_network = AsyncMock(return_value=None)
+    svc.change_band = AsyncMock(
+        return_value=BandChangeSaved(name="Barn-AP", band=WifiBand.GHZ_2_4)
+    )
     return svc
 
 
@@ -555,6 +559,23 @@ class TestListSavedNetworks:
         assert data[0]["active"] is True
         assert data[1]["active"] is False
 
+    def test_each_saved_network_carries_its_band(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.list_saved_networks = AsyncMock(
+            return_value=[
+                SavedWifiConnection(name="FarmShop", active=True),
+                SavedWifiConnection(
+                    name="Barn-AP", active=False, band=WifiBand.GHZ_2_4
+                ),
+                SavedWifiConnection(
+                    name="Office-5G", active=False, band=WifiBand.GHZ_5
+                ),
+            ],
+        )
+        resp = client.get("/api/network/saved")
+        assert [c["band"] for c in resp.json()] == ["auto", "2.4ghz", "5ghz"]
+
     def test_empty_list(
         self, client: TestClient, mock_network_service: MagicMock
     ) -> None:
@@ -579,6 +600,52 @@ class TestListSavedNetworks:
             side_effect=RuntimeError("nmcli exploded"),
         )
         resp = client.get("/api/network/saved")
+        assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/network/saved/{name}/band
+# ---------------------------------------------------------------------------
+
+
+class TestChangeBand:
+    def test_a_network_that_isnt_active_returns_200_with_saved(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "2.4ghz"})
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "outcome": "saved",
+            "name": "Barn-AP",
+            "band": "2.4ghz",
+        }
+        mock_network_service.change_band.assert_awaited_once_with(
+            "Barn-AP", WifiBand.GHZ_2_4
+        )
+
+    def test_an_unknown_band_is_rejected_before_the_service(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "6ghz"})
+        assert resp.status_code == 422
+        mock_network_service.change_band.assert_not_awaited()
+
+    def test_not_configured_returns_409(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            side_effect=NetworkNotConfiguredError("no config file"),
+        )
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "auto"})
+        assert resp.status_code == 409
+
+    def test_unexpected_error_returns_502(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            side_effect=RuntimeError("nmcli exploded"),
+        )
+        resp = client.put("/api/network/saved/Barn-AP/band", json={"band": "5ghz"})
         assert resp.status_code == 502
 
 
@@ -708,6 +775,10 @@ class TestManagedHostModeDisablesNetworkApi:
 
     def test_forget_is_404(self, client: TestClient) -> None:
         assert client.delete("/api/network/saved/SiteWiFi").status_code == 404
+
+    def test_band_change_is_404(self, client: TestClient) -> None:
+        resp = client.put("/api/network/saved/SiteWiFi/band", json={"band": "auto"})
+        assert resp.status_code == 404
 
     def test_network_service_is_never_reached(
         self, client: TestClient, mock_network_service: MagicMock

@@ -18,8 +18,10 @@ from collections.abc import Callable, Coroutine
 from typing import NamedTuple
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeOutcome,
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.services.net_provision.config_loader import (
@@ -182,6 +184,20 @@ class NetworkService:
         """
         adapter = self._get_adapter()
         return await asyncio.to_thread(adapter.list_saved_connections)
+
+    async def change_band(self, name: str, band: WifiBand) -> BandChangeOutcome:
+        """Lock a saved network to a Wi-Fi band, or set it back to Auto.
+
+        For a network that isn't active this completes before returning,
+        with Saved: only the profile is written, so the link carrying this
+        request is never touched.
+
+        Raises:
+            NetworkNotConfiguredError: No net-provisioning config exists.
+            NmcliError: The adapter couldn't make the change.
+        """
+        adapter = self._get_adapter()
+        return await asyncio.to_thread(adapter.change_band, name, band)
 
     async def switch_to_network(self, name: str) -> None:
         """Activate an already-saved WiFi profile — fire-and-acknowledge (issue #24).

@@ -13,6 +13,7 @@ function of observable state.
 from __future__ import annotations
 
 import enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -280,6 +281,30 @@ class SavedWifiConnection(BaseModel):
         )
     )
     active: bool = Field(description="True if this is the currently active connection")
+    band: WifiBand = Field(
+        default=WifiBand.AUTO,
+        description=(
+            "The Wi-Fi band this network is locked to, read from its "
+            "profile's 802-11-wireless.band. Auto means either band."
+        ),
+    )
+
+
+class BandChangeSaved(BaseModel):
+    """A band change to a saved network that isn't active: the band was
+    written to its profile, with no reconnect and no scan check."""
+
+    outcome: Literal["saved"] = "saved"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band now saved in its profile")
+
+
+# What a band change came to. Each outcome is its own model, told apart by
+# its ``outcome`` literal, so the active network's outcomes (Refused,
+# Applied, Reverted; ticket #151) join as further members of this union,
+# ``Annotated[BandChangeSaved | ..., Field(discriminator="outcome")]``,
+# without reshaping Saved or its callers.
+BandChangeOutcome = BandChangeSaved
 
 
 # ---------------------------------------------------------------------------

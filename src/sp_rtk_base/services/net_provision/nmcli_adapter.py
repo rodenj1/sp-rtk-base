@@ -34,6 +34,8 @@ import subprocess
 from collections.abc import Callable
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeOutcome,
+    BandChangeSaved,
     Connectivity,
     NetProvisionConfig,
     NetworkState,
@@ -224,8 +226,29 @@ class NmcliAdapter:
             conn_type, _, name = line.partition(":")
             if conn_type != _WIRELESS_TYPE or name == self._config.ap_ssid:
                 continue
-            connections.append(SavedWifiConnection(name=name, active=name in active))
+            connections.append(
+                SavedWifiConnection(
+                    name=name, active=name in active, band=self._band_of(name)
+                )
+            )
         return connections
+
+    def _band_of(self, name: str) -> WifiBand:
+        """The Wi-Fi band saved in profile ``name``.
+
+        Auto when it can't be read, so one odd profile doesn't hide the
+        whole saved list: Auto is also what NetworkManager does with a
+        profile that carries no lock.
+        """
+        result = self._run(
+            ["nmcli", "-g", "802-11-wireless.band", "connection", "show", "id", name]
+        )
+        if result.returncode != 0:
+            return WifiBand.AUTO
+        try:
+            return WifiBand.from_nm(result.stdout)
+        except ValueError:
+            return WifiBand.AUTO
 
     def scan_networks(self) -> list[WifiNetwork]:
         """Scan for nearby WiFi networks, for the WiFi-picker portal (issue #10).
@@ -445,6 +468,40 @@ class NmcliAdapter:
         if name == self._config.ap_ssid:
             raise NmcliError(f"refusing to forget the setup AP connection {name!r}")
         self._run_checked(["nmcli", "connection", "delete", "id", name])
+
+    def change_band(self, name: str, band: WifiBand) -> BandChangeOutcome:
+        """Lock saved network ``name`` to ``band``, or set it back to Auto.
+
+        For a network that isn't active the band is written to its
+        profile straight away, with no reconnect and no scan check, and
+        the outcome is Saved. Being in the profile, the band survives a
+        reboot.
+
+        Raises:
+            NmcliError: ``name`` is the setup AP profile, ``name`` is the
+                active network (its band can't be changed yet), or the
+                write failed.
+        """
+        if name == self._config.ap_ssid:
+            raise NmcliError(
+                f"refusing to change the band of the setup AP connection {name!r}"
+            )
+        if name in self._active_connection_names():
+            raise NmcliError(
+                f"changing the band of the active network {name!r} isn't supported"
+            )
+        self._run_checked(
+            [
+                "nmcli",
+                "connection",
+                "modify",
+                "id",
+                name,
+                "802-11-wireless.band",
+                band.nm_value,
+            ]
+        )
+        return BandChangeSaved(name=name, band=band)
 
     def connect_to_network(
         self, ssid: str, password: str, *, hidden: bool = False

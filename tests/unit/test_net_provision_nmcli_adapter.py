@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeSaved,
     Connectivity,
     NetProvisionConfig,
     NetworkState,
@@ -53,6 +54,24 @@ WLAN0_5GHZ = ["nmcli", "-g", "WIFI-PROPERTIES.5GHZ", "device", "show", "wlan0"]
 AP_UP = ["nmcli", "connection", "up", "id", AP_SSID]
 AP_DOWN = ["nmcli", "connection", "down", "id", AP_SSID]
 SAVED_UP = ["nmcli", "connection", "up", "id", SAVED_SSID]
+
+
+def _band_of(name: str) -> list[str]:
+    """`nmcli` reading one saved profile's Wi-Fi band."""
+    return ["nmcli", "-g", "802-11-wireless.band", "connection", "show", "id", name]
+
+
+def _set_band(name: str, nm_value: str) -> list[str]:
+    """`nmcli` writing one saved profile's Wi-Fi band."""
+    return [
+        "nmcli",
+        "connection",
+        "modify",
+        "id",
+        name,
+        "802-11-wireless.band",
+        nm_value,
+    ]
 
 
 def _scan_line(
@@ -761,6 +780,102 @@ class TestListSavedConnections:
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{AP_SSID}\n")
         fake.set_response(ACTIVE_CONNECTIONS, stdout="")
         assert _adapter(fake).list_saved_connections() == []
+
+    def test_each_saved_network_carries_the_band_read_from_its_profile(
+        self,
+    ) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            ALL_CONNECTIONS,
+            stdout=(
+                "802-11-wireless:FarmShop\n"
+                "802-11-wireless:Barn-AP\n"
+                "802-11-wireless:Office-5G\n"
+            ),
+        )
+        fake.set_response(ACTIVE_CONNECTIONS, stdout="FarmShop\n")
+        fake.set_response(_band_of("FarmShop"), stdout="\n")
+        fake.set_response(_band_of("Barn-AP"), stdout="bg\n")
+        fake.set_response(_band_of("Office-5G"), stdout="a\n")
+        connections = _adapter(fake).list_saved_connections()
+        assert connections == [
+            SavedWifiConnection(name="FarmShop", active=True, band=WifiBand.AUTO),
+            SavedWifiConnection(name="Barn-AP", active=False, band=WifiBand.GHZ_2_4),
+            SavedWifiConnection(name="Office-5G", active=False, band=WifiBand.GHZ_5),
+        ]
+        assert fake.calls == [
+            ALL_CONNECTIONS,
+            ACTIVE_CONNECTIONS,
+            _band_of("FarmShop"),
+            _band_of("Barn-AP"),
+            _band_of("Office-5G"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("stdout", "returncode"),
+        [("", 10), ("abg\n", 0)],
+        ids=["read-fails", "unknown-value"],
+    )
+    def test_a_band_that_cant_be_read_lists_as_auto(
+        self, stdout: str, returncode: int
+    ) -> None:
+        """One unreadable profile mustn't hide the whole saved list; Auto
+        is what NetworkManager does with a profile that has no lock."""
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
+        fake.set_response(
+            _band_of(SAVED_SSID), stdout=stdout, stderr="Error", returncode=returncode
+        )
+        assert _adapter(fake).list_saved_connections() == [
+            SavedWifiConnection(name=SAVED_SSID, active=False, band=WifiBand.AUTO)
+        ]
+
+
+# ---------------------------------------------------------------------------
+# change_band() — spec #147
+# ---------------------------------------------------------------------------
+
+
+class TestChangeBand:
+    @pytest.mark.parametrize(
+        ("band", "nm_value"),
+        [(WifiBand.GHZ_2_4, "bg"), (WifiBand.GHZ_5, "a"), (WifiBand.AUTO, "")],
+    )
+    def test_a_network_that_isnt_active_is_saved_straight_away(
+        self, band: WifiBand, nm_value: str
+    ) -> None:
+        """No reconnect and no scan: the profile is only written."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout="FarmShop\n")
+        outcome = _adapter(fake).change_band("Barn-AP", band)
+        assert outcome == BandChangeSaved(name="Barn-AP", band=band)
+        assert fake.calls == [ACTIVE_CONNECTIONS, _set_band("Barn-AP", nm_value)]
+
+    def test_a_failed_write_raises(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            _set_band("Barn-AP", "bg"),
+            stderr="Error: unknown connection 'Barn-AP'.",
+            returncode=10,
+        )
+        with pytest.raises(NmcliError, match="unknown connection"):
+            _adapter(fake).change_band("Barn-AP", WifiBand.GHZ_2_4)
+
+    def test_the_active_network_is_left_untouched_for_now(self) -> None:
+        """Changing the active network's band reconnects it (#151); until
+        that lands, nothing is written."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        with pytest.raises(NmcliError):
+            _adapter(fake).change_band(SAVED_SSID, WifiBand.GHZ_2_4)
+        assert fake.calls == [ACTIVE_CONNECTIONS]
+
+    def test_refuses_the_setup_ap_profile(self) -> None:
+        """The setup hotspot is a separate radio role, out of scope."""
+        fake = FakeNmcli()
+        with pytest.raises(NmcliError):
+            _adapter(fake).change_band(AP_SSID, WifiBand.GHZ_2_4)
+        assert fake.calls == []
 
 
 # ---------------------------------------------------------------------------

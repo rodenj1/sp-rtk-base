@@ -3,7 +3,8 @@
 Shows the Uplink from the Network link snapshot (for a Network link
 Uplink: Wi-Fi link strength, network, Wi-Fi band with its MHz, and
 address as separate readings, the same as the dashboard's Network
-card), a list of saved WiFi profiles with switch/forget actions, and a scan list of
+card), a list of saved WiFi profiles with Wi-Fi band/switch/forget actions, and a
+scan list of
 nearby networks the operator can join (or a hidden SSID typed
 manually). Each nearby network shows the Wi-Fi bands it's heard on and
 expands to the signal on each, when the adapter has 5 GHz.
@@ -21,6 +22,7 @@ from nicegui import ui
 
 from sp_rtk_base.models.net_provision_models import (
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
@@ -83,6 +85,9 @@ def network_page() -> None:
                 ).props("flat color=white")
         scan_status_label = ui.label("").classes("text-caption text-grey-6 q-mb-sm")
         scan_list = ui.column().classes("w-full gap-2")
+        # The page's last scan, which the Band dialog's hints read from.
+        # Filled on page entry and by Rescan, never polled.
+        last_scan: list[WifiNetwork] = []
 
         def _render_status_card(
             configured: bool, snapshot: NetworkLinkSnapshot
@@ -156,7 +161,7 @@ def network_page() -> None:
                 f"will appear again in about {fallback_minutes} min."
             )
 
-        def _render_saved_row(conn: SavedWifiConnection) -> None:
+        def _render_saved_row(conn: SavedWifiConnection, has_5ghz: bool | None) -> None:
             with ui.card().classes("w-full q-pa-sm"):
                 with ui.row().classes("items-center justify-between w-full"):
                     with ui.row().classes("items-center gap-3"):
@@ -168,7 +173,24 @@ def network_page() -> None:
                         ui.label(conn.name).classes("text-body1 text-white")
                         if conn.active:
                             ui.badge("Active", color="green")
+                        badge = wifi_bands.band_badge(conn, has_5ghz=has_5ghz)
+                        if badge is not None:
+                            ui.badge(badge, color="blue-grey").props(
+                                'data-testid="network-saved-band"'
+                            )
                     with ui.row().classes("gap-2"):
+                        if wifi_bands.shows_band_control(has_5ghz=has_5ghz):
+                            band_button = ui.button(
+                                "Band",
+                                icon="settings_input_antenna",
+                                on_click=lambda _e, c=conn: _open_band_dialog(c),
+                            ).props("flat dense color=white no-caps")
+                            if conn.active:
+                                band_button.disable()
+                                band_button.tooltip(
+                                    "The band of the network the base is on "
+                                    "can't be changed here yet."
+                                )
                         if not conn.active:
                             ui.button(
                                 "Switch",
@@ -182,6 +204,52 @@ def network_page() -> None:
                                 _open_forget_dialog(name, active)
                             ),
                         ).props("flat dense color=negative")
+
+        def _open_band_dialog(conn: SavedWifiConnection) -> None:
+            """Offer Auto, 2.4 GHz and 5 GHz, each with what the page's scan
+            hears now; choosing one closes the dialog and saves it."""
+            with (
+                ui.dialog() as dialog,
+                ui.card().classes("q-pa-md").style("min-width: 400px"),
+            ):
+                ui.label(f"Wi-Fi band for '{conn.name}'").classes("text-h6 text-white")
+                for option in wifi_bands.band_options(conn.name, last_scan):
+                    current = option.band is conn.band
+                    with ui.row().classes("items-center gap-3 w-full no-wrap"):
+                        ui.button(
+                            option.label,
+                            icon="radio_button_checked"
+                            if current
+                            else "radio_button_unchecked",
+                            on_click=lambda _e, band=option.band: _choose_band(
+                                conn, band, dialog
+                            ),
+                        ).props("flat dense color=white no-caps")
+                        ui.label(option.hint).classes("text-caption text-grey-5")
+                with ui.row().classes("justify-end w-full q-mt-md"):
+                    ui.button("Close", on_click=dialog.close).props("flat")
+            dialog.open()
+
+        async def _choose_band(
+            conn: SavedWifiConnection, band: WifiBand, dialog: ui.dialog
+        ) -> None:
+            dialog.close()
+            if band is conn.band:
+                return
+            try:
+                await svc.change_band(conn.name, band)
+            except NetworkNotConfiguredError:
+                ui.notify(
+                    "Network provisioning is not configured on this device.",
+                    type="negative",
+                )
+                return
+            except Exception as exc:
+                logger.exception("Failed to change a saved network's Wi-Fi band")
+                ui.notify(f"Could not change the band: {exc}", type="negative")
+                return
+            ui.notify(f"Saved: '{conn.name}' will use {band.label}.", type="positive")
+            await _refresh_saved()
 
         async def _open_switch_dialog(name: str) -> None:
             """Confirm switching to an already-saved network (issue #24)."""
@@ -268,8 +336,10 @@ def network_page() -> None:
         async def _do_refresh_saved() -> None:
             connections: list[SavedWifiConnection] = []
             error: str | None = None
+            has_5ghz: bool | None = None
             try:
                 connections = await svc.list_saved_networks()
+                has_5ghz = await _read_has_5ghz()
             except NetworkNotConfiguredError:
                 error = "Network provisioning is not configured on this device."
             except Exception as exc:
@@ -287,7 +357,7 @@ def network_page() -> None:
                     ui.label("No saved WiFi networks.").classes("text-grey-6 q-pa-md")
                     return
                 for conn in connections:
-                    _render_saved_row(conn)
+                    _render_saved_row(conn, has_5ghz)
 
         async def _refresh_saved() -> None:
             try:
@@ -419,6 +489,7 @@ def network_page() -> None:
                 logger.exception("WiFi scan failed")
                 error = f"Scan failed: {exc}"
 
+            last_scan[:] = networks
             scan_list.clear()
             if error is not None:
                 scan_status_label.text = error

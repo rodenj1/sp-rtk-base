@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from sp_rtk_base.models.api_models import (
     NetworkActionResponse,
+    NetworkBandChangeRequest,
     NetworkCapabilitiesResponse,
     NetworkConnectRequest,
     NetworkConnectResponse,
@@ -16,7 +17,11 @@ from sp_rtk_base.models.api_models import (
     NetworkStatusResponse,
     NetworkUplinkResponse,
 )
-from sp_rtk_base.models.net_provision_models import SavedWifiConnection, WifiNetwork
+from sp_rtk_base.models.net_provision_models import (
+    BandChangeOutcome,
+    SavedWifiConnection,
+    WifiNetwork,
+)
 from sp_rtk_base.services import (
     get_config_service,
     get_network_link_service,
@@ -143,6 +148,26 @@ async def list_saved_networks(
     """List saved WiFi profiles, for the console's switch/forget list."""
     try:
         return await svc.list_saved_networks()
+    except NetworkNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.put("/saved/{name}/band", response_model=BandChangeOutcome)
+async def change_band(
+    name: str,
+    request: NetworkBandChangeRequest,
+    svc: NetworkService = Depends(get_network_service),
+) -> BandChangeOutcome:
+    """Lock a saved network to a Wi-Fi band, or set it back to Auto.
+
+    200 with Saved for a network that isn't active: the band is in its
+    profile by the time this returns. 409 means there's no provisioning
+    config.
+    """
+    try:
+        return await svc.change_band(name, request.band)
     except NetworkNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

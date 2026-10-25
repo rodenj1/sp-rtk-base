@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from sp_rtk_base.models.net_provision_models import WifiBand, WifiNetwork
+from sp_rtk_base.models.net_provision_models import (
+    SavedWifiConnection,
+    WifiBand,
+    WifiNetwork,
+)
 from sp_rtk_base.ui import wifi_bands
-from sp_rtk_base.ui.wifi_bands import BandHeard
+from sp_rtk_base.ui.wifi_bands import BandHeard, BandOption
 
 
 def _network(band_signals: dict[WifiBand, int]) -> WifiNetwork:
@@ -56,3 +60,68 @@ class TestBandsHeard:
     @pytest.mark.parametrize("has_5ghz", [False, None])
     def test_nothing_unless_the_adapter_has_5ghz(self, has_5ghz: bool | None) -> None:
         assert wifi_bands.bands_heard(BOTH, has_5ghz=has_5ghz) == []
+
+
+def _saved(band: WifiBand, *, active: bool = False) -> SavedWifiConnection:
+    return SavedWifiConnection(name="Barn-AP", active=active, band=band)
+
+
+class TestShowsBandControl:
+    def test_shown_when_the_adapter_has_5ghz(self) -> None:
+        assert wifi_bands.shows_band_control(has_5ghz=True) is True
+
+    @pytest.mark.parametrize("has_5ghz", [False, None])
+    def test_hidden_unless_the_adapter_has_5ghz(self, has_5ghz: bool | None) -> None:
+        assert wifi_bands.shows_band_control(has_5ghz=has_5ghz) is False
+
+
+class TestBandBadge:
+    @pytest.mark.parametrize(
+        ("band", "badge"),
+        [(WifiBand.GHZ_2_4, "2.4 GHz only"), (WifiBand.GHZ_5, "5 GHz only")],
+    )
+    def test_a_locked_network_shows_its_band(self, band: WifiBand, badge: str) -> None:
+        assert wifi_bands.band_badge(_saved(band), has_5ghz=True) == badge
+
+    def test_an_auto_network_shows_no_badge(self) -> None:
+        assert wifi_bands.band_badge(_saved(WifiBand.AUTO), has_5ghz=True) is None
+
+    @pytest.mark.parametrize("has_5ghz", [False, None])
+    def test_no_badge_unless_the_adapter_has_5ghz(self, has_5ghz: bool | None) -> None:
+        saved = _saved(WifiBand.GHZ_2_4)
+        assert wifi_bands.band_badge(saved, has_5ghz=has_5ghz) is None
+
+
+class TestBandOptions:
+    def test_each_band_hints_what_the_scan_hears_now(self) -> None:
+        scan = [_named("Barn-AP", {WifiBand.GHZ_2_4: 82, WifiBand.GHZ_5: 41})]
+        assert wifi_bands.band_options("Barn-AP", scan) == [
+            BandOption(WifiBand.AUTO, "Auto", "Either band; the base picks."),
+            BandOption(WifiBand.GHZ_2_4, "2.4 GHz", "Heard now at 82%."),
+            BandOption(WifiBand.GHZ_5, "5 GHz", "Heard now at 41%."),
+        ]
+
+    def test_a_band_the_scan_doesnt_hear_says_so(self) -> None:
+        scan = [_named("Barn-AP", {WifiBand.GHZ_5: 55})]
+        options = wifi_bands.band_options("Barn-AP", scan)
+        assert [o.hint for o in options] == [
+            "Either band; the base picks.",
+            "Not heard right now.",
+            "Heard now at 55%.",
+        ]
+
+    def test_a_network_missing_from_the_scan_is_heard_on_neither_band(
+        self,
+    ) -> None:
+        """Only the saved network's own SSID counts, not its neighbours'."""
+        scan = [_named("Neighbour", {WifiBand.GHZ_2_4: 90, WifiBand.GHZ_5: 90})]
+        options = wifi_bands.band_options("Barn-AP", scan)
+        assert [o.hint for o in options] == [
+            "Either band; the base picks.",
+            "Not heard right now.",
+            "Not heard right now.",
+        ]
+
+
+def _named(ssid: str, band_signals: dict[WifiBand, int]) -> WifiNetwork:
+    return _network(band_signals).model_copy(update={"ssid": ssid})

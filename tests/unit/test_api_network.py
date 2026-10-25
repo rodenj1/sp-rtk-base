@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -40,6 +41,7 @@ from sp_rtk_base.services.net_provision.nmcli_adapter import NmcliAdapter
 from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
     ApFallbackInfo,
+    BandChangeInProgressError,
     NetworkNotConfiguredError,
     NetworkService,
 )
@@ -823,6 +825,43 @@ class TestForgetNetwork:
         )
         resp = client.delete("/api/network/saved/SiteWiFi")
         assert resp.status_code == 502
+
+
+class TestWhileABandChangeApplies:
+    """A band change, switch or forget asked for while a band change is
+    still applying is a conflict, not an nmcli fault."""
+
+    @pytest.mark.parametrize(
+        ("method", "call"),
+        [
+            (
+                "change_band",
+                lambda c: c.put(
+                    "/api/network/saved/Barn-AP/band", json={"band": "5ghz"}
+                ),
+            ),
+            (
+                "switch_to_network",
+                lambda c: c.post("/api/network/saved/Barn-AP/activate"),
+            ),
+            ("forget_network", lambda c: c.delete("/api/network/saved/Barn-AP")),
+        ],
+    )
+    def test_returns_409(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        method: str,
+        call: Callable[[TestClient], Any],
+    ) -> None:
+        setattr(
+            mock_network_service,
+            method,
+            AsyncMock(side_effect=BandChangeInProgressError("still applying")),
+        )
+        resp = call(client)
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "still applying"
 
 
 # ---------------------------------------------------------------------------

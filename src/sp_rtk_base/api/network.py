@@ -32,6 +32,7 @@ from sp_rtk_base.services import (
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.network_link.service import NetworkLinkService
 from sp_rtk_base.services.network_service import (
+    BandChangeInProgressError,
     NetworkNotConfiguredError,
     NetworkService,
 )
@@ -180,11 +181,12 @@ async def change_band(
     network: the reconnect runs in the background, fire-and-acknowledge,
     and the saved list later shows if it was undone. 422 when Refused, with
     the Refused outcome as ``detail`` (an object, where a body validation
-    error's is a list). 409 means there's no provisioning config.
+    error's is a list). 409 means there's no provisioning config, or
+    another band change is still being applied.
     """
     try:
         reply = await svc.change_band(name, request.band)
-    except NetworkNotConfiguredError as exc:
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -207,12 +209,13 @@ async def switch_network(
     Returns as soon as NetworkManager has been instructed to activate
     ``name``, not once the device is confirmed connected — see
     :meth:`NetworkService.switch_to_network`. 409 means there's no
-    provisioning config; it does not mean the switch itself failed,
-    since that outcome isn't known yet.
+    provisioning config, or a band change is still being applied; it
+    does not mean the switch itself failed, since that outcome isn't
+    known yet.
     """
     try:
         await svc.switch_to_network(name)
-    except NetworkNotConfiguredError as exc:
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -236,7 +239,7 @@ async def forget_network(
     """
     try:
         await svc.forget_network(name)
-    except NetworkNotConfiguredError as exc:
+    except (NetworkNotConfiguredError, BandChangeInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

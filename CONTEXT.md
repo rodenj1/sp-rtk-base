@@ -140,6 +140,14 @@ strength, the raw reading is an absolute power, not a relative one.
 _Avoid_: Wi-Fi signal, signal strength, signal, RSSI (a raw reading, not
 the concept)
 
+**Wi-Fi band**:
+Which radio band the base station may use to join one saved Wi-Fi network:
+**Auto** (either), **2.4 GHz** or **5 GHz**. A property of that saved
+network, not of the base station, and a hard lock rather than a hint: a
+network locked to a band it isn't being heard on can't be joined. Only an
+appliance owns its Wi-Fi bands; it has nothing to do with the setup AP.
+_Avoid_: band preference, frequency, 5 GHz toggle
+
 **Not supported** / **Disconnected** / **No reading**:
 The three reasons a Network link reading has no current value. **Not
 supported**: the hardware or its driver never gives this reading (for

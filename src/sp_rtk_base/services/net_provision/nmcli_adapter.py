@@ -159,6 +159,9 @@ class NmcliAdapter:
             saved_wifi_known=saved_wifi_name is not None,
             saved_wifi_visible=self._saved_wifi_seen,
             saved_wifi_name=saved_wifi_name,
+            saved_wifi_band=(
+                self._band_of(saved_wifi_name) if saved_wifi_name is not None else None
+            ),
         )
 
     def _active_connection_names(self) -> set[str]:
@@ -413,11 +416,20 @@ class NmcliAdapter:
         self._ap_down()
         saved_name = self._saved_wifi_connection_name()
         self._last_scan = self.scan_networks()
-        if saved_name is not None and any(
-            n.ssid == saved_name for n in self._last_scan
-        ):
+        if saved_name is not None and self._heard_on_allowed_band(saved_name):
             self._saved_wifi_seen = True
         self._ap_up()
+
+    def _heard_on_allowed_band(self, saved_name: str) -> bool:
+        """Whether the last scan heard ``saved_name`` on a band its Wi-Fi
+        band allows (issue #152). Auto allows any band; a lock that rules
+        out every band heard means a `con up` bound to fail, so the
+        network doesn't count as seen."""
+        heard = [n for n in self._last_scan if n.ssid == saved_name]
+        if not heard:
+            return False
+        band = self._band_of(saved_name)
+        return band is WifiBand.AUTO or any(band in n.band_signals for n in heard)
 
     def _stop_ap_and_connect(self) -> None:
         # decide() returns this action in two distinct situations: (a)

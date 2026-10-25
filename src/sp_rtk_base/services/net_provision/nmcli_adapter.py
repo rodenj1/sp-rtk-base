@@ -50,6 +50,7 @@ from sp_rtk_base.models.net_provision_models import (
     WifiBand,
     WifiNetwork,
     band_join_security,
+    band_signals_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -469,11 +470,11 @@ class NmcliAdapter:
         band allows (issue #152). Auto allows any band; a lock that rules
         out every band heard means a `con up` bound to fail, so the
         network doesn't count as seen."""
-        heard = [n for n in self._last_scan if n.ssid == saved_name]
-        if not heard:
+        heard = band_signals_of(saved_name, self._last_scan)
+        if heard is None:
             return False
         band = self._band_of(saved_name)
-        return band is WifiBand.AUTO or any(band in n.band_signals for n in heard)
+        return band is WifiBand.AUTO or band in heard
 
     def _stop_ap_and_connect(self) -> None:
         # decide() returns this action in two distinct situations: (a)
@@ -635,10 +636,7 @@ class NmcliAdapter:
 
     def _heard_on(self, name: str, band: WifiBand) -> bool:
         """Whether a fresh scan hears saved network ``name`` on ``band``."""
-        return any(
-            network.ssid == name and band in network.band_signals
-            for network in self.scan_networks()
-        )
+        return band in (band_signals_of(name, self.scan_networks()) or {})
 
     def connect_to_network(
         self,

@@ -16,6 +16,7 @@ from sp_rtk_base.models.net_provision_models import (
     WifiBand,
     WifiNetwork,
     band_join_security,
+    band_signals_of,
 )
 
 # The bands a network can be heard on, in the order the console lists them.
@@ -34,7 +35,7 @@ class BandHeard:
 def bands_heard(network: WifiNetwork, *, has_5ghz: bool | None) -> list[BandHeard]:
     """The bands ``network`` is heard on, 2.4 GHz first, each with the
     strongest signal on it; empty unless the adapter has 5 GHz."""
-    if has_5ghz is not True:
+    if not shows_band_control(has_5ghz=has_5ghz):
         return []
     return [
         BandHeard(band=band, signal=signal, text=f"{band.label}: {signal}%")
@@ -82,11 +83,7 @@ def band_options(
     For the ``active`` network, a band the scan doesn't hear is disabled,
     so the operator can't lock the base out of the network it is on.
     """
-    heard: dict[WifiBand, int] = {}
-    for network in scan:
-        if network.ssid == name:
-            heard = network.band_signals
-            break
+    heard = band_signals_of(name, scan) or {}
     options = [BandOption(WifiBand.AUTO, WifiBand.AUTO.label, _AUTO_HINT)]
     for band in _HEARD_ORDER:
         signal = heard.get(band)
@@ -211,9 +208,7 @@ def stronger_band(
         on_band = active.band
     if on_band is None:
         return None
-    heard = next(
-        (n.band_signals for n in scan if n.ssid == active.name), dict[WifiBand, int]()
-    )
+    heard = band_signals_of(active.name, scan) or {}
     other = WifiBand.GHZ_5 if on_band is WifiBand.GHZ_2_4 else WifiBand.GHZ_2_4
     on_signal, other_signal = heard.get(on_band), heard.get(other)
     if on_signal is None or other_signal is None:

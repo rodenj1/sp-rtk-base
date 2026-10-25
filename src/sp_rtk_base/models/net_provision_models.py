@@ -13,6 +13,7 @@ function of observable state.
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -292,6 +293,18 @@ class WifiNetwork(BaseModel):
             "absent, so is Auto. ``signal`` stays the strongest overall."
         ),
     )
+
+
+def band_signals_of(
+    ssid: str, scan: Iterable[WifiNetwork]
+) -> dict[WifiBand, int] | None:
+    """The bands ``scan`` hears ``ssid`` on, each with its strongest
+    signal; ``None`` when it isn't heard at all. Empty when it's heard
+    only outside both bands, such as on 6 GHz."""
+    for network in scan:
+        if network.ssid == ssid:
+            return network.band_signals
+    return None
 
 
 # ---------------------------------------------------------------------------

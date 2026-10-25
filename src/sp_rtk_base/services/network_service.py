@@ -90,7 +90,7 @@ class NetworkService:
         # The last Reverted band change per saved network, so the console can
         # tell the operator after they rejoin. Memory only: a restart forgets
         # it, which was accepted (#151).
-        self._reverted: dict[str, BandChangeReverted] = {}
+        self._last_reverted_band_change: dict[str, BandChangeReverted] = {}
         # Set from a band change being accepted until its reconnect (if any)
         # finishes, so only one runs at a time.
         self._band_change_running = False
@@ -217,7 +217,7 @@ class NetworkService:
         saved = await asyncio.to_thread(adapter.list_saved_connections)
         return [
             conn.model_copy(update={"last_band_change": reverted})
-            if (reverted := self._reverted.get(conn.name)) is not None
+            if (reverted := self._last_reverted_band_change.get(conn.name)) is not None
             else conn
             for conn in saved
         ]
@@ -250,7 +250,7 @@ class NetworkService:
             self._band_change_running = False
             raise
         if not isinstance(reply, BandChangeRefused):
-            self._reverted.pop(name, None)
+            self._last_reverted_band_change.pop(name, None)
         if not isinstance(reply, BandChangePending):
             self._band_change_running = False
             return reply
@@ -284,7 +284,7 @@ class NetworkService:
                 outcome.tried.label,
                 outcome.band.label,
             )
-            self._reverted[name] = outcome
+            self._last_reverted_band_change[name] = outcome
 
     async def switch_to_network(self, name: str) -> None:
         """Activate an already-saved WiFi profile — fire-and-acknowledge (issue #24).
@@ -337,7 +337,7 @@ class NetworkService:
     async def _forget(self, adapter: NmcliAdapter, name: str) -> None:
         await asyncio.to_thread(adapter.forget_connection, name)
         # A network saved again under the same name starts with no note.
-        self._reverted.pop(name, None)
+        self._last_reverted_band_change.pop(name, None)
 
     @staticmethod
     def _run_in_background(

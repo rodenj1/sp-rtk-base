@@ -3,11 +3,11 @@
 Shows the Uplink from the Network link snapshot (for a Network link
 Uplink: Wi-Fi link strength, network, Wi-Fi band with its MHz, and
 address as separate readings, the same as the dashboard's Network
-card), a list of saved WiFi profiles with Wi-Fi band/switch/forget actions, and a
-scan list of
-nearby networks the operator can join (or a hidden SSID typed
-manually). Each nearby network shows the Wi-Fi bands it's heard on and
-expands to the signal on each, when the adapter has 5 GHz.
+card), a list of saved WiFi profiles with Wi-Fi band/switch/forget
+actions, and a scan list of nearby networks the operator can join (or
+a hidden SSID typed manually). Each nearby network shows the Wi-Fi
+bands it's heard on and expands to the signal on each, when the
+adapter has 5 GHz.
 """
 
 # pyright: reportUnknownMemberType=false

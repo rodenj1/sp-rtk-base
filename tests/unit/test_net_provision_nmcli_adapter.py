@@ -1223,7 +1223,27 @@ class TestChangeBand:
         fake.set_response(SCAN, stdout=_scan_line(SAVED_SSID, 40, freq=5180))
         outcome = _adapter(fake).change_band(SAVED_SSID, WifiBand.GHZ_5)
         assert outcome == BandChangePending(name=SAVED_SSID, band=WifiBand.GHZ_5)
-        assert fake.calls == [ACTIVE_CONNECTIONS, SCAN]
+        # The band it's on now is read too: a revert needs it.
+        assert fake.calls == [ACTIVE_CONNECTIONS, SCAN, _band_of(SAVED_SSID)]
+
+    @pytest.mark.parametrize(
+        "unreadable",
+        [
+            FakeCompletedProcess(stderr="Error: no such profile.", returncode=10),
+            FakeCompletedProcess(stdout="bgn\n"),
+        ],
+    )
+    def test_the_active_network_whose_band_cant_be_read_is_not_changed(
+        self, unreadable: FakeCompletedProcess
+    ) -> None:
+        """Without the band it's on now there'd be nothing to revert to,
+        so the change fails before anything is written."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        fake.queue_responses(_band_of(SAVED_SSID), unreadable)
+        with pytest.raises(NmcliError, match="couldn't read"):
+            _adapter(fake).change_band(SAVED_SSID, WifiBand.AUTO)
+        assert fake.calls == [ACTIVE_CONNECTIONS, _band_of(SAVED_SSID)]
 
     def test_setting_the_active_network_back_to_auto_needs_no_scan(self) -> None:
         """Auto allows either band, so it can't rule the network out."""
@@ -1231,7 +1251,7 @@ class TestChangeBand:
         fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
         outcome = _adapter(fake).change_band(SAVED_SSID, WifiBand.AUTO)
         assert outcome == BandChangePending(name=SAVED_SSID, band=WifiBand.AUTO)
-        assert fake.calls == [ACTIVE_CONNECTIONS]
+        assert fake.calls == [ACTIVE_CONNECTIONS, _band_of(SAVED_SSID)]
 
     def test_refuses_the_setup_ap_profile(self) -> None:
         """The setup hotspot is a separate radio role, out of scope."""
@@ -1295,6 +1315,36 @@ class TestApplyBandChange:
             SAVED_UP,
             _set_band(SAVED_SSID, "bg"),
             SAVED_UP,
+        ]
+
+    def test_a_band_that_cant_be_read_fails_before_anything_is_written(
+        self,
+    ) -> None:
+        fake = FakeNmcli()
+        fake.set_response(_band_of(SAVED_SSID), stderr="Error: gone.", returncode=10)
+        with pytest.raises(NmcliError, match="couldn't read"):
+            _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_5)
+        assert fake.calls == [_band_of(SAVED_SSID)]
+
+    def test_a_failed_write_back_is_still_reverted(self) -> None:
+        """Best effort: the reconnect on the new band failed, so the
+        outcome is Reverted even though the old band couldn't be put
+        back, rather than the change ending with no outcome at all."""
+        fake = FakeNmcli()
+        fake.set_response(_band_of(SAVED_SSID), stdout="bg\n")
+        fake.set_response(SAVED_UP, stderr="Error: not found.", returncode=4)
+        fake.set_response(
+            _set_band(SAVED_SSID, "bg"), stderr="Error: failed.", returncode=1
+        )
+        outcome = _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_5)
+        assert outcome == BandChangeReverted(
+            name=SAVED_SSID, band=WifiBand.GHZ_2_4, tried=WifiBand.GHZ_5
+        )
+        assert fake.calls == [
+            _band_of(SAVED_SSID),
+            _set_band(SAVED_SSID, "a"),
+            SAVED_UP,
+            _set_band(SAVED_SSID, "bg"),
         ]
 
     def test_a_failed_write_raises_before_any_reconnect(self) -> None:

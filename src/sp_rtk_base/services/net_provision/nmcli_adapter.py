@@ -269,15 +269,33 @@ class NmcliAdapter:
         whole saved list: Auto is also what NetworkManager does with a
         profile that carries no lock.
         """
+        band = self._read_band(name)
+        return WifiBand.AUTO if band is None else band
+
+    def _read_band(self, name: str) -> WifiBand | None:
+        """The Wi-Fi band saved in profile ``name``; ``None`` unreadable."""
         result = self._run(
             ["nmcli", "-g", "802-11-wireless.band", "connection", "show", "id", name]
         )
         if result.returncode != 0:
-            return WifiBand.AUTO
+            return None
         try:
             return WifiBand.from_nm(result.stdout)
         except ValueError:
-            return WifiBand.AUTO
+            return None
+
+    def _current_band(self, name: str) -> WifiBand:
+        """The band in profile ``name``, which a revert would put back.
+
+        Raises:
+            NmcliError: It can't be read; nothing has been written.
+        """
+        band = self._read_band(name)
+        if band is None:
+            raise NmcliError(
+                f"couldn't read the Wi-Fi band of {name!r}, so it was not changed"
+            )
+        return band
 
     def scan_networks(self) -> list[WifiNetwork]:
         """Scan for nearby WiFi networks, for the WiFi-picker portal (issue #10).
@@ -521,8 +539,9 @@ class NmcliAdapter:
         :meth:`apply_band_change` to reconnect.
 
         Raises:
-            NmcliError: ``name`` is the setup AP profile, or the write
-                failed.
+            NmcliError: ``name`` is the setup AP profile, the write
+                failed, or the active network's current band couldn't be
+                read (so there'd be nothing to revert to).
         """
         if name == self._config.ap_ssid:
             raise NmcliError(
@@ -539,6 +558,9 @@ class NmcliAdapter:
                         "changed."
                     ),
                 )
+            # A revert needs the band it's on now: fail before the
+            # reconnect is even scheduled if that can't be read.
+            self._current_band(name)
             return BandChangePending(name=name, band=band)
         self._write_band(name, band)
         return BandChangeSaved(name=name, band=band)
@@ -556,21 +578,35 @@ class NmcliAdapter:
         attempt comes up. Only a failed reconnect reverts; joining and then
         lacking internet doesn't.
 
+        Writing the previous band back is best effort: if it fails, that
+        is logged and the outcome is still Reverted, without the second
+        reconnect, leaving recovery to the decision loop.
+
         Raises:
-            NmcliError: A write failed.
+            NmcliError: The previous band couldn't be read (nothing is
+                written), or writing the new band failed.
         """
-        previous = self._band_of(name)
+        previous = self._current_band(name)
         self._write_band(name, band)
         if self._connection_up(name):
             return BandChangeApplied(name=name, band=band)
-        self._write_band(name, previous)
-        if not self._connection_up(name):
-            logger.warning(
-                "%r didn't come back up on %s after a failed band change; "
+        try:
+            self._write_band(name, previous)
+        except NmcliError:
+            logger.exception(
+                "Couldn't put %r back on %s after a failed band change; "
                 "leaving recovery to the decision loop",
                 name,
                 previous.label,
             )
+        else:
+            if not self._connection_up(name):
+                logger.warning(
+                    "%r didn't come back up on %s after a failed band change; "
+                    "leaving recovery to the decision loop",
+                    name,
+                    previous.label,
+                )
         return BandChangeReverted(name=name, band=previous, tried=band)
 
     def _connection_up(self, name: str) -> bool:

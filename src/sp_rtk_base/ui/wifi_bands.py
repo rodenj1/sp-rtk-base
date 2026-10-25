@@ -69,11 +69,18 @@ class BandOption:
     band: WifiBand
     label: str
     hint: str
+    disabled: bool = False
 
 
-def band_options(name: str, scan: Sequence[WifiNetwork]) -> list[BandOption]:
+def band_options(
+    name: str, scan: Sequence[WifiNetwork], *, active: bool = False
+) -> list[BandOption]:
     """The Band dialog's choices for saved network ``name``: Auto, then
-    each band with whether the page's last scan hears ``name`` there."""
+    each band with whether the page's last scan hears ``name`` there.
+
+    For the ``active`` network, a band the scan doesn't hear is disabled,
+    so the operator can't lock the base out of the network it is on.
+    """
     heard: dict[WifiBand, int] = {}
     for network in scan:
         if network.ssid == name:
@@ -83,8 +90,55 @@ def band_options(name: str, scan: Sequence[WifiNetwork]) -> list[BandOption]:
     for band in _HEARD_ORDER:
         signal = heard.get(band)
         hint = _NOT_HEARD_HINT if signal is None else f"Heard now at {signal}%."
-        options.append(BandOption(band, band.label, hint))
+        options.append(
+            BandOption(band, band.label, hint, disabled=active and signal is None)
+        )
     return options
+
+
+def band_change_warning(
+    name: str,
+    band: WifiBand,
+    *,
+    on_portal: bool,
+    ap_ssid: str,
+    fallback_minutes: str,
+) -> str:
+    """The confirm dialog's warning before a band change reconnects the
+    active network ``name``.
+
+    The operator's own session drops with the link. On the Portal the base
+    drops off for longer, since it has to rejoin and reach the Portal
+    again. ``ap_ssid`` and ``fallback_minutes`` are the setup hotspot's,
+    read fresh by the caller.
+    """
+    target = "either band" if band is WifiBand.AUTO else band.label
+    if on_portal:
+        return (
+            f"'{name}' reconnects to apply this, so the base will drop off the "
+            "Portal for about a minute and this page will stop updating. If it "
+            f"can't join on {target}, it puts the old band back by itself and "
+            "reappears."
+        )
+    return (
+        f"'{name}' reconnects to apply this, so this console session will drop "
+        f"for about half a minute. If it can't join on {target}, it puts the old "
+        f"band back by itself; failing that, '{ap_ssid}' appears in about "
+        f"{fallback_minutes} min."
+    )
+
+
+def reverted_note(saved: SavedWifiConnection) -> str | None:
+    """Why the last band change to ``saved`` was undone; ``None`` unless it
+    was Reverted."""
+    reverted = saved.last_band_change
+    if reverted is None:
+        return None
+    return (
+        f"Your change to {reverted.tried.label} was undone: the base couldn't "
+        f"join '{saved.name}' on {reverted.tried.label}, so it went back to "
+        f"{reverted.band.label}."
+    )
 
 
 _AUTO_HINT = "Either band; the base picks."

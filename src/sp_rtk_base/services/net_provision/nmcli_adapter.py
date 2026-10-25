@@ -30,11 +30,16 @@ Two things this adapter deliberately does **not** own:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from collections.abc import Callable
 
 from sp_rtk_base.models.net_provision_models import (
-    BandChangeOutcome,
+    BandChangeApplied,
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReply,
+    BandChangeReverted,
     BandChangeSaved,
     Connectivity,
     NetProvisionConfig,
@@ -45,9 +50,15 @@ from sp_rtk_base.models.net_provision_models import (
     WifiNetwork,
 )
 
+logger = logging.getLogger(__name__)
+
 NmcliRunner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 _NMCLI_TIMEOUT_SECONDS = 10.0
+# `nmcli connection up` waits for the activation, up to NetworkManager's own
+# 90 s, and a failed one takes about 25 s on a Pi. Killing it sooner would
+# lose the failure a band change reverts on.
+_CONNECTION_UP_TIMEOUT_SECONDS = 120.0
 _WIRELESS_TYPE = "802-11-wireless"
 
 # NetworkManager's loopback connection ("lo") is active on every host,
@@ -62,11 +73,14 @@ _LOOPBACK_CONNECTION_NAME = "lo"
 
 def _run_nmcli(args: list[str]) -> subprocess.CompletedProcess[str]:
     """Default runner: invoke the real ``nmcli`` binary."""
+    connection_up = args[1:3] == ["connection", "up"]
     return subprocess.run(
         args,
         capture_output=True,
         text=True,
-        timeout=_NMCLI_TIMEOUT_SECONDS,
+        timeout=_CONNECTION_UP_TIMEOUT_SECONDS
+        if connection_up
+        else _NMCLI_TIMEOUT_SECONDS,
         check=False,
     )
 
@@ -469,7 +483,7 @@ class NmcliAdapter:
             raise NmcliError(f"refusing to forget the setup AP connection {name!r}")
         self._run_checked(["nmcli", "connection", "delete", "id", name])
 
-    def change_band(self, name: str, band: WifiBand) -> BandChangeOutcome:
+    def change_band(self, name: str, band: WifiBand) -> BandChangeReply:
         """Lock saved network ``name`` to ``band``, or set it back to Auto.
 
         For a network that isn't active the band is written to its
@@ -477,19 +491,76 @@ class NmcliAdapter:
         the outcome is Saved. Being in the profile, the band survives a
         reboot.
 
+        For the active network nothing is written here. A lock to a band
+        that a fresh scan doesn't hear it on is Refused, since it would
+        strand the base; anything else is Pending, for
+        :meth:`apply_band_change` to reconnect.
+
         Raises:
-            NmcliError: ``name`` is the setup AP profile, ``name`` is the
-                active network (its band can't be changed yet), or the
-                write failed.
+            NmcliError: ``name`` is the setup AP profile, or the write
+                failed.
         """
         if name == self._config.ap_ssid:
             raise NmcliError(
                 f"refusing to change the band of the setup AP connection {name!r}"
             )
         if name in self._active_connection_names():
-            raise NmcliError(
-                f"changing the band of the active network {name!r} isn't supported"
+            if band is not WifiBand.AUTO and not self._heard_on(name, band):
+                return BandChangeRefused(
+                    name=name,
+                    band=band,
+                    reason=(
+                        f"'{name}' isn't being heard on {band.label} right now, "
+                        "so the base couldn't join it there. The band was not "
+                        "changed."
+                    ),
+                )
+            return BandChangePending(name=name, band=band)
+        self._write_band(name, band)
+        return BandChangeSaved(name=name, band=band)
+
+    def apply_band_change(
+        self, name: str, band: WifiBand
+    ) -> BandChangeApplied | BandChangeReverted:
+        """Apply ``band`` to the active network ``name`` by reconnecting it.
+
+        Only for a change that :meth:`change_band` left Pending. The band
+        is written and the network brought up again, since NetworkManager
+        can't apply a band to a live link any other way. If it can't come
+        up on the new band, the previous band is written back and the
+        network brought up once more: Reverted, whether or not that second
+        attempt comes up. Only a failed reconnect reverts; joining and then
+        lacking internet doesn't.
+
+        Raises:
+            NmcliError: A write failed.
+        """
+        previous = self._band_of(name)
+        self._write_band(name, band)
+        if self._connection_up(name):
+            return BandChangeApplied(name=name, band=band)
+        self._write_band(name, previous)
+        if not self._connection_up(name):
+            logger.warning(
+                "%r didn't come back up on %s after a failed band change; "
+                "leaving recovery to the decision loop",
+                name,
+                previous.label,
             )
+        return BandChangeReverted(name=name, band=previous, tried=band)
+
+    def _connection_up(self, name: str) -> bool:
+        """Bring up saved network ``name``; whether it came up."""
+        result = self._run(["nmcli", "connection", "up", "id", name])
+        if result.returncode != 0:
+            logger.warning(
+                "`nmcli connection up` %r failed: %s",
+                name,
+                result.stderr.strip() or f"exit code {result.returncode}",
+            )
+        return result.returncode == 0
+
+    def _write_band(self, name: str, band: WifiBand) -> None:
         self._run_checked(
             [
                 "nmcli",
@@ -501,7 +572,13 @@ class NmcliAdapter:
                 band.nm_value,
             ]
         )
-        return BandChangeSaved(name=name, band=band)
+
+    def _heard_on(self, name: str, band: WifiBand) -> bool:
+        """Whether a fresh scan hears saved network ``name`` on ``band``."""
+        return any(
+            network.ssid == name and band in network.band_signals
+            for network in self.scan_networks()
+        )
 
     def connect_to_network(
         self, ssid: str, password: str, *, hidden: bool = False

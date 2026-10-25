@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeReverted,
     SavedWifiConnection,
     WifiBand,
     WifiNetwork,
@@ -121,6 +122,87 @@ class TestBandOptions:
             "Not heard right now.",
             "Not heard right now.",
         ]
+
+    def test_the_active_network_disables_a_band_the_scan_doesnt_hear(
+        self,
+    ) -> None:
+        """Locking the network the base is on to a band it isn't heard on
+        would strand the base; Auto is always open."""
+        scan = [_named("FarmShop", {WifiBand.GHZ_2_4: 82})]
+        options = wifi_bands.band_options("FarmShop", scan, active=True)
+        assert [(o.band, o.disabled) for o in options] == [
+            (WifiBand.AUTO, False),
+            (WifiBand.GHZ_2_4, False),
+            (WifiBand.GHZ_5, True),
+        ]
+
+    def test_a_network_that_isnt_active_disables_nothing(self) -> None:
+        """It may be out of range on purpose: the operator is preparing it."""
+        options = wifi_bands.band_options("Barn-AP", [], active=False)
+        assert [o.disabled for o in options] == [False, False, False]
+
+
+class TestBandChangeWarning:
+    def test_on_the_local_console_the_session_drops_for_half_a_minute(
+        self,
+    ) -> None:
+        text = wifi_bands.band_change_warning(
+            "FarmShop",
+            WifiBand.GHZ_2_4,
+            on_portal=False,
+            ap_ssid="sp-rtk-base-setup",
+            fallback_minutes="5",
+        )
+        assert text == (
+            "'FarmShop' reconnects to apply this, so this console session will "
+            "drop for about half a minute. If it can't join on 2.4 GHz, it puts "
+            "the old band back by itself; failing that, 'sp-rtk-base-setup' "
+            "appears in about 5 min."
+        )
+
+    def test_on_the_portal_the_base_drops_off_for_a_minute(self) -> None:
+        text = wifi_bands.band_change_warning(
+            "FarmShop",
+            WifiBand.GHZ_5,
+            on_portal=True,
+            ap_ssid="sp-rtk-base-setup",
+            fallback_minutes="5",
+        )
+        assert text == (
+            "'FarmShop' reconnects to apply this, so the base will drop off the "
+            "Portal for about a minute and this page will stop updating. If it "
+            "can't join on 5 GHz, it puts the old band back by itself and "
+            "reappears."
+        )
+
+    def test_auto_reads_as_either_band(self) -> None:
+        text = wifi_bands.band_change_warning(
+            "FarmShop",
+            WifiBand.AUTO,
+            on_portal=True,
+            ap_ssid="sp-rtk-base-setup",
+            fallback_minutes="5",
+        )
+        assert "If it can't join on either band," in text
+
+
+class TestRevertedNote:
+    def test_a_reverted_change_explains_what_happened(self) -> None:
+        saved = SavedWifiConnection(
+            name="FarmShop",
+            active=True,
+            last_band_change=BandChangeReverted(
+                name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+            ),
+        )
+        assert wifi_bands.reverted_note(saved) == (
+            "Your change to 5 GHz was undone: the base couldn't join 'FarmShop' "
+            "on 5 GHz, so it went back to Auto."
+        )
+
+    def test_no_note_without_a_reverted_change(self) -> None:
+        saved = SavedWifiConnection(name="FarmShop", active=True)
+        assert wifi_bands.reverted_note(saved) is None
 
 
 def _named(ssid: str, band_signals: dict[WifiBand, int]) -> WifiNetwork:

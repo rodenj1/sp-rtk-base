@@ -21,6 +21,8 @@ import logging
 from nicegui import ui
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangePending,
+    BandChangeRefused,
     SavedWifiConnection,
     WifiBand,
     WifiNetwork,
@@ -63,6 +65,10 @@ def network_page() -> None:
     """Render the network status, WiFi scan, and join dialog."""
     svc = get_network_service()
     network_link = get_network_link_service()
+    # The Portal proxies the console under its own path and says so in this
+    # header, so its presence means the operator reaches the base through
+    # the Portal rather than on the local network.
+    on_portal = bool(ui.context.client.request.headers.get("X-Forwarded-Prefix"))
 
     with page_layout("Network"):
         ui.label("Network").classes("text-h4 text-white q-mb-md")
@@ -143,10 +149,9 @@ def network_page() -> None:
             except RuntimeError:
                 return  # Elements deleted — user navigated away
 
-        async def _session_drop_warning_text(verb: str) -> str:
-            """Honest session-drop copy shared by the join/switch/forget
-            dialogs (issues #23, #24) — read the AP fallback values fresh
-            each time rather than hard-coding them (per #23's spec)."""
+        async def _ap_fallback() -> tuple[str, str]:
+            """The setup hotspot's SSID and fallback window in minutes, read
+            fresh each time rather than hard-coded (per #23's spec)."""
             ap_ssid = "the setup hotspot"
             fallback_minutes = "a few"
             try:
@@ -155,6 +160,12 @@ def network_page() -> None:
                 fallback_minutes = str(max(1, round(info.fallback_window_seconds / 60)))
             except Exception:
                 logger.exception("Failed to load AP fallback info for the warning")
+            return ap_ssid, fallback_minutes
+
+        async def _session_drop_warning_text(verb: str) -> str:
+            """Honest session-drop copy shared by the join/switch/forget
+            dialogs (issues #23, #24)."""
+            ap_ssid, fallback_minutes = await _ap_fallback()
             return (
                 f"This console session will drop once you {verb}. Rejoin "
                 f"on the new network to continue — if it fails, '{ap_ssid}' "
@@ -178,19 +189,18 @@ def network_page() -> None:
                             ui.badge(badge, color="blue-grey").props(
                                 'data-testid="network-saved-band"'
                             )
+                        note = wifi_bands.reverted_note(conn)
+                        if note is not None:
+                            ui.icon("undo").classes("text-orange-4").props(
+                                'data-testid="network-saved-band-undone"'
+                            ).tooltip(note)
                     with ui.row().classes("gap-2"):
                         if wifi_bands.shows_band_control(has_5ghz=has_5ghz):
-                            band_button = ui.button(
+                            ui.button(
                                 "Band",
                                 icon="settings_input_antenna",
                                 on_click=lambda _e, c=conn: _open_band_dialog(c),
                             ).props("flat dense color=white no-caps")
-                            if conn.active:
-                                band_button.disable()
-                                band_button.tooltip(
-                                    "The band of the network the base is on "
-                                    "can't be changed here yet."
-                                )
                         if not conn.active:
                             ui.button(
                                 "Switch",
@@ -207,16 +217,28 @@ def network_page() -> None:
 
         def _open_band_dialog(conn: SavedWifiConnection) -> None:
             """Offer Auto, 2.4 GHz and 5 GHz, each with what the page's scan
-            hears now; choosing one closes the dialog and saves it."""
+            hears now; on the active network a band it doesn't hear is
+            disabled. Choosing one closes the dialog and saves it, or, on the
+            active network, asks to confirm the reconnect first."""
             with (
                 ui.dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label(f"Wi-Fi band for '{conn.name}'").classes("text-h6 text-white")
-                for option in wifi_bands.band_options(conn.name, last_scan):
+                note = wifi_bands.reverted_note(conn)
+                if note is not None:
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        ui.icon("undo").classes("text-orange-4")
+                        ui.label(note).classes("text-caption text-orange-4").props(
+                            'data-testid="network-band-dialog-undone"'
+                        )
+                options = wifi_bands.band_options(
+                    conn.name, last_scan, active=conn.active
+                )
+                for option in options:
                     current = option.band is conn.band
                     with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        ui.button(
+                        choice = ui.button(
                             option.label,
                             icon="radio_button_checked"
                             if current
@@ -225,7 +247,16 @@ def network_page() -> None:
                                 conn, band, dialog
                             ),
                         ).props("flat dense color=white no-caps")
-                        ui.label(option.hint).classes("text-caption text-grey-5")
+                        if option.disabled:
+                            choice.disable()
+                        ui.label(option.hint).classes(
+                            "text-caption "
+                            + ("text-grey-7" if option.disabled else "text-grey-5")
+                        )
+                if conn.active:
+                    ui.label(
+                        "Changing the band of the network the base is on reconnects it."
+                    ).classes("text-caption text-grey-6 q-mt-sm")
                 with ui.row().classes("justify-end w-full q-mt-md"):
                     ui.button("Close", on_click=dialog.close).props("flat")
             dialog.open()
@@ -236,8 +267,46 @@ def network_page() -> None:
             dialog.close()
             if band is conn.band:
                 return
+            if conn.active:
+                await _open_band_confirm_dialog(conn, band)
+                return
+            await _submit_band(conn, band)
+
+        async def _open_band_confirm_dialog(
+            conn: SavedWifiConnection, band: WifiBand
+        ) -> None:
+            """Warn that the reconnect drops the session before going on."""
+            ap_ssid, fallback_minutes = await _ap_fallback()
+            warning = wifi_bands.band_change_warning(
+                conn.name,
+                band,
+                on_portal=on_portal,
+                ap_ssid=ap_ssid,
+                fallback_minutes=fallback_minutes,
+            )
+            with (
+                ui.dialog() as dialog,
+                ui.card().classes("q-pa-md").style("max-width: 440px"),
+            ):
+                ui.label(f"Use {band.label} for '{conn.name}'?").classes(
+                    "text-h6 text-white"
+                )
+                ui.label(warning).classes("text-caption text-orange-4 q-mt-sm")
+                with ui.row().classes("justify-end gap-2 q-mt-md"):
+                    ui.button("Cancel", on_click=dialog.close).props("flat")
+                    ui.button(
+                        "Change band",
+                        on_click=lambda: _submit_band(conn, band, dialog),
+                    ).props("color=primary")
+            dialog.open()
+
+        async def _submit_band(
+            conn: SavedWifiConnection,
+            band: WifiBand,
+            dialog: ui.dialog | None = None,
+        ) -> None:
             try:
-                await svc.change_band(conn.name, band)
+                reply = await svc.change_band(conn.name, band)
             except NetworkNotConfiguredError:
                 ui.notify(
                     "Network provisioning is not configured on this device.",
@@ -248,7 +317,21 @@ def network_page() -> None:
                 logger.exception("Failed to change a saved network's Wi-Fi band")
                 ui.notify(f"Could not change the band: {exc}", type="negative")
                 return
-            ui.notify(f"Saved: '{conn.name}' will use {band.label}.", type="positive")
+            finally:
+                if dialog is not None:
+                    dialog.close()
+            if isinstance(reply, BandChangeRefused):
+                ui.notify(reply.reason, type="warning", multi_line=True)
+                return
+            if isinstance(reply, BandChangePending):
+                ui.notify(
+                    f"Instructed the base to rejoin '{conn.name}' on {band.label}.",
+                    type="positive",
+                )
+            else:
+                ui.notify(
+                    f"Saved: '{conn.name}' will use {band.label}.", type="positive"
+                )
             await _refresh_saved()
 
         async def _open_switch_dialog(name: str) -> None:

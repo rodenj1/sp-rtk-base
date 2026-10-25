@@ -256,7 +256,7 @@ def network_page() -> None:
                 ui.dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
-                ui.label(f"Wi-Fi band for '{conn.name}'").classes("text-h6 text-white")
+                ui.label(f"Wi-Fi band for '{conn.ssid}'").classes("text-h6 text-white")
                 note = wifi_bands.reverted_note(conn)
                 if note is not None:
                     with ui.row().classes("items-center gap-2 no-wrap"):
@@ -264,10 +264,7 @@ def network_page() -> None:
                         ui.label(note).classes("text-caption text-orange-4").props(
                             'data-testid="network-band-dialog-undone"'
                         )
-                options = wifi_bands.band_options(
-                    conn.name, last_scan, active=conn.active
-                )
-                for option in options:
+                for option in wifi_bands.band_options(conn, last_scan):
                     current = option.band is conn.band
                     with ui.row().classes("items-center gap-3 w-full no-wrap"):
                         choice = ui.button(
@@ -310,7 +307,7 @@ def network_page() -> None:
             """Warn that the reconnect drops the session before going on."""
             ap_ssid, fallback_minutes = await _ap_fallback()
             warning = wifi_bands.band_change_warning(
-                conn.name,
+                conn.ssid,
                 band,
                 on_portal=on_portal,
                 ap_ssid=ap_ssid,
@@ -320,7 +317,7 @@ def network_page() -> None:
                 ui.dialog() as dialog,
                 ui.card().classes("q-pa-md").style("max-width: 440px"),
             ):
-                ui.label(f"Use {band.label} for '{conn.name}'?").classes(
+                ui.label(f"Use {band.label} for '{conn.ssid}'?").classes(
                     "text-h6 text-white"
                 )
                 ui.label(warning).classes("text-caption text-orange-4 q-mt-sm")
@@ -357,12 +354,12 @@ def network_page() -> None:
                 return
             if isinstance(reply, BandChangePending):
                 ui.notify(
-                    f"Instructed the base to rejoin '{conn.name}' on {band.label}.",
+                    f"Instructed the base to rejoin '{conn.ssid}' on {band.label}.",
                     type="positive",
                 )
             else:
                 ui.notify(
-                    f"Saved: '{conn.name}' will use {band.label}.", type="positive"
+                    f"Saved: '{conn.ssid}' will use {band.label}.", type="positive"
                 )
             await _refresh_saved()
 

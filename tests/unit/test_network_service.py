@@ -232,8 +232,8 @@ class TestListSavedNetworks:
     async def test_returns_the_adapter_listing(self) -> None:
         adapter = _fake_adapter()
         connections = [
-            SavedWifiConnection(name="SiteWiFi", active=True),
-            SavedWifiConnection(name="OldWiFi", active=False),
+            SavedWifiConnection(name="SiteWiFi", ssid="SiteWiFi", active=True),
+            SavedWifiConnection(name="OldWiFi", ssid="OldWiFi", active=False),
         ]
         adapter.list_saved_connections.return_value = connections  # type: ignore[attr-defined]
         svc = _service_with_adapter(adapter)
@@ -243,8 +243,10 @@ class TestListSavedNetworks:
     async def test_each_saved_network_carries_its_band(self) -> None:
         adapter = _fake_adapter()
         adapter.list_saved_connections.return_value = [  # type: ignore[attr-defined]
-            SavedWifiConnection(name="FarmShop", active=True),
-            SavedWifiConnection(name="Barn-AP", active=False, band=WifiBand.GHZ_2_4),
+            SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
+            SavedWifiConnection(
+                name="Barn-AP", ssid="Barn-AP", active=False, band=WifiBand.GHZ_2_4
+            ),
         ]
         saved = await _service_with_adapter(adapter).list_saved_networks()
         assert [(c.name, c.band) for c in saved] == [
@@ -311,8 +313,8 @@ class TestChangeBand:
         """A service whose change of FarmShop to 5 GHz was undone."""
         adapter = _fake_adapter()
         adapter.list_saved_connections.return_value = [  # type: ignore[attr-defined]
-            SavedWifiConnection(name="FarmShop", active=True),
-            SavedWifiConnection(name="Barn-AP", active=False),
+            SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
+            SavedWifiConnection(name="Barn-AP", ssid="Barn-AP", active=False),
         ]
         adapter.change_band.return_value = BandChangePending(  # type: ignore[attr-defined]
             name="FarmShop", band=WifiBand.GHZ_5

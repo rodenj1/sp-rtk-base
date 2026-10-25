@@ -246,12 +246,18 @@ class NmcliAdapter:
         """
         names = self._saved_wifi_names()
         active = self._active_connection_names()
-        return [
-            SavedWifiConnection(
-                name=name, active=name in active, band=self._band_of(name)
+        connections: list[SavedWifiConnection] = []
+        for name in names:
+            ssid, band = self._read_profile(name)
+            connections.append(
+                SavedWifiConnection(
+                    name=name,
+                    ssid=ssid,
+                    active=name in active,
+                    band=WifiBand.AUTO if band is None else band,
+                )
             )
-            for name in names
-        ]
+        return connections
 
     def _saved_wifi_names(self) -> list[str]:
         """The saved Wi-Fi profiles' names, the setup AP's excluded."""
@@ -262,6 +268,17 @@ class NmcliAdapter:
             if conn_type == _WIRELESS_TYPE and name != self._config.ap_ssid:
                 names.append(name)
         return names
+
+    def _saved_profile_for(self, ssid: str) -> str | None:
+        """The name of the first saved Wi-Fi profile for ``ssid``, if any.
+
+        Matched on the SSID read from each profile, not on its name, which
+        netplan for one sets to ``netplan-<device>-<ssid>``.
+        """
+        for name in self._saved_wifi_names():
+            if self._ssid_of(name) == ssid:
+                return name
+        return None
 
     def _band_of(self, name: str) -> WifiBand:
         """The Wi-Fi band saved in profile ``name``.
@@ -275,15 +292,42 @@ class NmcliAdapter:
 
     def _read_band(self, name: str) -> WifiBand | None:
         """The Wi-Fi band saved in profile ``name``; ``None`` unreadable."""
+        return self._read_profile(name)[1]
+
+    def _ssid_of(self, name: str) -> str:
+        """The SSID of saved profile ``name``, which scans are matched on."""
+        return self._read_profile(name)[0]
+
+    def _read_profile(self, name: str) -> tuple[str, WifiBand | None]:
+        """The SSID and Wi-Fi band saved in profile ``name``, in one call.
+
+        The profile name is not always the SSID (netplan names its
+        profiles ``netplan-<device>-<ssid>``), so the SSID is read from the
+        profile; the name stands in for it when it can't be. The band is
+        ``None`` when it can't be read. ``nmcli -g`` prints one value a
+        line, an empty band meaning Auto.
+        """
         result = self._run(
-            ["nmcli", "-g", "802-11-wireless.band", "connection", "show", "id", name]
+            [
+                "nmcli",
+                "-g",
+                "802-11-wireless.ssid,802-11-wireless.band",
+                "connection",
+                "show",
+                "id",
+                name,
+            ]
         )
         if result.returncode != 0:
-            return None
+            return name, None
+        lines = result.stdout.split("\n")
+        ssid = lines[0] or name
+        if len(lines) < 2:
+            return ssid, None
         try:
-            return WifiBand.from_nm(result.stdout)
+            return ssid, WifiBand.from_nm(lines[1])
         except ValueError:
-            return None
+            return ssid, None
 
     def _current_band(self, name: str) -> WifiBand:
         """The band in profile ``name``, which a revert would put back.
@@ -291,12 +335,20 @@ class NmcliAdapter:
         Raises:
             NmcliError: It can't be read; nothing has been written.
         """
-        band = self._read_band(name)
+        return self._current_profile(name)[1]
+
+    def _current_profile(self, name: str) -> tuple[str, WifiBand]:
+        """The SSID and band in profile ``name``; see :meth:`_current_band`.
+
+        Raises:
+            NmcliError: The band can't be read; nothing has been written.
+        """
+        ssid, band = self._read_profile(name)
         if band is None:
             raise NmcliError(
                 f"couldn't read the Wi-Fi band of {name!r}, so it was not changed"
             )
-        return band
+        return ssid, band
 
     def scan_networks(self) -> list[WifiNetwork]:
         """Scan for nearby WiFi networks, for the WiFi-picker portal (issue #10).
@@ -466,15 +518,16 @@ class NmcliAdapter:
         self._ap_up()
 
     def _heard_on_allowed_band(self, saved_name: str) -> bool:
-        """Whether the last scan heard ``saved_name`` on a band its Wi-Fi
-        band allows (issue #152). Auto allows any band; a lock that rules
-        out every band heard means a `con up` bound to fail, so the
-        network doesn't count as seen."""
-        heard = band_signals_of(saved_name, self._last_scan)
+        """Whether the last scan heard saved profile ``saved_name``, by its
+        SSID, on a band its Wi-Fi band allows (issue #152). Auto, or a band
+        that can't be read, allows any band; a lock that rules out every
+        band heard means a `con up` bound to fail, so the network doesn't
+        count as seen."""
+        ssid, band = self._read_profile(saved_name)
+        heard = band_signals_of(ssid, self._last_scan)
         if heard is None:
             return False
-        band = self._band_of(saved_name)
-        return band is WifiBand.AUTO or band in heard
+        return band in (None, WifiBand.AUTO) or band in heard
 
     def _stop_ap_and_connect(self) -> None:
         # decide() returns this action in two distinct situations: (a)
@@ -549,19 +602,19 @@ class NmcliAdapter:
                 f"refusing to change the band of the setup AP connection {name!r}"
             )
         if name in self._active_connection_names():
-            if band is not WifiBand.AUTO and not self._heard_on(name, band):
+            # A revert needs the band it's on now: fail before the
+            # reconnect is even scheduled if that can't be read.
+            ssid, _ = self._current_profile(name)
+            if band is not WifiBand.AUTO and not self._heard_on(ssid, band):
                 return BandChangeRefused(
                     name=name,
                     band=band,
                     reason=(
-                        f"'{name}' isn't being heard on {band.label} right now, "
+                        f"'{ssid}' isn't being heard on {band.label} right now, "
                         "so the base couldn't join it there. The band was not "
                         "changed."
                     ),
                 )
-            # A revert needs the band it's on now: fail before the
-            # reconnect is even scheduled if that can't be read.
-            self._current_band(name)
             return BandChangePending(name=name, band=band)
         self._write_band(name, band)
         return BandChangeSaved(name=name, band=band)
@@ -634,9 +687,9 @@ class NmcliAdapter:
             ]
         )
 
-    def _heard_on(self, name: str, band: WifiBand) -> bool:
-        """Whether a fresh scan hears saved network ``name`` on ``band``."""
-        return band in (band_signals_of(name, self.scan_networks()) or {})
+    def _heard_on(self, ssid: str, band: WifiBand) -> bool:
+        """Whether a fresh scan hears ``ssid`` on ``band``."""
+        return band in (band_signals_of(ssid, self.scan_networks()) or {})
 
     def connect_to_network(
         self,
@@ -701,8 +754,9 @@ class NmcliAdapter:
         A hidden network, or one the scan doesn't hear, is WPA-PSK with
         a password and open without.
 
-        A saved profile of that name is modified (its band, and its
-        password if one was typed) rather than duplicated. Otherwise the
+        A saved profile for that SSID, whatever it is named, is modified
+        (its band, and its password if one was typed) rather than
+        duplicated. Otherwise the
         profile is built with ``connection add``, and a failed join
         deletes it again, the way ``nmcli device wifi connect`` does, so
         nothing is left that the decision loop would mistake for the
@@ -715,8 +769,9 @@ class NmcliAdapter:
             settings += ["802-11-wireless.hidden", "yes"]
         if security != "open" and password:
             settings += ["wifi-sec.key-mgmt", security, "wifi-sec.psk", password]
-        if ssid in self._saved_wifi_names():
-            self._join_saved_with_band(ssid, settings)
+        saved = self._saved_profile_for(ssid)
+        if saved is not None:
+            self._join_saved_with_band(saved, settings)
             return
         add = [
             "nmcli",

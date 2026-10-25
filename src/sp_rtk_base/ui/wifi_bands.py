@@ -75,15 +75,16 @@ class BandOption:
 
 
 def band_options(
-    name: str, scan: Sequence[WifiNetwork], *, active: bool = False
+    saved: SavedWifiConnection, scan: Sequence[WifiNetwork]
 ) -> list[BandOption]:
-    """The Band dialog's choices for saved network ``name``: Auto, then
-    each band with whether the page's last scan hears ``name`` there.
+    """The Band dialog's choices for ``saved``: Auto, then each band with
+    whether the page's last scan hears its SSID there.
 
-    For the ``active`` network, a band the scan doesn't hear is disabled,
-    so the operator can't lock the base out of the network it is on.
+    For the active network, a band the scan doesn't hear is disabled, so
+    the operator can't lock the base out of the network it is on.
     """
-    heard = band_signals_of(name, scan) or {}
+    active = saved.active
+    heard = band_signals_of(saved.ssid, scan) or {}
     options = [BandOption(WifiBand.AUTO, WifiBand.AUTO.label, _AUTO_HINT)]
     for band in _HEARD_ORDER:
         signal = heard.get(band)
@@ -123,7 +124,7 @@ def join_band_choices(
 
 
 def band_change_warning(
-    name: str,
+    ssid: str,
     band: WifiBand,
     *,
     on_portal: bool,
@@ -131,7 +132,7 @@ def band_change_warning(
     fallback_minutes: str,
 ) -> str:
     """The confirm dialog's warning before a band change reconnects the
-    active network ``name``.
+    active network ``ssid``.
 
     The operator's own session drops with the link. On the Portal the base
     drops off for longer, since it has to rejoin and reach the Portal
@@ -141,13 +142,13 @@ def band_change_warning(
     target = "either band" if band is WifiBand.AUTO else band.label
     if on_portal:
         return (
-            f"'{name}' reconnects to apply this, so the base will drop off the "
+            f"'{ssid}' reconnects to apply this, so the base will drop off the "
             "Portal for about a minute and this page will stop updating. If it "
             f"can't join on {target}, it puts the old band back by itself and "
             "reappears."
         )
     return (
-        f"'{name}' reconnects to apply this, so this console session will drop "
+        f"'{ssid}' reconnects to apply this, so this console session will drop "
         f"for about half a minute. If it can't join on {target}, it puts the old "
         f"band back by itself; failing that, '{ap_ssid}' appears in about "
         f"{fallback_minutes} min."
@@ -162,7 +163,7 @@ def reverted_note(saved: SavedWifiConnection) -> str | None:
         return None
     return (
         f"Your change to {reverted.tried.label} was undone: the base couldn't "
-        f"join '{saved.name}' on {reverted.tried.label}, so it went back to "
+        f"join '{saved.ssid}' on {reverted.tried.label}, so it went back to "
         f"{reverted.band.label}."
     )
 
@@ -208,7 +209,7 @@ def stronger_band(
         on_band = active.band
     if on_band is None:
         return None
-    heard = band_signals_of(active.name, scan) or {}
+    heard = band_signals_of(active.ssid, scan) or {}
     other = WifiBand.GHZ_5 if on_band is WifiBand.GHZ_2_4 else WifiBand.GHZ_2_4
     on_signal, other_signal = heard.get(on_band), heard.get(other)
     if on_signal is None or other_signal is None:
@@ -218,7 +219,7 @@ def stronger_band(
     return BandSuggestion(
         band=other,
         text=(
-            f"'{active.name}' is heard more strongly on {other.label} "
+            f"'{active.ssid}' is heard more strongly on {other.label} "
             f"({other_signal}% vs {on_signal}%)."
         ),
         button=f"Use {other.label}",

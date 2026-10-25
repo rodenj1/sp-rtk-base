@@ -252,7 +252,7 @@ class TestSavedWifiConnection:
     """The console's saved-profile listing (issue #21)."""
 
     def test_holds_name_and_active_flag(self) -> None:
-        connection = SavedWifiConnection(name="SiteWiFi", active=True)
+        connection = SavedWifiConnection(name="SiteWiFi", ssid="SiteWiFi", active=True)
         assert connection.name == "SiteWiFi"
         assert connection.active is True
 

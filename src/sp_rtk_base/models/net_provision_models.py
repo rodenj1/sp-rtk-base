@@ -393,9 +393,15 @@ class SavedWifiConnection(BaseModel):
 
     name: str = Field(
         description=(
-            "The nmcli connection id, which also serves as the SSID under "
-            "this codebase's existing convention (see "
-            "NmcliAdapter._saved_wifi_connection_name)."
+            "The nmcli connection id. Not always the SSID: netplan, for one, "
+            "names its profiles netplan-<device>-<ssid>."
+        )
+    )
+    ssid: str = Field(
+        description=(
+            "The network's SSID, read from its profile's "
+            "802-11-wireless.ssid; the profile name when that can't be read. "
+            "Scan results are matched on this, never on the name."
         )
     )
     active: bool = Field(description="True if this is the currently active connection")

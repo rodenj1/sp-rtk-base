@@ -587,8 +587,8 @@ class TestListSavedNetworks:
     ) -> None:
         mock_network_service.list_saved_networks = AsyncMock(
             return_value=[
-                SavedWifiConnection(name="SiteWiFi", active=True),
-                SavedWifiConnection(name="OldWiFi", active=False),
+                SavedWifiConnection(name="SiteWiFi", ssid="SiteWiFi", active=True),
+                SavedWifiConnection(name="OldWiFi", ssid="OldWiFi", active=False),
             ],
         )
         resp = client.get("/api/network/saved")
@@ -606,12 +606,13 @@ class TestListSavedNetworks:
             return_value=[
                 SavedWifiConnection(
                     name="FarmShop",
+                    ssid="FarmShop",
                     active=True,
                     last_band_change=BandChangeReverted(
                         name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
                     ),
                 ),
-                SavedWifiConnection(name="Barn-AP", active=False),
+                SavedWifiConnection(name="Barn-AP", ssid="Barn-AP", active=False),
             ],
         )
         data = client.get("/api/network/saved").json()
@@ -628,12 +629,15 @@ class TestListSavedNetworks:
     ) -> None:
         mock_network_service.list_saved_networks = AsyncMock(
             return_value=[
-                SavedWifiConnection(name="FarmShop", active=True),
+                SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True),
                 SavedWifiConnection(
-                    name="Barn-AP", active=False, band=WifiBand.GHZ_2_4
+                    name="Barn-AP", ssid="Barn-AP", active=False, band=WifiBand.GHZ_2_4
                 ),
                 SavedWifiConnection(
-                    name="Office-5G", active=False, band=WifiBand.GHZ_5
+                    name="Office-5G",
+                    ssid="Office-5G",
+                    active=False,
+                    band=WifiBand.GHZ_5,
                 ),
             ],
         )

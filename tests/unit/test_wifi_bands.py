@@ -64,7 +64,7 @@ class TestBandsHeard:
 
 
 def _saved(band: WifiBand, *, active: bool = False) -> SavedWifiConnection:
-    return SavedWifiConnection(name="Barn-AP", active=active, band=band)
+    return SavedWifiConnection(name="Barn-AP", ssid="Barn-AP", active=active, band=band)
 
 
 class TestShowsBandControl:
@@ -96,7 +96,7 @@ class TestBandBadge:
 class TestBandOptions:
     def test_each_band_hints_what_the_scan_hears_now(self) -> None:
         scan = [_named("Barn-AP", {WifiBand.GHZ_2_4: 82, WifiBand.GHZ_5: 41})]
-        assert wifi_bands.band_options("Barn-AP", scan) == [
+        assert wifi_bands.band_options(_saved(WifiBand.AUTO), scan) == [
             BandOption(WifiBand.AUTO, "Auto", "Either band; the base picks."),
             BandOption(WifiBand.GHZ_2_4, "2.4 GHz", "Heard now at 82%."),
             BandOption(WifiBand.GHZ_5, "5 GHz", "Heard now at 41%."),
@@ -104,7 +104,7 @@ class TestBandOptions:
 
     def test_a_band_the_scan_doesnt_hear_says_so(self) -> None:
         scan = [_named("Barn-AP", {WifiBand.GHZ_5: 55})]
-        options = wifi_bands.band_options("Barn-AP", scan)
+        options = wifi_bands.band_options(_saved(WifiBand.AUTO), scan)
         assert [o.hint for o in options] == [
             "Either band; the base picks.",
             "Not heard right now.",
@@ -116,7 +116,7 @@ class TestBandOptions:
     ) -> None:
         """Only the saved network's own SSID counts, not its neighbours'."""
         scan = [_named("Neighbour", {WifiBand.GHZ_2_4: 90, WifiBand.GHZ_5: 90})]
-        options = wifi_bands.band_options("Barn-AP", scan)
+        options = wifi_bands.band_options(_saved(WifiBand.AUTO), scan)
         assert [o.hint for o in options] == [
             "Either band; the base picks.",
             "Not heard right now.",
@@ -129,7 +129,7 @@ class TestBandOptions:
         """Locking the network the base is on to a band it isn't heard on
         would strand the base; Auto is always open."""
         scan = [_named("FarmShop", {WifiBand.GHZ_2_4: 82})]
-        options = wifi_bands.band_options("FarmShop", scan, active=True)
+        options = wifi_bands.band_options(_active(), scan)
         assert [(o.band, o.disabled) for o in options] == [
             (WifiBand.AUTO, False),
             (WifiBand.GHZ_2_4, False),
@@ -138,7 +138,7 @@ class TestBandOptions:
 
     def test_a_network_that_isnt_active_disables_nothing(self) -> None:
         """It may be out of range on purpose: the operator is preparing it."""
-        options = wifi_bands.band_options("Barn-AP", [], active=False)
+        options = wifi_bands.band_options(_saved(WifiBand.AUTO), [])
         assert [o.disabled for o in options] == [False, False, False]
 
 
@@ -190,6 +190,7 @@ class TestRevertedNote:
     def test_a_reverted_change_explains_what_happened(self) -> None:
         saved = SavedWifiConnection(
             name="FarmShop",
+            ssid="FarmShop",
             active=True,
             last_band_change=BandChangeReverted(
                 name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
@@ -201,7 +202,7 @@ class TestRevertedNote:
         )
 
     def test_no_note_without_a_reverted_change(self) -> None:
-        saved = SavedWifiConnection(name="FarmShop", active=True)
+        saved = SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True)
         assert wifi_bands.reverted_note(saved) is None
 
 
@@ -256,7 +257,7 @@ class TestJoinBandChoices:
 
 
 def _active(band: WifiBand = WifiBand.AUTO) -> SavedWifiConnection:
-    return SavedWifiConnection(name="FarmShop", active=True, band=band)
+    return SavedWifiConnection(name="FarmShop", ssid="FarmShop", active=True, band=band)
 
 
 _ON_5GHZ_MHZ = 5180
@@ -346,4 +347,47 @@ class TestStrongerBand:
         assert (
             wifi_bands.stronger_band(_active(), _ON_5GHZ_MHZ, [BOTH], has_5ghz=has_5ghz)
             is None
+        )
+
+
+# A profile named the way netplan names the ones it writes: the name isn't
+# the SSID, and the scan only ever lists the SSID.
+_NETPLAN_CATS = SavedWifiConnection(name="netplan-wlan0-Cats", ssid="Cats", active=True)
+_CATS_HEARD = _named("Cats", {WifiBand.GHZ_2_4: 100, WifiBand.GHZ_5: 84})
+
+
+class TestANetplanProfileIsMatchedByItsSsid:
+    """A saved network is looked up in the scan by its SSID, never by its
+    profile name, and named to the operator by its SSID."""
+
+    def test_the_band_dialog_hears_it_on_both_bands(self) -> None:
+        options = wifi_bands.band_options(_NETPLAN_CATS, [_CATS_HEARD])
+        assert options == [
+            BandOption(WifiBand.AUTO, "Auto", "Either band; the base picks."),
+            BandOption(WifiBand.GHZ_2_4, "2.4 GHz", "Heard now at 100%."),
+            BandOption(WifiBand.GHZ_5, "5 GHz", "Heard now at 84%."),
+        ]
+
+    def test_the_status_card_suggests_the_stronger_band(self) -> None:
+        heard = _named("Cats", {WifiBand.GHZ_2_4: 90, WifiBand.GHZ_5: 40})
+        suggestion = wifi_bands.stronger_band(
+            _NETPLAN_CATS, _ON_5GHZ_MHZ, [heard], has_5ghz=True
+        )
+        assert suggestion == BandSuggestion(
+            band=WifiBand.GHZ_2_4,
+            text="'Cats' is heard more strongly on 2.4 GHz (90% vs 40%).",
+            button="Use 2.4 GHz",
+        )
+
+    def test_the_reverted_note_names_the_ssid(self) -> None:
+        saved = _NETPLAN_CATS.model_copy(
+            update={
+                "last_band_change": BandChangeReverted(
+                    name="netplan-wlan0-Cats", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+                )
+            }
+        )
+        assert wifi_bands.reverted_note(saved) == (
+            "Your change to 5 GHz was undone: the base couldn't join 'Cats' "
+            "on 5 GHz, so it went back to Auto."
         )

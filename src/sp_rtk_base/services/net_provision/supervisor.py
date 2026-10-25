@@ -169,12 +169,16 @@ def tick(
 
     # A failure count only means something against the profile it was
     # recorded for — if the saved network has changed since (a new
-    # portal submission, issue #10), the old count no longer applies.
-    # ``state.saved_wifi_name`` reuses the nmcli lookup read_state()
-    # already made rather than asking the adapter a second time.
+    # portal submission, issue #10), or its Wi-Fi band has (issue #152),
+    # the old count no longer applies. ``state.saved_wifi_name`` and
+    # ``saved_wifi_band`` reuse the nmcli lookups read_state() already
+    # made rather than asking the adapter a second time.
     connect_ssid = state.saved_wifi_name
+    connect_band = state.saved_wifi_band
     failures_apply = (
-        connect_ssid is not None and clocks.failed_connect_ssid == connect_ssid
+        connect_ssid is not None
+        and clocks.failed_connect_ssid == connect_ssid
+        and clocks.failed_connect_band == connect_band
     )
     consecutive_connect_failures = (
         clocks.consecutive_connect_failures if failures_apply else 0
@@ -201,6 +205,7 @@ def tick(
     action = decide(state, config)
 
     new_failed_ssid = connect_ssid if consecutive_connect_failures else None
+    new_failed_band = connect_band if consecutive_connect_failures else None
     new_consecutive_failures = consecutive_connect_failures
     new_last_failure_at = last_connect_failure_at
     if action is ProvisionAction.STOP_AP_AND_CONNECT:
@@ -214,10 +219,12 @@ def tick(
                 consecutive_connect_failures + 1,
             )
             new_failed_ssid = connect_ssid
+            new_failed_band = connect_band
             new_consecutive_failures = consecutive_connect_failures + 1
             new_last_failure_at = now
         else:
             new_failed_ssid = None
+            new_failed_band = None
             new_consecutive_failures = 0
             new_last_failure_at = None
     else:
@@ -234,6 +241,7 @@ def tick(
             else None
         ),
         failed_connect_ssid=new_failed_ssid,
+        failed_connect_band=new_failed_band,
         consecutive_connect_failures=new_consecutive_failures,
         last_connect_failure_at=new_last_failure_at,
         consecutive_uplink_ticks=consecutive_uplink_ticks,

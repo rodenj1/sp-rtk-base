@@ -9,6 +9,7 @@ subprocess, clock, or filesystem beyond the state store's tmp_path.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetProvisionConfig,
     NetworkState,
     ProvisionAction,
+    WifiBand,
 )
 from sp_rtk_base.services.net_provision.nmcli_adapter import WifiConnectError
 from sp_rtk_base.services.net_provision.state_store import (
@@ -748,6 +750,96 @@ class TestFailureAwareRetryBackoff:
         )
 
         assert len(adapter.executed_actions) == 3
+
+
+class TestFailureRecordKeyedOnBand:
+    """The connect-failure record is keyed on the saved network's name
+    and Wi-Fi band (issue #152), so changing the band gives the new band
+    a fair number of attempts straight away. ``max_connect_failures=1``
+    makes a carried-over count suppress at once, so STOP_AP_AND_CONNECT
+    means "reset" and IDLE means "held"."""
+
+    @staticmethod
+    def _tick_with_band(
+        band: WifiBand, state_store: ProvisioningStateStore
+    ) -> ProvisionAction:
+        config = NetProvisionConfig(ap_password=_PASSWORD, max_connect_failures=1)
+        adapter = FakeAdapter(
+            _SAVED_WIFI_VISIBLE_STATE.model_copy(update={"saved_wifi_band": band})
+        )
+        adapter.fail_connect_with = WifiConnectError("SiteWiFi", "not found")
+        return tick(
+            adapter=adapter,
+            config=config,
+            state_store=state_store,
+            now_fn=lambda: 1_000.0,
+            uptime_fn=lambda: 500.0,
+        )
+
+    def test_a_failure_is_recorded_against_the_band(
+        self, state_store: ProvisioningStateStore
+    ) -> None:
+        self._tick_with_band(WifiBand.GHZ_5, state_store)
+        clocks = state_store.load()
+        assert clocks.failed_connect_ssid == "SiteWiFi"
+        assert clocks.failed_connect_band is WifiBand.GHZ_5
+
+    def test_the_failure_count_resets_when_the_band_changes(
+        self, state_store: ProvisioningStateStore
+    ) -> None:
+        state_store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="SiteWiFi",
+                failed_connect_band=WifiBand.GHZ_5,
+                consecutive_connect_failures=5,
+                last_connect_failure_at=990.0,
+            )
+        )
+        action = self._tick_with_band(WifiBand.GHZ_2_4, state_store)
+        assert action is ProvisionAction.STOP_AP_AND_CONNECT
+        clocks = state_store.load()
+        assert clocks.failed_connect_band is WifiBand.GHZ_2_4
+        assert clocks.consecutive_connect_failures == 1
+
+    def test_the_failure_count_holds_when_the_band_does_not_change(
+        self, state_store: ProvisioningStateStore
+    ) -> None:
+        state_store.save(
+            ProvisioningClockState(
+                failed_connect_ssid="SiteWiFi",
+                failed_connect_band=WifiBand.GHZ_5,
+                consecutive_connect_failures=5,
+                last_connect_failure_at=990.0,
+            )
+        )
+        action = self._tick_with_band(WifiBand.GHZ_5, state_store)
+        assert action is ProvisionAction.IDLE
+        assert state_store.load().consecutive_connect_failures == 5
+
+    def test_an_old_record_without_a_band_resets_once(self, tmp_path: Path) -> None:
+        """A state file written before the band was recorded has no
+        band key: it doesn't match, so the count resets, and the next
+        failure is recorded against the band and then holds."""
+        path = tmp_path / "state.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "failed_connect_ssid": "SiteWiFi",
+                    "consecutive_connect_failures": 5,
+                    "last_connect_failure_at": 990.0,
+                }
+            )
+        )
+        state_store = ProvisioningStateStore(path)
+
+        first = self._tick_with_band(WifiBand.AUTO, state_store)
+        second = self._tick_with_band(WifiBand.AUTO, state_store)
+
+        assert first is ProvisionAction.STOP_AP_AND_CONNECT
+        assert second is ProvisionAction.IDLE
+        clocks = state_store.load()
+        assert clocks.failed_connect_band is WifiBand.AUTO
+        assert clocks.consecutive_connect_failures == 1
 
 
 class TestUplinkConfirmationDebounce:

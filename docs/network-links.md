@@ -42,7 +42,7 @@ badge. Beneath it:
 | State | **Connected**, **Disconnected** or **No reading**, with the reason beside it |
 | Wi-Fi link (Wi-Fi) | Wi-Fi link strength, **Good** / **Marginal** / **Poor**, with the latest dBm beneath |
 | Network (Wi-Fi) | the Wi-Fi network's name (SSID), with the access point's BSSID beneath |
-| Band (Wi-Fi) | 2.4, 5 or 6 GHz, with the frequency in MHz beneath |
+| Band (Wi-Fi) | 2.4 or 5 GHz, with the frequency in MHz beneath (a frequency outside both, such as 6 GHz, shows —) |
 | Bitrate (Wi-Fi) | ↑ the rate of the last frames sent, ↓ received, in Mbit/s |
 | Speed (Ethernet) | the negotiated speed in Mbit/s, with full or half duplex beneath |
 | Address | the IPv4 address, with the IPv6 address beneath |

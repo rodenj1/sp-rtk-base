@@ -378,6 +378,18 @@ class NetworkStatusResponse(BaseModel):
     )
 
 
+class NetworkCapabilitiesResponse(BaseModel):
+    """What this base's Wi-Fi adapter can do, for the console (spec #147)."""
+
+    has_5ghz: bool | None = Field(
+        description=(
+            "Whether the Wi-Fi adapter has 5 GHz, from NetworkManager's "
+            "WIFI-PROPERTIES.5GHZ. The hardware, not whether 5 GHz is "
+            "usable in the current WLAN country. null when unknown."
+        )
+    )
+
+
 class NetworkFallbackInfoResponse(BaseModel):
     """AP-fallback config values for the console's pre-apply session-drop warning.
 

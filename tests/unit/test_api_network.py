@@ -14,6 +14,7 @@ from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
     NetProvisionConfig,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.models.network_link_models import (
@@ -135,6 +136,7 @@ def mock_network_service() -> NetworkService:
     svc = MagicMock(spec=NetworkService)
     svc.is_configured = AsyncMock(return_value=True)
     svc.scan_networks = AsyncMock(return_value=[])
+    svc.has_5ghz = AsyncMock(return_value=True)
     svc.get_ap_fallback_info = AsyncMock(
         return_value=ApFallbackInfo(
             ap_ssid="sp-rtk-base-setup", fallback_window_seconds=300.0
@@ -318,6 +320,31 @@ class TestScanNetworks:
         assert data[0]["signal"] == 80
         assert data[1]["security"] == ""
 
+    def test_returns_the_signal_on_each_band(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.scan_networks = AsyncMock(
+            return_value=[
+                WifiNetwork(
+                    ssid="FarmShop",
+                    signal=82,
+                    security="WPA2",
+                    band_signals={WifiBand.GHZ_2_4: 82, WifiBand.GHZ_5: 41},
+                ),
+                WifiNetwork(
+                    ssid="Neighbour-5G",
+                    signal=55,
+                    security="WPA2",
+                    band_signals={WifiBand.GHZ_5: 55},
+                ),
+            ],
+        )
+        resp = client.get("/api/network/scan")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data[0]["band_signals"] == {"2.4ghz": 82, "5ghz": 41}
+        assert data[1]["band_signals"] == {"5ghz": 55}
+
     def test_empty_scan(
         self, client: TestClient, mock_network_service: MagicMock
     ) -> None:
@@ -343,6 +370,41 @@ class TestScanNetworks:
         )
         resp = client.get("/api/network/scan")
         assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# GET /api/network/capabilities
+# ---------------------------------------------------------------------------
+
+
+class TestGetCapabilities:
+    @pytest.mark.parametrize("answer", [True, False, None])
+    def test_reports_whether_the_adapter_has_5ghz(
+        self,
+        client: TestClient,
+        mock_network_service: MagicMock,
+        answer: bool | None,
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(return_value=answer)
+        resp = client.get("/api/network/capabilities")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_5ghz": answer}
+
+    def test_not_configured_returns_409(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(
+            side_effect=NetworkNotConfiguredError("no config file"),
+        )
+        assert client.get("/api/network/capabilities").status_code == 409
+
+    def test_unexpected_error_returns_502(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.has_5ghz = AsyncMock(
+            side_effect=RuntimeError("nmcli exploded"),
+        )
+        assert client.get("/api/network/capabilities").status_code == 502
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +686,9 @@ class TestManagedHostModeDisablesNetworkApi:
 
     def test_scan_is_404(self, client: TestClient) -> None:
         assert client.get("/api/network/scan").status_code == 404
+
+    def test_capabilities_is_404(self, client: TestClient) -> None:
+        assert client.get("/api/network/capabilities").status_code == 404
 
     def test_fallback_info_is_404(self, client: TestClient) -> None:
         assert client.get("/api/network/fallback-info").status_code == 404

@@ -5,7 +5,8 @@ Uplink: Wi-Fi link strength, network, Wi-Fi band with its MHz, and
 address as separate readings, the same as the dashboard's Network
 card), a list of saved WiFi profiles with switch/forget actions, and a scan list of
 nearby networks the operator can join (or a hidden SSID typed
-manually).
+manually). Each nearby network shows the Wi-Fi bands it's heard on and
+expands to the signal on each, when the adapter has 5 GHz.
 """
 
 # pyright: reportUnknownMemberType=false
@@ -26,6 +27,7 @@ from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
 from sp_rtk_base.services import get_network_link_service, get_network_service
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
 from sp_rtk_base.ui import network_link_status as shown
+from sp_rtk_base.ui import wifi_bands
 from sp_rtk_base.ui.components.status_card import status_metric
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import is_non_empty
@@ -293,26 +295,44 @@ def network_page() -> None:
             except RuntimeError:
                 return  # Elements deleted — user navigated away
 
-        def _render_network_row(network: WifiNetwork) -> None:
-            with (
-                ui.card()
-                .classes("w-full q-pa-sm cursor-pointer")
-                .on(
-                    "click",
-                    lambda _e, ssid=network.ssid: _open_connect_dialog(
-                        ssid, hidden=False
-                    ),
-                )
-            ):
-                with ui.row().classes("items-center justify-between w-full"):
-                    with ui.row().classes("items-center gap-3"):
-                        ui.icon(_signal_icon(network.signal)).classes(
-                            "text-blue-4 text-xl"
-                        )
-                        ui.label(network.ssid).classes("text-body1 text-white")
-                        if network.security:
-                            ui.icon("lock").classes("text-grey-5 text-sm")
-                    ui.label(f"{network.signal}%").classes("text-caption text-grey-5")
+        def _render_network_row(network: WifiNetwork, has_5ghz: bool | None) -> None:
+            """One nearby network: its band summary in the header, and when
+            expanded the signal on each band and the Join button."""
+            summary = wifi_bands.band_summary(network, has_5ghz=has_5ghz)
+            row = ui.expansion().classes("w-full bg-grey-10 rounded-borders")
+            row.props('data-testid="network-scan-row"')
+            with row:
+                with row.add_slot("header"):
+                    with ui.row().classes("items-center justify-between w-full"):
+                        with ui.row().classes("items-center gap-3"):
+                            ui.icon(_signal_icon(network.signal)).classes(
+                                "text-blue-4 text-xl"
+                            )
+                            ui.label(network.ssid).classes("text-body1 text-white")
+                            if network.security:
+                                ui.icon("lock").classes("text-grey-5 text-sm")
+                        if summary is not None:
+                            ui.label(summary).classes("text-caption text-grey-5").props(
+                                'data-testid="network-scan-bands"'
+                            )
+                        else:
+                            ui.label(f"{network.signal}%").classes(
+                                "text-caption text-grey-5"
+                            )
+                with ui.row().classes("items-center justify-between w-full q-px-md"):
+                    with ui.column().classes("gap-1"):
+                        for heard in wifi_bands.bands_heard(network, has_5ghz=has_5ghz):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.icon(_signal_icon(heard.signal)).classes(
+                                    "text-blue-4"
+                                )
+                                ui.label(heard.text).classes("text-caption text-grey-4")
+                    ui.button(
+                        "Join",
+                        on_click=lambda _e, ssid=network.ssid: _open_connect_dialog(
+                            ssid, hidden=False
+                        ),
+                    ).props("flat dense color=primary")
 
         async def _open_connect_dialog(ssid: str | None, *, hidden: bool) -> None:
             """Show the join dialog: SSID (fixed or typed), password, and
@@ -376,12 +396,23 @@ def network_page() -> None:
             )
             await _refresh_saved()
 
+        async def _read_has_5ghz() -> bool | None:
+            """Whether the adapter has 5 GHz; unknown hides the band summaries
+            rather than failing the scan list."""
+            try:
+                return await svc.has_5ghz()
+            except Exception:
+                logger.exception("Could not read the Wi-Fi adapter's 5 GHz support")
+                return None
+
         async def _do_refresh_scan() -> None:
             scan_status_label.text = "Scanning…"
             networks: list[WifiNetwork] = []
             error: str | None = None
+            has_5ghz: bool | None = None
             try:
                 networks = await svc.scan_networks()
+                has_5ghz = await _read_has_5ghz()
             except NetworkNotConfiguredError:
                 error = "Network provisioning is not configured on this device."
             except Exception as exc:
@@ -399,7 +430,7 @@ def network_page() -> None:
                     ui.label("No WiFi networks found.").classes("text-grey-6 q-pa-md")
                     return
                 for network in networks:
-                    _render_network_row(network)
+                    _render_network_row(network, has_5ghz)
 
         async def _refresh_scan() -> None:
             try:

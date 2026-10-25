@@ -72,6 +72,7 @@ class NetworkService:
         self._adapter_factory = adapter_factory
         self._adapter: NmcliAdapter | None = None
         self._config: NetProvisionConfig | None = None
+        self._has_5ghz: bool | None = None
         # Exposed only so tests can synchronize on a background connect/
         # switch/forget attempt — production callers never need to await
         # these, that's the whole point of fire-and-acknowledge.
@@ -110,6 +111,21 @@ class NetworkService:
         """
         adapter = self._get_adapter()
         return await asyncio.to_thread(adapter.scan_networks)
+
+    async def has_5ghz(self) -> bool | None:
+        """Whether the Wi-Fi adapter has 5 GHz; ``None`` when unknown.
+
+        The hardware, not the regulatory country (see
+        :meth:`NmcliAdapter.has_5ghz`). A definite answer is read once
+        and kept; unknown is asked again next time.
+
+        Raises:
+            NetworkNotConfiguredError: No net-provisioning config exists.
+        """
+        adapter = self._get_adapter()
+        if self._has_5ghz is None:
+            self._has_5ghz = await asyncio.to_thread(adapter.has_5ghz)
+        return self._has_5ghz
 
     async def get_ap_fallback_info(self) -> ApFallbackInfo:
         """AP SSID + fallback window, for the console's pre-apply warning.

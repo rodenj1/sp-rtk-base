@@ -160,33 +160,6 @@ class NetworkState(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# WiFi scan results
-# ---------------------------------------------------------------------------
-
-
-class WifiNetwork(BaseModel):
-    """One network from an nmcli scan, as rendered by the WiFi-picker portal."""
-
-    ssid: str = Field(description="Network name")
-    signal: int = Field(ge=0, le=100, description="Signal strength percent")
-    security: str = Field(
-        description=(
-            "Security type (e.g. 'WPA2'), or empty for an open network — "
-            "the adapter normalizes nmcli's '--' column to ''."
-        )
-    )
-    in_range: bool = Field(
-        default=True,
-        description=(
-            "Whether this network was detected by the scan that produced "
-            "this entry. Always True for a fresh nmcli scan (issue #21) — "
-            "the field exists so console API responses are self-describing "
-            "rather than relying on callers to know that invariant."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Wi-Fi band (spec rodenj1/rtk_development#147)
 # ---------------------------------------------------------------------------
 
@@ -250,6 +223,41 @@ _BAND_NM: dict[WifiBand, str] = {
     WifiBand.GHZ_2_4: "bg",
     WifiBand.GHZ_5: "a",
 }
+
+
+# ---------------------------------------------------------------------------
+# WiFi scan results
+# ---------------------------------------------------------------------------
+
+
+class WifiNetwork(BaseModel):
+    """One network from an nmcli scan, as rendered by the WiFi-picker portal."""
+
+    ssid: str = Field(description="Network name")
+    signal: int = Field(ge=0, le=100, description="Signal strength percent")
+    security: str = Field(
+        description=(
+            "Security type (e.g. 'WPA2'), or empty for an open network — "
+            "the adapter normalizes nmcli's '--' column to ''."
+        )
+    )
+    in_range: bool = Field(
+        default=True,
+        description=(
+            "Whether this network was detected by the scan that produced "
+            "this entry. Always True for a fresh nmcli scan (issue #21) — "
+            "the field exists so console API responses are self-describing "
+            "rather than relying on callers to know that invariant."
+        ),
+    )
+    band_signals: dict[WifiBand, int] = Field(
+        default_factory=lambda: dict[WifiBand, int](),
+        description=(
+            "The strongest signal percent heard on each Wi-Fi band, from "
+            "each BSS's frequency. A band the network isn't heard on is "
+            "absent, so is Auto. ``signal`` stays the strongest overall."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

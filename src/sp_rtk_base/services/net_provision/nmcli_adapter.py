@@ -39,6 +39,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetworkState,
     ProvisionAction,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 
@@ -66,6 +67,19 @@ def _run_nmcli(args: list[str]) -> subprocess.CompletedProcess[str]:
         timeout=_NMCLI_TIMEOUT_SECONDS,
         check=False,
     )
+
+
+def _band_of_freq(freq: str) -> WifiBand | None:
+    """The Wi-Fi band of one BSS from nmcli's FREQ column (``5180 MHz``).
+
+    ``None`` for a frequency outside both bands (6 GHz, say) or one that
+    doesn't parse; such a BSS still counts toward the overall signal.
+    """
+    try:
+        mhz = int(freq.split()[0])
+    except (IndexError, ValueError):
+        return None
+    return WifiBand.from_frequency(mhz)
 
 
 class NmcliError(RuntimeError):
@@ -230,7 +244,7 @@ class NmcliAdapter:
                 "nmcli",
                 "-t",
                 "-f",
-                "SSID,SIGNAL,SECURITY",
+                "SSID,SIGNAL,SECURITY,FREQ",
                 "device",
                 "wifi",
                 "list",
@@ -242,13 +256,13 @@ class NmcliAdapter:
         for line in result.stdout.splitlines():
             if not line:
                 continue
-            # Split from the right: SIGNAL/SECURITY never contain a colon,
-            # but an SSID theoretically could, so anchoring on the last
-            # two colons keeps an SSID with colons in it intact.
-            parts = line.rsplit(":", 2)
-            if len(parts) != 3:
+            # Split from the right: SIGNAL/SECURITY/FREQ never contain a
+            # colon, but an SSID theoretically could, so anchoring on the
+            # last three colons keeps an SSID with colons in it intact.
+            parts = line.rsplit(":", 3)
+            if len(parts) != 4:
                 continue
-            ssid, signal_str, security_raw = parts
+            ssid, signal_str, security_raw, freq_raw = parts
             if not ssid:
                 continue
             try:
@@ -256,12 +270,51 @@ class NmcliAdapter:
             except ValueError:
                 continue
             security = "" if security_raw == "--" else security_raw
+            band = _band_of_freq(freq_raw)
             existing = best_by_ssid.get(ssid)
-            if existing is None or signal > existing.signal:
-                best_by_ssid[ssid] = WifiNetwork(
-                    ssid=ssid, signal=signal, security=security
-                )
+            if existing is None:
+                existing = WifiNetwork(ssid=ssid, signal=signal, security=security)
+                best_by_ssid[ssid] = existing
+            elif signal > existing.signal:
+                existing.signal = signal
+                existing.security = security
+            if band is not None and signal > existing.band_signals.get(band, -1):
+                existing.band_signals[band] = signal
         return sorted(best_by_ssid.values(), key=lambda n: n.signal, reverse=True)
+
+    def has_5ghz(self) -> bool | None:
+        """Whether the Wi-Fi adapter has 5 GHz, from ``WIFI-PROPERTIES.5GHZ``.
+
+        This is the hardware's capability, not whether 5 GHz is usable
+        under the current regulatory country: a base with a wrong or
+        unset WLAN country can say yes here and still never hear 5 GHz.
+
+        Returns:
+            ``True`` or ``False`` as nmcli reports it; ``None`` when it
+            can't tell (nmcli says ``unknown``, there's no Wi-Fi device,
+            or the query fails).
+        """
+        devices = self._run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+        if devices.returncode != 0:
+            return None
+        wifi_device = next(
+            (
+                device
+                for device, _, kind in (
+                    line.rpartition(":") for line in devices.stdout.splitlines()
+                )
+                if kind == "wifi" and device
+            ),
+            None,
+        )
+        if wifi_device is None:
+            return None
+        result = self._run(
+            ["nmcli", "-g", "WIFI-PROPERTIES.5GHZ", "device", "show", wifi_device]
+        )
+        if result.returncode != 0:
+            return None
+        return {"yes": True, "no": False}.get(result.stdout.strip())
 
     def latest_scan(self) -> list[WifiNetwork]:
         """The scan cached by the most recent AP (re)start or rescan.

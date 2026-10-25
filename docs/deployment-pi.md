@@ -643,6 +643,24 @@ disabling a network service you didn't ask it to touch, mid
 shouldn't spring on a box you might be SSH'd into over that same
 interface.
 
+### The base never hears 5 GHz
+
+*(`appliance` mode only.)*
+
+The Network page lists no nearby network on 5 GHz, even ones your router
+serves there, although the base's Wi-Fi adapter has 5 GHz. The Network
+page only checks whether the hardware has 5 GHz, not whether the WLAN
+country lets it be used, so check the regulatory country:
+
+```bash
+iw reg get                    # "country 00" or the wrong country is the problem
+sudo raspi-config             # Localisation Options > WLAN Country
+```
+
+Set the WLAN country to the country the base is in, then reboot. An unset
+country keeps Wi-Fi off entirely on dual-band Pis. A wrong country can hide
+or restrict 5 GHz channels while the hardware still reports 5 GHz.
+
 ### Bluetooth scan finds nothing
 
 Symptom: the **Input → Bluetooth** scan returns zero devices, or

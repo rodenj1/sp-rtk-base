@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from sp_rtk_base.models.api_models import (
     NetworkActionResponse,
+    NetworkCapabilitiesResponse,
     NetworkConnectRequest,
     NetworkConnectResponse,
     NetworkFallbackInfoResponse,
@@ -76,6 +77,20 @@ async def scan_networks(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/capabilities", response_model=NetworkCapabilitiesResponse)
+async def get_network_capabilities(
+    svc: NetworkService = Depends(get_network_service),
+) -> NetworkCapabilitiesResponse:
+    """Whether the Wi-Fi adapter has 5 GHz (``null`` when unknown)."""
+    try:
+        has_5ghz = await svc.has_5ghz()
+    except NetworkNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return NetworkCapabilitiesResponse(has_5ghz=has_5ghz)
 
 
 @router.get("/fallback-info", response_model=NetworkFallbackInfoResponse)

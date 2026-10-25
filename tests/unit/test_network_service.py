@@ -102,6 +102,40 @@ class TestScanNetworks:
             await svc.scan_networks()
 
 
+class TestHas5Ghz:
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("answer", [True, False, None])
+    async def test_returns_the_adapter_answer(self, answer: bool | None) -> None:
+        adapter = _fake_adapter()
+        adapter.has_5ghz.return_value = answer  # type: ignore[attr-defined]
+        assert await _service_with_adapter(adapter).has_5ghz() is answer
+
+    @pytest.mark.asyncio()
+    async def test_a_definite_answer_is_read_once(self) -> None:
+        """The hardware doesn't change while the app runs, and the Network
+        page asks on every visit."""
+        adapter = _fake_adapter()
+        adapter.has_5ghz.return_value = True  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        await svc.has_5ghz()
+        assert await svc.has_5ghz() is True
+        adapter.has_5ghz.assert_called_once_with()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio()
+    async def test_unknown_is_asked_again(self) -> None:
+        """Unknown may be a transient nmcli failure, so it isn't kept."""
+        adapter = _fake_adapter()
+        adapter.has_5ghz.side_effect = [None, True]  # type: ignore[attr-defined]
+        svc = _service_with_adapter(adapter)
+        assert await svc.has_5ghz() is None
+        assert await svc.has_5ghz() is True
+
+    @pytest.mark.asyncio()
+    async def test_raises_not_configured_when_config_is_missing(self) -> None:
+        with pytest.raises(NetworkNotConfiguredError):
+            await _service_unconfigured().has_5ghz()
+
+
 class TestGetApFallbackInfo:
     @pytest.mark.asyncio()
     async def test_returns_ap_ssid_and_window_from_config(self) -> None:

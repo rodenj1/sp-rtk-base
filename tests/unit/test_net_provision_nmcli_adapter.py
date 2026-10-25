@@ -22,6 +22,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetworkState,
     ProvisionAction,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 from sp_rtk_base.services.net_provision import (
@@ -40,21 +41,28 @@ SCAN = [
     "nmcli",
     "-t",
     "-f",
-    "SSID,SIGNAL,SECURITY",
+    "SSID,SIGNAL,SECURITY,FREQ",
     "device",
     "wifi",
     "list",
     "--rescan",
     "yes",
 ]
+DEVICES = ["nmcli", "-t", "-f", "DEVICE,TYPE", "device"]
+WLAN0_5GHZ = ["nmcli", "-g", "WIFI-PROPERTIES.5GHZ", "device", "show", "wlan0"]
 AP_UP = ["nmcli", "connection", "up", "id", AP_SSID]
 AP_DOWN = ["nmcli", "connection", "down", "id", AP_SSID]
 SAVED_UP = ["nmcli", "connection", "up", "id", SAVED_SSID]
 
 
-def _scan_line(ssid: str, signal: int = 50, security: str = "WPA2") -> str:
-    """One `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list` line."""
-    return f"{ssid}:{signal}:{security}"
+def _scan_line(
+    ssid: str, signal: int = 50, security: str = "WPA2", freq: int = 2412
+) -> str:
+    """One `nmcli -t -f SSID,SIGNAL,SECURITY,FREQ device wifi list` line.
+
+    nmcli prints FREQ with its unit even in terse mode, e.g. ``2412 MHz``.
+    """
+    return f"{ssid}:{signal}:{security}:{freq} MHz"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +334,12 @@ class TestExecuteStartAp:
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.START_AP)
         assert adapter.latest_scan() == [
-            WifiNetwork(ssid=SAVED_SSID, signal=80, security="WPA2")
+            WifiNetwork(
+                ssid=SAVED_SSID,
+                signal=80,
+                security="WPA2",
+                band_signals={WifiBand.GHZ_2_4: 80},
+            )
         ]
 
     def test_raises_nmcli_error_when_ap_fails_to_come_up(self) -> None:
@@ -368,7 +381,12 @@ class TestExecuteRescan:
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
         assert adapter.latest_scan() == [
-            WifiNetwork(ssid="OtherNetwork", signal=40, security="WPA2")
+            WifiNetwork(
+                ssid="OtherNetwork",
+                signal=40,
+                security="WPA2",
+                band_signals={WifiBand.GHZ_2_4: 40},
+            )
         ]
 
     def test_raises_nmcli_error_when_ap_fails_to_resume(self) -> None:
@@ -447,7 +465,14 @@ class TestScanNetworks:
         fake = FakeNmcli()
         fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID, signal=64)}\n")
         networks = _adapter(fake).scan_networks()
-        assert networks == [WifiNetwork(ssid=SAVED_SSID, signal=64, security="WPA2")]
+        assert networks == [
+            WifiNetwork(
+                ssid=SAVED_SSID,
+                signal=64,
+                security="WPA2",
+                band_signals={WifiBand.GHZ_2_4: 64},
+            )
+        ]
 
     def test_normalizes_open_network_security_dash_to_empty_string(self) -> None:
         """nmcli prints `--` in the SECURITY column for an open network —
@@ -480,7 +505,79 @@ class TestScanNetworks:
             ),
         )
         networks = _adapter(fake).scan_networks()
-        assert networks == [WifiNetwork(ssid=SAVED_SSID, signal=75, security="WPA2")]
+        assert networks == [
+            WifiNetwork(
+                ssid=SAVED_SSID,
+                signal=75,
+                security="WPA2",
+                band_signals={WifiBand.GHZ_2_4: 75},
+            )
+        ]
+
+    def test_an_ssid_heard_on_both_bands_reports_the_signal_on_each(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN,
+            stdout=(
+                f"{_scan_line('FarmShop', signal=82, freq=2437)}\n"
+                f"{_scan_line('FarmShop', signal=41, freq=5180)}\n"
+            ),
+        )
+        [network] = _adapter(fake).scan_networks()
+        assert network.band_signals == {WifiBand.GHZ_2_4: 82, WifiBand.GHZ_5: 41}
+        assert network.signal == 82
+
+    def test_an_ssid_heard_on_only_one_band_reports_only_that_band(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN, stdout=f"{_scan_line('Neighbour-5G', signal=55, freq=5745)}\n"
+        )
+        [network] = _adapter(fake).scan_networks()
+        assert network.band_signals == {WifiBand.GHZ_5: 55}
+
+    def test_the_strongest_bss_on_each_band_wins(self) -> None:
+        """Several access points serving one SSID on the same band (a mesh,
+        repeaters): the band reports the strongest of them."""
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN,
+            stdout=(
+                f"{_scan_line('Home-Mesh', signal=35, freq=2412)}\n"
+                f"{_scan_line('Home-Mesh', signal=22, freq=5180)}\n"
+                f"{_scan_line('Home-Mesh', signal=60, freq=2462)}\n"
+                f"{_scan_line('Home-Mesh', signal=48, freq=5500)}\n"
+                f"{_scan_line('Home-Mesh', signal=30, freq=2437)}\n"
+            ),
+        )
+        [network] = _adapter(fake).scan_networks()
+        assert network.band_signals == {WifiBand.GHZ_2_4: 60, WifiBand.GHZ_5: 48}
+        assert network.signal == 60
+
+    def test_a_freq_outside_both_bands_is_ignored_for_the_band_signals(
+        self,
+    ) -> None:
+        """A 6 GHz BSS (5955 MHz) belongs to neither band. It still counts
+        toward the overall signal, so the setup hotspot's Wi-Fi picker lists
+        the network exactly as before."""
+        fake = FakeNmcli()
+        fake.set_response(
+            SCAN,
+            stdout=(
+                f"{_scan_line('Office', signal=90, freq=5955)}\n"
+                f"{_scan_line('Office', signal=40, freq=2412)}\n"
+                f"{_scan_line('SixOnly', signal=70, freq=6115)}\n"
+            ),
+        )
+        networks = _adapter(fake).scan_networks()
+        assert networks == [
+            WifiNetwork(
+                ssid="Office",
+                signal=90,
+                security="WPA2",
+                band_signals={WifiBand.GHZ_2_4: 40},
+            ),
+            WifiNetwork(ssid="SixOnly", signal=70, security="WPA2"),
+        ]
 
     def test_ignores_blank_lines(self) -> None:
         fake = FakeNmcli()
@@ -501,6 +598,47 @@ class TestScanNetworks:
         fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
         networks = _adapter(fake).scan_networks()
         assert all(network.in_range for network in networks)
+
+
+# ---------------------------------------------------------------------------
+# has_5ghz() — whether the Wi-Fi adapter has 5 GHz (spec #147)
+# ---------------------------------------------------------------------------
+
+_DEVICE_LIST = "eth0:ethernet\nwlan0:wifi\np2p-dev-wlan0:wifi-p2p\nlo:loopback\n"
+
+
+class TestHas5Ghz:
+    def test_yes_when_the_wifi_device_reports_5ghz(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(DEVICES, stdout=_DEVICE_LIST)
+        fake.set_response(WLAN0_5GHZ, stdout="yes\n")
+        assert _adapter(fake).has_5ghz() is True
+        assert fake.calls == [DEVICES, WLAN0_5GHZ]
+
+    def test_no_when_the_wifi_device_lacks_5ghz(self) -> None:
+        """A Pi Zero W or Pi 3B: 2.4 GHz-only hardware."""
+        fake = FakeNmcli()
+        fake.set_response(DEVICES, stdout=_DEVICE_LIST)
+        fake.set_response(WLAN0_5GHZ, stdout="no\n")
+        assert _adapter(fake).has_5ghz() is False
+
+    def test_unknown_when_nmcli_reports_unknown(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(DEVICES, stdout=_DEVICE_LIST)
+        fake.set_response(WLAN0_5GHZ, stdout="unknown\n")
+        assert _adapter(fake).has_5ghz() is None
+
+    def test_unknown_without_a_wifi_device(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(DEVICES, stdout="eth0:ethernet\nlo:loopback\n")
+        assert _adapter(fake).has_5ghz() is None
+        assert fake.calls == [DEVICES]
+
+    def test_unknown_when_the_device_query_fails(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(DEVICES, stdout=_DEVICE_LIST)
+        fake.set_response(WLAN0_5GHZ, stderr="Error: boom", returncode=10)
+        assert _adapter(fake).has_5ghz() is None
 
 
 # ---------------------------------------------------------------------------

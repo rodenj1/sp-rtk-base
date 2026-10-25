@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sp_rtk_base.models.net_provision_models import WifiBand
 from sp_rtk_base.models.network_link_models import (
     LinkKind,
     LinkState,
@@ -135,23 +136,17 @@ def wifi_strength(link: NetworkLink) -> Shown | None:
     return Shown(level, LEVEL_COLOR[level], sub)
 
 
-def _band(mhz: int) -> str:
-    if mhz < 3000:
-        return "2.4 GHz"
-    if mhz < 5925:
-        return "5 GHz"
-    return "6 GHz"
-
-
 def wifi_band(link: NetworkLink) -> Shown | None:
     """The Wi-Fi band, with the frequency beneath; ``None`` when Not
-    supported."""
+    supported.  A frequency outside 2.4 and 5 GHz shows "—" over its MHz.
+    Shared by the dashboard's Network card and the Network page."""
     if link.wifi is None or link.wifi.frequency_mhz is None:
         return None
     mhz = link.wifi.frequency_mhz.value
     if mhz is None:
         return Shown(NONE, sub=NONE)
-    return Shown(_band(mhz), sub=f"{mhz} MHz")
+    band = WifiBand.from_frequency(mhz)
+    return Shown(NONE if band is None else band.label, sub=f"{mhz} MHz")
 
 
 def _mbits(bps: int) -> str:

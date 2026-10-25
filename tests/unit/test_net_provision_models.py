@@ -19,6 +19,7 @@ from sp_rtk_base.models.net_provision_models import (
     NetworkState,
     ProvisionAction,
     SavedWifiConnection,
+    WifiBand,
     WifiNetwork,
 )
 
@@ -271,3 +272,51 @@ class TestEnumWireValues:
             "stop_ap_and_connect",
             "rescan",
         ]
+
+
+class TestWifiBand:
+    """The Wi-Fi band of a saved network, and the one place that speaks
+    NetworkManager's ``802-11-wireless.band`` spelling."""
+
+    @pytest.mark.parametrize(
+        ("band", "nm_value"),
+        [(WifiBand.AUTO, ""), (WifiBand.GHZ_2_4, "bg"), (WifiBand.GHZ_5, "a")],
+    )
+    def test_maps_to_networkmanager_band(self, band: WifiBand, nm_value: str) -> None:
+        assert band.nm_value == nm_value
+        assert WifiBand.from_nm(nm_value) is band
+
+    def test_an_unset_networkmanager_band_is_auto(self) -> None:
+        # nmcli -g prints an unset property as an empty line, -t as "--".
+        assert WifiBand.from_nm("--") is WifiBand.AUTO
+        assert WifiBand.from_nm("  ") is WifiBand.AUTO
+
+    def test_an_unknown_networkmanager_band_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="6ghz"):
+            WifiBand.from_nm("6ghz")
+
+    def test_labels_are_the_glossary_words(self) -> None:
+        assert [b.label for b in WifiBand] == ["Auto", "2.4 GHz", "5 GHz"]
+
+    def test_wire_values(self) -> None:
+        assert [b.value for b in WifiBand] == ["auto", "2.4ghz", "5ghz"]
+
+    @pytest.mark.parametrize(
+        ("mhz", "band"),
+        [
+            (2401, WifiBand.GHZ_2_4),
+            (2412, WifiBand.GHZ_2_4),
+            (2484, WifiBand.GHZ_2_4),
+            (2495, WifiBand.GHZ_2_4),
+            (5150, WifiBand.GHZ_5),
+            (5745, WifiBand.GHZ_5),
+            (5949, WifiBand.GHZ_5),
+            (2400, None),
+            (2496, None),
+            (5149, None),
+            (5950, None),
+            (5955, None),
+        ],
+    )
+    def test_band_from_frequency(self, mhz: int, band: WifiBand | None) -> None:
+        assert WifiBand.from_frequency(mhz) is band

@@ -187,6 +187,72 @@ class WifiNetwork(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Wi-Fi band (spec rodenj1/rtk_development#147)
+# ---------------------------------------------------------------------------
+
+
+class WifiBand(str, enum.Enum):
+    """Which radio band the base may use to join one saved Wi-Fi network.
+
+    A hard lock, not a hint (see ``CONTEXT.md``).  This is the only place
+    that knows NetworkManager's ``802-11-wireless.band`` spelling
+    (:attr:`nm_value`, :meth:`from_nm`), and the only frequency-to-band
+    rule (:meth:`from_frequency`).
+    """
+
+    AUTO = "auto"
+    GHZ_2_4 = "2.4ghz"
+    GHZ_5 = "5ghz"
+
+    @property
+    def label(self) -> str:
+        """The glossary word the console shows: Auto, 2.4 GHz or 5 GHz."""
+        return _BAND_LABEL[self]
+
+    @property
+    def nm_value(self) -> str:
+        """NetworkManager's ``802-11-wireless.band`` value: empty, bg or a."""
+        return _BAND_NM[self]
+
+    @classmethod
+    def from_nm(cls, value: str) -> WifiBand:
+        """The band for an ``802-11-wireless.band`` value read from nmcli.
+
+        An unset property reads as empty (``-g``) or ``--`` (``-t``),
+        which is Auto.  Anything else unknown raises :class:`ValueError`.
+        """
+        value = value.strip()
+        if value in ("", "--"):
+            return cls.AUTO
+        for band, nm in _BAND_NM.items():
+            if nm == value:
+                return band
+        raise ValueError(f"unknown 802-11-wireless.band value: {value!r}")
+
+    @classmethod
+    def from_frequency(cls, mhz: int) -> WifiBand | None:
+        """The band a channel frequency is in: 2401-2495 MHz is 2.4 GHz,
+        5150-5949 MHz is 5 GHz, and anything else is ``None``."""
+        if 2401 <= mhz <= 2495:
+            return cls.GHZ_2_4
+        if 5150 <= mhz <= 5949:
+            return cls.GHZ_5
+        return None
+
+
+_BAND_LABEL: dict[WifiBand, str] = {
+    WifiBand.AUTO: "Auto",
+    WifiBand.GHZ_2_4: "2.4 GHz",
+    WifiBand.GHZ_5: "5 GHz",
+}
+_BAND_NM: dict[WifiBand, str] = {
+    WifiBand.AUTO: "",
+    WifiBand.GHZ_2_4: "bg",
+    WifiBand.GHZ_5: "a",
+}
+
+
+# ---------------------------------------------------------------------------
 # Console network operations (issue #21)
 # ---------------------------------------------------------------------------
 

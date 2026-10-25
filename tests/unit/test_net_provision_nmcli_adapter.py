@@ -339,6 +339,84 @@ class TestSavedWifiVisible:
         assert state.saved_wifi_visible is False
 
 
+class TestSavedWifiVisibleWithABandLock:
+    """Issue #152: the saved network counts as seen only if the rescan
+    hears it on a band its Wi-Fi band allows. Otherwise the loop would
+    drop the setup hotspot every rescan interval for a `con up` that is
+    bound to fail."""
+
+    @staticmethod
+    def _rescan(*, nm_band: str, freqs: list[int]) -> NetworkState:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
+        fake.set_response(_band_of(SAVED_SSID), stdout=f"{nm_band}\n")
+        fake.set_response(
+            SCAN,
+            stdout="".join(f"{_scan_line(SAVED_SSID, freq=f)}\n" for f in freqs),
+        )
+        adapter = _adapter(fake)
+        adapter.execute(ProvisionAction.RESCAN)
+        return _read_state(adapter)
+
+    @pytest.mark.parametrize(
+        ("nm_band", "freqs"),
+        [
+            pytest.param("bg", [5180], id="2.4-ghz-lock-heard-only-on-5-ghz"),
+            pytest.param("a", [2412], id="5-ghz-lock-heard-only-on-2.4-ghz"),
+        ],
+    )
+    def test_a_lock_that_excludes_every_band_heard_is_not_visible(
+        self, nm_band: str, freqs: list[int]
+    ) -> None:
+        assert self._rescan(nm_band=nm_band, freqs=freqs).saved_wifi_visible is False
+
+    @pytest.mark.parametrize(
+        ("nm_band", "freqs"),
+        [
+            pytest.param("bg", [2412], id="2.4-ghz-lock-heard-on-2.4-ghz"),
+            pytest.param("a", [5180], id="5-ghz-lock-heard-on-5-ghz"),
+            pytest.param("a", [2412, 5180], id="5-ghz-lock-heard-on-both"),
+        ],
+    )
+    def test_a_lock_that_matches_a_band_heard_is_visible(
+        self, nm_band: str, freqs: list[int]
+    ) -> None:
+        assert self._rescan(nm_band=nm_band, freqs=freqs).saved_wifi_visible is True
+
+    @pytest.mark.parametrize(
+        "freqs",
+        [
+            pytest.param([2412], id="heard-on-2.4-ghz"),
+            pytest.param([5180], id="heard-on-5-ghz"),
+        ],
+    )
+    def test_auto_is_visible_on_either_band(self, freqs: list[int]) -> None:
+        assert self._rescan(nm_band="", freqs=freqs).saved_wifi_visible is True
+
+
+class TestSavedWifiBand:
+    """Issue #152: the state carries the saved network's Wi-Fi band, so
+    the supervisor can key its connect-failure record on it."""
+
+    def test_the_state_carries_the_saved_networks_band(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
+        fake.set_response(_band_of(SAVED_SSID), stdout="bg\n")
+        assert _read_state(_adapter(fake)).saved_wifi_band is WifiBand.GHZ_2_4
+
+    def test_an_unlocked_saved_network_is_auto(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
+        assert _read_state(_adapter(fake)).saved_wifi_band is WifiBand.AUTO
+
+    def test_no_band_without_a_saved_network(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{AP_SSID}\n")
+        state = _read_state(_adapter(fake))
+        assert state.saved_wifi_band is None
+        assert _band_of(AP_SSID) not in fake.calls
+
+
 # ---------------------------------------------------------------------------
 # Commands: IDLE / START_AP
 # ---------------------------------------------------------------------------
@@ -391,13 +469,21 @@ class TestExecuteRescan:
     def test_issues_down_then_scan_then_up_in_order(self) -> None:
         """Single radio: the AP has to be let go of before the saved
         network can even be looked for, then resumed so decide() sees it
-        active again on the next tick."""
+        active again on the next tick. The saved network's Wi-Fi band is
+        read once it has been heard (issue #152), still before the AP
+        comes back up."""
         fake = FakeNmcli()
         fake.set_response(ALL_CONNECTIONS, stdout=f"802-11-wireless:{SAVED_SSID}\n")
         fake.set_response(SCAN, stdout=f"{_scan_line(SAVED_SSID)}\n")
         adapter = _adapter(fake)
         adapter.execute(ProvisionAction.RESCAN)
-        assert fake.calls == [AP_DOWN, ALL_CONNECTIONS, SCAN, AP_UP]
+        assert fake.calls == [
+            AP_DOWN,
+            ALL_CONNECTIONS,
+            SCAN,
+            _band_of(SAVED_SSID),
+            AP_UP,
+        ]
 
     def test_resumes_ap_even_without_a_saved_profile(self) -> None:
         fake = FakeNmcli()

@@ -27,6 +27,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from sp_rtk_base.models.net_provision_models import WifiBand
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_STATE_PATH = Path("/var/lib/sp-rtk-base/net_provision_state.json")
@@ -43,6 +45,10 @@ class ProvisioningClockState(BaseModel):
     last_uplink_at: float | None = None
     ap_started_at: float | None = None
     failed_connect_ssid: str | None = None
+    # Issue #152: the failure record is keyed on the name *and* the
+    # Wi-Fi band. A file written before then has no band, which matches
+    # no saved network's band, so its count simply resets once.
+    failed_connect_band: WifiBand | None = None
     consecutive_connect_failures: int = 0
     last_connect_failure_at: float | None = None
     consecutive_uplink_ticks: int = 0

@@ -120,6 +120,15 @@ class NetworkState(BaseModel):
             "nmcli round trip alongside this one."
         ),
     )
+    saved_wifi_band: WifiBand | None = Field(
+        default=None,
+        description=(
+            "The saved WiFi profile's Wi-Fi band, or None without a saved "
+            "profile. Bookkeeping only, like saved_wifi_name: the "
+            "supervisor keys its connect-failure count on the name and "
+            "the band, so changing the band resets it (issue #152)."
+        ),
+    )
     consecutive_connect_failures: int = Field(
         default=0,
         ge=0,

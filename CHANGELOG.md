@@ -11,6 +11,74 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.13.0 (2026-10-25)
+
+### Wi-Fi band
+
+Each saved Wi-Fi network gets a **Wi-Fi band**, Auto, 2.4 GHz or 5 GHz,
+on appliance bases whose adapter has 5 GHz (rtk_development#147). Both
+non-Auto values are hard locks: a network locked to 2.4 GHz never joins
+over 5 GHz, and the other way round. The band is kept in the network's
+NetworkManager profile, so it survives a reboot. Managed-host mode is
+unchanged, since the host owns the network there.
+
+- **Band on the status card.** The Network page's status card shows
+  Wi-Fi link strength, Band (with the frequency in MHz beneath) and
+  Address as separate readings, matching the dashboard's Network card.
+  The dashboard and the Network page share one frequency-to-band rule:
+  2401-2495 MHz is 2.4 GHz and 5150-5949 MHz is 5 GHz. A frequency
+  outside both, such as 6 GHz, now reads "—" with its MHz beneath,
+  where the dashboard used to read "6 GHz".
+- **Bands in the scan.** Each nearby network shows which bands it is
+  heard on, such as "2.4 GHz + 5 GHz", and expands to its signal on
+  each band, with the Join button inside. The setup hotspot's Wi-Fi
+  picker is unchanged.
+- **Locking a saved network.** A **Band** button on each saved network
+  opens the Band dialog. Each band shows what the page's scan hears now
+  ("Heard now at 82%.", "Not heard right now."). A locked network shows
+  a "2.4 GHz only" or "5 GHz only" badge. A network that isn't active
+  saves at once, with no reconnect.
+- **Changing the active network's band safely.** On the network the base
+  is on, a band the scan doesn't hear can't be chosen, and a band that
+  stops being heard before you confirm is refused without touching the
+  link. Confirming warns that the console session drops for about half a
+  minute (about a minute through the Portal) while the base reconnects.
+  If the base can't join on the new band, it puts the old band back by
+  itself and the network's entry says so until its band is next changed.
+  Only one band change runs at a time.
+- **Choosing a band when joining.** The join form has a Wi-Fi band
+  select, defaulting to Auto, whose options show what's heard ("5 GHz
+  (41%)", "5 GHz (not heard)"). The security comes from the scan, so a
+  WPA3-only network joins with SAE. WEP, 802.1X and OWE networks join on
+  Auto only.
+- **Stronger-band suggestion.** When the page's scan hears the active
+  network more than 20 points more strongly on the other band, the status
+  card says so, and **Use <band>** opens the Band dialog.
+- **The decision loop respects the lock.** The saved network counts as
+  in range only when it's heard on a band its lock allows, so the setup
+  hotspot stays up steadily instead of dropping every rescan for a join
+  that's bound to fail. Changing the band resets the count of failed
+  joins for that network.
+- **Netplan profiles.** Saved networks are matched to the scan by their
+  SSID rather than their profile name, so a profile netplan names
+  `netplan-wlan0-<SSID>` is recognised as being in range. That applies to
+  the decision loop as well as the band controls.
+- **Reconnect timeout.** `nmcli connection up` may now take up to 120 s
+  instead of 10 s, since a failed join on a Pi takes about 25 s to report.
+- **API.**
+  - `GET /api/network/saved` returns each network's `ssid` and `band`,
+    and `last_band_change` when its last change was undone.
+  - `PUT /api/network/saved/{name}/band` changes the band: 200 with
+    Saved for a network that isn't active, 202 for the active network,
+    422 with the reason when it's refused, and 409 while another band
+    change is running.
+  - `GET /api/network/scan` returns `band_signals` per network.
+  - `GET /api/network/capabilities` reports `has_5ghz`.
+  - `POST /api/network/connect` takes an optional `band`.
+- **Documentation.** The Pi deployment doc gains a troubleshooting note
+  for a base that never hears 5 GHz: check `iw reg get` and set the WLAN
+  country with `raspi-config` (Localisation, WLAN Country).
+
 ## v0.12.0 (2026-10-20)
 
 ### Network link health

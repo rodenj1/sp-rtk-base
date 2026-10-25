@@ -72,6 +72,11 @@ def network_page() -> None:
 
     with page_layout("Network"):
         ui.label("Network").classes("text-h4 text-white q-mb-md")
+        # Every dialog on the page is made in here. NiceGUI deletes a dialog
+        # along with the container it was made in, and the status card and
+        # saved list are cleared on their poll, so a dialog opened from them
+        # would vanish within seconds. This one is never cleared.
+        dialog_host = ui.element()
         status_container = ui.column().classes("w-full gap-3")
 
         ui.label("Saved Networks").classes("text-h5 text-white q-mt-lg")
@@ -99,6 +104,11 @@ def network_page() -> None:
         # active network and open its Band dialog without asking again.
         last_saved: list[SavedWifiConnection] = []
         last_has_5ghz: list[bool | None] = [None]
+
+        def _page_dialog() -> ui.dialog:
+            """A dialog that outlives the page's polled containers."""
+            with dialog_host:
+                return ui.dialog()
 
         def _render_status_card(
             configured: bool, snapshot: NetworkLinkSnapshot
@@ -253,7 +263,7 @@ def network_page() -> None:
             disabled. Choosing one closes the dialog and saves it, or, on the
             active network, asks to confirm the reconnect first."""
             with (
-                ui.dialog() as dialog,
+                _page_dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label(f"Wi-Fi band for '{conn.ssid}'").classes("text-h6 text-white")
@@ -314,7 +324,7 @@ def network_page() -> None:
                 fallback_minutes=fallback_minutes,
             )
             with (
-                ui.dialog() as dialog,
+                _page_dialog() as dialog,
                 ui.card().classes("q-pa-md").style("max-width: 440px"),
             ):
                 ui.label(f"Use {band.label} for '{conn.ssid}'?").classes(
@@ -367,7 +377,7 @@ def network_page() -> None:
             """Confirm switching to an already-saved network (issue #24)."""
             warning = await _session_drop_warning_text("switch")
             with (
-                ui.dialog() as dialog,
+                _page_dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label(f"Switch to '{name}'").classes("text-h6 text-white")
@@ -409,7 +419,7 @@ def network_page() -> None:
             the operator's current connection.
             """
             with (
-                ui.dialog() as dialog,
+                _page_dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label(f"Forget '{name}'?").classes("text-h6 text-white")
@@ -531,7 +541,7 @@ def network_page() -> None:
             )
 
             with (
-                ui.dialog() as dialog,
+                _page_dialog() as dialog,
                 ui.card().classes("q-pa-md").style("min-width: 400px"),
             ):
                 ui.label("Add Hidden Network" if hidden else f"Join '{ssid}'").classes(

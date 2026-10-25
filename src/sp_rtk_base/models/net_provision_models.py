@@ -13,7 +13,7 @@ function of observable state.
 from __future__ import annotations
 
 import enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -275,6 +275,78 @@ class WifiNetwork(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class BandChangeSaved(BaseModel):
+    """A band change to a saved network that isn't active: the band was
+    written to its profile, with no reconnect and no scan check."""
+
+    outcome: Literal["saved"] = "saved"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band now saved in its profile")
+
+
+class BandChangeRefused(BaseModel):
+    """A band change to the active network that a fresh scan ruled out: the
+    network isn't heard on that band, so nothing was written and the link
+    was left alone."""
+
+    outcome: Literal["refused"] = "refused"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band that was asked for")
+    reason: str = Field(description="Why the change was refused, for the operator")
+
+
+class BandChangePending(BaseModel):
+    """A band change to the active network that passed the scan check.
+
+    Not an outcome yet: nothing has been written. Applying it reconnects
+    the link (``NmcliAdapter.apply_band_change``), so the console runs that
+    in the background and acknowledges this straight away.
+    """
+
+    outcome: Literal["pending"] = "pending"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band about to be applied")
+
+
+class BandChangeApplied(BaseModel):
+    """A band change to the active network that took: the band was written
+    and the network came back up on it."""
+
+    outcome: Literal["applied"] = "applied"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band now in use")
+
+
+class BandChangeReverted(BaseModel):
+    """A band change to the active network that didn't take: the network
+    couldn't come up on the new band, so the previous band was written back
+    and the network brought up on it again.
+
+    Still Reverted when that second reconnect fails too; the decision loop
+    then recovers the base.
+    """
+
+    outcome: Literal["reverted"] = "reverted"
+    name: str = Field(description="The saved network's nmcli connection id")
+    band: WifiBand = Field(description="The Wi-Fi band put back")
+    tried: WifiBand = Field(description="The Wi-Fi band that was tried")
+
+
+# What a band change came to. Each outcome is its own model, told apart by
+# its ``outcome`` literal.
+BandChangeOutcome = Annotated[
+    BandChangeSaved | BandChangeRefused | BandChangeApplied | BandChangeReverted,
+    Field(discriminator="outcome"),
+]
+
+# The immediate answer to a band change request: Saved or Refused, which are
+# final, or Pending, whose reconnect is still to run.
+BandChangeReply = Annotated[
+    BandChangeSaved | BandChangeRefused | BandChangePending,
+    Field(discriminator="outcome"),
+]
+
+
 class SavedWifiConnection(BaseModel):
     """One saved WiFi profile NetworkManager knows about.
 
@@ -297,23 +369,14 @@ class SavedWifiConnection(BaseModel):
             "profile's 802-11-wireless.band. Auto means either band."
         ),
     )
-
-
-class BandChangeSaved(BaseModel):
-    """A band change to a saved network that isn't active: the band was
-    written to its profile, with no reconnect and no scan check."""
-
-    outcome: Literal["saved"] = "saved"
-    name: str = Field(description="The saved network's nmcli connection id")
-    band: WifiBand = Field(description="The Wi-Fi band now saved in its profile")
-
-
-# What a band change came to. Each outcome is its own model, told apart by
-# its ``outcome`` literal, so the active network's outcomes (Refused,
-# Applied, Reverted; ticket #151) join as further members of this union,
-# ``Annotated[BandChangeSaved | ..., Field(discriminator="outcome")]``,
-# without reshaping Saved or its callers.
-BandChangeOutcome = BandChangeSaved
+    last_band_change: BandChangeReverted | None = Field(
+        default=None,
+        description=(
+            "The last band change to this network, when it was Reverted: "
+            "the base couldn't join on the band tried and put the old one "
+            "back. Kept in memory until the next band change to it."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

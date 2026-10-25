@@ -18,7 +18,10 @@ from collections.abc import Callable, Coroutine
 from typing import NamedTuple
 
 from sp_rtk_base.models.net_provision_models import (
-    BandChangeOutcome,
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReply,
+    BandChangeReverted,
     NetProvisionConfig,
     SavedWifiConnection,
     WifiBand,
@@ -75,12 +78,17 @@ class NetworkService:
         self._adapter: NmcliAdapter | None = None
         self._config: NetProvisionConfig | None = None
         self._has_5ghz: bool | None = None
+        # The last Reverted band change per saved network, so the console can
+        # tell the operator after they rejoin. Memory only: a restart forgets
+        # it, which was accepted (#151).
+        self._reverted: dict[str, BandChangeReverted] = {}
         # Exposed only so tests can synchronize on a background connect/
         # switch/forget attempt — production callers never need to await
         # these, that's the whole point of fire-and-acknowledge.
         self.last_connect_task: asyncio.Task[None] | None = None
         self.last_switch_task: asyncio.Task[None] | None = None
         self.last_forget_task: asyncio.Task[None] | None = None
+        self.last_band_change_task: asyncio.Task[None] | None = None
 
     def _get_adapter(self) -> NmcliAdapter:
         if self._adapter is None:
@@ -194,21 +202,55 @@ class NetworkService:
             NetworkNotConfiguredError: No net-provisioning config exists.
         """
         adapter = self._get_adapter()
-        return await asyncio.to_thread(adapter.list_saved_connections)
+        saved = await asyncio.to_thread(adapter.list_saved_connections)
+        return [
+            conn.model_copy(update={"last_band_change": reverted})
+            if (reverted := self._reverted.get(conn.name)) is not None
+            else conn
+            for conn in saved
+        ]
 
-    async def change_band(self, name: str, band: WifiBand) -> BandChangeOutcome:
+    async def change_band(self, name: str, band: WifiBand) -> BandChangeReply:
         """Lock a saved network to a Wi-Fi band, or set it back to Auto.
 
         For a network that isn't active this completes before returning,
         with Saved: only the profile is written, so the link carrying this
         request is never touched.
 
+        For the active network the scan check runs first, so a Refused
+        comes back before the link is touched. Otherwise the answer is
+        Pending and the reconnect runs in the background —
+        fire-and-acknowledge, like :meth:`switch_to_network` — since it
+        drops the very link carrying this request.
+
         Raises:
             NetworkNotConfiguredError: No net-provisioning config exists.
             NmcliError: The adapter couldn't make the change.
         """
         adapter = self._get_adapter()
-        return await asyncio.to_thread(adapter.change_band, name, band)
+        reply = await asyncio.to_thread(adapter.change_band, name, band)
+        if not isinstance(reply, BandChangeRefused):
+            self._reverted.pop(name, None)
+        if isinstance(reply, BandChangePending):
+            self.last_band_change_task = self._run_in_background(
+                self._apply_band_change(adapter, name, band),
+                name="sp_rtk_base.network_band_change",
+                action="Wi-Fi band change",
+            )
+        return reply
+
+    async def _apply_band_change(
+        self, adapter: NmcliAdapter, name: str, band: WifiBand
+    ) -> None:
+        outcome = await asyncio.to_thread(adapter.apply_band_change, name, band)
+        if isinstance(outcome, BandChangeReverted):
+            logger.warning(
+                "Band change of %r to %s was undone; it's back on %s",
+                name,
+                outcome.tried.label,
+                outcome.band.label,
+            )
+            self._reverted[name] = outcome
 
     async def switch_to_network(self, name: str) -> None:
         """Activate an already-saved WiFi profile — fire-and-acknowledge (issue #24).

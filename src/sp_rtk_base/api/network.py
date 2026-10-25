@@ -5,7 +5,7 @@ No authentication, consistent with the rest of the console.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from sp_rtk_base.models.api_models import (
     NetworkActionResponse,
@@ -18,7 +18,9 @@ from sp_rtk_base.models.api_models import (
     NetworkUplinkResponse,
 )
 from sp_rtk_base.models.net_provision_models import (
-    BandChangeOutcome,
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeSaved,
     SavedWifiConnection,
     WifiNetwork,
 )
@@ -157,24 +159,40 @@ async def list_saved_networks(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.put("/saved/{name}/band", response_model=BandChangeOutcome)
+@router.put(
+    "/saved/{name}/band",
+    response_model=BandChangeSaved | BandChangePending,
+    responses={
+        202: {"description": "Accepted: the active network reconnects on it"},
+        422: {"description": "Refused: the scan doesn't hear it on that band"},
+    },
+)
 async def change_band(
     name: str,
     request: NetworkBandChangeRequest,
+    response: Response,
     svc: NetworkService = Depends(get_network_service),
-) -> BandChangeOutcome:
+) -> BandChangeSaved | BandChangePending:
     """Lock a saved network to a Wi-Fi band, or set it back to Auto.
 
     200 with Saved for a network that isn't active: the band is in its
-    profile by the time this returns. 409 means there's no provisioning
-    config.
+    profile by the time this returns. 202 with Pending for the active
+    network: the reconnect runs in the background, fire-and-acknowledge,
+    and the saved list later shows if it was undone. 422 when Refused, with
+    the Refused outcome as ``detail`` (an object, where a body validation
+    error's is a list). 409 means there's no provisioning config.
     """
     try:
-        return await svc.change_band(name, request.band)
+        reply = await svc.change_band(name, request.band)
     except NetworkNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if isinstance(reply, BandChangeRefused):
+        raise HTTPException(status_code=422, detail=reply.model_dump(mode="json"))
+    if isinstance(reply, BandChangePending):
+        response.status_code = 202
+    return reply
 
 
 @router.post(

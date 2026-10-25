@@ -12,6 +12,9 @@ from fastapi.testclient import TestClient
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import AppConfig, DeploymentConfig
 from sp_rtk_base.models.net_provision_models import (
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReverted,
     BandChangeSaved,
     NetProvisionConfig,
     SavedWifiConnection,
@@ -594,6 +597,30 @@ class TestListSavedNetworks:
         assert data[0]["active"] is True
         assert data[1]["active"] is False
 
+    def test_a_reverted_band_change_comes_with_its_network(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.list_saved_networks = AsyncMock(
+            return_value=[
+                SavedWifiConnection(
+                    name="FarmShop",
+                    active=True,
+                    last_band_change=BandChangeReverted(
+                        name="FarmShop", band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+                    ),
+                ),
+                SavedWifiConnection(name="Barn-AP", active=False),
+            ],
+        )
+        data = client.get("/api/network/saved").json()
+        assert data[0]["last_band_change"] == {
+            "outcome": "reverted",
+            "name": "FarmShop",
+            "band": "auto",
+            "tried": "5ghz",
+        }
+        assert data[1]["last_band_change"] is None
+
     def test_each_saved_network_carries_its_band(
         self, client: TestClient, mock_network_service: MagicMock
     ) -> None:
@@ -657,6 +684,40 @@ class TestChangeBand:
         mock_network_service.change_band.assert_awaited_once_with(
             "Barn-AP", WifiBand.GHZ_2_4
         )
+
+    def test_the_active_network_returns_202_once_accepted(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        mock_network_service.change_band = AsyncMock(
+            return_value=BandChangePending(name="FarmShop", band=WifiBand.GHZ_2_4)
+        )
+        resp = client.put("/api/network/saved/FarmShop/band", json={"band": "2.4ghz"})
+        assert resp.status_code == 202
+        assert resp.json() == {
+            "outcome": "pending",
+            "name": "FarmShop",
+            "band": "2.4ghz",
+        }
+
+    def test_a_refused_change_returns_422_with_the_reason(
+        self, client: TestClient, mock_network_service: MagicMock
+    ) -> None:
+        """Told apart from a body validation error, whose detail is a list."""
+        mock_network_service.change_band = AsyncMock(
+            return_value=BandChangeRefused(
+                name="FarmShop", band=WifiBand.GHZ_5, reason="not heard on 5 GHz"
+            )
+        )
+        resp = client.put("/api/network/saved/FarmShop/band", json={"band": "5ghz"})
+        assert resp.status_code == 422
+        assert resp.json() == {
+            "detail": {
+                "outcome": "refused",
+                "name": "FarmShop",
+                "band": "5ghz",
+                "reason": "not heard on 5 GHz",
+            }
+        }
 
     def test_an_unknown_band_is_rejected_before_the_service(
         self, client: TestClient, mock_network_service: MagicMock

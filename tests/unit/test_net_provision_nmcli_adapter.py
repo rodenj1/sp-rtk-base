@@ -17,6 +17,10 @@ from typing import Any
 import pytest
 
 from sp_rtk_base.models.net_provision_models import (
+    BandChangeApplied,
+    BandChangePending,
+    BandChangeRefused,
+    BandChangeReverted,
     BandChangeSaved,
     Connectivity,
     NetProvisionConfig,
@@ -31,6 +35,7 @@ from sp_rtk_base.services.net_provision import (
     NmcliError,
     WifiConnectError,
 )
+from sp_rtk_base.services.net_provision.nmcli_adapter import _run_nmcli
 
 AP_SSID = "sp-rtk-base-setup"
 SAVED_SSID = "SiteWiFi"
@@ -107,7 +112,7 @@ class FakeNmcli:
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
-        self._responses: dict[tuple[str, ...], FakeCompletedProcess] = {}
+        self._responses: dict[tuple[str, ...], list[FakeCompletedProcess]] = {}
 
     def set_response(
         self,
@@ -117,11 +122,21 @@ class FakeNmcli:
         stderr: str = "",
         returncode: int = 0,
     ) -> None:
-        self._responses[tuple(args)] = FakeCompletedProcess(stdout, stderr, returncode)
+        self._responses[tuple(args)] = [
+            FakeCompletedProcess(stdout, stderr, returncode)
+        ]
+
+    def queue_responses(self, args: list[str], *results: FakeCompletedProcess) -> None:
+        """Answer successive calls of ``args`` with ``results`` in turn; the
+        last one repeats once the others are used up."""
+        self._responses[tuple(args)] = list(results)
 
     def __call__(self, args: list[str]) -> FakeCompletedProcess:
         self.calls.append(args)
-        return self._responses.get(tuple(args), FakeCompletedProcess())
+        queued = self._responses.get(tuple(args))
+        if not queued:
+            return FakeCompletedProcess()
+        return queued.pop(0) if len(queued) > 1 else queued[0]
 
 
 def _config(**overrides: Any) -> NetProvisionConfig:
@@ -1073,13 +1088,44 @@ class TestChangeBand:
         with pytest.raises(NmcliError, match="unknown connection"):
             _adapter(fake).change_band("Barn-AP", WifiBand.GHZ_2_4)
 
-    def test_the_active_network_is_left_untouched_for_now(self) -> None:
-        """Changing the active network's band reconnects it (#151); until
-        that lands, nothing is written."""
+    def test_the_active_network_is_refused_a_band_the_scan_doesnt_hear(
+        self,
+    ) -> None:
+        """A fresh scan hears it only on 2.4 GHz: a 5 GHz lock would strand
+        the base, so nothing is written and the link isn't touched."""
         fake = FakeNmcli()
         fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
-        with pytest.raises(NmcliError):
-            _adapter(fake).change_band(SAVED_SSID, WifiBand.GHZ_2_4)
+        fake.set_response(SCAN, stdout=_scan_line(SAVED_SSID, 70, freq=2437))
+        outcome = _adapter(fake).change_band(SAVED_SSID, WifiBand.GHZ_5)
+        assert outcome == BandChangeRefused(
+            name=SAVED_SSID,
+            band=WifiBand.GHZ_5,
+            reason=(
+                "'SiteWiFi' isn't being heard on 5 GHz right now, so the base "
+                "couldn't join it there. The band was not changed."
+            ),
+        )
+        assert fake.calls == [ACTIVE_CONNECTIONS, SCAN]
+
+    def test_the_active_network_heard_on_the_band_is_left_to_apply(
+        self,
+    ) -> None:
+        """The check passes, but nothing is written yet: the reconnect is
+        :meth:`apply_band_change`'s, so a caller can run it in the
+        background."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        fake.set_response(SCAN, stdout=_scan_line(SAVED_SSID, 40, freq=5180))
+        outcome = _adapter(fake).change_band(SAVED_SSID, WifiBand.GHZ_5)
+        assert outcome == BandChangePending(name=SAVED_SSID, band=WifiBand.GHZ_5)
+        assert fake.calls == [ACTIVE_CONNECTIONS, SCAN]
+
+    def test_setting_the_active_network_back_to_auto_needs_no_scan(self) -> None:
+        """Auto allows either band, so it can't rule the network out."""
+        fake = FakeNmcli()
+        fake.set_response(ACTIVE_CONNECTIONS, stdout=f"{SAVED_SSID}\n")
+        outcome = _adapter(fake).change_band(SAVED_SSID, WifiBand.AUTO)
+        assert outcome == BandChangePending(name=SAVED_SSID, band=WifiBand.AUTO)
         assert fake.calls == [ACTIVE_CONNECTIONS]
 
     def test_refuses_the_setup_ap_profile(self) -> None:
@@ -1088,6 +1134,72 @@ class TestChangeBand:
         with pytest.raises(NmcliError):
             _adapter(fake).change_band(AP_SSID, WifiBand.GHZ_2_4)
         assert fake.calls == []
+
+
+class TestApplyBandChange:
+    """Applying a band to the active network: write it, then reconnect,
+    since ``device reapply`` rejects band changes (#144)."""
+
+    def test_a_reconnect_that_comes_up_is_applied(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(_band_of(SAVED_SSID), stdout="\n")
+        outcome = _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_2_4)
+        assert outcome == BandChangeApplied(name=SAVED_SSID, band=WifiBand.GHZ_2_4)
+        assert fake.calls == [
+            _band_of(SAVED_SSID),
+            _set_band(SAVED_SSID, "bg"),
+            SAVED_UP,
+        ]
+
+    def test_a_reconnect_that_fails_puts_the_old_band_back(self) -> None:
+        """`con up` can't find it on 5 GHz: the old band (Auto here) is
+        written back and the network brought up on it again."""
+        fake = FakeNmcli()
+        fake.set_response(_band_of(SAVED_SSID), stdout="\n")
+        fake.queue_responses(
+            SAVED_UP,
+            FakeCompletedProcess(
+                stderr="Error: The Wi-Fi network could not be found.", returncode=4
+            ),
+            FakeCompletedProcess(),
+        )
+        outcome = _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_5)
+        assert outcome == BandChangeReverted(
+            name=SAVED_SSID, band=WifiBand.AUTO, tried=WifiBand.GHZ_5
+        )
+        assert fake.calls == [
+            _band_of(SAVED_SSID),
+            _set_band(SAVED_SSID, "a"),
+            SAVED_UP,
+            _set_band(SAVED_SSID, ""),
+            SAVED_UP,
+        ]
+
+    def test_a_revert_whose_reconnect_also_fails_is_still_reverted(self) -> None:
+        """Nothing more is tried: the decision loop recovers the base."""
+        fake = FakeNmcli()
+        fake.set_response(_band_of(SAVED_SSID), stdout="bg\n")
+        fake.set_response(SAVED_UP, stderr="Error: timed out.", returncode=4)
+        outcome = _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_5)
+        assert outcome == BandChangeReverted(
+            name=SAVED_SSID, band=WifiBand.GHZ_2_4, tried=WifiBand.GHZ_5
+        )
+        assert fake.calls == [
+            _band_of(SAVED_SSID),
+            _set_band(SAVED_SSID, "a"),
+            SAVED_UP,
+            _set_band(SAVED_SSID, "bg"),
+            SAVED_UP,
+        ]
+
+    def test_a_failed_write_raises_before_any_reconnect(self) -> None:
+        fake = FakeNmcli()
+        fake.set_response(
+            _set_band(SAVED_SSID, "a"), stderr="Error: failed.", returncode=1
+        )
+        with pytest.raises(NmcliError):
+            _adapter(fake).apply_band_change(SAVED_SSID, WifiBand.GHZ_5)
+        assert SAVED_UP not in fake.calls
 
 
 # ---------------------------------------------------------------------------
@@ -1141,3 +1253,53 @@ class TestForgetConnection:
         with pytest.raises(NmcliError):
             _adapter(fake).forget_connection(AP_SSID)
         assert fake.calls == []
+
+
+# ---------------------------------------------------------------------------
+# The default runner's timeouts
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultRunnerTimeouts:
+    """A failed `con up` takes about 25 s on a Pi before nmcli gives up
+    (#144), so the default runner must wait out NetworkManager's own
+    activation timeout (90 s) for it, or a band change could never see the
+    failure it reverts on."""
+
+    @staticmethod
+    def _timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        seen: list[float] = []
+
+        def fake_run(args: list[str], **kwargs: Any) -> FakeCompletedProcess:
+            seen.append(kwargs["timeout"])
+            return FakeCompletedProcess()
+
+        monkeypatch.setattr(
+            "sp_rtk_base.services.net_provision.nmcli_adapter.subprocess.run",
+            fake_run,
+        )
+        return seen
+
+    def test_connection_up_waits_out_networkmanager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen = self._timeouts(monkeypatch)
+        NmcliAdapter(_config()).activate_connection(SAVED_SSID)
+        assert len(seen) == 1
+        assert seen[0] > 90
+
+    def test_band_join_connection_up_by_uuid_waits_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # #153's band-locked join brings the new profile up by uuid.
+        seen = self._timeouts(monkeypatch)
+        _run_nmcli(JOIN_UP)
+        assert len(seen) == 1
+        assert seen[0] > 90
+
+    def test_other_commands_keep_the_short_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen = self._timeouts(monkeypatch)
+        NmcliAdapter(_config()).forget_connection(SAVED_SSID)
+        assert seen == [10.0]

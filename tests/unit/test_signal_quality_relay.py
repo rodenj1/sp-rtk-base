@@ -9,6 +9,7 @@ survey-in, where the fake driver supplies Snapshots.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import pytest
 from sp_rtk_base_relay import Frame, FrameSubscription
@@ -290,3 +291,88 @@ def test_msm4_and_msm7_for_one_constellation_stay_one_epoch() -> None:
     reading = relay.service.current("dashboard")
     assert isinstance(reading, SignalQualityVerdict)
     assert reading.usable_satellites == 16  # GPS and Galileo judged together
+
+
+# pyrtcm maps an MSM satellite-mask index to a PRN from its own tables and
+# returns a placeholder ('N/A', or a name such as 'GIOVE-A') for indices
+# outside them, e.g. GLONASS slots above 24 (#285).
+_GLONASS_L1_L2 = {2: 50.0, 8: 48.0}
+
+
+@pytest.mark.parametrize(
+    ("message_number", "valid", "unmappable"),
+    [
+        (1084, {sv: _GLONASS_L1_L2 for sv in range(1, 9)}, 25),  # 'N/A'
+        (1094, {sv: {2: 50.0, 14: 48.0} for sv in range(1, 9)}, 51),  # 'GIOVE-A'
+    ],
+)
+def test_a_cell_pyrtcm_cannot_map_to_a_satellite_is_skipped(
+    message_number: int,
+    valid: dict[int, dict[int, float]],
+    unmappable: int,
+) -> None:
+    relay = _relay_mode()
+    cells = {**valid, unmappable: {2: 45.0}}
+
+    relay.at(0, [msm_frame(message_number, cells)])
+
+    reading = relay.service.current("dashboard")
+    assert isinstance(reading, SignalQualityVerdict)
+    assert reading.usable_satellites == 8  # the rest of the Frame survives
+
+
+def test_an_msm_whose_only_cell_is_unmappable_still_closes_the_epoch() -> None:
+    relay = _relay_mode()
+    gps = {sv: {2: 50.0, 16: 48.0} for sv in range(1, 9)}
+
+    relay.at(
+        0,
+        [
+            msm_frame(1074, gps, more_follow=True),
+            msm_frame(1084, {25: {2: 45.0}}),  # the epoch's last MSM
+        ],
+    )
+
+    reading = relay.service.current("dashboard")
+    assert isinstance(reading, SignalQualityVerdict)
+    assert reading.usable_satellites == 8
+
+
+def test_a_cell_with_a_non_numeric_c_n0_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pyrtcm import parse_msm  # type: ignore[import-untyped]
+
+    from sp_rtk_base.services.signal_quality import msm
+
+    def parse_msm_with_a_bad_cn0(
+        message: object,
+    ) -> tuple[object, object, list[dict[str, Any]]]:
+        meta, sats, cells = parse_msm(message)
+        cells[0]["DF403"] = "N/A"
+        return meta, sats, cells
+
+    monkeypatch.setattr(msm, "parse_msm", parse_msm_with_a_bad_cn0)
+    relay = _relay_mode()
+    gps = {sv: {2: 50.0, 16: 48.0} for sv in range(1, 10)}
+
+    relay.at(0, [msm_frame(1074, gps)])
+
+    reading = relay.service.current("dashboard")
+    assert isinstance(reading, SignalQualityVerdict)
+    assert reading.usable_satellites == 9  # satellite 1 keeps its L2 signal
+
+
+def test_a_skipped_cell_is_logged_at_debug_with_its_message_and_signal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    relay = _relay_mode()
+    cells = {**{sv: _GLONASS_L1_L2 for sv in range(1, 9)}, 25: {2: 45.0}}
+
+    with caplog.at_level("DEBUG", logger="sp_rtk_base.services.signal_quality.msm"):
+        relay.at(0, [msm_frame(1084, cells)])
+
+    skipped = [r for r in caplog.records if "1084" in r.getMessage()]
+    assert len(skipped) == 1
+    assert skipped[0].levelname == "DEBUG"
+    assert "N/A" in skipped[0].getMessage() and "1C" in skipped[0].getMessage()

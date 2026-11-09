@@ -11,6 +11,19 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.13.1 (2026-11-09)
+
+### Fixed
+
+- **Signal Quality in Relay mode no longer loses an MSM Frame to a
+  satellite it can't identify** (#285). pyrtcm returns a placeholder
+  instead of a PRN for some satellite-mask slots (GLONASS above 24,
+  QZSS above 10, GPS/BeiDou 64, Galileo 51/52). Each such cell is now
+  skipped, logged at debug level with its message and signal code, and
+  the rest of the Frame still counts toward the Signal Snapshot. This
+  stops the `ValueError: invalid literal for int() ... 'N/A'` traceback
+  in the journal.
+
 ## v0.13.0 (2026-10-25)
 
 ### Wi-Fi band

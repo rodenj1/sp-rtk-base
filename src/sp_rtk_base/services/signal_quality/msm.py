@@ -112,14 +112,29 @@ class MsmSnapshotAssembler:
         signals: list[Signal] = []
         for cell in cells:
             cn0 = cell.get("DF408", cell.get("DF403"))
-            if cn0 is None or float(cn0) <= 0:
+            if cn0 is None:
+                continue
+            # pyrtcm gives a placeholder ('N/A', or a name like 'GIOVE-A')
+            # for a satellite-mask index outside its PRN tables.
+            try:
+                satellite, cn0_dbhz = int(cell["CELLPRN"]), float(cn0)
+            except (TypeError, ValueError):
+                logger.debug(
+                    "Skipping MSM %d cell: PRN %r, signal %r, C/N0 %r",
+                    frame.message_id,
+                    cell.get("CELLPRN"),
+                    cell.get("CELLSIG"),
+                    cn0,
+                )
+                continue
+            if cn0_dbhz <= 0:
                 continue
             signals.append(
                 Signal(
                     constellation=constellation,
-                    satellite=int(cell["CELLPRN"]),
+                    satellite=satellite,
                     band=band_for(constellation, str(cell["CELLSIG"])),
-                    cn0_dbhz=float(cn0),
+                    cn0_dbhz=cn0_dbhz,
                 )
             )
         return constellation, signals, int(getattr(message, "DF393", 0)) == 0

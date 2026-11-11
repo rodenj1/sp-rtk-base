@@ -11,6 +11,18 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.13.2 (2026-11-11)
+
+### Fixed
+
+- **The Relay now recovers on its own when a Bluetooth input goes silent
+  without dropping the link** (sp-rtk-base-relay#75). The RFCOMM link could
+  stay open while the receiver stopped sending, and the Relay kept warning
+  about no data without ever reconnecting, until someone restarted it (27
+  hours on one base). It now requires sp-rtk-base-relay 4.2.2: after 60 s
+  with no bytes, the Relay logs `Bluetooth input: no data for <N>s, forcing
+  reconnect`, drops the link and reconnects with its usual backoff.
+
 ## v0.13.1 (2026-11-09)
 
 ### Fixed

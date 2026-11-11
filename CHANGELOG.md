@@ -11,6 +11,37 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.14.0 (2026-11-11)
+
+### New metrics on /metrics
+
+A base now exports its **Host resources**, its **Wi-Fi link band**, its
+Input kind and its version (rtk_development#166). They are documented, with
+their missing-value rules, in
+[`docs/monitoring/README.md`](docs/monitoring/README.md#whats-exposed).
+
+- **Host resources,** read by a new background sampler every 2 s without
+  root:
+  - CPU time by mode, `sp_rtk_base_host_cpu_seconds_total`;
+  - memory total and available;
+  - CPU temperature from the `cpu-thermal` zone;
+  - undervoltage from the Pi's `rpi_volt` sensor, as a 0/1 gauge plus an
+    events counter that catches dips between scrapes;
+  - root filesystem size and available;
+  - the last sample's time.
+
+  On a host without the temperature zone or the undervoltage sensor, that
+  reading is absent. A failed or stale reading is NaN.
+- **Wi-Fi link band:** `sp_rtk_base_wifi_link_band{interface, band}`
+  (`2.4GHz` / `5GHz` / `6GHz`). It is present only while the link has a
+  current frequency, so it can be joined onto any Wi-Fi gauge to split it
+  by band.
+- **Input kind and build version:** `sp_rtk_base_input_info{kind}` and
+  `sp_rtk_base_build_info{version}`.
+- **The app's own process,** as the standard `process_*` metrics: CPU
+  seconds, resident memory, and the rest.
+- The existing metrics and their labels are unchanged.
+
 ### A Grafana dashboard for a fleet of bases
 
 The bundled Grafana dashboard

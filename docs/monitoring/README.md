@@ -5,7 +5,7 @@ same port as the UI (8080 by default).  This directory contains:
 
 | File | Purpose |
 |---|---|
-| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Fleet Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  A [Fleet overview](#fleet-overview) table at the top lists every base; the rows below follow a `$base` variable, so one dashboard works for one base station or many. |
+| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Fleet Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  A [Fleet overview](#fleet-overview) table at the top lists every base; Fleet trends and one section per base follow a `$base` variable, so one dashboard works for one base station or many.  See [The dashboard's layout](#the-dashboards-layout). |
 | [`prometheus-scrape-config.example.yml`](prometheus-scrape-config.example.yml) | Drop-in `scrape_config` snippet — point Prometheus at your sp-rtk-base instance. |
 | [`prometheus-alerts.example.yml`](prometheus-alerts.example.yml) | Example alert rules for Signal Quality: degraded for 10 minutes, or no data for 5 minutes while the Relay runs. See [Alerts](#alerts). |
 
@@ -34,8 +34,9 @@ same port as the UI (8080 by default).  This directory contains:
 
 3. **Import the dashboard.**  In Grafana: *Dashboards → New →
    Import* → upload `grafana-dashboard-sp-rtk-base.json` → pick your
-   Prom datasource.  The **Base** dropdown at the top populates from
-   the metric labels and defaults to "All".  Keep the dashboard's UID
+   Prom datasource.  The **Base** dropdown at the top lists every base
+   Prometheus scrapes for the `sp-rtk-base` job, Down ones included, and
+   defaults to "All".  Keep the dashboard's UID
    (`sp-rtk-base-overview`): the Fleet overview's base links point at it.
 
 ## The job name and the `base` label
@@ -55,13 +56,64 @@ This lets one dashboard work whether you have:
 
 - **One base station** (`base: home`) — the dropdown shows just that one.
 - **Multiple base stations** (`base: home`, `base: field-01`, …) — pick
-  one to focus on, pick several to compare side-by-side, or leave
-  "All" selected to overlay every base station on each panel.
+  one to focus on, pick several to compare them in Fleet trends, or
+  leave "All" selected to get a section for every base.
 
 If you scrape without setting `base`, the dashboard's variable will
 have no values to choose from and the queries will return nothing.
 The label is just a free-text identifier — pick whatever's meaningful
 per base station (location name, callsign, antenna ID, etc.).
+
+## The dashboard's layout
+
+From the top:
+
+1. **Fleet overview:** a table with one row per base, worst
+   [Base health](#base-health) first.  It always shows the whole fleet,
+   whatever the Base selector says.  Click a base's name to select just
+   that base.  See [Fleet overview](#fleet-overview).
+2. **Fleet trends:** the selected bases overlaid on four graphs, one
+   colour per base with a legend by base.  A base's colour comes from its
+   name, so it keeps it however you filter.
+   - Wi-Fi link strength, for bases whose Uplink is Wi-Fi only, with the
+     Poor line (-78 dBm);
+   - CPU temperature, with the 80 °C line;
+   - CPU busy %;
+   - L1 Band strength, with the 41 dB-Hz line.
+3. **One section per selected base,** open, titled with the base's name,
+   Base health, version, Input kind and Uplink (as of the last refresh of
+   the Base selector).  Each section has:
+   - a Base health strip.  When the base is Down it says so, and that its
+     panels show the last data before it went Down;
+   - status tiles: Relay and uptime, Input and its kind, Last RTCM, Signal
+     Quality, Bluetooth link strength, Wi-Fi link strength (dBm, Wi-Fi link
+     band, and whether the link is the Uplink), CPU temperature, and
+     undervoltage events in the last 24 h;
+   - graphs: Input bytes/s; Band strength L1 / L2 with the 41 / 44 dB-Hz
+     lines; Wi-Fi link strength split by Wi-Fi link band (5 GHz blue,
+     2.4 GHz aqua) with the Good and Poor lines; Bluetooth link strength in
+     relative dB; CPU busy and memory used % on one 0–100 axis; CPU
+     temperature with the 70 °C amber and 80 °C red lines;
+   - a Destinations table: connected, bytes/s, messages/s, drops/s, queue
+     depth and errors/s.
+4. **Logs · base:** a collapsed row per selected base with its
+   `sp-rtk-base.service` logs (needs Loki, see [Logs](#logs-optional)).
+   Grafana's classic dashboard rows can't nest, so the Logs rows follow
+   the base sections rather than sitting inside them; with one base
+   selected, its Logs row is directly below its section.
+
+Something that doesn't apply says so in words and never takes a status
+colour: Bluetooth link strength reads **n/a** on an Input that isn't
+Bluetooth, Wi-Fi reads **—** on a base with no Wi-Fi interface, and an
+idle Wi-Fi radio behind an Ethernet Uplink reads a grey **Disconnected**
+that doesn't count against Base health.
+
+**Mixed fleets.**  You can update bases one at a time.  A base still on an
+older sp-rtk-base version doesn't export the newer readings (Host
+resources, Wi-Fi link band, Input kind, version), so those read **—** for
+it in the Fleet overview, its section title and its tiles, and its graphs
+for them stay empty.  It still gets a Base health, judged on what it
+exports.
 
 ## Fleet overview
 
@@ -365,17 +417,17 @@ rules for an unattended base; add it under `rule_files:` in `prometheus.yml`:
 | `SignalQualityDegraded` | `sp_rtk_base_signal_quality >= 1` for 10m: Marginal or Poor long enough to rule out a passing obstruction |
 | `SignalQualityUnavailable` | `sp_rtk_base_signal_available == 0 and sp_rtk_base_relay_running == 1` for 5m: the Relay runs but no RTCM, or no MSM, is arriving |
 
-The dashboard's **▶ Signal Quality** row shows the verdict, Band strength
-(with the 41 / 44 dB-Hz Good lines) and Usable satellites.
+Each base's section on the dashboard shows the Signal Quality verdict
+and Band strength (with the 41 / 44 dB-Hz lines).
 You can still use `rate()` on the byte/message counters — they
 increase monotonically until a relay restart.
 
 ## Logs (optional)
 
-The bundled dashboard also has a **Logs** panel at the bottom that
-queries a **Loki** datasource.  It's purely additive — if you don't
-have Loki, just delete that panel after importing or ignore it
-(Grafana will render it empty).
+The bundled dashboard also has a collapsed **Logs** row for each
+selected base that queries a **Loki** datasource.  It's purely
+additive — if you don't have Loki, leave it collapsed (Grafana will
+render it empty).
 
 To make it light up, ship `sp-rtk-base.service` logs to a Loki instance
 with at least these labels:

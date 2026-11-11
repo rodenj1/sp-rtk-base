@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Fleet dashboard for one or more sp-rtk-base base stations. The Fleet overview at the top has one row per base, worst Base health first, and ignores the Base selector. Fleet trends compares the selected bases; below it, one section per selected base. Pick a Prometheus datasource; the scrape job must be named sp-rtk-base and carry a base label.",
+  "description": "Fleet dashboard for one or more sp-rtk-base base stations. The Fleet overview at the top has one row per base, worst Base health first, and ignores the Base selector. Fleet trends compares the selected bases; below it, one section per selected base. Pick a Prometheus datasource; each base needs a base label. The Job selector finds the scrape job exporting sp-rtk-base metrics by itself; pick one if there are several.",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
@@ -26,7 +26,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "One row per base, whatever the Base selector says, worst Base health first. Base health and every threshold: see docs/monitoring/README.md, Base health. Anchored on Prometheus's scrape status for the sp-rtk-base job, so a base it can't scrape stays as Down. Click a base to select it.",
+      "description": "One row per base, whatever the Base selector says, worst Base health first. Base health and every threshold: see docs/monitoring/README.md, Base health. Anchored on Prometheus's scrape status for the selected Job, so a base it can't scrape stays as Down. Click a base to select it.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -1044,7 +1044,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
+          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1056,7 +1056,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1068,7 +1068,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_input_connected{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_input_connected{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1080,7 +1080,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1092,7 +1092,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1104,7 +1104,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, destinations) (\n  label_join(\n      count_values by (base) (\"active\", sp_rtk_base_active_destinations{job=\"sp-rtk-base\"})\n    * on (base) group_left (total)\n      count_values by (base) (\"total\", sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}),\n    \"destinations\", \"/\", \"active\", \"total\"\n  )\n)",
+          "expr": "max by (base, destinations) (\n  label_join(\n      count_values by (base) (\"active\", sp_rtk_base_active_destinations{job=\"$job\"})\n    * on (base) group_left (total)\n      count_values by (base) (\"total\", sp_rtk_base_total_destinations{job=\"$job\"}),\n    \"destinations\", \"/\", \"active\", \"total\"\n  )\n)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1116,7 +1116,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, bluetooth) (\n    label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\", kind!=\"bluetooth\"}, \"bluetooth\", \"n/a \u00b7 $1\", \"kind\", \"(.*)\")\n  or count_values by (base) (\"bluetooth\",\n       sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"}\n       unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", kind!=\"bluetooth\"})\n)",
+          "expr": "max by (base, bluetooth) (\n    label_replace(sp_rtk_base_input_info{job=\"$job\", kind!=\"bluetooth\"}, \"bluetooth\", \"n/a \u00b7 $1\", \"kind\", \"(.*)\")\n  or count_values by (base) (\"bluetooth\",\n       sp_rtk_base_bluetooth_link_strength{job=\"$job\"}\n       unless on (base) sp_rtk_base_input_info{job=\"$job\", kind!=\"bluetooth\"})\n)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1128,7 +1128,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, uplink) (\n    label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\")\n)",
+          "expr": "max by (base, uplink) (\n    label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} == 1, \"uplink\", \"Other\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} != sp_rtk_base_network_uplink_other{job=\"$job\"}, \"uplink\", \"No reading\", \"\", \"\")\n)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1140,7 +1140,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, wifi) (topk by (base) (1, max by (base, interface, wifi) (\n    label_join(\n        label_join(\n            count_values without () (\"dbm\", sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"})\n          * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\"},\n          \"wifi\", \" dBm \u00b7 \", \"dbm\", \"band\"\n        )\n      * on (base, interface) group_left (role) (\n            label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n          or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} != 0, \"role\", \"\", \"\", \"\")\n        ),\n      \"wifi\", \"\", \"wifi\", \"role\"\n    )\n  or label_replace(sp_rtk_base_network_link_up{job=\"sp-rtk-base\", kind=\"wifi\"} == 0, \"wifi\", \"Disconnected\", \"\", \"\")\n  or label_replace((sp_rtk_base_network_link_up{job=\"sp-rtk-base\", kind=\"wifi\"} != 0) unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"})), \"wifi\", \"No reading\", \"\", \"\")\n)))",
+          "expr": "max by (base, wifi) (topk by (base) (1, max by (base, interface, wifi) (\n    label_join(\n        label_join(\n            count_values without () (\"dbm\", sp_rtk_base_wifi_link_strength_dbm{job=\"$job\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"$job\"})\n          * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"$job\"},\n          \"wifi\", \" dBm \u00b7 \", \"dbm\", \"band\"\n        )\n      * on (base, interface) group_left (role) (\n            label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n          or label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} != 0, \"role\", \"\", \"\", \"\")\n        ),\n      \"wifi\", \"\", \"wifi\", \"role\"\n    )\n  or label_replace(sp_rtk_base_network_link_up{job=\"$job\", kind=\"wifi\"} == 0, \"wifi\", \"Disconnected\", \"\", \"\")\n  or label_replace((sp_rtk_base_network_link_up{job=\"$job\", kind=\"wifi\"} != 0) unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"$job\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"$job\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"$job\"})), \"wifi\", \"No reading\", \"\", \"\")\n)))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1152,7 +1152,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", mode=~\"idle|iowait\"}[5m]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\"}[5m])))",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\", mode=~\"idle|iowait\"}[5m]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\"}[5m])))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1164,7 +1164,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"}))",
+          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"$job\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"$job\"}))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1176,7 +1176,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1188,7 +1188,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[24h])))",
+          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[24h])))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1200,7 +1200,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"sp-rtk-base\"})",
+          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1212,7 +1212,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, version) (sp_rtk_base_build_info{job=\"sp-rtk-base\"})",
+          "expr": "max by (base, version) (sp_rtk_base_build_info{job=\"$job\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1369,7 +1369,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base, interface) group_left () (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 1))",
+          "expr": "max by (base) (sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"}\n  * on (base, interface) group_left () (sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"} == 1))",
           "range": true,
           "refId": "A",
           "legendFormat": "{{base}}"
@@ -1444,7 +1444,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "{{base}}"
@@ -1508,7 +1508,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval])))",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\", base=~\"$base\"}[$__rate_interval])))",
           "range": true,
           "refId": "A",
           "legendFormat": "{{base}}"
@@ -1583,7 +1583,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_signal_band_strength_dbhz{job=\"sp-rtk-base\", base=~\"$base\", band=\"L1\"})",
+          "expr": "max by (base) (sp_rtk_base_signal_band_strength_dbhz{job=\"$job\", base=~\"$base\", band=\"L1\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "{{base}}"
@@ -1708,7 +1708,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\", base=~\"$base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\", base=~\"$base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\", base=~\"$base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\", base=~\"$base\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\", base=~\"$base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\", base=~\"$base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\", base=~\"$base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
+          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"$job\", base=~\"$base\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\", base=~\"$base\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\", base=~\"$base\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\", base=~\"$base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"$job\", base=~\"$base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"$job\", base=~\"$base\"} < bool sp_rtk_base_total_destinations{job=\"$job\", base=~\"$base\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\", base=~\"$base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\", base=~\"$base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\", base=~\"$base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\", base=~\"$base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\", base=~\"$base\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\", base=~\"$base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\", base=~\"$base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\", base=~\"$base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
           "range": true,
           "refId": "A",
           "legendFormat": "Base health"
@@ -1856,7 +1856,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "Relay"
@@ -1867,7 +1867,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "B",
           "legendFormat": "Uptime"
@@ -1968,7 +1968,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, kind) (\n    sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base) group_left (kind) label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")\n  or on (base) label_replace(sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"}, \"kind\", \"Input\", \"\", \"\")\n)",
+          "expr": "max by (base, kind) (\n    sp_rtk_base_input_connected{job=\"$job\", base=~\"$base\"}\n  * on (base) group_left (kind) label_replace(sp_rtk_base_input_info{job=\"$job\", base=~\"$base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")\n  or on (base) label_replace(sp_rtk_base_input_connected{job=\"$job\", base=~\"$base\"}, \"kind\", \"Input\", \"\", \"\")\n)",
           "range": true,
           "refId": "A",
           "legendFormat": "{{kind}}"
@@ -2074,7 +2074,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "Last RTCM"
@@ -2180,7 +2180,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "Signal Quality"
@@ -2291,7 +2291,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "    label_replace(max by (base) (sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Bluetooth Input\", \"\", \"\")\n  or label_replace(max by (base, kind) (-1 * sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Input is $1\", \"kind\", \"(.+)\")",
+          "expr": "    label_replace(max by (base) (sp_rtk_base_bluetooth_link_strength{job=\"$job\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"$job\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Bluetooth Input\", \"\", \"\")\n  or label_replace(max by (base, kind) (-1 * sp_rtk_base_input_info{job=\"$job\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Input is $1\", \"kind\", \"(.+)\")",
           "range": true,
           "refId": "A",
           "legendFormat": "{{kind}}"
@@ -2402,7 +2402,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base, interface, band, role) (\n    (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}) * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"}\n  + on (base, interface) group_left (role) (0 * (\n        label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 1, \"role\", \" \u00b7 the Uplink\", \"\", \"\")\n     or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n     or (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} != sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"})\n  ))\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} + 1, \"role\", \" \u00b7 not in use\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 0)\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} + 2, \"role\", \"\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} != 0)\n     unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}))\n)",
+          "expr": "max by (base, interface, band, role) (\n    (sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"}) * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"$job\", base=~\"$base\"}\n  + on (base, interface) group_left (role) (0 * (\n        label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"} == 1, \"role\", \" \u00b7 the Uplink\", \"\", \"\")\n     or label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n     or (sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"} != sp_rtk_base_network_link_uplink{job=\"$job\", base=~\"$base\", kind=\"wifi\"})\n  ))\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"$job\", base=~\"$base\", kind=\"wifi\"} + 1, \"role\", \" \u00b7 not in use\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"$job\", base=~\"$base\", kind=\"wifi\"} == 0)\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"$job\", base=~\"$base\", kind=\"wifi\"} + 2, \"role\", \"\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"$job\", base=~\"$base\", kind=\"wifi\"} != 0)\n     unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"$job\", base=~\"$base\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"}))\n)",
           "range": true,
           "refId": "A",
           "legendFormat": "{{interface}} {{band}}{{role}}"
@@ -2498,7 +2498,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "CPU temperature"
@@ -2589,7 +2589,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\", base=~\"$base\"}[24h])))",
+          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\", base=~\"$base\"}[24h])))",
           "range": false,
           "refId": "A",
           "legendFormat": "Undervoltage events",
@@ -2653,7 +2653,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (base) (rate(sp_rtk_base_input_bytes_received{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval]))",
+          "expr": "sum by (base) (rate(sp_rtk_base_input_bytes_received{job=\"$job\", base=~\"$base\"}[$__rate_interval]))",
           "range": true,
           "refId": "A",
           "legendFormat": "RTCM in"
@@ -2732,7 +2732,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (band) (sp_rtk_base_signal_band_strength_dbhz{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (band) (sp_rtk_base_signal_band_strength_dbhz{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "{{band}}"
@@ -2858,7 +2858,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (interface, band) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (interface, band) (sp_rtk_base_wifi_link_strength_dbm{job=\"$job\", base=~\"$base\"}\n  * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "{{interface}} \u00b7 {{band}}"
@@ -2933,7 +2933,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_bluetooth_link_median_db{job=\"sp-rtk-base\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"})",
+          "expr": "max by (base) (sp_rtk_base_bluetooth_link_median_db{job=\"$job\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"$job\", base=~\"$base\", kind!=\"bluetooth\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "median"
@@ -2997,7 +2997,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval])))",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"$job\", base=~\"$base\"}[$__rate_interval])))",
           "range": true,
           "refId": "A",
           "legendFormat": "CPU busy"
@@ -3008,7 +3008,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\", base=~\"$base\"}))",
+          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"$job\", base=~\"$base\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"$job\", base=~\"$base\"}))",
           "range": true,
           "refId": "B",
           "legendFormat": "Memory used"
@@ -3088,7 +3088,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\", base=~\"$base\"})",
           "range": true,
           "refId": "A",
           "legendFormat": "cpu-thermal"
@@ -3348,7 +3348,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (sp_rtk_base_dest_connected{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (destination) (sp_rtk_base_dest_connected{job=\"$job\", base=~\"$base\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3360,7 +3360,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (rate(sp_rtk_base_dest_bytes_sent{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_bytes_sent{job=\"$job\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3372,7 +3372,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_sent{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_sent{job=\"$job\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3384,7 +3384,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_dropped{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_dropped{job=\"$job\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3396,7 +3396,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (sp_rtk_base_dest_queue_depth{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "expr": "max by (destination) (sp_rtk_base_dest_queue_depth{job=\"$job\", base=~\"$base\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3408,7 +3408,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (destination) (rate(sp_rtk_base_dest_errors{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_errors{job=\"$job\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -3553,6 +3553,31 @@
         "type": "datasource"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(sp_rtk_base_relay_running, job)",
+        "description": "The Prometheus scrape job the bases are scraped under, found from the jobs that export sp-rtk-base metrics. Pick one if several do.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(sp_rtk_base_relay_running, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
         "current": {
           "selected": false,
           "text": "All",
@@ -3562,7 +3587,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"sp-rtk-base\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
+        "definition": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"$job\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"$job\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} != sp_rtk_base_network_uplink_other{job=\"$job\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
         "hide": 0,
         "includeAll": true,
         "allValue": ".*",
@@ -3571,7 +3596,7 @@
         "name": "base",
         "options": [],
         "query": {
-          "query": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"sp-rtk-base\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
+          "query": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"$job\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"$job\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"$job\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"$job\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"$job\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"$job\"} < bool sp_rtk_base_total_destinations{job=\"$job\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"$job\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"$job\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"$job\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"$job\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"$job\"} / sp_rtk_base_host_memory_total_bytes{job=\"$job\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"$job\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"$job\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"$job\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"$job\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"$job\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"$job\"} != sp_rtk_base_network_uplink_other{job=\"$job\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"$job\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -3579,7 +3604,7 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query",
-        "description": "Every base Prometheus scrapes for the sp-rtk-base job, Down ones included. Each option reads base \u00b7 Base health \u00b7 version \u00b7 Input kind \u00b7 Uplink, as of the last time-range refresh."
+        "description": "Every base Prometheus scrapes for the selected Job, Down ones included. Each option reads base \u00b7 Base health \u00b7 version \u00b7 Input kind \u00b7 Uplink, as of the last time-range refresh."
       }
     ]
   },
@@ -3591,6 +3616,6 @@
   "timezone": "browser",
   "title": "SP-Base \u00b7 Unified Base Station Overview",
   "uid": "sp-rtk-base-overview",
-  "version": 5,
+  "version": 6,
   "weekStart": ""
 }

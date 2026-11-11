@@ -6,18 +6,17 @@
 # it's intended to be scraped over a private LAN / VPN.  See README
 # in this directory for guidance when scraping over the internet.
 #
-# Two things are required by the bundled Grafana dashboard:
+# For the bundled Grafana dashboard:
 #
-# - The job must be named `sp-rtk-base`.  The dashboard's Fleet
-#   overview is anchored on `up{job="sp-rtk-base"}`, so a base that
-#   can't be scraped still shows as Down; under another job name the
-#   table is empty.
+# - Name the job what you like.  The dashboard's Job variable finds the
+#   job that exports sp-rtk-base metrics; if several do, pick one in its
+#   dropdown.  Scrape all your bases under the one job.
 # - Every target needs a `base` label, for the `$base` template
-#   variable.  Pick any short identifier per base station (e.g.
+#   variable.  This one is required.  Pick any short identifier per base station (e.g.
 #   `home`, `larson-base`, `field-01`).
 
 scrape_configs:
-  - job_name: sp-rtk-base                 # ← required: keep this name
+  - job_name: sp-rtk-base                 # ← any name; the dashboard detects it
     scrape_interval: 30s
     scrape_timeout: 10s
     static_configs:

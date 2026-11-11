@@ -18,19 +18,23 @@ import logging
 import time
 from collections.abc import Callable
 
-from prometheus_client import CollectorRegistry, Gauge
+from prometheus_client import CollectorRegistry, Gauge, ProcessCollector
 from sp_rtk_base_relay.core.status import RelayStatus
 
+from sp_rtk_base import __version__
 from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
+from sp_rtk_base.models.config_models import InputSource
+from sp_rtk_base.models.host_resources_models import HostResourcesSnapshot
 from sp_rtk_base.models.level_models import LEVEL_VALUE
 from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
 from sp_rtk_base.models.signal_quality_models import (
     SignalQualityReading,
     SignalQualityVerdict,
 )
+from sp_rtk_base.services.host_resources.metrics import HostResourcesCollector
 from sp_rtk_base.services.network_link.metrics import NetworkLinkCollector
 
 logger = logging.getLogger(__name__)
@@ -189,10 +193,38 @@ class MetricsService:
         )
         self.update_bluetooth_link(None)
 
+        # Input kind: info-style, the active Input profile's type; no
+        # series at all without an Input profile.
+        self.input_info = Gauge(
+            f"{ns}_input_info",
+            "Active Input profile type in the kind label (always 1; "
+            "absent with no Input profile)",
+            ["kind"],
+            registry=self.registry,
+        )
+
+        # Build version: info-style, always present.
+        self.build_info = Gauge(
+            f"{ns}_build_info",
+            "Installed sp-rtk-base version (always 1)",
+            ["version"],
+            registry=self.registry,
+        )
+        self.build_info.labels(version=__version__).set(1)
+
+        # The standard process_* metrics, read from this app's own process
+        # on each scrape: the one collect-on-scrape exception.
+        ProcessCollector(registry=self.registry)
+
         # Network links: a collector that builds its series from the
         # latest snapshot, so a vanished interface's series disappear.
         self.network_links = NetworkLinkCollector(ns, wall_clock=wall_clock)
         self.registry.register(self.network_links)
+
+        # Host resources: a collector over the host sampler's latest
+        # snapshot, so a Not supported reading has no series.
+        self.host_resources = HostResourcesCollector(ns, wall_clock=wall_clock)
+        self.registry.register(self.host_resources)
 
         logger.info("MetricsService initialized (namespace=%s)", ns)
 
@@ -259,9 +291,19 @@ class MetricsService:
         self.bluetooth_link_strength.set(float("nan"))
         self.bluetooth_link_median_db.set(float("nan"))
 
+    def update_input_kind(self, kind: InputSource | None) -> None:
+        """Export the Input profile type *kind* (``None``: no Input profile)."""
+        self.input_info.clear()
+        if kind is not None:
+            self.input_info.labels(kind=kind).set(1)
+
     def update_network_links(self, snapshot: NetworkLinkSnapshot) -> None:
         """Export the Network link *snapshot* (it never samples)."""
         self.network_links.update(snapshot)
+
+    def update_host_resources(self, snapshot: HostResourcesSnapshot) -> None:
+        """Export the Host resources *snapshot* (it never samples)."""
+        self.host_resources.update(snapshot)
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

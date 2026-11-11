@@ -167,6 +167,20 @@ closed under one lock, so `stop()` waits for a read in flight before closing
 the netlink sockets. The e2e fake (`SP_RTK_BASE_FAKE_NETWORK_LINKS`) swaps the
 host for a JSON `HostReading` file.
 
+### Host resources sampler (rtk_development#166)
+`HostResourcesService` (`services/host_resources/`) is a second background
+asyncio task, separate from the Network link sampler so a failing read in one
+never touches the other's freshness. Every 2 s it reads the host off the loop
+(`asyncio.to_thread(HostResourcesReader.read)`: `/proc/stat`, `/proc/meminfo`,
+the `cpu-thermal` zone, the `rpi_volt` hwmon alarm and `statvfs("/")`; no
+subprocesses) and feeds the pure `HostResourcesMonitor`. Each reading fails on
+its own: `None` is No reading, `NOT_SUPPORTED` means the host doesn't have it,
+and counters (CPU seconds, undervoltage events) hold through No reading. Only
+`/metrics` reads `current()`; it never samples, and a Not supported reading's
+series isn't exported. Its reads open nothing, so stopping only cancels the
+task. Both samplers share `services/sampling.py` (`attempt`, the unlabelled
+`Gauge`, `supported_value`, `sample_timestamp`) and `models/frozen.py`.
+
 ## Component Relationships
 
 ### Dependency Graph

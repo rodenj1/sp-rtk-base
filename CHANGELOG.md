@@ -11,6 +11,35 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### A Grafana dashboard for a fleet of bases
+
+The bundled Grafana dashboard
+(`docs/monitoring/grafana-dashboard-sp-rtk-base.json`) has a **new
+layout** built for 5–10 bases (rtk_development#166). Re-import it over the
+old one: the uid is unchanged, so bookmarks and links keep working. The
+old layout stays only in git history. A tour is in
+[`docs/monitoring/README.md`](docs/monitoring/README.md#the-dashboards-layout).
+
+- **Fleet overview** at the top: one row per base, worst Base health
+  (OK / Degraded / Fault / Down) first, whatever the Base selector says.
+  Click a base to select it.
+- **Fleet trends:** the selected bases overlaid on Wi-Fi link strength
+  (Wi-Fi Uplinks only), CPU temperature, CPU busy and L1 Band strength,
+  one fixed colour per base.
+- **One section per base,** open, titled with its Base health, version,
+  Input kind and Uplink: status tiles, graphs (including Wi-Fi link
+  strength split by Wi-Fi link band, Bluetooth link strength, CPU and
+  memory, CPU temperature), a Destinations table, and a collapsed Logs row.
+- **Removed:** the Service Overview, Throughput, Per-Destination Health,
+  Per-Destination Activity, Reliability and Signal Quality rows. Their
+  readings moved into the Fleet overview and the base sections; the
+  separate per-destination graphs, the Hub processing rate and Usable
+  satellites graphs are gone.
+- **The Base selector now lists every base Prometheus scrapes,** Down ones
+  included. The scrape job must be named `sp-rtk-base`.
+- **Mixed fleets:** a base still on an older version reads "—" for the
+  new readings and is judged on what it exports.
+
 ## v0.13.2 (2026-11-11)
 
 ### Fixed

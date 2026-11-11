@@ -148,6 +148,12 @@ network locked to a band it isn't being heard on can't be joined. Only an
 appliance owns its Wi-Fi bands; it has nothing to do with the setup AP.
 _Avoid_: band preference, frequency, 5 GHz toggle
 
+**Wi-Fi link band**:
+The radio band a Wi-Fi link is associated on right now, taken from its
+channel frequency: **2.4 GHz**, **5 GHz** or **6 GHz**. Distinct from a
+**Wi-Fi band**, which is a saved network's Auto / 2.4 GHz / 5 GHz setting.
+_Avoid_: band (unqualified), channel
+
 **Not supported** / **Disconnected** / **No reading**:
 The three reasons a Network link reading has no current value. **Not
 supported**: the hardware or its driver never gives this reading (for
@@ -158,6 +164,29 @@ while connected (Wi-Fi link strength, speed) have nothing to report.
 last one is too old to trust; the same meaning as Bluetooth link strength's
 "no reading". None of them is ever shown as a value, old or zero.
 _Avoid_: unavailable, stale, N/A, unknown, 0
+
+### Host resources
+
+**Host resources**:
+The base computer's own CPU, memory, temperature, power supply and storage,
+as opposed to the Relay's or a link's health. Their readings have no
+current value for the same reasons as a Network link's: **Not supported**
+or **No reading**.
+_Avoid_: system stats, health
+
+### Monitoring
+
+**Fleet overview**:
+The one-row-per-base summary at the top of the Grafana dashboard.
+_Avoid_: fleet table, summary, status page
+
+**Base health**:
+A base's single rollup state as the monitoring stack sees it: **OK**,
+**Degraded**, **Fault** or **Down**. Computed by the dashboard from what
+each base exports and whether Prometheus can scrape it, never exported by
+the base itself. The rule and its thresholds live in the monitoring
+README.
+_Avoid_: status, Green / Red (those are Verification outcomes), healthy
 
 ### Bluetooth pairing
 

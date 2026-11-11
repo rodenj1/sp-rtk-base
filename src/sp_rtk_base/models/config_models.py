@@ -317,10 +317,14 @@ class DestinationProfile(BaseModel):
 DEFAULT_BT_SCAN_TIMEOUT_SECONDS: int = 20
 
 
+# An Input profile's type (``InputProfile.source``).
+InputSource = Literal["serial", "tcp", "bluetooth"]
+
+
 class InputProfile(BaseModel):
     """Input source configuration for persistence."""
 
-    source: Literal["serial", "tcp", "bluetooth"]
+    source: InputSource
     config: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("source", mode="before")

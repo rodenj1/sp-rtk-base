@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict
-
+from sp_rtk_base.models.frozen import FrozenModel
 from sp_rtk_base.models.level_models import Level
 from sp_rtk_base.uplink import Uplink
 
@@ -32,16 +31,12 @@ WifiMode = Literal["station", "ap", "p2p", "monitor", "other"]
 T = TypeVar("T")
 
 
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-
 # ---------------------------------------------------------------------------
 # Raw readings (the sampler's sources)
 # ---------------------------------------------------------------------------
 
 
-class Counters(_Frozen):
+class Counters(FrozenModel):
     """An interface's kernel counter totals (sysfs ``statistics/``)."""
 
     rx_bytes: int = 0
@@ -54,7 +49,7 @@ class Counters(_Frozen):
     tx_drops: int = 0
 
 
-class InterfaceReading(_Frozen):
+class InterfaceReading(FrozenModel):
     """One Network link interface as sysfs shows it.
 
     A field sysfs didn't give (the file raised ``EINVAL``, or held a
@@ -71,7 +66,7 @@ class InterfaceReading(_Frozen):
     counters: Counters = Counters()
 
 
-class AddressReading(_Frozen):
+class AddressReading(FrozenModel):
     """One IPv4 or IPv6 address on an interface."""
 
     interface: str
@@ -79,14 +74,14 @@ class AddressReading(_Frozen):
     prefixlen: int
 
 
-class EgressReading(_Frozen):
+class EgressReading(FrozenModel):
     """The Uplink probe's result: the source address the kernel picked for
     traffic to a public IPv4 address, ``None`` when it's unreachable."""
 
     source: str | None
 
 
-class StationReading(_Frozen):
+class StationReading(FrozenModel):
     """The access point a Wi-Fi interface is associated with, as nl80211
     reports it.  A value the driver didn't give is ``None``."""
 
@@ -98,7 +93,7 @@ class StationReading(_Frozen):
     tx_failed: int | None = None
 
 
-class WifiReading(_Frozen):
+class WifiReading(FrozenModel):
     """One Wi-Fi interface as nl80211 shows it.
 
     ``frequency_mhz`` hops while the interface scans, so only an
@@ -115,7 +110,7 @@ class WifiReading(_Frozen):
     station: StationReading | None = None
 
 
-class HostReading(_Frozen):
+class HostReading(FrozenModel):
     """One sample of every source.  ``None`` is a source whose read failed.
 
     ``wifi`` has a reading for each Wi-Fi interface nl80211 answered for:
@@ -133,7 +128,7 @@ class HostReading(_Frozen):
 # ---------------------------------------------------------------------------
 
 
-class Supported(_Frozen, Generic[T]):
+class Supported(FrozenModel, Generic[T]):
     """A reading this link supports.  ``value`` is ``None`` while it has no
     current value (Disconnected or No reading).  A Not supported reading
     isn't a ``Supported`` at all: its field is ``None``."""
@@ -141,21 +136,21 @@ class Supported(_Frozen, Generic[T]):
     value: T | None = None
 
 
-class Throughput(_Frozen):
+class Throughput(FrozenModel):
     """Bytes per second over the last two samples."""
 
     rx_bytes_per_second: float
     tx_bytes_per_second: float
 
 
-class EthernetDetails(_Frozen):
+class EthernetDetails(FrozenModel):
     """Ethernet-only readings.  ``None`` fields are Not supported."""
 
     speed_mbps: Supported[int] | None = None
     full_duplex: Supported[bool] | None = None
 
 
-class WifiDetails(_Frozen):
+class WifiDetails(FrozenModel):
     """Wi-Fi-only readings, from nl80211.  ``None`` fields are Not supported.
 
     Everything but ``tx_failed`` has a value only while associated and
@@ -180,7 +175,7 @@ class WifiDetails(_Frozen):
     tx_failed: Supported[int] | None = None
 
 
-class NetworkLink(_Frozen):
+class NetworkLink(FrozenModel):
     """One Network link as the snapshot shows it."""
 
     name: str
@@ -204,7 +199,7 @@ class NetworkLink(_Frozen):
     link_changes: int = 0
 
 
-class NetworkLinkSnapshot(_Frozen):
+class NetworkLinkSnapshot(FrozenModel):
     """The Network links now: what the dashboard and metrics read."""
 
     # Uplink first, then Ethernet, then Wi-Fi, each by name.

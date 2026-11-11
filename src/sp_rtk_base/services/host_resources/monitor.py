@@ -95,9 +95,12 @@ class _Counter(Generic[K]):
     """
 
     totals: dict[K, float] = field(default_factory=dict[K, float])
-    # The last raw value per key (a total, or the flag), which the next
-    # one is measured against.
-    last: dict[K, float] = field(default_factory=dict[K, float])
+    # :meth:`take`'s last raw total per key, which the next is measured
+    # against.
+    last_raw_totals: dict[K, float] = field(default_factory=dict[K, float])
+    # :meth:`take_rises`'s last flag per key, which a rise is measured
+    # against.
+    raised: dict[K, bool] = field(default_factory=dict[K, bool])
     supported: bool = False
 
     def take(self, raw: Raw[Mapping[K, float]]) -> bool:
@@ -110,12 +113,12 @@ class _Counter(Generic[K]):
         if raw is None or raw == NOT_SUPPORTED:
             return self._unread(raw)
         for key, value in raw.items():
-            before = self.last.get(key)
+            before = self.last_raw_totals.get(key)
             if before is None:
                 self.totals.setdefault(key, value)
             else:
                 self.totals[key] += max(0.0, value - before)
-            self.last[key] = value
+            self.last_raw_totals[key] = value
         self.supported = True
         return True
 
@@ -130,9 +133,9 @@ class _Counter(Generic[K]):
         if raw is None or raw == NOT_SUPPORTED:
             return self._unread(raw)
         raised = bool(raw)
-        rise = raised and not self.last.get(key)
+        rise = raised and not self.raised.get(key, False)
         self.totals[key] = self.totals.get(key, 0.0) + rise
-        self.last[key] = raised
+        self.raised[key] = raised
         self.supported = True
         return True
 
@@ -148,22 +151,14 @@ class _Counter(Generic[K]):
         return dict(self.totals) if self.supported else None
 
 
-def _unlabelled(counter: _Counter[tuple[()]]) -> int | None:
+def _event_count(counter: _Counter[tuple[()]]) -> int | None:
     """A label-less event counter's count, or ``None`` if Not supported."""
     totals = counter.current()
     return None if totals is None else int(totals.get((), 0))
 
 
-def _flag(value: int) -> bool:
-    return bool(value)
-
-
 def _celsius(millicelsius: int) -> float:
     return millicelsius / 1000.0
-
-
-def _float(value: int) -> float:
-    return float(value)
 
 
 class HostResourcesMonitor:
@@ -206,14 +201,14 @@ class HostResourcesMonitor:
         age = None if self._last_full_sample is None else now - self._last_full_sample
         return HostResourcesSnapshot(
             cpu_seconds=self._cpu_seconds.current(),
-            memory_total_bytes=self._memory_total.value_at(now, _float),
-            memory_available_bytes=self._memory_available.value_at(now, _float),
+            memory_total_bytes=self._memory_total.value_at(now, float),
+            memory_available_bytes=self._memory_available.value_at(now, float),
             cpu_temperature_celsius=self._cpu_temperature.current(now, _celsius),
-            root_filesystem_size_bytes=self._root_filesystem_size.value_at(now, _float),
+            root_filesystem_size_bytes=self._root_filesystem_size.value_at(now, float),
             root_filesystem_available_bytes=self._root_filesystem_available.value_at(
-                now, _float
+                now, float
             ),
-            undervoltage=self._undervoltage.current(now, _flag),
-            undervoltage_events=_unlabelled(self._undervoltage_events),
+            undervoltage=self._undervoltage.current(now, bool),
+            undervoltage_events=_event_count(self._undervoltage_events),
             last_sample_age_seconds=age,
         )

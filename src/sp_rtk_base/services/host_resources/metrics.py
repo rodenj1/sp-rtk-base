@@ -11,29 +11,20 @@ to the Host resources metric table in ``docs/monitoring/README.md``.
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
-from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily
 from prometheus_client.metrics_core import Metric
 
 from sp_rtk_base.models.host_resources_models import HostResourcesSnapshot
-from sp_rtk_base.models.network_link_models import Supported
-
-NAN = math.nan
-
-
-@dataclass(frozen=True)
-class Gauge:
-    """A gauge with no labels.  ``value`` gets the snapshot and the
-    wall-clock time of the scrape, and gives NaN with no current reading
-    or ``None`` for no series at all (Not supported)."""
-
-    name: str
-    documentation: str
-    value: Callable[[HostResourcesSnapshot, float], float | None]
+from sp_rtk_base.services.sampling import (
+    NAN,
+    Gauge,
+    sample_timestamp,
+    supported_value,
+)
 
 
 @dataclass(frozen=True)
@@ -58,30 +49,7 @@ def _bytes(value: float | None) -> float:
     return NAN if value is None else value
 
 
-def _supported_value(field: Supported[float] | None) -> float | None:
-    """``None`` (no series) when Not supported, NaN with no current value."""
-    if field is None:
-        return None
-    return NAN if field.value is None else field.value
-
-
-def _cpu_temperature(snapshot: HostResourcesSnapshot, _: float) -> float | None:
-    return _supported_value(snapshot.cpu_temperature_celsius)
-
-
-def _undervoltage(snapshot: HostResourcesSnapshot, _: float) -> float | None:
-    field = snapshot.undervoltage
-    if field is None:
-        return None
-    return NAN if field.value is None else float(field.value)
-
-
-def _last_sample_timestamp(snapshot: HostResourcesSnapshot, now: float) -> float:
-    age = snapshot.last_sample_age_seconds
-    return NAN if age is None else now - age
-
-
-GAUGES: tuple[Gauge, ...] = (
+GAUGES: tuple[Gauge[HostResourcesSnapshot], ...] = (
     Gauge(
         "host_memory_total_bytes",
         "Total usable RAM in bytes, from /proc/meminfo MemTotal (NaN: No reading)",
@@ -97,7 +65,7 @@ GAUGES: tuple[Gauge, ...] = (
         "host_cpu_temperature_celsius",
         "CPU temperature in degrees Celsius, from the cpu-thermal thermal zone "
         "(NaN: No reading; absent: Not supported)",
-        _cpu_temperature,
+        lambda snapshot, _: supported_value(snapshot.cpu_temperature_celsius, float),
     ),
     Gauge(
         "host_root_filesystem_size_bytes",
@@ -114,13 +82,13 @@ GAUGES: tuple[Gauge, ...] = (
         "host_undervoltage",
         "1 if the Pi firmware saw undervoltage in about the last 2 s, from the "
         "rpi_volt hwmon alarm, else 0 (NaN: No reading; absent: Not supported)",
-        _undervoltage,
+        lambda snapshot, _: supported_value(snapshot.undervoltage, float),
     ),
     Gauge(
         "host_last_sample_timestamp_seconds",
         "Unix time of the last Host resources sample in which every reading "
         "read (NaN before the first)",
-        _last_sample_timestamp,
+        lambda snapshot, now: sample_timestamp(snapshot.last_sample_age_seconds, now),
     ),
 )
 
@@ -133,7 +101,7 @@ def _cpu_seconds(
     return {(mode,): total for mode, total in snapshot.cpu_seconds.items()}
 
 
-def _unlabelled(total: float | None) -> dict[tuple[str, ...], float] | None:
+def _single_series(total: float | None) -> dict[tuple[str, ...], float] | None:
     """A counter with no labels: its one series, or none."""
     return None if total is None else {(): total}
 
@@ -152,7 +120,7 @@ COUNTERS: tuple[Counter, ...] = (
         "Rises (0 to 1) of the rpi_volt undervoltage alarm seen by the 2 s "
         "host sampler (holds on No reading; absent: Not supported)",
         (),
-        lambda snapshot: _unlabelled(snapshot.undervoltage_events),
+        lambda snapshot: _single_series(snapshot.undervoltage_events),
     ),
 )
 
@@ -184,13 +152,7 @@ class HostResourcesCollector:
         self, snapshot: HostResourcesSnapshot, now: float, describe: bool = False
     ) -> Iterator[Metric]:
         for gauge in GAUGES:
-            family = GaugeMetricFamily(
-                f"{self._namespace}_{gauge.name}", gauge.documentation
-            )
-            value = gauge.value(snapshot, now)
-            if value is not None and not describe:
-                family.add_metric((), value)
-            yield family
+            yield gauge.family(self._namespace, snapshot, now, describe)
         for counter in COUNTERS:
             counter_family = CounterMetricFamily(
                 f"{self._namespace}_{counter.name}",

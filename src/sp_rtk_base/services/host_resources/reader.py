@@ -17,13 +17,15 @@ import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import NamedTuple, Protocol, TypeVar
 
 from sp_rtk_base.models.host_resources_models import (
     NOT_SUPPORTED,
     HostResourcesReading,
+    NotSupported,
     Raw,
 )
+from sp_rtk_base.services.sampling import attempt
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +167,21 @@ def read_cpu_seconds(
     raise ValueError("/proc/stat has no aggregate cpu line")
 
 
-def read_memory(proc: Path = PROC, read: ReadFile = _read_text) -> tuple[int, int]:
+class Memory(NamedTuple):
+    """``/proc/meminfo``'s two figures, in bytes."""
+
+    total_bytes: int
+    available_bytes: int
+
+
+class RootFilesystem(NamedTuple):
+    """The root filesystem's two figures, in bytes."""
+
+    size_bytes: int
+    available_bytes: int
+
+
+def read_memory(proc: Path = PROC, read: ReadFile = _read_text) -> Memory:
     """``MemTotal`` and ``MemAvailable`` from ``/proc/meminfo``, in bytes.
 
     Raises:
@@ -176,10 +192,13 @@ def read_memory(proc: Path = PROC, read: ReadFile = _read_text) -> tuple[int, in
     for line in read(proc / "meminfo").splitlines():
         name, _, rest = line.partition(":")
         kib[name] = rest.split()[0] if rest.split() else ""
-    return int(kib["MemTotal"]) * 1024, int(kib["MemAvailable"]) * 1024
+    return Memory(
+        total_bytes=int(kib["MemTotal"]) * 1024,
+        available_bytes=int(kib["MemAvailable"]) * 1024,
+    )
 
 
-def read_root_filesystem(statvfs: Statvfs = os.statvfs) -> tuple[int, int]:
+def read_root_filesystem(statvfs: Statvfs = os.statvfs) -> RootFilesystem:
     """The root filesystem's size and the space a non-root user can use
     (``f_bavail``: not the root-reserved blocks), in bytes.  Its read-only
     flag is ignored: the service unit's hardening always sets it.
@@ -188,18 +207,21 @@ def read_root_filesystem(statvfs: Statvfs = os.statvfs) -> tuple[int, int]:
         OSError: ``statvfs`` failed.
     """
     space = statvfs("/")
-    return space.f_blocks * space.f_frsize, space.f_bavail * space.f_frsize
+    return RootFilesystem(
+        size_bytes=space.f_blocks * space.f_frsize,
+        available_bytes=space.f_bavail * space.f_frsize,
+    )
 
 
 def _attempt(name: str, read: Callable[[], T | None]) -> Raw[T]:
     """*read*'s result: ``None`` (No reading) if it raised, Not supported
     if it gave ``None``."""
-    try:
+
+    def read_or_not_supported() -> T | NotSupported:
         value = read()
-    except Exception:
-        logger.debug("Host resources read of %s failed", name, exc_info=True)
-        return None
-    return NOT_SUPPORTED if value is None else value
+        return NOT_SUPPORTED if value is None else value
+
+    return attempt(logger, f"Host resources read of {name}", read_or_not_supported)
 
 
 class HostResourcesReaderLike(Protocol):
@@ -242,8 +264,12 @@ class HostResourcesReader:
                     self._proc_root, self._clock_ticks, self._read
                 ),
             ),
-            memory_total_bytes=_part(memory, 0),
-            memory_available_bytes=_part(memory, 1),
+            memory_total_bytes=(
+                memory.total_bytes if isinstance(memory, Memory) else memory
+            ),
+            memory_available_bytes=(
+                memory.available_bytes if isinstance(memory, Memory) else memory
+            ),
             cpu_temperature_millicelsius=_attempt(
                 "the CPU temperature",
                 lambda: read_cpu_temperature(self._thermal_root, self._read),
@@ -252,11 +278,15 @@ class HostResourcesReader:
                 "undervoltage",
                 lambda: read_undervoltage_alarm(self._hwmon_root, self._read),
             ),
-            root_filesystem_size_bytes=_part(filesystem, 0),
-            root_filesystem_available_bytes=_part(filesystem, 1),
+            # Both figures of one read fail together.
+            root_filesystem_size_bytes=(
+                filesystem.size_bytes
+                if isinstance(filesystem, RootFilesystem)
+                else filesystem
+            ),
+            root_filesystem_available_bytes=(
+                filesystem.available_bytes
+                if isinstance(filesystem, RootFilesystem)
+                else filesystem
+            ),
         )
-
-
-def _part(raw: Raw[tuple[int, int]], index: int) -> Raw[int]:
-    """One figure of a read that gives two (both fail together)."""
-    return raw[index] if isinstance(raw, tuple) else raw

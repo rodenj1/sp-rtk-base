@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import Final, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypeAliasType
 
+from sp_rtk_base.models.frozen import FrozenModel
 from sp_rtk_base.models.network_link_models import Supported
 
 NotSupported = Literal["Not supported"]
@@ -36,11 +36,7 @@ T = TypeVar("T")
 Raw = TypeAliasType("Raw", T | NotSupported | None, type_params=(T,))
 
 
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-
-class HostResourcesReading(_Frozen):
+class HostResourcesReading(FrozenModel):
     """One sample of every Host resources reading.  The default, every
     field ``None``, is a sample in which every read failed."""
 
@@ -62,7 +58,7 @@ class HostResourcesReading(_Frozen):
     root_filesystem_available_bytes: Raw[int] = None
 
 
-class HostResourcesSnapshot(_Frozen):
+class HostResourcesSnapshot(FrozenModel):
     """The Host resources now.
 
     A :class:`Supported` field is ``None`` when its reading is Not

@@ -12,11 +12,10 @@ outside those tables: it's info-style, so its value lives in a label.
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import Literal
 
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.metrics_core import Metric
@@ -28,10 +27,12 @@ from sp_rtk_base.models.network_link_models import (
     Supported,
     WifiDetails,
 )
-
-NAN = math.nan
-
-T = TypeVar("T")
+from sp_rtk_base.services.sampling import (
+    NAN,
+    Gauge,
+    sample_timestamp,
+    supported_value,
+)
 
 
 @dataclass(frozen=True)
@@ -51,16 +52,6 @@ class LinkMetric:
     value: Callable[[NetworkLink, NetworkLinkSnapshot], float | None]
     type: Literal["gauge", "counter"] = "gauge"
     kind_label: bool = True
-
-
-@dataclass(frozen=True)
-class Gauge:
-    """A gauge with no labels, one value for the whole snapshot.
-    ``value`` gets the snapshot and the wall-clock time of the scrape."""
-
-    name: str
-    documentation: str
-    value: Callable[[NetworkLinkSnapshot, float], float]
 
 
 def _flag(flag: bool) -> float:
@@ -99,26 +90,16 @@ def _kernel_counter(direction: str, what: str) -> LinkMetric:
     )
 
 
-def _supported_value(
-    field: Supported[T] | None, to_float: Callable[[T], float]
-) -> float | None:
-    """A Supported reading's value: ``None`` (no series) when Not
-    supported, NaN while it has no current value."""
-    if field is None:
-        return None
-    return NAN if field.value is None else to_float(field.value)
-
-
 def _ethernet_speed(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
     if link.ethernet is None:
         return None
-    return _supported_value(link.ethernet.speed_mbps, lambda mbps: mbps * 1_000_000.0)
+    return supported_value(link.ethernet.speed_mbps, lambda mbps: mbps * 1_000_000.0)
 
 
 def _ethernet_full_duplex(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
     if link.ethernet is None:
         return None
-    return _supported_value(link.ethernet.full_duplex, _flag)
+    return supported_value(link.ethernet.full_duplex, _flag)
 
 
 def _wifi_metric(
@@ -133,7 +114,7 @@ def _wifi_metric(
     def value(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
         if link.wifi is None:
             return None
-        return _supported_value(field(link.wifi), lambda v: v * scale)
+        return supported_value(field(link.wifi), lambda v: v * scale)
 
     return LinkMetric(name, documentation, value, type=type, kind_label=False)
 
@@ -141,7 +122,7 @@ def _wifi_metric(
 def _wifi_link_strength(link: NetworkLink, _: NetworkLinkSnapshot) -> float | None:
     if link.wifi is None:
         return None
-    return _supported_value(link.wifi.link_strength, lambda level: LEVEL_VALUE[level])
+    return supported_value(link.wifi.link_strength, lambda level: LEVEL_VALUE[level])
 
 
 def _uplink_other(snapshot: NetworkLinkSnapshot, _: float) -> float:
@@ -149,11 +130,6 @@ def _uplink_other(snapshot: NetworkLinkSnapshot, _: float) -> float:
         return NAN
     uplink = snapshot.uplink
     return _flag(uplink is not None and not uplink.network_link)
-
-
-def _last_sample_timestamp(snapshot: NetworkLinkSnapshot, now: float) -> float:
-    age = snapshot.last_sample_age_seconds
-    return NAN if age is None else now - age
 
 
 @dataclass(frozen=True)
@@ -264,7 +240,7 @@ LINK_METRICS: tuple[LinkMetric, ...] = (
     ),
 )
 
-GAUGES: tuple[Gauge, ...] = (
+GAUGES: tuple[Gauge[NetworkLinkSnapshot], ...] = (
     Gauge(
         "network_uplink_other",
         "1 when the Uplink is an interface that isn't a Network link, such as "
@@ -275,7 +251,7 @@ GAUGES: tuple[Gauge, ...] = (
         "network_last_sample_timestamp_seconds",
         "Unix time of the last Network link sample in which every source "
         "read (NaN before the first)",
-        _last_sample_timestamp,
+        lambda snapshot, now: sample_timestamp(snapshot.last_sample_age_seconds, now),
     ),
 )
 
@@ -306,9 +282,7 @@ class NetworkLinkCollector:
     def _families(self, snapshot: NetworkLinkSnapshot, now: float) -> Iterator[Metric]:
         ns = self._namespace
         for gauge in GAUGES:
-            yield GaugeMetricFamily(
-                f"{ns}_{gauge.name}", gauge.documentation, gauge.value(snapshot, now)
-            )
+            yield gauge.family(ns, snapshot, now)
         for spec in LINK_METRICS:
             labels = ("interface", "kind") if spec.kind_label else ("interface",)
             family_type = (

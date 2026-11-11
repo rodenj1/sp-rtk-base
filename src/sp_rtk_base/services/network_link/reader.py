@@ -38,6 +38,7 @@ from sp_rtk_base.models.network_link_models import (
 )
 from sp_rtk_base.services.network_link import netlink
 from sp_rtk_base.services.network_link.nl80211 import WifiReader
+from sp_rtk_base.services.sampling import attempt
 from sp_rtk_base.uplink import picked_source as probe_picked_source
 
 logger = logging.getLogger(__name__)
@@ -261,11 +262,7 @@ class HostReaderLike(Protocol):
 
 def _attempt(name: str, read: Callable[[], T]) -> T | None:
     """*read*'s result, or ``None`` (No reading) if it raised."""
-    try:
-        return read()
-    except Exception:
-        logger.debug("Network link read of %s failed", name, exc_info=True)
-        return None
+    return attempt(logger, f"Network link read of {name}", read)
 
 
 class HostReader:

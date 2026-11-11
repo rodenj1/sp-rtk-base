@@ -18,9 +18,10 @@ To add a reading, add a field to both and a source to the monitor.
 
 from __future__ import annotations
 
-from typing import Final, Literal, TypeAlias, TypeVar, Union
+from typing import Final, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
+from typing_extensions import TypeAliasType
 
 from sp_rtk_base.models.network_link_models import Supported
 
@@ -30,7 +31,9 @@ NOT_SUPPORTED: Final[NotSupported] = "Not supported"
 T = TypeVar("T")
 
 # One raw reading: its value, None (the read failed) or Not supported.
-Raw: TypeAlias = Union[T, NotSupported, None]  # noqa: UP007 (mypy needs an explicit generic alias)
+# TypeAliasType is PEP 695's ``type Raw[T] = ...`` for Python 3.10: a
+# generic alias pydantic, mypy and pyright all accept.
+Raw = TypeAliasType("Raw", T | NotSupported | None, type_params=(T,))
 
 
 class _Frozen(BaseModel):

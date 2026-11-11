@@ -80,6 +80,8 @@ async def prometheus_metrics(
     metrics.update_signal_quality(signal_quality.current(METRICS_SIGNAL_VIEW))
     metrics.update_bluetooth_link(bluetooth_link.current())
     metrics.update_network_links(network_link.current())
+    input_profile = config_svc.get_input_config()
+    metrics.update_input_kind(None if input_profile is None else input_profile.source)
 
     output: bytes = generate_latest(metrics.registry)
     return Response(content=output, media_type=PROMETHEUS_CONTENT_TYPE)

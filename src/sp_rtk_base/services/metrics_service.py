@@ -18,9 +18,10 @@ import logging
 import time
 from collections.abc import Callable
 
-from prometheus_client import CollectorRegistry, Gauge
+from prometheus_client import CollectorRegistry, Gauge, ProcessCollector
 from sp_rtk_base_relay.core.status import RelayStatus
 
+from sp_rtk_base import __version__
 from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
@@ -189,6 +190,29 @@ class MetricsService:
         )
         self.update_bluetooth_link(None)
 
+        # Input kind: info-style, the active Input profile's type; no
+        # series at all without an Input profile.
+        self.input_info = Gauge(
+            f"{ns}_input_info",
+            "Active Input profile type in the kind label (always 1; "
+            "absent with no Input profile)",
+            ["kind"],
+            registry=self.registry,
+        )
+
+        # Build version: info-style, always present.
+        self.build_info = Gauge(
+            f"{ns}_build_info",
+            "Installed sp-rtk-base version (always 1)",
+            ["version"],
+            registry=self.registry,
+        )
+        self.build_info.labels(version=__version__).set(1)
+
+        # The standard process_* metrics, read from this app's own process
+        # on each scrape: the one collect-on-scrape exception.
+        ProcessCollector(registry=self.registry)
+
         # Network links: a collector that builds its series from the
         # latest snapshot, so a vanished interface's series disappear.
         self.network_links = NetworkLinkCollector(ns, wall_clock=wall_clock)
@@ -258,6 +282,12 @@ class MetricsService:
             return
         self.bluetooth_link_strength.set(float("nan"))
         self.bluetooth_link_median_db.set(float("nan"))
+
+    def update_input_kind(self, kind: str | None) -> None:
+        """Export the Input profile type *kind* (``None``: no Input profile)."""
+        self.input_info.clear()
+        if kind is not None:
+            self.input_info.labels(kind=kind).set(1)
 
     def update_network_links(self, snapshot: NetworkLinkSnapshot) -> None:
         """Export the Network link *snapshot* (it never samples)."""

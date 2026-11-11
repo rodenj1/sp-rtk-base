@@ -87,7 +87,8 @@ The current metric surface covers:
 - Network links (the base station's own Ethernet and Wi-Fi links and its
   Uplink, exactly as the dashboard's Network card shows them): see
   [Network links](#network-links) below.
-- Host resources (the base computer's own temperature and more): see
+- Host resources (the base computer's own temperature, power supply and
+  more): see
   [Host resources](#host-resources) below.
 
 - Input kind, build version and the app's own process: see
@@ -232,14 +233,27 @@ sampler never touches the other's freshness. No metric here has labels.
 | Metric | Type | Unit | Labels | Value |
 |---|---|---|---|---|
 | `sp_rtk_base_host_cpu_temperature_celsius` | gauge | °C | none | the SoC temperature, from the thermal zone whose type is `cpu-thermal` (found by type, never by zone number); NaN with No reading; absent when Not supported |
+| `sp_rtk_base_host_undervoltage` | gauge | 0/1 | none | 1 if the Pi firmware saw undervoltage in roughly the last 2 s, from the alarm of the hwmon device named `rpi_volt` (found by name, never by hwmon number), else 0; NaN with No reading; absent when Not supported |
+| `sp_rtk_base_host_undervoltage_events_total` | counter | events | none | each 0→1 rise of that alarm the 2 s sampler has seen since sp-rtk-base started; holds on No reading; absent when Not supported |
 | `sp_rtk_base_host_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every reading read (a Not supported one counts as read); NaN before the first |
 
 **Missing values.**
 
 - **Not supported:** a host with no `cpu-thermal` zone (not a Pi: a dev
-  laptop or a container) has no temperature series at all.
+  laptop or a container) has no temperature series at all, and one with no
+  `rpi_volt` device has neither undervoltage series.
 - **No reading** (the read raised, or the last good one is over 6 s old)
-  makes the gauge NaN; its series stays.
+  makes a gauge NaN; its series stays. A counter holds its last value.
+
+**Undervoltage.** The kernel polls the Pi firmware every 2 s and reports
+only whether undervoltage happened in roughly that last window: the alarm
+doesn't latch, so a dip between two scrapes has already cleared from
+`sp_rtk_base_host_undervoltage` by the next scrape. The sampler reads it
+every 2 s and counts each rise, so query the counter, for example
+`increase(sp_rtk_base_host_undervoltage_events_total[24h]) > 0`, rather
+than the gauge. Because the kernel's 2 s cycle and the sampler's drift
+against each other, the sampler can occasionally miss a window. The counter restarts from 0 when
+sp-rtk-base restarts, which `increase()` handles.
 
 ## Alerts
 

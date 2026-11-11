@@ -6,10 +6,12 @@ import asyncio
 
 import pytest
 
-from sp_rtk_base.models.host_resources_models import HostResourcesReading
+from sp_rtk_base.models.host_resources_models import NOT_SUPPORTED, HostResourcesReading
 from sp_rtk_base.services.host_resources.service import HostResourcesService
 
-READING = HostResourcesReading(cpu_temperature_millicelsius=50_000)
+READING = HostResourcesReading(
+    cpu_temperature_millicelsius=50_000, undervoltage_alarm=NOT_SUPPORTED
+)
 
 
 class Clock:

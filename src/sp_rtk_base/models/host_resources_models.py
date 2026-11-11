@@ -43,6 +43,9 @@ class HostResourcesReading(_Frozen):
 
     # The ``cpu-thermal`` thermal zone's ``temp``, in millidegrees Celsius.
     cpu_temperature_millicelsius: Raw[int] = None
+    # The ``rpi_volt`` hwmon device's ``in0_lcrit_alarm``: 1 if the
+    # firmware saw undervoltage in the kernel's last ~2 s poll window.
+    undervoltage_alarm: Raw[int] = None
 
 
 class HostResourcesSnapshot(_Frozen):
@@ -54,6 +57,10 @@ class HostResourcesSnapshot(_Frozen):
     """
 
     cpu_temperature_celsius: Supported[float] | None = None
+    undervoltage: Supported[bool] | None = None
+    # Rises (0 -> 1) of the undervoltage alarm the sampler has seen: a
+    # counter, so it holds through No reading.  None when Not supported.
+    undervoltage_events: int | None = None
     # Seconds since the last sample in which every reading read; None
     # before the first.
     last_sample_age_seconds: float | None = None

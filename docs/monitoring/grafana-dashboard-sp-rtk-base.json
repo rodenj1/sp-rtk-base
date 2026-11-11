@@ -15,19 +15,1287 @@
       }
     ]
   },
-  "description": "Unified dashboard for one or more sp-rtk-base instances (local pull and/or remote push via Alloy).  Pick a Prometheus datasource and one or more base stations.  All queries are templated on $base so local-vs-remote comparison is one click.",
+  "description": "Fleet dashboard for one or more sp-rtk-base base stations. The Fleet overview at the top has one row per base, worst Base health first, and ignores the Base selector. The rows below follow the Base selector ($base). Pick a Prometheus datasource; the scrape job must be named sp-rtk-base and carry a base label.",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "One row per base, whatever the Base selector says, worst Base health first. Base health and every threshold: see docs/monitoring/README.md, Base health. Anchored on Prometheus's scrape status for the sp-rtk-base job, so a base it can't scrape stays as Down. Click a base to select it.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": false,
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Base"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show ${__data.fields.base}",
+                    "url": "/d/sp-rtk-base-overview/?var-base=${__data.fields.base}&${__url_time_range}"
+                  }
+                ]
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Base health"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "OK"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "Degraded"
+                      },
+                      "2": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "Fault"
+                      },
+                      "3": {
+                        "color": "#6e7480",
+                        "index": 3,
+                        "text": "Down"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Relay"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "Running"
+                      },
+                      "0": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "Stopped"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Input"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "Connected"
+                      },
+                      "0": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "Disconnected"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last RTCM"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "-1": {
+                        "color": "#8e8e8e",
+                        "index": 0,
+                        "text": "No reading"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 60
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Signal Quality"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "Good"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "Marginal"
+                      },
+                      "2": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "Poor"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Destinations"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^0/0$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^(\\d+)/\\1$",
+                      "result": {
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^\\d+/\\d+$",
+                      "result": {
+                        "color": "yellow",
+                        "index": 2
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bluetooth link"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "Good"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "Marginal"
+                      },
+                      "2": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "Poor"
+                      },
+                      "NaN": {
+                        "color": "#8e8e8e",
+                        "index": 3,
+                        "text": "No reading"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^n/a",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uplink"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^No reading$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^Disconnected$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Wi-Fi link"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "not Uplink$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^No reading$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^Disconnected$",
+                      "result": {
+                        "color": "#8e8e8e",
+                        "index": 2
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^-(7[89]|[89]\\d|\\d{3}) dBm",
+                      "result": {
+                        "color": "red",
+                        "index": 3
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^-(6[89]|7[0-7]) dBm",
+                      "result": {
+                        "color": "yellow",
+                        "index": 4
+                      }
+                    }
+                  },
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^-?\\d+ dBm",
+                      "result": {
+                        "color": "green",
+                        "index": 5
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 90
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU temp"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Undervoltage 24 h"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uptime"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 300,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Base health",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "health"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "relay"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_input_connected{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "input"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "rtcm"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "sq"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, destinations) (\n  label_join(\n      count_values by (base) (\"active\", sp_rtk_base_active_destinations{job=\"sp-rtk-base\"})\n    * on (base) group_left (total)\n      count_values by (base) (\"total\", sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}),\n    \"destinations\", \"/\", \"active\", \"total\"\n  )\n)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "dest"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, bluetooth) (\n    label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\", kind!=\"bluetooth\"}, \"bluetooth\", \"n/a \u00b7 $1\", \"kind\", \"(.*)\")\n  or count_values by (base) (\"bluetooth\",\n       sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"}\n       unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", kind!=\"bluetooth\"})\n)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "bt"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, uplink) (\n    label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\")\n  or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\")\n)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "uplink"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, wifi) (topk by (base) (1, max by (base, interface, wifi) (\n    label_join(\n        label_join(\n            count_values without () (\"dbm\", sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"})\n          * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\"},\n          \"wifi\", \" dBm \u00b7 \", \"dbm\", \"band\"\n        )\n      * on (base, interface) group_left (role) (\n            label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n          or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} != 0, \"role\", \"\", \"\", \"\")\n        ),\n      \"wifi\", \"\", \"wifi\", \"role\"\n    )\n  or label_replace(sp_rtk_base_network_link_up{job=\"sp-rtk-base\", kind=\"wifi\"} == 0, \"wifi\", \"Disconnected\", \"\", \"\")\n  or label_replace((sp_rtk_base_network_link_up{job=\"sp-rtk-base\", kind=\"wifi\"} != 0) unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\"})), \"wifi\", \"No reading\", \"\", \"\")\n)))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "wifi"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", mode=~\"idle|iowait\"}[5m]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\"}[5m])))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "cpu"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"}))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "mem"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "temp"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[24h])))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "uv"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "uptime"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, version) (sp_rtk_base_build_info{job=\"sp-rtk-base\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "version"
+        }
+      ],
+      "title": "Fleet overview",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value #dest": true,
+              "Value #bt": true,
+              "Value #uplink": true,
+              "Value #wifi": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "base": 0,
+              "Value #health": 1,
+              "Value #relay": 2,
+              "Value #input": 3,
+              "Value #rtcm": 4,
+              "Value #sq": 5,
+              "destinations": 6,
+              "bluetooth": 7,
+              "uplink": 8,
+              "wifi": 9,
+              "Value #cpu": 10,
+              "Value #mem": 11,
+              "Value #temp": 12,
+              "Value #uv": 13,
+              "Value #uptime": 14,
+              "Value #version": 15
+            },
+            "renameByName": {
+              "base": "Base",
+              "Value #health": "Base health",
+              "Value #relay": "Relay",
+              "Value #input": "Input",
+              "Value #rtcm": "Last RTCM",
+              "Value #sq": "Signal Quality",
+              "destinations": "Destinations",
+              "bluetooth": "Bluetooth link",
+              "uplink": "Uplink",
+              "wifi": "Wi-Fi link",
+              "Value #cpu": "CPU %",
+              "Value #mem": "Memory %",
+              "Value #temp": "CPU temp",
+              "Value #uv": "Undervoltage 24 h",
+              "Value #uptime": "Uptime",
+              "Value #version": "Version"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Base",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 10
       },
       "id": 100,
       "panels": [],
@@ -81,7 +1349,7 @@
         "h": 4,
         "w": 5,
         "x": 0,
-        "y": 1
+        "y": 11
       },
       "id": 1,
       "options": {
@@ -137,7 +1405,7 @@
         "h": 4,
         "w": 5,
         "x": 5,
-        "y": 1
+        "y": 11
       },
       "id": 2,
       "options": {
@@ -193,7 +1461,7 @@
         "h": 4,
         "w": 4,
         "x": 10,
-        "y": 1
+        "y": 11
       },
       "id": 3,
       "options": {
@@ -230,7 +1498,7 @@
         "h": 4,
         "w": 5,
         "x": 14,
-        "y": 1
+        "y": 11
       },
       "id": 4,
       "options": {
@@ -284,7 +1552,7 @@
         "h": 4,
         "w": 5,
         "x": 19,
-        "y": 1
+        "y": 11
       },
       "id": 5,
       "options": {
@@ -311,7 +1579,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 15
       },
       "id": 105,
       "panels": [],
@@ -388,7 +1656,7 @@
         "h": 7,
         "w": 5,
         "x": 0,
-        "y": 6
+        "y": 16
       },
       "id": 60,
       "options": {
@@ -447,7 +1715,7 @@
         "h": 7,
         "w": 12,
         "x": 5,
-        "y": 6
+        "y": 16
       },
       "id": 61,
       "options": {
@@ -512,7 +1780,7 @@
         "h": 7,
         "w": 7,
         "x": 17,
-        "y": 6
+        "y": 16
       },
       "id": 62,
       "options": {
@@ -541,7 +1809,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 23
       },
       "id": 101,
       "panels": [],
@@ -563,7 +1831,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 14
+        "y": 24
       },
       "id": 10,
       "options": {
@@ -606,7 +1874,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 14
+        "y": 24
       },
       "id": 11,
       "options": {
@@ -679,7 +1947,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 31
       },
       "id": 12,
       "options": {
@@ -712,7 +1980,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 38
       },
       "id": 102,
       "panels": [],
@@ -848,7 +2116,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 39
       },
       "id": 20,
       "options": {
@@ -992,7 +2260,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 48
       },
       "id": 103,
       "panels": [],
@@ -1014,7 +2282,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 49
       },
       "id": 30,
       "options": {
@@ -1056,7 +2324,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 49
       },
       "id": 31,
       "options": {
@@ -1098,7 +2366,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 46
+        "y": 56
       },
       "id": 40,
       "options": {
@@ -1141,7 +2409,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 46
+        "y": 56
       },
       "id": 41,
       "options": {
@@ -1174,7 +2442,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 63
       },
       "id": 104,
       "panels": [],
@@ -1210,7 +2478,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 54
+        "y": 64
       },
       "id": 50,
       "options": {
@@ -1251,7 +2519,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 54
+        "y": 64
       },
       "id": 51,
       "options": {
@@ -1285,7 +2553,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 71
       },
       "id": 200,
       "panels": [],
@@ -1302,7 +2570,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 72
       },
       "id": 201,
       "options": {
@@ -1416,6 +2684,6 @@
   "timezone": "browser",
   "title": "SP-Base \u00b7 Unified Base Station Overview",
   "uid": "sp-rtk-base-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

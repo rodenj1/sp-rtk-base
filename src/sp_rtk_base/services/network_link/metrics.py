@@ -6,7 +6,8 @@ it never samples, and a vanished interface's series simply aren't built.
 
 To add a metric, add a row to :data:`LINK_METRICS` (one series per link)
 or :data:`GAUGES` (one unlabelled series), and to the metric reference in
-``docs/monitoring/README.md``.
+``docs/monitoring/README.md``.  The Wi-Fi link band is the one family
+outside those tables: it's info-style, so its value lives in a label.
 """
 
 from __future__ import annotations
@@ -155,6 +156,40 @@ def _last_sample_timestamp(snapshot: NetworkLinkSnapshot, now: float) -> float:
     return NAN if age is None else now - age
 
 
+@dataclass(frozen=True)
+class WifiLinkBand:
+    """One Wi-Fi link band: channel frequencies from ``low_mhz`` up to,
+    but not including, ``high_mhz``."""
+
+    label: str
+    low_mhz: int
+    high_mhz: int
+
+
+# The only place the Wi-Fi link band edges live.  Half-open, so a
+# frequency on a shared edge (5925 MHz) belongs to the band above it.
+WIFI_LINK_BANDS: tuple[WifiLinkBand, ...] = (
+    WifiLinkBand("2.4GHz", 2400, 2500),
+    WifiLinkBand("5GHz", 5150, 5925),
+    WifiLinkBand("6GHz", 5925, 7125),
+)
+
+
+def wifi_link_band(link: NetworkLink) -> str | None:
+    """The band *link* is associated on right now, or ``None`` (no series)
+    when it isn't Wi-Fi, its frequency has no current reading, or the
+    frequency is outside every band."""
+    if link.wifi is None or link.wifi.frequency_mhz is None:
+        return None
+    mhz = link.wifi.frequency_mhz.value
+    if mhz is None:
+        return None
+    for band in WIFI_LINK_BANDS:
+        if band.low_mhz <= mhz < band.high_mhz:
+            return band.label
+    return None
+
+
 LINK_METRICS: tuple[LinkMetric, ...] = (
     LinkMetric(
         "network_link_up",
@@ -286,3 +321,14 @@ class NetworkLinkCollector:
                     label_values = (link.name, link.kind)[: len(labels)]
                     family.add_metric(label_values, value)
             yield family
+        band_family = GaugeMetricFamily(
+            f"{ns}_wifi_link_band",
+            "The Wi-Fi link band the link is associated on, as the band "
+            "label; always 1 (no series: Disconnected, No reading or out of band)",
+            labels=("interface", "band"),
+        )
+        for link in snapshot.links:
+            band = wifi_link_band(link)
+            if band is not None:
+                band_family.add_metric((link.name, band), 1.0)
+        yield band_family

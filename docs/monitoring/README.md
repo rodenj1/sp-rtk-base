@@ -331,6 +331,12 @@ has a label (`mode`); there is no per-core breakdown.
 - **No reading** (the read raised, or the last good one is over 6 s old)
   makes a gauge NaN; its series stays. A counter holds its last value.
 
+**Service hardening.** The host sampler reads system-wide files under
+`/proc` (`/proc/stat`, `/proc/meminfo`) and `/sys` (`/sys/class/thermal`,
+`/sys/class/hwmon`) without root. `ProcSubset=pid` must never be added to
+the service unit: it hides `/proc`'s system-wide files, so the CPU and
+memory readings would stay at No reading.
+
 **Undervoltage.** The kernel polls the Pi firmware every 2 s and reports
 only whether undervoltage happened in roughly that last window: the alarm
 doesn't latch, so a dip between two scrapes has already cleared from

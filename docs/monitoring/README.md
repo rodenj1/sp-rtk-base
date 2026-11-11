@@ -88,8 +88,38 @@ The current metric surface covers:
   Uplink, exactly as the dashboard's Network card shows them): see
   [Network links](#network-links) below.
 
-Apart from the Network link counters below, these are all gauges that
-update on each scrape of `/metrics`.
+- Input kind, build version and the app's own process: see
+  [Input kind, build version and process](#input-kind-build-version-and-process)
+  below.
+
+Apart from the Network link counters and the process metrics below, these
+are all gauges that update on each scrape of `/metrics`.
+
+### Input kind, build version and process
+
+| Metric | Type | Unit | Labels | Value |
+|---|---|---|---|---|
+| `sp_rtk_base_input_info` | gauge (info-style) | — | `kind` | always 1; `kind` is the active Input profile's type (`bluetooth`, `serial` or `tcp`); absent with no Input profile |
+| `sp_rtk_base_build_info` | gauge (info-style) | — | `version` | always 1; `version` is the installed sp-rtk-base version; always present |
+| `process_*` (standard set) | various | various | none | the client library's standard process metrics for the app's own process: `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_virtual_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds` |
+
+An info-style metric's series *is* its value: join on it, or read its
+label, rather than graphing it. For example, `sp_rtk_base_input_info`
+tells a Bluetooth link strength of NaN on a non-Bluetooth Input ("n/a")
+apart from one with no reading.
+
+The process metrics are the one collect-on-scrape exception: everything
+else is exported from state the app already holds (or a background
+sampler's latest snapshot), while these read `/proc/self` during the
+scrape. They cover only the app's own process, never the host.
+
+```promql
+# The app's CPU use, as a share of one core
+rate(process_cpu_seconds_total{job="sp-rtk-base"}[5m])
+
+# Which version each base runs
+sp_rtk_base_build_info
+```
 
 ### Network links
 

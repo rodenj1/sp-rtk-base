@@ -25,12 +25,14 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
+from sp_rtk_base.models.host_resources_models import HostResourcesSnapshot
 from sp_rtk_base.models.level_models import LEVEL_VALUE
 from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
 from sp_rtk_base.models.signal_quality_models import (
     SignalQualityReading,
     SignalQualityVerdict,
 )
+from sp_rtk_base.services.host_resources.metrics import HostResourcesCollector
 from sp_rtk_base.services.network_link.metrics import NetworkLinkCollector
 
 logger = logging.getLogger(__name__)
@@ -194,6 +196,11 @@ class MetricsService:
         self.network_links = NetworkLinkCollector(ns, wall_clock=wall_clock)
         self.registry.register(self.network_links)
 
+        # Host resources: a collector over the host sampler's latest
+        # snapshot, so a Not supported reading has no series.
+        self.host_resources = HostResourcesCollector(ns, wall_clock=wall_clock)
+        self.registry.register(self.host_resources)
+
         logger.info("MetricsService initialized (namespace=%s)", ns)
 
     # ──────────────────────────────────────────────────────────────
@@ -262,6 +269,10 @@ class MetricsService:
     def update_network_links(self, snapshot: NetworkLinkSnapshot) -> None:
         """Export the Network link *snapshot* (it never samples)."""
         self.network_links.update(snapshot)
+
+    def update_host_resources(self, snapshot: HostResourcesSnapshot) -> None:
+        """Export the Host resources *snapshot* (it never samples)."""
+        self.host_resources.update(snapshot)
 
     def update_idle(self) -> None:
         """Reset metrics to idle/stopped state.

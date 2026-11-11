@@ -120,6 +120,10 @@ async def startup_services() -> None:
     # so every tab (and /metrics) sees the same snapshot.
     services_mod.network_link_service.start()
 
+    # The host sampler reads Host resources every 2 s in the background,
+    # apart from the Network link sampler, so /metrics never reads the host.
+    services_mod.host_resources_service.start()
+
     # Check PyPI for an Available update now, then every 24 h.
     services_mod.update_check_service.start()
 
@@ -216,6 +220,13 @@ async def shutdown_services() -> None:
         services_mod.network_link_service.stop(),
         AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
         "the Network link sampler",
+    )
+
+    # 0b. Host sampler — nothing depends on it.
+    await _stop_within(
+        services_mod.host_resources_service.stop(),
+        AUTO_START_TASK_CANCEL_TIMEOUT_SECONDS,
+        "the host sampler",
     )
 
     # 0b'. Update check schedule — nothing depends on it; just stop it.

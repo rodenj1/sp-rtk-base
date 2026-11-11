@@ -100,7 +100,8 @@ exports its latest snapshot and never reads the host itself. What the
 dashboard's Network card shows, and the sampler's limitations, are in
 [`docs/network-links.md`](../network-links.md). Labels are
 `interface` (such as `eth0`, `wlan0`) and `kind` (`ethernet` or `wifi`);
-the `ethernet_*` and `wifi_*` metrics carry only `interface`. No SSID, BSSID, MAC or IP
+the `ethernet_*` and `wifi_*` metrics carry only `interface` (bar
+`wifi_link_band`, which adds `band`). No SSID, BSSID, MAC or IP
 address appears in any label.
 
 | Metric | Type | Unit | Labels | Value |
@@ -121,6 +122,7 @@ address appears in any label.
 | `sp_rtk_base_wifi_tx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames sent; NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_rx_bitrate_bits_per_second` | gauge | bits/s | `interface` | bitrate of the last frames received; NaN when Disconnected or No reading |
 | `sp_rtk_base_wifi_tx_failed_total` | counter | frames | `interface` | frames the access point never acknowledged, as the driver counts them; resets with each association |
+| `sp_rtk_base_wifi_link_band` | gauge (info-style) | — | `interface`, `band` | always 1; `band` is the Wi-Fi link band the link is associated on, from its channel frequency: `2.4GHz` (2400–2500 MHz), `5GHz` (5150–5925 MHz) or `6GHz` (5925–7125 MHz), each including its lower edge only; no series when Disconnected, on No reading, or outside every band |
 | `sp_rtk_base_network_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every source read (nl80211 for every Wi-Fi interface too); NaN before the first |
 
 **Missing values.**
@@ -132,6 +134,12 @@ address appears in any label.
   appears once a successful read gives it while the link is up.
 - **Counters never go NaN.** During No reading (and, for
   `wifi_tx_failed_total`, while Disconnected) they hold their last value.
+- **`wifi_link_band` disappears instead of going NaN.** It's an info
+  metric: its series *is* its value (the `band` label), so a NaN series
+  would still claim a band. With no current in-band frequency
+  (Disconnected, No reading, or a frequency outside every band) it has
+  no series, and it reappears, possibly with another `band`, on the next
+  in-band reading.
 - **Wi-Fi details come from nl80211 on their own.** If it fails, only the
   `wifi_*` gauges go NaN; the link's state and kernel counters stay current.
 - **Interfaces coming and going:** when an interface vanishes (say a USB
@@ -166,6 +174,11 @@ min_over_time(sp_rtk_base_wifi_link_strength[5m]) == 2
 
 # Wi-Fi fallen back to slow rates: under 20 Mbit/s sent for 10 min
 max_over_time(sp_rtk_base_wifi_tx_bitrate_bits_per_second[10m]) < 20e6
+
+# Wi-Fi link strength split by Wi-Fi link band: one series per base,
+# interface and band (absent while the link has no band)
+sp_rtk_base_wifi_link_strength_dbm
+  * on(base, interface) group_left(band) sp_rtk_base_wifi_link_band
 
 # Which link is the Uplink
 sp_rtk_base_network_link_uplink == 1

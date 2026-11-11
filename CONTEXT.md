@@ -148,6 +148,12 @@ network locked to a band it isn't being heard on can't be joined. Only an
 appliance owns its Wi-Fi bands; it has nothing to do with the setup AP.
 _Avoid_: band preference, frequency, 5 GHz toggle
 
+**Wi-Fi link band**:
+The radio band a Wi-Fi link is associated on right now, taken from its
+channel frequency: **2.4 GHz**, **5 GHz** or **6 GHz**. Distinct from a
+**Wi-Fi band**, which is a saved network's Auto / 2.4 GHz / 5 GHz setting.
+_Avoid_: band (unqualified), channel
+
 **Not supported** / **Disconnected** / **No reading**:
 The three reasons a Network link reading has no current value. **Not
 supported**: the hardware or its driver never gives this reading (for

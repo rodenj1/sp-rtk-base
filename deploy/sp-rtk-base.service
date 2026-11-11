@@ -47,9 +47,6 @@ DevicePolicy=auto
 # PrivateNetwork= must never be added: either silently leaves every
 # Network link with No reading. The sampler must not move into the Portal
 # agent, whose unit blocks netlink (docs/network-links.md).
-# The host sampler reads /proc and /sys/class/thermal for Host resources.
-# ProcSubset=pid must never be added: it hides /proc's system-wide files
-# (/proc/stat, /proc/meminfo), leaving those readings with No reading.
 
 [Install]
 WantedBy=multi-user.target

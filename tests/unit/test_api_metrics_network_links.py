@@ -508,3 +508,99 @@ async def test_wifi_readings_never_given_have_no_series() -> None:
 
     for name in (*WIFI_GAUGES, TX_FAILED):
         assert name not in samples
+
+
+# ---------------------------------------------------------------------------
+# Wi-Fi link band
+# ---------------------------------------------------------------------------
+
+BAND = "sp_rtk_base_wifi_link_band"
+
+
+def _associated_at(mhz: int) -> WifiReading:
+    return ASSOCIATED.model_copy(update={"frequency_mhz": mhz})
+
+
+@pytest.mark.asyncio()
+async def test_wifi_link_band_is_one_labelled_with_the_interface_and_band() -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(ASSOCIATED,))))
+
+    assert samples[BAND] == [
+        Sample("gauge", {"interface": "wlan0", "band": "5GHz"}, 1.0)
+    ]
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("mhz", "band"),
+    [
+        (2400, "2.4GHz"),
+        (2437, "2.4GHz"),
+        (2499, "2.4GHz"),
+        (5150, "5GHz"),
+        (5745, "5GHz"),
+        (5924, "5GHz"),
+        (5925, "6GHz"),
+        (6115, "6GHz"),
+        (7124, "6GHz"),
+    ],
+)
+async def test_wifi_link_band_is_named_from_the_channel_frequency(
+    mhz: int, band: str
+) -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(_associated_at(mhz),))))
+
+    assert samples[BAND] == [Sample("gauge", {"interface": "wlan0", "band": band}, 1.0)]
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize("mhz", [2399, 2500, 5149, 7125, 58320])
+async def test_wifi_link_band_has_no_series_outside_every_band(mhz: int) -> None:
+    samples = _scrape(await _fed(_reading(WLAN0, wifi=(_associated_at(mhz),))))
+
+    assert BAND not in samples
+    assert _value(samples, FREQUENCY, "wlan0") == mhz * 1e6
+
+
+@pytest.mark.asyncio()
+async def test_wifi_link_band_has_no_series_when_disconnected() -> None:
+    samples = _scrape(
+        await _fed(
+            _reading(WLAN0, wifi=(ASSOCIATED,)),
+            _reading(WLAN0_DORMANT, wifi=(UNASSOCIATED,)),
+        )
+    )
+
+    assert BAND not in samples
+    assert math.isnan(_value(samples, FREQUENCY, "wlan0"))
+
+
+@pytest.mark.asyncio()
+async def test_wifi_link_band_has_no_series_on_no_reading() -> None:
+    samples = _scrape(
+        await _fed(_reading(WLAN0, wifi=(ASSOCIATED,)), _reading(WLAN0, wifi=None))
+    )
+
+    assert BAND not in samples
+    assert math.isnan(_value(samples, FREQUENCY, "wlan0"))
+
+
+@pytest.mark.asyncio()
+async def test_wifi_link_band_has_no_series_once_the_sample_is_too_old() -> None:
+    clock = _Clock()
+    service = await _fed(_reading(WLAN0, wifi=(ASSOCIATED,)), clock=clock)
+    clock.now += 30.0  # the sampler stopped: everything is No reading
+
+    samples = _scrape(service)
+
+    assert BAND not in samples
+
+
+@pytest.mark.asyncio()
+async def test_the_wifi_gauges_keep_interface_as_their_only_label() -> None:
+    samples = _scrape(await _fed(_reading(ETH0, WLAN0, wifi=(ASSOCIATED,))))
+
+    assert BAND in samples
+    for name, series in samples.items():
+        if name.startswith("sp_rtk_base_wifi_") and name != BAND:
+            assert [sample.labels for sample in series] == [{"interface": "wlan0"}]

@@ -265,3 +265,135 @@ class TestBaseVariable:
 
         assert links
         assert all("var-base=${__data.fields.base:percentencode}" in u for u in links)
+
+
+def _organize() -> dict[str, Any]:
+    [organize] = [
+        t["options"]
+        for t in _fleet_overview()["transformations"]
+        if t["id"] == "organize"
+    ]
+    return organize
+
+
+def _label_column(expr: str) -> str | None:
+    """The label a ``max by (base, <label>) (...)`` query carries its column
+    in, or ``None`` for a query whose value is the column."""
+    match = re.match(r"\s*max by \(base, (\w+)\)", expr)
+    return match.group(1) if match else None
+
+
+class TestFleetOverviewColumns:
+    def test_a_label_column_is_shown_from_its_label_not_its_value(self) -> None:
+        # A label-carried column's value is always 1 (an info-style metric)
+        # or meaningless (count_values), so the column must show the label.
+        organize = _organize()
+        label_columns = {
+            t["refId"]: label
+            for t in _fleet_overview()["targets"]
+            if (label := _label_column(t["expr"])) is not None
+        }
+
+        assert "version" in label_columns.values()
+        for ref, label in label_columns.items():
+            assert organize["excludeByName"].get(f"Value #{ref}") is True, ref
+            assert f"Value #{ref}" not in organize["renameByName"], ref
+            assert label in organize["indexByName"], label
+            assert label in organize["renameByName"], label
+
+    def test_the_version_column_comes_from_the_version_label(self) -> None:
+        organize = _organize()
+
+        [field] = [
+            f for f, name in organize["renameByName"].items() if name == "Version"
+        ]
+        assert field == "version"
+        assert organize["indexByName"]["version"] == 16
+
+
+def _wifi_colour(text: str) -> str | None:
+    """The colour Grafana gives a Fleet overview Wi-Fi link cell: the first
+    regex mapping that matches, in order, as Grafana applies them."""
+    [override] = [
+        o
+        for o in _fleet_overview()["fieldConfig"]["overrides"]
+        if o["matcher"]["options"] == "Wi-Fi link"
+    ]
+    [mappings] = [p["value"] for p in override["properties"] if p["id"] == "mappings"]
+    for mapping in mappings:
+        if mapping["type"] == "regex" and re.search(
+            mapping["options"]["pattern"], text
+        ):
+            return str(mapping["options"]["result"]["color"])
+    return None
+
+
+GREY = "#8e8e8e"
+
+
+class TestFleetOverviewWifiColours:
+    # Good at -67 dBm or above, Marginal below that down to -77, Poor below
+    # -77 (network_link/monitor.py's GOOD_DBM and MARGINAL_DBM).  The
+    # reading is whole dBm today, but the regexes stay right for a
+    # fractional one, so a driver that reports one can't uncolour the cell.
+    @pytest.mark.parametrize(
+        ("dbm", "colour"),
+        [
+            ("-5", "green"),
+            ("-30", "green"),
+            ("-66.9", "green"),
+            ("-67", "green"),
+            ("-67.0", "green"),
+            ("-67.5", "yellow"),
+            ("-68", "yellow"),
+            ("-72.25", "yellow"),
+            ("-77", "yellow"),
+            ("-77.0", "yellow"),
+            ("-77.01", "red"),
+            ("-77.5", "red"),
+            ("-78", "red"),
+            ("-89.9", "red"),
+            ("-100", "red"),
+        ],
+    )
+    def test_a_reading_is_coloured_by_its_wifi_link_strength(
+        self, dbm: str, colour: str
+    ) -> None:
+        assert _wifi_colour(f"{dbm} dBm · 5GHz") == colour
+
+    @pytest.mark.parametrize(
+        "text", ["-50 dBm · 5GHz · not Uplink", "Disconnected", "No reading"]
+    )
+    def test_a_link_that_doesnt_count_is_grey(self, text: str) -> None:
+        assert _wifi_colour(text) == GREY
+
+
+def _texts(panel: dict[str, Any]) -> list[str]:
+    """Every text a panel can show in place of a value: its no-value text
+    and its value mappings' texts."""
+    defaults = panel.get("fieldConfig", {}).get("defaults", {})
+    texts = [str(defaults["noValue"])] if "noValue" in defaults else []
+    for mapping in defaults.get("mappings", []):
+        options = mapping["options"]
+        results = [options["result"]] if "result" in options else options.values()
+        texts += [str(r["text"]) for r in results if "text" in r]
+    return texts
+
+
+class TestNotApplicableAndNoReading:
+    def test_no_text_merges_not_applicable_with_no_reading(self) -> None:
+        texts = [t for p in _panels(_dashboard()["panels"]) for t in _texts(p)]
+
+        assert [t for t in texts if "n/a" in t.lower() and "reading" in t.lower()] == []
+
+    def test_the_bluetooth_link_graph_shows_no_reading_as_no_reading(self) -> None:
+        [graph] = [
+            p
+            for p in _panels(_dashboard()["panels"])
+            if p.get("title") == "Bluetooth link strength" and p["type"] == "timeseries"
+        ]
+
+        assert "No reading" in _texts(graph)
+        # The legend's value is the latest one, so a current No reading
+        # (NaN) reads as such rather than the last good median.
+        assert graph["options"]["legend"]["calcs"] == ["last"]

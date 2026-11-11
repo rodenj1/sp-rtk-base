@@ -669,7 +669,7 @@
                   {
                     "type": "regex",
                     "options": {
-                      "pattern": "^-(7[89]|[89]\\d|\\d{3}) dBm",
+                      "pattern": "^-(77\\.\\d*[1-9]\\d*|7[89](\\.\\d+)?|[89]\\d(\\.\\d+)?|\\d{3,}(\\.\\d+)?) dBm",
                       "result": {
                         "color": "red",
                         "index": 3
@@ -679,7 +679,7 @@
                   {
                     "type": "regex",
                     "options": {
-                      "pattern": "^-(6[89]|7[0-7]) dBm",
+                      "pattern": "^-(67\\.\\d*[1-9]\\d*|6[89](\\.\\d+)?|7[0-6](\\.\\d+)?|77(\\.0+)?) dBm",
                       "result": {
                         "color": "yellow",
                         "index": 4
@@ -689,7 +689,7 @@
                   {
                     "type": "regex",
                     "options": {
-                      "pattern": "^-?\\d+ dBm",
+                      "pattern": "^(-(\\d|[1-5]\\d|6[0-6])(\\.\\d+)?|-67(\\.0+)?|\\d+(\\.\\d+)?) dBm",
                       "result": {
                         "color": "green",
                         "index": 5
@@ -1233,7 +1233,8 @@
               "Value #dest": true,
               "Value #bt": true,
               "Value #uplink": true,
-              "Value #wifi": true
+              "Value #wifi": true,
+              "Value #version": true
             },
             "includeByName": {},
             "indexByName": {
@@ -1252,7 +1253,7 @@
               "Value #temp": 12,
               "Value #uv": 13,
               "Value #uptime": 14,
-              "Value #version": 15
+              "version": 16
             },
             "renameByName": {
               "base": "Base",
@@ -1270,7 +1271,7 @@
               "Value #temp": "CPU temp",
               "Value #uv": "Undervoltage 24 h",
               "Value #uptime": "Uptime",
-              "Value #version": "Version"
+              "version": "Version"
             }
           }
         },
@@ -2888,7 +2889,19 @@
             "mode": "palette-classic"
           },
           "unit": "suffix: dB",
-          "noValue": "n/a: the Input isn't Bluetooth (or no reading)"
+          "noValue": "n/a: the Input isn't Bluetooth",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "index": 0
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -2905,7 +2918,7 @@
           "placement": "bottom",
           "showLegend": true,
           "calcs": [
-            "lastNotNull"
+            "last"
           ]
         },
         "tooltip": {
@@ -3578,6 +3591,6 @@
   "timezone": "browser",
   "title": "SP-Base \u00b7 Unified Base Station Overview",
   "uid": "sp-rtk-base-overview",
-  "version": 4,
+  "version": 5,
   "weekStart": ""
 }

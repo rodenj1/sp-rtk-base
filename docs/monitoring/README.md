@@ -103,8 +103,9 @@ From the top:
    selected, its Logs row is directly below its section.
 
 Something that doesn't apply says so in words and never takes a status
-colour: Bluetooth link strength reads **n/a** on an Input that isn't
-Bluetooth, Wi-Fi reads **—** on a base with no Wi-Fi interface, and an
+colour: Bluetooth link strength reads **n/a** only on an Input that
+isn't Bluetooth (a Bluetooth Input with no current reading reads **No
+reading**, never n/a), Wi-Fi reads **—** on a base with no Wi-Fi interface, and an
 idle Wi-Fi radio behind an Ethernet Uplink reads a grey **Disconnected**
 that doesn't count against Base health.
 
@@ -133,8 +134,9 @@ Version.
 - **No reading** (a NaN gauge) and **—** (no series at all: a base on an
   older version, a reading that's Not supported, or a Down base) are both
   muted grey, never a status colour.
-- **Bluetooth link strength** reads `n/a · <kind>` when the Input isn't
-  Bluetooth (`kind` from `sp_rtk_base_input_info`).
+- **Bluetooth link strength** reads `n/a · <kind>` only when the Input
+  isn't Bluetooth (`kind` from `sp_rtk_base_input_info`); a Bluetooth
+  Input with no current reading reads **No reading**.
 - **Wi-Fi link strength** is the latest reading in dBm with the Wi-Fi link
   band, coloured Good (≥ -67 dBm), Marginal (-68 to -77) or Poor (≤ -78).
   It reads **—** with no Wi-Fi interface and a grey **Disconnected** for an
@@ -240,8 +242,9 @@ are all gauges that update on each scrape of `/metrics`.
 
 An info-style metric's series *is* its value: join on it, or read its
 label, rather than graphing it. For example, `sp_rtk_base_input_info`
-tells a Bluetooth link strength of NaN on a non-Bluetooth Input ("n/a")
-apart from one with no reading.
+tells a Bluetooth link strength of NaN on a non-Bluetooth Input (shown as
+"n/a": it doesn't apply) apart from NaN on a Bluetooth Input (shown as
+"No reading").
 
 The process metrics are the one collect-on-scrape exception: everything
 else is exported from state the app already holds (or a background

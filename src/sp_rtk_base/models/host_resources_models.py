@@ -18,7 +18,7 @@ To add a reading, add a field to both and a source to the monitor.
 
 from __future__ import annotations
 
-from typing import Final, Literal, TypeVar
+from typing import Final, Literal, TypeAlias, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -30,7 +30,7 @@ NOT_SUPPORTED: Final[NotSupported] = "Not supported"
 T = TypeVar("T")
 
 # One raw reading: its value, None (the read failed) or Not supported.
-Raw = T | NotSupported | None
+Raw: TypeAlias = Union[T, NotSupported, None]  # noqa: UP007 (mypy needs an explicit generic alias)
 
 
 class _Frozen(BaseModel):

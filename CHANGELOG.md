@@ -36,7 +36,11 @@ old layout stays only in git history. A tour is in
   separate per-destination graphs, the Hub processing rate and Usable
   satellites graphs are gone.
 - **The Base selector now lists every base Prometheus scrapes,** Down ones
-  included. The scrape job must be named `sp-rtk-base`.
+  included.
+- **A Job selector finds the scrape job by itself,** so the job can have
+  any name, such as Grafana Alloy's `prometheus.scrape.sp_rtk_base`. It
+  lists the jobs exporting sp-rtk-base metrics and picks the first; if
+  several do, pick one.
 - **Mixed fleets:** a base still on an older version reads "—" for the
   new readings and is judged on what it exports.
 

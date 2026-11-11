@@ -133,7 +133,7 @@ class TestShippedDashboard:
     ) -> None:
         exprs = _prometheus_exprs(_fleet_overview())
 
-        assert any(re.search(r'\bup\{job="sp-rtk-base"\}', e) for e in exprs)
+        assert any(re.search(r'\bup\{job="\$job"\}', e) for e in exprs)
 
     def test_no_fleet_overview_query_uses_the_base_variable(self) -> None:
         exprs = _prometheus_exprs(_fleet_overview())
@@ -236,6 +236,62 @@ class TestLayout:
         assert _dashboard()["version"] > 3
 
 
+def _variables() -> list[dict[str, Any]]:
+    return list(_dashboard()["templating"]["list"])
+
+
+def _variable_queries() -> list[str]:
+    return [
+        v["query"]["query"] if isinstance(v["query"], dict) else v["query"]
+        for v in _variables()
+        if v["type"] == "query"
+    ]
+
+
+def _all_prometheus_queries() -> list[str]:
+    return [
+        e for p in _panels(_dashboard()["panels"]) for e in _prometheus_exprs(p)
+    ] + _variable_queries()
+
+
+JOB_MATCHER = re.compile(r'\bjob\s*(?:=~|!~|!=|=)\s*"[^"]*"')
+
+
+class TestJobVariable:
+    # Prometheus names the scrape job, not the dashboard: Grafana Alloy
+    # calls it prometheus.scrape.<component>, a hand-written scrape_config
+    # whatever its author chose.  So the dashboard detects it.
+    def test_no_query_names_a_job_literally(self) -> None:
+        queries = _all_prometheus_queries()
+
+        assert queries
+        assert [q for q in queries if "sp-rtk-base" in q] == []
+
+    def test_every_job_matcher_uses_the_job_variable(self) -> None:
+        matchers = [m for q in _all_prometheus_queries() for m in JOB_MATCHER.findall(q)]
+
+        assert matchers
+        assert set(matchers) == {'job="$job"'}
+
+    def test_the_job_variable_is_detected_from_an_exported_metric(self) -> None:
+        [job] = [v for v in _variables() if v["name"] == "job"]
+        query = job["query"]["query"]
+
+        assert job["type"] == "query"
+        match = re.fullmatch(r"label_values\((\w+), job\)", query)
+        assert match
+        assert match.group(1) in _exported_names()
+        assert job["multi"] is False
+        assert job["includeAll"] is False
+        assert job["hide"] == 0
+        assert job["refresh"] == 2
+
+    def test_the_job_variable_comes_before_base_which_depends_on_it(self) -> None:
+        names = [v["name"] for v in _variables()]
+
+        assert names.index("job") < names.index("base")
+
+
 def _base_variable() -> dict[str, Any]:
     [variable] = [v for v in _dashboard()["templating"]["list"] if v["name"] == "base"]
     return variable
@@ -247,7 +303,7 @@ class TestBaseVariable:
     ) -> None:
         query = _base_variable()["query"]["query"]
 
-        assert re.search(r'\bup\{job="sp-rtk-base"\}', query)
+        assert re.search(r'\bup\{job="\$job"\}', query)
 
     def test_its_query_selects_only_exported_metrics_or_scrape_status(self) -> None:
         names = metric_names(_base_variable()["query"]["query"])

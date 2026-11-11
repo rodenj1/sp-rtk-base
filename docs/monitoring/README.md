@@ -14,7 +14,7 @@ same port as the UI (8080 by default).  This directory contains:
 1. **Tell Prometheus to scrape sp-rtk-base.**  Paste the contents of
    `prometheus-scrape-config.example.yml` into your `prometheus.yml`'s
    `scrape_configs:` list and adjust the target + `base:` label.
-   Keep the job name `sp-rtk-base` (see
+   Name the job what you like (see
    [The job name and the `base` label](#the-job-name-and-the-base-label)).
    Reload Prometheus.
 
@@ -29,27 +29,31 @@ same port as the UI (8080 by default).  This directory contains:
    ```
 
 2. **Verify the scrape is succeeding** in Prom's UI:
-   `http://your-prometheus:9090/targets` — the `sp-rtk-base` job should
+   `http://your-prometheus:9090/targets` — the job (`sp-rtk-base` above) should
    show `UP`.
 
 3. **Import the dashboard.**  In Grafana: *Dashboards → New →
    Import* → upload `grafana-dashboard-sp-rtk-base.json` → pick your
-   Prom datasource.  The **Base** dropdown at the top lists every base
-   Prometheus scrapes for the `sp-rtk-base` job, Down ones included, and
-   defaults to "All".  Keep the dashboard's UID
+   Prom datasource.  The **Job** dropdown at the top finds the scrape
+   job your bases are under by itself.  The **Base** dropdown next to it
+   lists every base Prometheus scrapes for that job, Down ones included,
+   and defaults to "All".  Keep the dashboard's UID
    (`sp-rtk-base-overview`): the Fleet overview's base links point at it.
 
 ## The job name and the `base` label
 
-Both are requirements, not suggestions:
-
-- **The scrape job must be named `sp-rtk-base`.**  The Fleet overview
-  is anchored on Prometheus's own scrape status,
-  `up{job="sp-rtk-base"}`, so that a base Prometheus can't scrape
-  keeps its row as Down; every Fleet overview query filters on that
-  job.  Under any other job name the table is empty.  There is no job
-  variable.
-- **Every target must carry a `base` label**, as below.
+- **The scrape job can have any name.**  The dashboard's **Job**
+  variable finds it: it lists the jobs that export
+  `sp_rtk_base_relay_running` and selects the first.  A hand-written
+  `scrape_config` names the job `job_name`; Grafana Alloy names it after
+  the scrape component, such as `prometheus.scrape.sp_rtk_base`.  If
+  several jobs export sp-rtk-base metrics, pick one in the Job dropdown.
+  Every query filters on `job="$job"`, and the Fleet overview is
+  anchored on Prometheus's own scrape status, `up{job="$job"}`, so that
+  a base Prometheus can't scrape keeps its row as Down.  Scrape all your
+  bases under one job: the dashboard shows one job at a time.
+- **Every target must carry a `base` label**, as below.  This one is a
+  requirement.
 
 Every panel below the Fleet overview filters with `{base=~"$base"}`.
 This lets one dashboard work whether you have:
@@ -156,7 +160,7 @@ The worst state that applies wins:
 
 | State | When | From |
 |---|---|---|
-| **Down** | Prometheus can't scrape the base | `up{job="sp-rtk-base"} == 0` |
+| **Down** | Prometheus can't scrape the base | `up{job="$job"} == 0` |
 | **Fault** | the Relay is stopped, including a deliberate stop | `sp_rtk_base_relay_running == 0` |
 | | the Input is disconnected | `sp_rtk_base_input_connected == 0` |
 | | no RTCM for over 60 s | `sp_rtk_base_input_seconds_since_last_data > 60` |
@@ -253,7 +257,7 @@ scrape. They cover only the app's own process, never the host.
 
 ```promql
 # The app's CPU use, as a share of one core
-rate(process_cpu_seconds_total{job="sp-rtk-base"}[5m])
+rate(process_cpu_seconds_total{base="home"}[5m])
 
 # Which version each base runs
 sp_rtk_base_build_info

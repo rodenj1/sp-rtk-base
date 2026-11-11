@@ -165,6 +165,15 @@ last one is too old to trust; the same meaning as Bluetooth link strength's
 "no reading". None of them is ever shown as a value, old or zero.
 _Avoid_: unavailable, stale, N/A, unknown, 0
 
+### Host resources
+
+**Host resources**:
+The base computer's own CPU, memory, temperature, power supply and storage,
+as opposed to the Relay's or a link's health. Their readings have no
+current value for the same reasons as a Network link's: **Not supported**
+or **No reading**.
+_Avoid_: system stats, health
+
 ### Bluetooth pairing
 
 **Bond**:

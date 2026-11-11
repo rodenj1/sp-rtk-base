@@ -80,7 +80,7 @@ class TestStartupServices:
     ) -> None:
         """startup_services calls init_services exactly once, then starts the
         Signal Quality and Bluetooth link strength pollers, the Network link
-        sampler and the update
+        and host samplers and the update
         check (at startup, then daily)."""
         called: list[str] = []
 
@@ -96,6 +96,11 @@ class TestStartupServices:
         )
         monkeypatch.setattr(
             services_mod.network_link_service, "start", lambda: called.append("net")
+        )
+        monkeypatch.setattr(
+            services_mod.host_resources_service,
+            "start",
+            lambda: called.append("host"),
         )
         monkeypatch.setattr(
             services_mod.update_check_service, "start", lambda: called.append("update")
@@ -121,6 +126,7 @@ class TestStartupServices:
             "sq",
             "bt",
             "net",
+            "host",
             "update",
         ]
 
@@ -171,6 +177,19 @@ class TestShutdownServicesOrdering:
     ) -> None:
         stop = AsyncMock()
         monkeypatch.setattr(services_mod.network_link_service, "stop", stop)
+
+        await shutdown_services()
+
+        stop.assert_awaited_once()
+
+    @pytest.mark.asyncio()
+    async def test_the_host_sampler_is_stopped(
+        self,
+        patched_services: tuple[MagicMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stop = AsyncMock()
+        monkeypatch.setattr(services_mod.host_resources_service, "stop", stop)
 
         await shutdown_services()
 

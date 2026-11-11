@@ -87,6 +87,8 @@ The current metric surface covers:
 - Network links (the base station's own Ethernet and Wi-Fi links and its
   Uplink, exactly as the dashboard's Network card shows them): see
   [Network links](#network-links) below.
+- Host resources (the base computer's own temperature and more): see
+  [Host resources](#host-resources) below.
 
 - Input kind, build version and the app's own process: see
   [Input kind, build version and process](#input-kind-build-version-and-process)
@@ -219,6 +221,25 @@ NaN compares false, so the last query (like any threshold on a NaN gauge)
 doesn't fire before the first full sample. To catch that too, add
 `or sp_rtk_base_network_last_sample_timestamp_seconds != sp_rtk_base_network_last_sample_timestamp_seconds`,
 which is true only for NaN.
+
+### Host resources
+
+A second background sampler, separate from the Network link one, reads
+the base computer's own **Host resources** every 2 s; each scrape exports
+its latest snapshot and never reads the host itself. A failure in one
+sampler never touches the other's freshness. No metric here has labels.
+
+| Metric | Type | Unit | Labels | Value |
+|---|---|---|---|---|
+| `sp_rtk_base_host_cpu_temperature_celsius` | gauge | °C | none | the SoC temperature, from the thermal zone whose type is `cpu-thermal` (found by type, never by zone number); NaN with No reading; absent when Not supported |
+| `sp_rtk_base_host_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every reading read (a Not supported one counts as read); NaN before the first |
+
+**Missing values.**
+
+- **Not supported:** a host with no `cpu-thermal` zone (not a Pi: a dev
+  laptop or a container) has no temperature series at all.
+- **No reading** (the read raised, or the last good one is over 6 s old)
+  makes the gauge NaN; its series stays.
 
 ## Alerts
 

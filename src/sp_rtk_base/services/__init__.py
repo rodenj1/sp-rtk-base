@@ -37,6 +37,8 @@ from sp_rtk_base.services.correction_verification import (
 )
 from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceService
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
+from sp_rtk_base.services.host_resources.reader import HostResourcesReader
+from sp_rtk_base.services.host_resources.service import HostResourcesService
 from sp_rtk_base.services.metrics_service import MetricsService
 from sp_rtk_base.services.network_link.reader import host_reader_from_env
 from sp_rtk_base.services.network_link.service import NetworkLinkService
@@ -163,6 +165,11 @@ bluetooth_link_service: BluetoothLinkService = BluetoothLinkService(
 )
 # Opens nothing until its first sample, so importing this module stays free.
 network_link_service: NetworkLinkService = NetworkLinkService(host_reader_from_env())
+# The host sampler: separate from the Network link sampler, so one failing
+# never touches the other's freshness.  Reads nothing until started.
+host_resources_service: HostResourcesService = HostResourcesService(
+    HostResourcesReader()
+)
 
 
 def _fake_gps_timing(env: str, default: float) -> float:
@@ -354,6 +361,15 @@ def get_network_link_service() -> NetworkLinkService:
         The application's NetworkLinkService (the Network link sampler).
     """
     return network_link_service
+
+
+def get_host_resources_service() -> HostResourcesService:
+    """Get the singleton HostResourcesService instance.
+
+    Returns:
+        The application's HostResourcesService (the host sampler).
+    """
+    return host_resources_service
 
 
 def get_network_service() -> NetworkService:

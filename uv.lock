@@ -2899,7 +2899,7 @@ wheels = [
 
 [[package]]
 name = "sp-rtk-base"
-version = "0.13.1"
+version = "0.13.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2947,7 +2947,7 @@ requires-dist = [
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyubx2", specifier = ">=1.2.43" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "sp-rtk-base-relay", specifier = ">=4.2.1,<5" },
+    { name = "sp-rtk-base-relay", specifier = ">=4.2.2,<5" },
     { name = "sp-rtk-portal-protocol", specifier = ">=0.9.0,<1" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=14" },
@@ -2972,7 +2972,7 @@ dev = [
 
 [[package]]
 name = "sp-rtk-base-relay"
-version = "4.2.1"
+version = "4.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dbus-fast" },
@@ -2980,9 +2980,9 @@ dependencies = [
     { name = "pyserial" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/15/70/75db2d519673b2ce50b6d48ece469011a0e78c52104d7c14087284b32349/sp_rtk_base_relay-4.2.1.tar.gz", hash = "sha256:28556b5ef72efc154b69f9f88e15ffa615870dec02dd1ba7bc92e28248bd755c", size = 125025, upload-time = "2026-10-18T06:02:18.384Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/fe/3104348070f8ae4c60b2c4872136b0609f0a4eac57aacd0359a740c2ffc8/sp_rtk_base_relay-4.2.2.tar.gz", hash = "sha256:d1f1cd094b29b29098ec37fdd1662914aba1f7b996fc86af01123b39c1fdfaf5", size = 125283, upload-time = "2026-11-11T05:55:04.427Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/7b/ea87041d7c6fc76a7bb586c9440b0235e0b1afde3ab682dc34df686de9e7/sp_rtk_base_relay-4.2.1-py3-none-any.whl", hash = "sha256:a6ff0be63acad5e65dbff6ef9bb3e17ebaf85ab71c2ce6f3d271fd3c1c5afa52", size = 136960, upload-time = "2026-10-18T06:02:16.455Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/8c/16e9aae3f6d0aa75e927f999997d8766b12b0c7ef5e89b6bf7a76e0c6d3e/sp_rtk_base_relay-4.2.2-py3-none-any.whl", hash = "sha256:65cdb156542040d7a5539c63bd3cce16e605257ef0767b8e41a1d5308b079409", size = 137259, upload-time = "2026-11-11T05:55:02.914Z" },
 ]
 
 [[package]]

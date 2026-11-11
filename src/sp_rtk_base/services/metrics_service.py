@@ -26,6 +26,7 @@ from sp_rtk_base.models.bluetooth_link_models import (
     BluetoothLinkReading,
     BluetoothLinkVerdict,
 )
+from sp_rtk_base.models.config_models import InputSource
 from sp_rtk_base.models.host_resources_models import HostResourcesSnapshot
 from sp_rtk_base.models.level_models import LEVEL_VALUE
 from sp_rtk_base.models.network_link_models import NetworkLinkSnapshot
@@ -290,7 +291,7 @@ class MetricsService:
         self.bluetooth_link_strength.set(float("nan"))
         self.bluetooth_link_median_db.set(float("nan"))
 
-    def update_input_kind(self, kind: str | None) -> None:
+    def update_input_kind(self, kind: InputSource | None) -> None:
         """Export the Input profile type *kind* (``None``: no Input profile)."""
         self.input_info.clear()
         if kind is not None:

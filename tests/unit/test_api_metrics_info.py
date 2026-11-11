@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
 
 from sp_rtk_base.app import create_api_app
-from sp_rtk_base.models.config_models import AppSettings, InputProfile
+from sp_rtk_base.models.config_models import AppSettings, InputProfile, InputSource
 from sp_rtk_base.services import (
     get_config_service,
     get_metrics_service,
@@ -62,14 +62,15 @@ class TestBuildInfo:
 class TestInputInfo:
     @pytest.mark.parametrize("kind", ["bluetooth", "serial", "tcp"])
     def test_input_info_is_one_labelled_with_the_input_profile_type(
-        self, kind: str
+        self, kind: InputSource
     ) -> None:
-        body = _scrape(InputProfile(source=kind))  # type: ignore[arg-type]
+        body = _scrape(InputProfile(source=kind))
 
         assert _samples(body, "sp_rtk_base_input_info") == [({"kind": kind}, 1.0)]
 
     def test_a_saved_usb_serial_profile_is_exported_as_serial(self) -> None:
-        body = _scrape(InputProfile(source="usb_serial"))  # type: ignore[arg-type]
+        # Not an InputSource: only a saved profile's JSON can still say it.
+        body = _scrape(InputProfile.model_validate({"source": "usb_serial"}))
 
         assert _samples(body, "sp_rtk_base_input_info") == [({"kind": "serial"}, 1.0)]
 

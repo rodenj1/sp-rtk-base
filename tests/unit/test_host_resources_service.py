@@ -9,7 +9,15 @@ import pytest
 from sp_rtk_base.models.host_resources_models import HostResourcesReading
 from sp_rtk_base.services.host_resources.service import HostResourcesService
 
-READING = HostResourcesReading(cpu_temperature_millicelsius=50_000)
+# A sample in which every reading read.
+READING = HostResourcesReading(
+    cpu_seconds={"user": 100.0, "idle": 900.0},
+    memory_total_bytes=4_000_000_000,
+    memory_available_bytes=3_000_000_000,
+    cpu_temperature_millicelsius=50_000,
+    root_filesystem_size_bytes=32_000_000_000,
+    root_filesystem_available_bytes=20_000_000_000,
+)
 
 
 class Clock:

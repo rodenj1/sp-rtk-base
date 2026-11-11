@@ -41,19 +41,40 @@ class HostResourcesReading(_Frozen):
     """One sample of every Host resources reading.  The default, every
     field ``None``, is a sample in which every read failed."""
 
+    # Seconds of CPU time since boot by mode, summed over every core, from
+    # the aggregate ``cpu`` line of ``/proc/stat``.
+    cpu_seconds: Raw[dict[str, float]] = None
+    # ``/proc/meminfo`` ``MemTotal`` and ``MemAvailable`` (the kernel's
+    # estimate, not ``MemFree``), in bytes.
+    memory_total_bytes: Raw[int] = None
+    memory_available_bytes: Raw[int] = None
     # The ``cpu-thermal`` thermal zone's ``temp``, in millidegrees Celsius.
     cpu_temperature_millicelsius: Raw[int] = None
+    # The root filesystem's size and the space a non-root user can use, in
+    # bytes, from ``statvfs("/")``.
+    root_filesystem_size_bytes: Raw[int] = None
+    root_filesystem_available_bytes: Raw[int] = None
 
 
 class HostResourcesSnapshot(_Frozen):
     """The Host resources now.
 
-    A reading's field is ``None`` when it is Not supported (or not yet
-    known to be supported), and a :class:`Supported` whose ``value`` is
-    ``None`` while it has no current reading.
+    A :class:`Supported` field is ``None`` when its reading is Not
+    supported (or not yet known to be supported), and a
+    :class:`Supported` whose ``value`` is ``None`` while it has no current
+    reading.  A plain ``float`` field is for a reading every host has:
+    ``None`` is No reading.
     """
 
+    # A counter, by mode: each mode's total never goes backwards and holds
+    # through No reading.  None before the first reading.
+    cpu_seconds: dict[str, float] | None = None
+    # Every host has these: ``None`` is No reading (NaN), never Not supported.
+    memory_total_bytes: float | None = None
+    memory_available_bytes: float | None = None
     cpu_temperature_celsius: Supported[float] | None = None
+    root_filesystem_size_bytes: float | None = None
+    root_filesystem_available_bytes: float | None = None
     # Seconds since the last sample in which every reading read; None
     # before the first.
     last_sample_age_seconds: float | None = None

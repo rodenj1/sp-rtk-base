@@ -5,18 +5,18 @@ endpoint handed it and builds every family from that on each scrape, so
 it never reads the host, and a Not supported reading's series simply
 isn't built.
 
-To add a metric, add a row to :data:`GAUGES` and to the Host resources
-metric table in ``docs/monitoring/README.md``.
+To add a metric, add a row to :data:`GAUGES` (or :data:`COUNTERS`) and
+to the Host resources metric table in ``docs/monitoring/README.md``.
 """
 
 from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
-from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.metrics_core import Metric
 
 from sp_rtk_base.models.host_resources_models import HostResourcesSnapshot
@@ -34,6 +34,28 @@ class Gauge:
     name: str
     documentation: str
     value: Callable[[HostResourcesSnapshot, float], float | None]
+
+
+@dataclass(frozen=True)
+class Counter:
+    """A counter, whose totals hold through No reading and are never NaN.
+
+    ``name`` has no ``_total``: the exposition adds it.  ``labels`` are
+    the label names, ``()`` for none.  ``totals`` gets the snapshot and
+    gives each series' total keyed by its label values (``{(): total}``
+    with no labels), or ``None`` for no series at all (Not supported, or
+    nothing counted yet).
+    """
+
+    name: str
+    documentation: str
+    labels: tuple[str, ...]
+    totals: Callable[[HostResourcesSnapshot], Mapping[tuple[str, ...], float] | None]
+
+
+def _bytes(value: float | None) -> float:
+    """NaN with No reading."""
+    return NAN if value is None else value
 
 
 def _supported_value(field: Supported[float] | None) -> float | None:
@@ -54,16 +76,58 @@ def _last_sample_timestamp(snapshot: HostResourcesSnapshot, now: float) -> float
 
 GAUGES: tuple[Gauge, ...] = (
     Gauge(
+        "host_memory_total_bytes",
+        "Total usable RAM in bytes, from /proc/meminfo MemTotal (NaN: No reading)",
+        lambda snapshot, _: _bytes(snapshot.memory_total_bytes),
+    ),
+    Gauge(
+        "host_memory_available_bytes",
+        "RAM available to start new applications without swapping in bytes, the "
+        "kernel's MemAvailable estimate (NaN: No reading)",
+        lambda snapshot, _: _bytes(snapshot.memory_available_bytes),
+    ),
+    Gauge(
         "host_cpu_temperature_celsius",
         "CPU temperature in degrees Celsius, from the cpu-thermal thermal zone "
         "(NaN: No reading; absent: Not supported)",
         _cpu_temperature,
     ),
     Gauge(
+        "host_root_filesystem_size_bytes",
+        "Size of the root filesystem in bytes (NaN: No reading)",
+        lambda snapshot, _: _bytes(snapshot.root_filesystem_size_bytes),
+    ),
+    Gauge(
+        "host_root_filesystem_available_bytes",
+        "Space on the root filesystem a non-root user can use, in bytes "
+        "(NaN: No reading)",
+        lambda snapshot, _: _bytes(snapshot.root_filesystem_available_bytes),
+    ),
+    Gauge(
         "host_last_sample_timestamp_seconds",
         "Unix time of the last Host resources sample in which every reading "
         "read (NaN before the first)",
         _last_sample_timestamp,
+    ),
+)
+
+
+def _cpu_seconds(
+    snapshot: HostResourcesSnapshot,
+) -> dict[tuple[str, ...], float] | None:
+    if snapshot.cpu_seconds is None:
+        return None
+    return {(mode,): total for mode, total in snapshot.cpu_seconds.items()}
+
+
+COUNTERS: tuple[Counter, ...] = (
+    Counter(
+        "host_cpu_seconds",
+        "CPU time since boot in seconds by mode, summed over every core, from "
+        "the aggregate cpu line of /proc/stat (holds through No reading; a "
+        "mode that falls, as iowait can, is clamped)",
+        ("mode",),
+        _cpu_seconds,
     ),
 )
 
@@ -102,3 +166,13 @@ class HostResourcesCollector:
             if value is not None and not describe:
                 family.add_metric((), value)
             yield family
+        for counter in COUNTERS:
+            counter_family = CounterMetricFamily(
+                f"{self._namespace}_{counter.name}",
+                counter.documentation,
+                labels=counter.labels,
+            )
+            totals = None if describe else counter.totals(snapshot)
+            for label_values, total in (totals or {}).items():
+                counter_family.add_metric(label_values, total)
+            yield counter_family

@@ -40,10 +40,23 @@ def test_cpu_temperature_is_converted_from_millidegrees_to_celsius() -> None:
     assert temperature.value == 48.312
 
 
+def _reading(**fields: object) -> HostResourcesReading:
+    """A sample in which every reading read, but for *fields*."""
+    good: dict[str, object] = {
+        "cpu_seconds": {"user": 100.0, "idle": 900.0},
+        "memory_total_bytes": 4_000_000_000,
+        "memory_available_bytes": 3_000_000_000,
+        "cpu_temperature_millicelsius": 50_000,
+        "root_filesystem_size_bytes": 32_000_000_000,
+        "root_filesystem_available_bytes": 20_000_000_000,
+    }
+    return HostResourcesReading.model_validate(good | fields)
+
+
 def _temperature(
     millicelsius: int | NotSupported | None = 50_000,
 ) -> HostResourcesReading:
-    return HostResourcesReading(cpu_temperature_millicelsius=millicelsius)
+    return _reading(cpu_temperature_millicelsius=millicelsius)
 
 
 def test_a_host_with_no_cpu_thermal_zone_has_no_temperature_reading() -> None:
@@ -137,3 +150,122 @@ def test_a_not_supported_reading_still_makes_a_full_sample() -> None:
     monitor.observe(_temperature(NOT_SUPPORTED), clock.tick())
 
     assert monitor.snapshot(clock.now).last_sample_age_seconds == 0.0
+
+
+def _cpu(**seconds: float) -> HostResourcesReading:
+    return HostResourcesReading(cpu_seconds=seconds)
+
+
+def test_cpu_seconds_are_the_latest_totals_by_mode() -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_cpu(user=100.0, idle=900.0), clock.tick())
+    monitor.observe(_cpu(user=101.5, idle=902.0), clock.tick())
+
+    assert monitor.snapshot(clock.now).cpu_seconds == {"user": 101.5, "idle": 902.0}
+
+
+def test_an_iowait_total_that_falls_is_clamped_and_then_grows_again() -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_cpu(iowait=50.0), clock.tick())
+    monitor.observe(_cpu(iowait=48.0), clock.tick())
+    held = monitor.snapshot(clock.now).cpu_seconds
+    monitor.observe(_cpu(iowait=49.5), clock.tick())
+
+    assert held == {"iowait": 50.0}
+    # It grows by the 1.5 s since the fall, never back down to 48.
+    assert monitor.snapshot(clock.now).cpu_seconds == {"iowait": 51.5}
+
+
+def test_cpu_seconds_hold_their_last_totals_through_no_reading() -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_reading(cpu_seconds={"user": 100.0}), clock.tick())
+    monitor.observe(_reading(cpu_seconds=None), clock.tick())
+
+    snapshot = monitor.snapshot(clock.now + 60.0)
+    assert snapshot.cpu_seconds == {"user": 100.0}
+    assert snapshot.last_sample_age_seconds == 62.0
+
+
+def test_before_any_cpu_reading_there_are_no_cpu_seconds() -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_reading(cpu_seconds=None), clock.tick())
+
+    assert monitor.snapshot(clock.now).cpu_seconds is None
+
+
+def test_memory_and_root_filesystem_figures_are_in_bytes() -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(
+        _reading(
+            memory_total_bytes=3_980_000_000,
+            memory_available_bytes=2_100_000_000,
+            root_filesystem_size_bytes=31_000_000_000,
+            root_filesystem_available_bytes=24_500_000_000,
+        ),
+        clock.tick(),
+    )
+
+    snapshot = monitor.snapshot(clock.now)
+    assert snapshot.memory_total_bytes == 3_980_000_000
+    assert snapshot.memory_available_bytes == 2_100_000_000
+    assert snapshot.root_filesystem_size_bytes == 31_000_000_000
+    assert snapshot.root_filesystem_available_bytes == 24_500_000_000
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "memory_total_bytes",
+        "memory_available_bytes",
+        "root_filesystem_size_bytes",
+        "root_filesystem_available_bytes",
+    ],
+)
+def test_a_failed_memory_or_filesystem_read_is_no_reading(field: str) -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_reading(), clock.tick())
+    monitor.observe(_reading(**{field: None}), clock.tick())
+
+    snapshot = monitor.snapshot(clock.now)
+    assert getattr(snapshot, field) is None
+    assert snapshot.last_sample_age_seconds == 2.0
+
+
+@pytest.mark.parametrize(("seconds_later", "current"), [(6.0, True), (6.1, False)])
+def test_memory_and_filesystem_figures_over_6_s_old_are_no_reading(
+    seconds_later: float, current: bool
+) -> None:
+    clock = Clock()
+    monitor = HostResourcesMonitor()
+
+    monitor.observe(_reading(), clock.tick())
+
+    snapshot = monitor.snapshot(clock.now + seconds_later)
+    figures = [
+        snapshot.memory_total_bytes,
+        snapshot.memory_available_bytes,
+        snapshot.root_filesystem_size_bytes,
+        snapshot.root_filesystem_available_bytes,
+    ]
+    assert all((figure is not None) is current for figure in figures)
+
+
+def test_before_any_reading_memory_and_filesystem_are_no_reading() -> None:
+    monitor = HostResourcesMonitor()
+
+    snapshot = monitor.snapshot(1000.0)
+
+    assert snapshot.memory_total_bytes is None
+    assert snapshot.root_filesystem_available_bytes is None

@@ -38,6 +38,13 @@ from sp_rtk_base.services.relay_service import RelayService
 WALL_NOW = 1_800_000_000.0
 TEMPERATURE = "sp_rtk_base_host_cpu_temperature_celsius"
 TIMESTAMP = "sp_rtk_base_host_last_sample_timestamp_seconds"
+CPU_SECONDS = "sp_rtk_base_host_cpu_seconds_total"
+BYTES_GAUGES = (
+    "sp_rtk_base_host_memory_total_bytes",
+    "sp_rtk_base_host_memory_available_bytes",
+    "sp_rtk_base_host_root_filesystem_size_bytes",
+    "sp_rtk_base_host_root_filesystem_available_bytes",
+)
 NETWORK_TIMESTAMP = "sp_rtk_base_network_last_sample_timestamp_seconds"
 
 
@@ -68,6 +75,19 @@ class _FailingNetworkHost:
 
     def close(self) -> None:
         pass
+
+
+def _reading(**fields: object) -> HostResourcesReading:
+    """A sample in which every reading read, but for *fields*."""
+    good: dict[str, object] = {
+        "cpu_seconds": {"user": 100.0, "idle": 900.0},
+        "memory_total_bytes": 4_000_000_000,
+        "memory_available_bytes": 3_000_000_000,
+        "cpu_temperature_millicelsius": 50_000,
+        "root_filesystem_size_bytes": 32_000_000_000,
+        "root_filesystem_available_bytes": 20_000_000_000,
+    }
+    return HostResourcesReading.model_validate(good | fields)
 
 
 async def _fed(
@@ -132,7 +152,7 @@ async def test_the_cpu_temperature_is_an_unlabelled_gauge_in_celsius() -> None:
 @pytest.mark.asyncio()
 async def test_a_host_with_no_cpu_thermal_zone_has_no_temperature_series() -> None:
     samples = await _scrape(
-        await _fed(HostResourcesReading(cpu_temperature_millicelsius=NOT_SUPPORTED))
+        await _fed(_reading(cpu_temperature_millicelsius=NOT_SUPPORTED))
     )
 
     assert TEMPERATURE not in samples
@@ -176,9 +196,7 @@ async def test_a_temperature_over_6_s_old_is_nan() -> None:
 async def test_the_timestamp_is_the_unix_time_of_the_last_full_sample() -> None:
     clock = _Clock()
     service = await _fed(
-        HostResourcesReading(cpu_temperature_millicelsius=50_000),
-        HostResourcesReading(cpu_temperature_millicelsius=None),
-        clock=clock,
+        _reading(), _reading(cpu_temperature_millicelsius=None), clock=clock
     )
     clock.now += 1.5
 
@@ -199,9 +217,7 @@ async def test_before_any_sample_there_is_no_temperature_and_no_timestamp() -> N
 
 @pytest.mark.asyncio()
 async def test_a_failing_network_link_sampler_leaves_the_host_sample_fresh() -> None:
-    samples = await _scrape(
-        await _fed(HostResourcesReading(cpu_temperature_millicelsius=50_000))
-    )
+    samples = await _scrape(await _fed(_reading()))
 
     (network_timestamp,) = samples[NETWORK_TIMESTAMP]
     assert math.isnan(network_timestamp.value)
@@ -218,3 +234,99 @@ async def test_scraping_never_reads_the_host() -> None:
     samples = await _scrape(service)
 
     assert math.isnan(samples[TIMESTAMP][0].value)
+
+
+@pytest.mark.asyncio()
+async def test_cpu_seconds_are_a_counter_by_mode_with_no_per_core_label() -> None:
+    samples = await _scrape(
+        await _fed(_reading(cpu_seconds={"user": 101.5, "idle": 902.0, "iowait": 3.0}))
+    )
+
+    assert sorted(samples[CPU_SECONDS], key=lambda s: s.labels["mode"]) == [
+        Sample("counter", "", {"mode": "idle"}, 902.0),
+        Sample("counter", "", {"mode": "iowait"}, 3.0),
+        Sample("counter", "", {"mode": "user"}, 101.5),
+    ]
+
+
+@pytest.mark.asyncio()
+async def test_cpu_seconds_never_go_backwards_when_iowait_falls() -> None:
+    samples = await _scrape(
+        await _fed(
+            _reading(cpu_seconds={"iowait": 50.0}),
+            _reading(cpu_seconds={"iowait": 48.0}),
+        )
+    )
+
+    assert samples[CPU_SECONDS] == [Sample("counter", "", {"mode": "iowait"}, 50.0)]
+
+
+@pytest.mark.parametrize(
+    "failure", [_reading(cpu_seconds=None), RuntimeError("the whole read raised")]
+)
+@pytest.mark.asyncio()
+async def test_cpu_seconds_hold_their_last_value_through_no_reading(
+    failure: HostResourcesReading | Exception,
+) -> None:
+    clock = _Clock()
+    service = await _fed(_reading(cpu_seconds={"user": 100.0}), failure, clock=clock)
+    clock.now += 60.0
+
+    samples = await _scrape(service)
+
+    assert samples[CPU_SECONDS] == [Sample("counter", "", {"mode": "user"}, 100.0)]
+
+
+@pytest.mark.asyncio()
+async def test_before_any_sample_there_are_no_cpu_seconds() -> None:
+    samples = await _scrape(await _fed())
+
+    assert CPU_SECONDS not in samples
+
+
+@pytest.mark.asyncio()
+async def test_memory_and_root_filesystem_are_unlabelled_gauges_in_bytes() -> None:
+    samples = await _scrape(
+        await _fed(
+            _reading(
+                memory_total_bytes=3_980_000_000,
+                memory_available_bytes=2_100_000_000,
+                root_filesystem_size_bytes=31_000_000_000,
+                root_filesystem_available_bytes=24_500_000_000,
+            )
+        )
+    )
+
+    assert {name: samples[name] for name in BYTES_GAUGES} == {
+        "sp_rtk_base_host_memory_total_bytes": [Sample("gauge", "", {}, 3_980_000_000)],
+        "sp_rtk_base_host_memory_available_bytes": [
+            Sample("gauge", "", {}, 2_100_000_000)
+        ],
+        "sp_rtk_base_host_root_filesystem_size_bytes": [
+            Sample("gauge", "", {}, 31_000_000_000)
+        ],
+        "sp_rtk_base_host_root_filesystem_available_bytes": [
+            Sample("gauge", "", {}, 24_500_000_000)
+        ],
+    }
+
+
+@pytest.mark.parametrize("name", BYTES_GAUGES)
+@pytest.mark.asyncio()
+async def test_a_failed_memory_or_filesystem_read_is_nan_with_the_series_kept(
+    name: str,
+) -> None:
+    field = name.removeprefix("sp_rtk_base_host_")
+    samples = await _scrape(await _fed(_reading(), _reading(**{field: None})))
+
+    (gauge,) = samples[name]
+    assert math.isnan(gauge.value)
+
+
+@pytest.mark.asyncio()
+async def test_before_any_sample_memory_and_filesystem_are_nan() -> None:
+    samples = await _scrape(await _fed())
+
+    for name in BYTES_GAUGES:
+        (gauge,) = samples[name]
+        assert math.isnan(gauge.value)

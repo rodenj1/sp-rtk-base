@@ -227,11 +227,17 @@ which is true only for NaN.
 A second background sampler, separate from the Network link one, reads
 the base computer's own **Host resources** every 2 s; each scrape exports
 its latest snapshot and never reads the host itself. A failure in one
-sampler never touches the other's freshness. No metric here has labels.
+sampler never touches the other's freshness. Only the CPU time counter
+has a label (`mode`); there is no per-core breakdown.
 
 | Metric | Type | Unit | Labels | Value |
 |---|---|---|---|---|
+| `sp_rtk_base_host_cpu_seconds_total` | counter | seconds | `mode` | CPU time since boot by mode (`user`, `nice`, `system`, `idle`, `iowait`, `irq`, `softirq`, `steal`; fewer on older kernels), summed over every core, from the aggregate `cpu` line of `/proc/stat`. Guest time is already inside `user` and `nice`. A mode whose kernel total falls (iowait can) is clamped: it never goes backwards. Holds its last value with No reading; absent before the first reading |
+| `sp_rtk_base_host_memory_total_bytes` | gauge | bytes | none | total usable RAM (`MemTotal`); NaN with No reading |
+| `sp_rtk_base_host_memory_available_bytes` | gauge | bytes | none | the kernel's estimate of RAM available to start new applications without swapping (`MemAvailable`, not `MemFree`); no swap; NaN with No reading |
 | `sp_rtk_base_host_cpu_temperature_celsius` | gauge | °C | none | the SoC temperature, from the thermal zone whose type is `cpu-thermal` (found by type, never by zone number); NaN with No reading; absent when Not supported |
+| `sp_rtk_base_host_root_filesystem_size_bytes` | gauge | bytes | none | size of the root filesystem; NaN with No reading |
+| `sp_rtk_base_host_root_filesystem_available_bytes` | gauge | bytes | none | space on the root filesystem a non-root user can use (excludes the root-reserved blocks); NaN with No reading. Its read-only flag is ignored: the service unit's hardening always sets it |
 | `sp_rtk_base_host_last_sample_timestamp_seconds` | gauge | Unix seconds | none | time of the last sample in which every reading read (a Not supported one counts as read); NaN before the first |
 
 **Missing values.**
@@ -239,7 +245,22 @@ sampler never touches the other's freshness. No metric here has labels.
 - **Not supported:** a host with no `cpu-thermal` zone (not a Pi: a dev
   laptop or a container) has no temperature series at all.
 - **No reading** (the read raised, or the last good one is over 6 s old)
-  makes the gauge NaN; its series stays.
+  makes the gauge NaN; its series stays. A counter instead holds its last
+  value.
+
+**Examples.** CPU busy % over 5 minutes (everything but idle and iowait):
+
+```promql
+100 * (1 - sum by (instance) (rate(sp_rtk_base_host_cpu_seconds_total{mode=~"idle|iowait"}[5m]))
+         / sum by (instance) (rate(sp_rtk_base_host_cpu_seconds_total[5m])))
+```
+
+Memory used % and free disk:
+
+```promql
+100 * (1 - sp_rtk_base_host_memory_available_bytes / sp_rtk_base_host_memory_total_bytes)
+sp_rtk_base_host_root_filesystem_available_bytes
+```
 
 ## Alerts
 

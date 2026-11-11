@@ -10,13 +10,17 @@ Each reading is judged on its own, like a Network link source:
 * **No reading:** its latest read failed, or its last success is more
   than :data:`NO_READING_AFTER_SECONDS` old.  The value is ``None``.
 
-To add a reading, give it a :class:`_Source` and a snapshot field.
+A counter (:class:`_Counter`) instead holds its totals through No
+reading, and never goes backwards.
+
+To add a gauge reading, give it a :class:`_Source` and a snapshot field;
+to add a counter, give it a :class:`_Counter`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Hashable, Mapping
+from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 from sp_rtk_base.models.host_resources_models import (
@@ -33,6 +37,7 @@ NO_READING_AFTER_SECONDS = 3 * SAMPLE_INTERVAL_SECONDS
 
 T = TypeVar("T")
 U = TypeVar("U")
+K = TypeVar("K", bound=Hashable)
 
 
 @dataclass
@@ -61,18 +66,71 @@ class _Source(Generic[T]):
         :class:`Supported` on No reading."""
         if not self.supported:
             return None
+        return Supported[U](value=self.value_at(now, convert))
+
+    def value_at(self, now: float, convert: Callable[[T], U]) -> U | None:
+        """The reading's value at *now*, or ``None`` on No reading (for a
+        reading every host has, so never Not supported)."""
         if (
             self.failed
             or self.value is None
             or self.at is None
             or now - self.at > NO_READING_AFTER_SECONDS
         ):
-            return Supported[U]()
-        return Supported[U](value=convert(self.value))
+            return None
+        return convert(self.value)
+
+
+@dataclass
+class _Counter(Generic[K]):
+    """One counter's totals, by key (a label value, or ``()`` for a
+    counter with no labels).
+
+    Its totals hold through No reading and never go backwards: a raw
+    total that falls (``/proc/stat`` iowait can) adds nothing, and the
+    counter grows again from the new raw value.
+    """
+
+    totals: dict[K, float] = field(default_factory=dict[K, float])
+    # The last raw total per key, which the next one is measured against.
+    last: dict[K, float] = field(default_factory=dict[K, float])
+    supported: bool = False
+
+    def take(self, raw: Raw[Mapping[K, float]]) -> bool:
+        """Take one sample's raw totals since some fixed start (boot);
+        whether it read (Not supported counts as read)."""
+        if raw is None:
+            return False
+        if raw == NOT_SUPPORTED:
+            self.totals, self.last, self.supported = {}, {}, False
+            return True
+        for key, value in raw.items():
+            before = self.last.get(key)
+            if before is None:
+                self.totals.setdefault(key, value)
+            else:
+                self.add(key, max(0.0, value - before))
+            self.last[key] = value
+        self.supported = True
+        return True
+
+    def add(self, key: K, amount: float) -> None:
+        """Count *amount* more under *key* (for a counter the monitor
+        counts itself, such as events it sees)."""
+        self.supported = True
+        self.totals[key] = self.totals.get(key, 0.0) + amount
+
+    def current(self) -> dict[K, float] | None:
+        """The totals, or ``None`` if Not supported."""
+        return dict(self.totals) if self.supported else None
 
 
 def _celsius(millicelsius: int) -> float:
     return millicelsius / 1000.0
+
+
+def _float(value: int) -> float:
+    return float(value)
 
 
 class HostResourcesMonitor:
@@ -83,13 +141,25 @@ class HostResourcesMonitor:
     """
 
     def __init__(self) -> None:
+        self._cpu_seconds = _Counter[str]()
+        self._memory_total = _Source[int]()
+        self._memory_available = _Source[int]()
         self._cpu_temperature = _Source[int]()
+        self._root_filesystem_size = _Source[int]()
+        self._root_filesystem_available = _Source[int]()
         self._last_full_sample: float | None = None
 
     def observe(self, reading: HostResourcesReading, now: float) -> None:
         """Take in one sample read at monotonic time *now*."""
         read = [
+            self._cpu_seconds.take(reading.cpu_seconds),
+            self._memory_total.take(reading.memory_total_bytes, now),
+            self._memory_available.take(reading.memory_available_bytes, now),
             self._cpu_temperature.take(reading.cpu_temperature_millicelsius, now),
+            self._root_filesystem_size.take(reading.root_filesystem_size_bytes, now),
+            self._root_filesystem_available.take(
+                reading.root_filesystem_available_bytes, now
+            ),
         ]
         if all(read):
             self._last_full_sample = now
@@ -98,6 +168,13 @@ class HostResourcesMonitor:
         """The Host resources at monotonic time *now*."""
         age = None if self._last_full_sample is None else now - self._last_full_sample
         return HostResourcesSnapshot(
+            cpu_seconds=self._cpu_seconds.current(),
+            memory_total_bytes=self._memory_total.value_at(now, _float),
+            memory_available_bytes=self._memory_available.value_at(now, _float),
             cpu_temperature_celsius=self._cpu_temperature.current(now, _celsius),
+            root_filesystem_size_bytes=self._root_filesystem_size.value_at(now, _float),
+            root_filesystem_available_bytes=self._root_filesystem_available.value_at(
+                now, _float
+            ),
             last_sample_age_seconds=age,
         )

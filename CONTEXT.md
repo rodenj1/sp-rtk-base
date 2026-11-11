@@ -174,6 +174,20 @@ current value for the same reasons as a Network link's: **Not supported**
 or **No reading**.
 _Avoid_: system stats, health
 
+### Monitoring
+
+**Fleet overview**:
+The one-row-per-base summary at the top of the Grafana dashboard.
+_Avoid_: fleet table, summary, status page
+
+**Base health**:
+A base's single rollup state as the monitoring stack sees it: **OK**,
+**Degraded**, **Fault** or **Down**. Computed by the dashboard from what
+each base exports and whether Prometheus can scrape it, never exported by
+the base itself. The rule and its thresholds live in the monitoring
+README.
+_Avoid_: status, Green / Red (those are Verification outcomes), healthy
+
 ### Bluetooth pairing
 
 **Bond**:

@@ -5,7 +5,7 @@ same port as the UI (8080 by default).  This directory contains:
 
 | File | Purpose |
 |---|---|
-| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Unified Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  Templated on a `$base` variable so one dashboard works for one base station or many. |
+| [`grafana-dashboard-sp-rtk-base.json`](grafana-dashboard-sp-rtk-base.json) | Fleet Grafana dashboard.  Import into Grafana → New → Import → upload JSON.  A [Fleet overview](#fleet-overview) table at the top lists every base; the rows below follow a `$base` variable, so one dashboard works for one base station or many. |
 | [`prometheus-scrape-config.example.yml`](prometheus-scrape-config.example.yml) | Drop-in `scrape_config` snippet — point Prometheus at your sp-rtk-base instance. |
 | [`prometheus-alerts.example.yml`](prometheus-alerts.example.yml) | Example alert rules for Signal Quality: degraded for 10 minutes, or no data for 5 minutes while the Relay runs. See [Alerts](#alerts). |
 
@@ -14,6 +14,8 @@ same port as the UI (8080 by default).  This directory contains:
 1. **Tell Prometheus to scrape sp-rtk-base.**  Paste the contents of
    `prometheus-scrape-config.example.yml` into your `prometheus.yml`'s
    `scrape_configs:` list and adjust the target + `base:` label.
+   Keep the job name `sp-rtk-base` (see
+   [The job name and the `base` label](#the-job-name-and-the-base-label)).
    Reload Prometheus.
 
    ```yaml
@@ -33,12 +35,23 @@ same port as the UI (8080 by default).  This directory contains:
 3. **Import the dashboard.**  In Grafana: *Dashboards → New →
    Import* → upload `grafana-dashboard-sp-rtk-base.json` → pick your
    Prom datasource.  The **Base** dropdown at the top populates from
-   the metric labels and defaults to "All".
+   the metric labels and defaults to "All".  Keep the dashboard's UID
+   (`sp-rtk-base-overview`): the Fleet overview's base links point at it.
 
-## Why the `base` label
+## The job name and the `base` label
 
-Every panel filters with `{base=~"$base"}`.  This lets one dashboard
-work whether you have:
+Both are requirements, not suggestions:
+
+- **The scrape job must be named `sp-rtk-base`.**  The Fleet overview
+  is anchored on Prometheus's own scrape status,
+  `up{job="sp-rtk-base"}`, so that a base Prometheus can't scrape
+  keeps its row as Down; every Fleet overview query filters on that
+  job.  Under any other job name the table is empty.  There is no job
+  variable.
+- **Every target must carry a `base` label**, as below.
+
+Every panel below the Fleet overview filters with `{base=~"$base"}`.
+This lets one dashboard work whether you have:
 
 - **One base station** (`base: home`) — the dropdown shows just that one.
 - **Multiple base stations** (`base: home`, `base: field-01`, …) — pick
@@ -49,6 +62,73 @@ If you scrape without setting `base`, the dashboard's variable will
 have no values to choose from and the queries will return nothing.
 The label is just a free-text identifier — pick whatever's meaningful
 per base station (location name, callsign, antenna ID, etc.).
+
+## Fleet overview
+
+The table at the top of the dashboard has one row per base, sorted
+worst [Base health](#base-health) first and then by base name.  It
+always shows the whole fleet: it ignores the Base selector.  Click a
+base's name to set the Base selector to that base, keeping the time
+range.
+
+Each column is one instant query reduced to one series per base, and
+the rows are merged on `base`.  Columns, in order: Base, Base health,
+Relay, Input, Last RTCM, Signal Quality, Destinations (active/total),
+Bluetooth link strength, Uplink, Wi-Fi link strength, CPU %, Memory %,
+CPU temperature, Undervoltage events in the last 24 h, Relay uptime and
+Version.
+
+- **No reading** (a NaN gauge) and **—** (no series at all: a base on an
+  older version, a reading that's Not supported, or a Down base) are both
+  muted grey, never a status colour.
+- **Bluetooth link strength** reads `n/a · <kind>` when the Input isn't
+  Bluetooth (`kind` from `sp_rtk_base_input_info`).
+- **Wi-Fi link strength** is the latest reading in dBm with the Wi-Fi link
+  band, coloured Good (≥ -67 dBm), Marginal (-68 to -77) or Poor (≤ -78).
+  It reads **—** with no Wi-Fi interface and a grey **Disconnected** for an
+  idle radio (as behind an Ethernet Uplink).  A connected Wi-Fi link that
+  isn't the Uplink is greyed and marked `not Uplink`: it doesn't count
+  against Base health.  With more than one Wi-Fi interface, one is shown.
+
+## Base health
+
+A base's single rollup state as the monitoring stack sees it: **OK**,
+**Degraded**, **Fault** or **Down**.  It is computed by the Fleet
+overview's query, not exported, because a base can't report itself
+Down.  This section is the one place the rule and its thresholds are
+written down; the dashboard implements exactly this.
+
+The worst state that applies wins:
+
+| State | When | From |
+|---|---|---|
+| **Down** | Prometheus can't scrape the base | `up{job="sp-rtk-base"} == 0` |
+| **Fault** | the Relay is stopped, including a deliberate stop | `sp_rtk_base_relay_running == 0` |
+| | the Input is disconnected | `sp_rtk_base_input_connected == 0` |
+| | no RTCM for over 60 s | `sp_rtk_base_input_seconds_since_last_data > 60` |
+| **Degraded** | Signal Quality is Marginal or Poor | `sp_rtk_base_signal_quality >= 1` |
+| | an enabled Destination is disconnected | `sp_rtk_base_active_destinations < sp_rtk_base_total_destinations` |
+| | Bluetooth link strength is Poor | `sp_rtk_base_bluetooth_link_strength == 2` |
+| | Wi-Fi link strength is Poor *and* that link is the Uplink | `sp_rtk_base_wifi_link_strength == 2` on the interface where `sp_rtk_base_network_link_uplink == 1` |
+| | CPU temperature is 80 °C or above | `sp_rtk_base_host_cpu_temperature_celsius >= 80` |
+| | any undervoltage event in the last hour | `increase(sp_rtk_base_host_undervoltage_events_total[1h]) > 0` |
+| | less than 10 % of memory available | `sp_rtk_base_host_memory_available_bytes / sp_rtk_base_host_memory_total_bytes < 0.1` |
+| | less than 10 % of the root filesystem free | `sp_rtk_base_host_root_filesystem_available_bytes / sp_rtk_base_host_root_filesystem_size_bytes < 0.1` |
+| **OK** | none of the above | |
+
+- **An absent or NaN reading counts as not failing**, so a base on an older
+  version is judged on what it exports, and No reading never makes a base
+  Degraded.  (No RTCM yet, `-1`, isn't over 60 s either; a stopped Relay is
+  already a Fault.)
+- **Wi-Fi counts only on the Uplink**, so an idle or unused radio behind an
+  Ethernet Uplink never flags a base.
+- **Last RTCM** uses the same 60 s as Fault; in the table it turns amber
+  from 10 s.
+
+To tune a threshold, edit the Base health query of the Fleet overview
+panel (and this table).  Each check there is one line, labelled with
+`check`; in Grafana's *Explore*, drop the outer `max by (base)` to see
+which checks fire for a base.
 
 ## What's exposed
 

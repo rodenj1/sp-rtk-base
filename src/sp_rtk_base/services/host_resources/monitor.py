@@ -11,7 +11,8 @@ Each reading is judged on its own, like a Network link source:
   than :data:`NO_READING_AFTER_SECONDS` old.  The value is ``None``.
 
 A counter (:class:`_Counter`) instead holds its totals through No
-reading, and never goes backwards.
+reading, never goes backwards, and is absent (``None``) when Not
+supported.
 
 To add a gauge reading, give it a :class:`_Source` and a snapshot field;
 to add a counter, give it a :class:`_Counter`.
@@ -83,46 +84,78 @@ class _Source(Generic[T]):
 
 @dataclass
 class _Counter(Generic[K]):
-    """One counter's totals, by key (a label value, or ``()`` for a
-    counter with no labels).
+    """One counter's totals, by key: a label value, or ``()`` for a
+    counter with no labels.
 
-    Its totals hold through No reading and never go backwards: a raw
-    total that falls (``/proc/stat`` iowait can) adds nothing, and the
-    counter grows again from the new raw value.
+    Fed either raw totals since some fixed start (:meth:`take`, such as
+    ``/proc/stat``'s CPU ticks) or a 0/1 flag whose rises it counts
+    (:meth:`take_rises`).  Either way its totals hold through No reading,
+    never go backwards, and survive the reading going Not supported and
+    coming back; :meth:`current` hides them while it is Not supported.
     """
 
     totals: dict[K, float] = field(default_factory=dict[K, float])
-    # The last raw total per key, which the next one is measured against.
+    # The last raw value per key (a total, or the flag), which the next
+    # one is measured against.
     last: dict[K, float] = field(default_factory=dict[K, float])
     supported: bool = False
 
     def take(self, raw: Raw[Mapping[K, float]]) -> bool:
-        """Take one sample's raw totals since some fixed start (boot);
-        whether it read (Not supported counts as read)."""
-        if raw is None:
-            return False
-        if raw == NOT_SUPPORTED:
-            self.totals, self.last, self.supported = {}, {}, False
-            return True
+        """Take one sample's raw totals; whether it read (Not supported
+        counts as read).
+
+        A raw total that falls (iowait can) adds nothing, and the counter
+        grows again from the new raw value.
+        """
+        if raw is None or raw == NOT_SUPPORTED:
+            return self._unread(raw)
         for key, value in raw.items():
             before = self.last.get(key)
             if before is None:
                 self.totals.setdefault(key, value)
             else:
-                self.add(key, max(0.0, value - before))
+                self.totals[key] += max(0.0, value - before)
             self.last[key] = value
         self.supported = True
         return True
 
-    def add(self, key: K, amount: float) -> None:
-        """Count *amount* more under *key* (for a counter the monitor
-        counts itself, such as events it sees)."""
+    def take_rises(self, raw: Raw[int], key: K) -> bool:
+        """Take one sample's 0/1 flag, counting each 0 -> 1 rise under
+        *key*; whether it read.
+
+        The flag before the first read counts as 0, so a flag already
+        raised at the first sample is one rise.  A failed read neither
+        rises nor resets the flag, so a flag held across it counts once.
+        """
+        if raw is None or raw == NOT_SUPPORTED:
+            return self._unread(raw)
+        raised = bool(raw)
+        rise = raised and not self.last.get(key)
+        self.totals[key] = self.totals.get(key, 0.0) + rise
+        self.last[key] = raised
         self.supported = True
-        self.totals[key] = self.totals.get(key, 0.0) + amount
+        return True
+
+    def _unread(self, raw: Raw[object]) -> bool:
+        """A failed read (``None``) holds; Not supported hides the totals."""
+        if raw is None:
+            return False
+        self.supported = False
+        return True
 
     def current(self) -> dict[K, float] | None:
-        """The totals, or ``None`` if Not supported."""
+        """The totals, or ``None`` if Not supported (or nothing read yet)."""
         return dict(self.totals) if self.supported else None
+
+
+def _unlabelled(counter: _Counter[tuple[()]]) -> int | None:
+    """A label-less event counter's count, or ``None`` if Not supported."""
+    totals = counter.current()
+    return None if totals is None else int(totals.get((), 0))
+
+
+def _flag(value: int) -> bool:
+    return bool(value)
 
 
 def _celsius(millicelsius: int) -> float:
@@ -147,6 +180,8 @@ class HostResourcesMonitor:
         self._cpu_temperature = _Source[int]()
         self._root_filesystem_size = _Source[int]()
         self._root_filesystem_available = _Source[int]()
+        self._undervoltage = _Source[int]()
+        self._undervoltage_events = _Counter[tuple[()]]()
         self._last_full_sample: float | None = None
 
     def observe(self, reading: HostResourcesReading, now: float) -> None:
@@ -160,7 +195,9 @@ class HostResourcesMonitor:
             self._root_filesystem_available.take(
                 reading.root_filesystem_available_bytes, now
             ),
+            self._undervoltage.take(reading.undervoltage_alarm, now),
         ]
+        self._undervoltage_events.take_rises(reading.undervoltage_alarm, ())
         if all(read):
             self._last_full_sample = now
 
@@ -176,5 +213,7 @@ class HostResourcesMonitor:
             root_filesystem_available_bytes=self._root_filesystem_available.value_at(
                 now, _float
             ),
+            undervoltage=self._undervoltage.current(now, _flag),
+            undervoltage_events=_unlabelled(self._undervoltage_events),
             last_sample_age_seconds=age,
         )

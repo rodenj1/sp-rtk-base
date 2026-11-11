@@ -15,6 +15,7 @@ READING = HostResourcesReading(
     memory_total_bytes=4_000_000_000,
     memory_available_bytes=3_000_000_000,
     cpu_temperature_millicelsius=50_000,
+    undervoltage_alarm=0,
     root_filesystem_size_bytes=32_000_000_000,
     root_filesystem_available_bytes=20_000_000_000,
 )

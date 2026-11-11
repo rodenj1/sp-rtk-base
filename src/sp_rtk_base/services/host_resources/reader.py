@@ -32,6 +32,12 @@ SYSFS_THERMAL = Path("/sys/class/thermal")
 # zone numbers aren't stable (the Pi 5's RP1 and overlays add zones).
 CPU_THERMAL_TYPE = "cpu-thermal"
 
+SYSFS_HWMON = Path("/sys/class/hwmon")
+# The Pi firmware's undervoltage sensor: found by name, because hwmon
+# numbers depend on probe order.
+RPI_VOLT_NAME = "rpi_volt"
+UNDERVOLTAGE_ALARM = "in0_lcrit_alarm"
+
 PROC = Path("/proc")
 # The aggregate ``cpu`` line's columns, in order.  ``guest`` and
 # ``guest_nice`` are left out: the kernel already counts them in ``user``
@@ -61,29 +67,44 @@ def _read_text(path: Path) -> str:
 
 
 class _UnknownError(Exception):
-    """A zone's type couldn't be read, so the zone may be the one wanted."""
+    """A device's identifying file couldn't be read, so the device may be
+    the one wanted."""
 
 
-def _cpu_thermal_zone(root: Path, read: ReadFile) -> Path | None:
-    """The ``cpu-thermal`` zone under *root*, or ``None`` if there is none.
+def _find_device(
+    root: Path, pattern: str, attribute: str, wanted: str, read: ReadFile
+) -> Path | None:
+    """The device under *root* matching *pattern* whose *attribute* file
+    reads *wanted*, or ``None`` if there is none.
 
     Raises:
-        _UnknownError: there is no match, but a zone's type couldn't be read.
+        _UnknownError: there is no match, but a device's *attribute*
+            couldn't be read.
     """
     if not root.is_dir():
         return None
     unknown = False
-    for zone in sorted(root.glob("thermal_zone*")):
+    for device in sorted(root.glob(pattern)):
         try:
-            zone_type = read(zone / "type").strip()
+            value = read(device / attribute).strip()
         except OSError:
             unknown = True
             continue
-        if zone_type == CPU_THERMAL_TYPE:
-            return zone
+        if value == wanted:
+            return device
     if unknown:
         raise _UnknownError
     return None
+
+
+def _find_or_raise(
+    root: Path, pattern: str, attribute: str, wanted: str, read: ReadFile
+) -> Path | None:
+    """:func:`_find_device`, with an unknown device as an ``OSError``."""
+    try:
+        return _find_device(root, pattern, attribute, wanted, read)
+    except _UnknownError as exc:
+        raise OSError(f"a device's {attribute} couldn't be read") from exc
 
 
 def read_cpu_temperature(
@@ -95,13 +116,31 @@ def read_cpu_temperature(
     Raises:
         OSError, ValueError: the zone's temperature couldn't be read.
     """
-    try:
-        zone = _cpu_thermal_zone(root, read)
-    except _UnknownError as exc:
-        raise OSError("a thermal zone's type couldn't be read") from exc
+    zone = _find_or_raise(root, "thermal_zone*", "type", CPU_THERMAL_TYPE, read)
     if zone is None:
         return None
     return int(read(zone / "temp").strip())
+
+
+def read_undervoltage_alarm(
+    root: Path = SYSFS_HWMON, read: ReadFile = _read_text
+) -> int | None:
+    """The ``rpi_volt`` hwmon device's undervoltage alarm (0 or 1), or
+    ``None`` when there is no such device (Not supported).
+
+    The kernel polls the firmware every 2 s, so 1 means undervoltage
+    in roughly the last 2 s: it does not latch since boot.
+
+    Raises:
+        OSError, ValueError: the alarm couldn't be read, or isn't 0 or 1.
+    """
+    device = _find_or_raise(root, "hwmon*", "name", RPI_VOLT_NAME, read)
+    if device is None:
+        return None
+    alarm = int(read(device / UNDERVOLTAGE_ALARM).strip())
+    if alarm not in (0, 1):
+        raise ValueError(f"undervoltage alarm {alarm} is not 0 or 1")
+    return alarm
 
 
 def read_cpu_seconds(
@@ -175,12 +214,14 @@ class HostResourcesReader:
     def __init__(
         self,
         thermal_root: Path = SYSFS_THERMAL,
+        hwmon_root: Path = SYSFS_HWMON,
         proc_root: Path = PROC,
         clock_ticks: int | None = None,
         statvfs: Statvfs = os.statvfs,
         read: ReadFile = _read_text,
     ) -> None:
         self._thermal_root = thermal_root
+        self._hwmon_root = hwmon_root
         self._proc_root = proc_root
         self._clock_ticks = clock_ticks or os.sysconf("SC_CLK_TCK")
         self._statvfs = statvfs
@@ -206,6 +247,10 @@ class HostResourcesReader:
             cpu_temperature_millicelsius=_attempt(
                 "the CPU temperature",
                 lambda: read_cpu_temperature(self._thermal_root, self._read),
+            ),
+            undervoltage_alarm=_attempt(
+                "undervoltage",
+                lambda: read_undervoltage_alarm(self._hwmon_root, self._read),
             ),
             root_filesystem_size_bytes=_part(filesystem, 0),
             root_filesystem_available_bytes=_part(filesystem, 1),

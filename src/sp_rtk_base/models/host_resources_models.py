@@ -50,6 +50,9 @@ class HostResourcesReading(_Frozen):
     memory_available_bytes: Raw[int] = None
     # The ``cpu-thermal`` thermal zone's ``temp``, in millidegrees Celsius.
     cpu_temperature_millicelsius: Raw[int] = None
+    # The ``rpi_volt`` hwmon device's ``in0_lcrit_alarm``: 1 if the
+    # firmware saw undervoltage in the kernel's last ~2 s poll window.
+    undervoltage_alarm: Raw[int] = None
     # The root filesystem's size and the space a non-root user can use, in
     # bytes, from ``statvfs("/")``.
     root_filesystem_size_bytes: Raw[int] = None
@@ -73,6 +76,10 @@ class HostResourcesSnapshot(_Frozen):
     memory_total_bytes: float | None = None
     memory_available_bytes: float | None = None
     cpu_temperature_celsius: Supported[float] | None = None
+    undervoltage: Supported[bool] | None = None
+    # Rises (0 -> 1) of the undervoltage alarm the sampler has seen: a
+    # counter, so it holds through No reading.  None when Not supported.
+    undervoltage_events: int | None = None
     root_filesystem_size_bytes: float | None = None
     root_filesystem_available_bytes: float | None = None
     # Seconds since the last sample in which every reading read; None

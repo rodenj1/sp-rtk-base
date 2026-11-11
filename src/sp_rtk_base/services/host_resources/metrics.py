@@ -69,6 +69,13 @@ def _cpu_temperature(snapshot: HostResourcesSnapshot, _: float) -> float | None:
     return _supported_value(snapshot.cpu_temperature_celsius)
 
 
+def _undervoltage(snapshot: HostResourcesSnapshot, _: float) -> float | None:
+    field = snapshot.undervoltage
+    if field is None:
+        return None
+    return NAN if field.value is None else float(field.value)
+
+
 def _last_sample_timestamp(snapshot: HostResourcesSnapshot, now: float) -> float:
     age = snapshot.last_sample_age_seconds
     return NAN if age is None else now - age
@@ -104,6 +111,12 @@ GAUGES: tuple[Gauge, ...] = (
         lambda snapshot, _: _bytes(snapshot.root_filesystem_available_bytes),
     ),
     Gauge(
+        "host_undervoltage",
+        "1 if the Pi firmware saw undervoltage in about the last 2 s, from the "
+        "rpi_volt hwmon alarm, else 0 (NaN: No reading; absent: Not supported)",
+        _undervoltage,
+    ),
+    Gauge(
         "host_last_sample_timestamp_seconds",
         "Unix time of the last Host resources sample in which every reading "
         "read (NaN before the first)",
@@ -120,6 +133,11 @@ def _cpu_seconds(
     return {(mode,): total for mode, total in snapshot.cpu_seconds.items()}
 
 
+def _unlabelled(total: float | None) -> dict[tuple[str, ...], float] | None:
+    """A counter with no labels: its one series, or none."""
+    return None if total is None else {(): total}
+
+
 COUNTERS: tuple[Counter, ...] = (
     Counter(
         "host_cpu_seconds",
@@ -128,6 +146,13 @@ COUNTERS: tuple[Counter, ...] = (
         "mode that falls, as iowait can, is clamped)",
         ("mode",),
         _cpu_seconds,
+    ),
+    Counter(
+        "host_undervoltage_events",
+        "Rises (0 to 1) of the rpi_volt undervoltage alarm seen by the 2 s "
+        "host sampler (holds on No reading; absent: Not supported)",
+        (),
+        lambda snapshot: _unlabelled(snapshot.undervoltage_events),
     ),
 )
 

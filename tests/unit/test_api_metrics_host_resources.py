@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,7 +46,15 @@ BYTES_GAUGES = (
     "sp_rtk_base_host_root_filesystem_size_bytes",
     "sp_rtk_base_host_root_filesystem_available_bytes",
 )
+UNDERVOLTAGE = "sp_rtk_base_host_undervoltage"
+UNDERVOLTAGE_EVENTS = "sp_rtk_base_host_undervoltage_events_total"
 NETWORK_TIMESTAMP = "sp_rtk_base_network_last_sample_timestamp_seconds"
+
+
+def _reading(**fields: Any) -> HostResourcesReading:
+    """A reading with every field not given Not supported."""
+    every = dict.fromkeys(HostResourcesReading.model_fields, NOT_SUPPORTED)
+    return HostResourcesReading(**(every | fields))
 
 
 class _Clock:
@@ -77,17 +86,18 @@ class _FailingNetworkHost:
         pass
 
 
-def _reading(**fields: object) -> HostResourcesReading:
+def _good(**fields: Any) -> HostResourcesReading:
     """A sample in which every reading read, but for *fields*."""
-    good: dict[str, object] = {
+    good: dict[str, Any] = {
         "cpu_seconds": {"user": 100.0, "idle": 900.0},
         "memory_total_bytes": 4_000_000_000,
         "memory_available_bytes": 3_000_000_000,
         "cpu_temperature_millicelsius": 50_000,
+        "undervoltage_alarm": 0,
         "root_filesystem_size_bytes": 32_000_000_000,
         "root_filesystem_available_bytes": 20_000_000_000,
     }
-    return HostResourcesReading.model_validate(good | fields)
+    return _reading(**(good | fields))
 
 
 async def _fed(
@@ -139,9 +149,7 @@ async def _scrape(service: HostResourcesService) -> dict[str, list[Sample]]:
 
 @pytest.mark.asyncio()
 async def test_the_cpu_temperature_is_an_unlabelled_gauge_in_celsius() -> None:
-    samples = await _scrape(
-        await _fed(HostResourcesReading(cpu_temperature_millicelsius=48_312))
-    )
+    samples = await _scrape(await _fed(_reading(cpu_temperature_millicelsius=48_312)))
 
     (temperature,) = samples[TEMPERATURE]
     assert temperature.type == "gauge"
@@ -162,7 +170,7 @@ async def test_a_host_with_no_cpu_thermal_zone_has_no_temperature_series() -> No
 @pytest.mark.parametrize(
     "failure",
     [
-        HostResourcesReading(cpu_temperature_millicelsius=None),
+        _reading(cpu_temperature_millicelsius=None),
         RuntimeError("the whole read raised"),
     ],
 )
@@ -170,7 +178,7 @@ async def test_a_host_with_no_cpu_thermal_zone_has_no_temperature_series() -> No
 async def test_a_failed_temperature_read_is_nan_with_the_series_kept(
     failure: HostResourcesReading | Exception,
 ) -> None:
-    good = HostResourcesReading(cpu_temperature_millicelsius=50_000)
+    good = _reading(cpu_temperature_millicelsius=50_000)
 
     samples = await _scrape(await _fed(good, failure))
 
@@ -181,9 +189,7 @@ async def test_a_failed_temperature_read_is_nan_with_the_series_kept(
 @pytest.mark.asyncio()
 async def test_a_temperature_over_6_s_old_is_nan() -> None:
     clock = _Clock()
-    service = await _fed(
-        HostResourcesReading(cpu_temperature_millicelsius=50_000), clock=clock
-    )
+    service = await _fed(_reading(cpu_temperature_millicelsius=50_000), clock=clock)
     clock.now += 6.5
 
     samples = await _scrape(service)
@@ -196,7 +202,9 @@ async def test_a_temperature_over_6_s_old_is_nan() -> None:
 async def test_the_timestamp_is_the_unix_time_of_the_last_full_sample() -> None:
     clock = _Clock()
     service = await _fed(
-        _reading(), _reading(cpu_temperature_millicelsius=None), clock=clock
+        _reading(cpu_temperature_millicelsius=50_000),
+        _reading(cpu_temperature_millicelsius=None),
+        clock=clock,
     )
     clock.now += 1.5
 
@@ -217,7 +225,7 @@ async def test_before_any_sample_there_is_no_temperature_and_no_timestamp() -> N
 
 @pytest.mark.asyncio()
 async def test_a_failing_network_link_sampler_leaves_the_host_sample_fresh() -> None:
-    samples = await _scrape(await _fed(_reading()))
+    samples = await _scrape(await _fed(_reading(cpu_temperature_millicelsius=50_000)))
 
     (network_timestamp,) = samples[NETWORK_TIMESTAMP]
     assert math.isnan(network_timestamp.value)
@@ -239,7 +247,7 @@ async def test_scraping_never_reads_the_host() -> None:
 @pytest.mark.asyncio()
 async def test_cpu_seconds_are_a_counter_by_mode_with_no_per_core_label() -> None:
     samples = await _scrape(
-        await _fed(_reading(cpu_seconds={"user": 101.5, "idle": 902.0, "iowait": 3.0}))
+        await _fed(_good(cpu_seconds={"user": 101.5, "idle": 902.0, "iowait": 3.0}))
     )
 
     assert sorted(samples[CPU_SECONDS], key=lambda s: s.labels["mode"]) == [
@@ -253,8 +261,8 @@ async def test_cpu_seconds_are_a_counter_by_mode_with_no_per_core_label() -> Non
 async def test_cpu_seconds_never_go_backwards_when_iowait_falls() -> None:
     samples = await _scrape(
         await _fed(
-            _reading(cpu_seconds={"iowait": 50.0}),
-            _reading(cpu_seconds={"iowait": 48.0}),
+            _good(cpu_seconds={"iowait": 50.0}),
+            _good(cpu_seconds={"iowait": 48.0}),
         )
     )
 
@@ -262,14 +270,14 @@ async def test_cpu_seconds_never_go_backwards_when_iowait_falls() -> None:
 
 
 @pytest.mark.parametrize(
-    "failure", [_reading(cpu_seconds=None), RuntimeError("the whole read raised")]
+    "failure", [_good(cpu_seconds=None), RuntimeError("the whole read raised")]
 )
 @pytest.mark.asyncio()
 async def test_cpu_seconds_hold_their_last_value_through_no_reading(
     failure: HostResourcesReading | Exception,
 ) -> None:
     clock = _Clock()
-    service = await _fed(_reading(cpu_seconds={"user": 100.0}), failure, clock=clock)
+    service = await _fed(_good(cpu_seconds={"user": 100.0}), failure, clock=clock)
     clock.now += 60.0
 
     samples = await _scrape(service)
@@ -288,7 +296,7 @@ async def test_before_any_sample_there_are_no_cpu_seconds() -> None:
 async def test_memory_and_root_filesystem_are_unlabelled_gauges_in_bytes() -> None:
     samples = await _scrape(
         await _fed(
-            _reading(
+            _good(
                 memory_total_bytes=3_980_000_000,
                 memory_available_bytes=2_100_000_000,
                 root_filesystem_size_bytes=31_000_000_000,
@@ -317,7 +325,7 @@ async def test_a_failed_memory_or_filesystem_read_is_nan_with_the_series_kept(
     name: str,
 ) -> None:
     field = name.removeprefix("sp_rtk_base_host_")
-    samples = await _scrape(await _fed(_reading(), _reading(**{field: None})))
+    samples = await _scrape(await _fed(_good(), _good(**{field: None})))
 
     (gauge,) = samples[name]
     assert math.isnan(gauge.value)
@@ -330,3 +338,48 @@ async def test_before_any_sample_memory_and_filesystem_are_nan() -> None:
     for name in BYTES_GAUGES:
         (gauge,) = samples[name]
         assert math.isnan(gauge.value)
+
+
+@pytest.mark.asyncio()
+async def test_undervoltage_is_an_unlabelled_0_or_1_gauge() -> None:
+    samples = await _scrape(await _fed(_reading(undervoltage_alarm=1)))
+
+    assert samples[UNDERVOLTAGE] == [Sample("gauge", "", {}, 1.0)]
+
+
+@pytest.mark.asyncio()
+async def test_undervoltage_events_are_an_unlabelled_counter_of_rises() -> None:
+    samples = await _scrape(
+        await _fed(*(_reading(undervoltage_alarm=a) for a in (0, 1, 1, 0, 1, 0)))
+    )
+
+    assert samples[UNDERVOLTAGE] == [Sample("gauge", "", {}, 0.0)]
+    assert samples[UNDERVOLTAGE_EVENTS] == [Sample("counter", "", {}, 2.0)]
+
+
+@pytest.mark.asyncio()
+async def test_a_host_with_no_rpi_volt_has_no_undervoltage_series() -> None:
+    samples = await _scrape(await _fed(_reading(undervoltage_alarm=NOT_SUPPORTED)))
+
+    assert UNDERVOLTAGE not in samples
+    assert UNDERVOLTAGE_EVENTS not in samples
+    assert samples[TIMESTAMP] == [Sample("gauge", "", {}, WALL_NOW)]
+
+
+@pytest.mark.asyncio()
+async def test_a_failed_undervoltage_read_is_nan_and_the_events_hold() -> None:
+    samples = await _scrape(
+        await _fed(_reading(undervoltage_alarm=1), _reading(undervoltage_alarm=None))
+    )
+
+    (undervoltage,) = samples[UNDERVOLTAGE]
+    assert math.isnan(undervoltage.value)
+    assert samples[UNDERVOLTAGE_EVENTS] == [Sample("counter", "", {}, 1.0)]
+
+
+@pytest.mark.asyncio()
+async def test_before_any_sample_there_are_no_undervoltage_series() -> None:
+    samples = await _scrape(await _fed())
+
+    assert UNDERVOLTAGE not in samples
+    assert UNDERVOLTAGE_EVENTS not in samples

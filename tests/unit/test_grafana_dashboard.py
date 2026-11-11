@@ -140,3 +140,128 @@ class TestShippedDashboard:
 
         assert exprs
         assert [e for e in exprs if re.search(r"\$\{?base\b", e)] == []
+
+
+def _rows() -> list[dict[str, Any]]:
+    return [p for p in _dashboard()["panels"] if p["type"] == "row"]
+
+
+def _per_base_row() -> dict[str, Any]:
+    [row] = [
+        r for r in _rows() if r.get("repeat") == "base" and "Logs" not in r["title"]
+    ]
+    return row
+
+
+class TestPerBaseSection:
+    def test_the_per_base_row_repeats_on_base_and_is_open(self) -> None:
+        row = _per_base_row()
+
+        assert row["collapsed"] is False
+        assert "$" in row["title"] and "base" in row["title"]
+
+    def test_the_logs_row_repeats_on_base_collapsed_with_its_loki_panel_inside(
+        self,
+    ) -> None:
+        [logs] = [
+            r for r in _rows() if r.get("repeat") == "base" and "Logs" in r["title"]
+        ]
+
+        assert logs["collapsed"] is True
+        assert [p["type"] for p in logs["panels"]] == ["logs"]
+        assert "loki" in str(logs["panels"][0]["datasource"])
+
+    def test_no_panel_reads_another_panels_results(self) -> None:
+        # A repeated row's clones would all read the original row's panel.
+        datasources = [
+            str(p.get("datasource", "")) for p in _panels(_dashboard()["panels"])
+        ]
+
+        assert [d for d in datasources if "-- Dashboard --" in d] == []
+
+    def test_every_per_base_query_is_filtered_by_base(self) -> None:
+        panels = _dashboard()["panels"]
+        start = panels.index(_per_base_row())
+        section = [p for p in panels[start + 1 :] if p["type"] != "row"]
+
+        assert section
+        exprs = [e for p in section for e in _prometheus_exprs(p)]
+        assert [e for e in exprs if 'base=~"$base"' not in e] == []
+
+
+class TestLayout:
+    def test_fleet_trends_follows_the_fleet_overview_with_one_colour_per_base(
+        self,
+    ) -> None:
+        panels = _dashboard()["panels"]
+        [trends] = [r for r in _rows() if r["title"] == "Fleet trends"]
+        start = panels.index(trends)
+        graphs = []
+        for p in panels[start + 1 :]:
+            if p["type"] == "row":
+                break
+            graphs.append(p)
+
+        assert panels[start - 1]["title"] == "Fleet overview"
+        assert len(graphs) == 4
+        for g in graphs:
+            assert (
+                g["fieldConfig"]["defaults"]["color"]["mode"]
+                == "palette-classic-by-name"
+            )
+            for t in g["targets"]:
+                assert t["legendFormat"] == "{{base}}"
+                assert 'base=~"$base"' in t["expr"]
+
+    @pytest.mark.parametrize(
+        "old",
+        [
+            "Service Overview",
+            "Throughput",
+            "Per-Destination Health",
+            "Per-Destination Activity",
+            "Reliability",
+            "Signal Quality",
+        ],
+    )
+    def test_the_old_rows_are_gone(self, old: str) -> None:
+        assert [r["title"] for r in _rows() if old in r["title"]] == []
+
+    def test_the_per_destination_graphs_are_dropped(self) -> None:
+        titles = [p.get("title", "") for p in _panels(_dashboard()["panels"])]
+
+        assert [t for t in titles if "per destination" in t.lower()] == []
+
+    def test_the_version_is_bumped_past_the_fleet_overview_s(self) -> None:
+        assert _dashboard()["version"] > 3
+
+
+def _base_variable() -> dict[str, Any]:
+    [variable] = [v for v in _dashboard()["templating"]["list"] if v["name"] == "base"]
+    return variable
+
+
+class TestBaseVariable:
+    def test_it_lists_every_scraped_base_so_a_down_base_stays_selectable(
+        self,
+    ) -> None:
+        query = _base_variable()["query"]["query"]
+
+        assert re.search(r'\bup\{job="sp-rtk-base"\}', query)
+
+    def test_its_query_selects_only_exported_metrics_or_scrape_status(self) -> None:
+        names = metric_names(_base_variable()["query"]["query"])
+
+        assert names - _exported_names() - SCRAPE_STATUS == set()
+
+    def test_the_fleet_overview_drill_down_url_encodes_the_base(self) -> None:
+        links = [
+            link["url"]
+            for o in _fleet_overview()["fieldConfig"]["overrides"]
+            for prop in o["properties"]
+            if prop["id"] == "links"
+            for link in prop["value"]
+        ]
+
+        assert links
+        assert all("var-base=${__data.fields.base:percentencode}" in u for u in links)

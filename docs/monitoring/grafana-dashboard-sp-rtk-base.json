@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Fleet dashboard for one or more sp-rtk-base base stations. The Fleet overview at the top has one row per base, worst Base health first, and ignores the Base selector. The rows below follow the Base selector ($base). Pick a Prometheus datasource; the scrape job must be named sp-rtk-base and carry a base label.",
+  "description": "Fleet dashboard for one or more sp-rtk-base base stations. The Fleet overview at the top has one row per base, worst Base health first, and ignores the Base selector. Fleet trends compares the selected bases; below it, one section per selected base. Pick a Prometheus datasource; the scrape job must be named sp-rtk-base and carry a base label.",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
@@ -85,7 +85,7 @@
                 "value": [
                   {
                     "title": "Show ${__data.fields.base}",
-                    "url": "/d/sp-rtk-base-overview/?var-base=${__data.fields.base}&${__url_time_range}"
+                    "url": "/d/sp-rtk-base-overview/?var-base=${__data.fields.base:percentencode}&${__url_time_range}"
                   }
                 ]
               },
@@ -1297,9 +1297,9 @@
         "x": 0,
         "y": 10
       },
-      "id": 100,
+      "id": 301,
       "panels": [],
-      "title": "\u25b6 Service Overview",
+      "title": "Fleet trends",
       "type": "row"
     },
     {
@@ -1307,257 +1307,134 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Green when the most recent sample arrived within the last 2 minutes \u2014 the canonical 'is the push pipeline still alive' signal.  Goes red whenever the base is offline, the host is down, or the home receiver is broken.",
+      "description": "The selected bases whose Uplink is Wi-Fi, one colour per base. A base on an Ethernet Uplink isn't drawn: its radio doesn't count against Base health. The red line is Poor (\u2264 -78 dBm).",
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "text": "STALE"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "text": "FRESH"
-                }
-              },
-              "type": "value"
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
             }
-          ],
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "transparent",
                 "value": null
               },
               {
-                "color": "green",
-                "value": 1
+                "color": "red",
+                "value": -78
               }
             ]
-          }
-        }
+          },
+          "unit": "dBm"
+        },
+        "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 5,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 11
       },
-      "id": 1,
+      "id": 302,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "(time() - timestamp(sp_rtk_base_relay_uptime_seconds{base=~\"$base\"})) < 120",
-          "legendFormat": "{{base}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Pipeline Freshness",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "1 = relay engine running, 0 = stopped.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "text": "STOPPED"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "text": "RUNNING"
-                }
-              },
-              "type": "value"
-            }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
           ]
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 5,
-        "y": 11
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_relay_running{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Relay Running",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "1 = input source connected (TCP/serial/Bluetooth open), 0 = disconnected.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "text": "DISCONN"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "text": "CONN"
-                }
-              },
-              "type": "value"
-            }
-          ]
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 10,
-        "y": 11
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_input_connected{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Input Source",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Connected destination count out of total registered.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 14,
-        "y": 11
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_active_destinations{base=~\"$base\"}",
-          "legendFormat": "active {{base}}",
-          "refId": "A"
         },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_total_destinations{base=~\"$base\"}",
-          "legendFormat": "total {{base}}",
-          "refId": "B"
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base, interface) group_left () (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 1))",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{base}}"
         }
       ],
-      "title": "Destinations Active / Total",
-      "type": "stat"
+      "title": "Wi-Fi link strength \u00b7 Wi-Fi Uplinks",
+      "type": "timeseries"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "How long the relay engine has been continuously running.",
+      "description": "CPU temperature of the selected bases, one colour per base. The red line is 80 \u00b0C, where a Pi throttles and Base health turns Degraded.",
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
               }
             ]
-          }
-        }
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 19,
+        "h": 8,
+        "w": 12,
+        "x": 12,
         "y": 11
       },
-      "id": 5,
+      "id": 303,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area"
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -1565,13 +1442,154 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_relay_uptime_seconds{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{base}}"
         }
       ],
-      "title": "Relay Uptime",
-      "type": "stat"
+      "title": "CPU temperature",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Share of CPU time not idle or waiting on I/O, over all cores, one colour per base.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "id": 304,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval])))",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{base}}"
+        }
+      ],
+      "title": "CPU busy",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "L1 Band strength (mean C/N0 of the 4 strongest L1 signals) of the selected bases, one colour per base. The line is 41 dB-Hz.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 41
+              }
+            ]
+          },
+          "unit": "suffix: dB-Hz"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "id": 305,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_signal_band_strength_dbhz{job=\"sp-rtk-base\", base=~\"$base\", band=\"L1\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{base}}"
+        }
+      ],
+      "title": "Band strength L1",
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -1579,60 +1597,431 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 27
       },
-      "id": 105,
+      "id": 310,
       "panels": [],
-      "title": "\u25b6 Signal Quality",
-      "type": "row"
+      "title": "${base:text}",
+      "type": "row",
+      "repeat": "base"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "How well the antenna hears the satellites, exactly as the Signal Quality card on the dashboard and survey-in pages shows it (smoothed over 10 s, deadbanded). NO DATA while the Relay is stopped and no receiver is connected, or while no MSM / Signal Snapshot is arriving.",
+      "description": "The same Base health as the Fleet overview; the rule and every threshold are in docs/monitoring/README.md, Base health. When the base is Down, Prometheus can't scrape it and every panel in this section shows its last data before it went Down.",
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
             {
+              "type": "value",
               "options": {
                 "0": {
+                  "text": "OK",
                   "color": "green",
-                  "text": "GOOD"
+                  "index": 0
                 },
                 "1": {
-                  "color": "orange",
-                  "text": "MARGINAL"
+                  "text": "Degraded",
+                  "color": "yellow",
+                  "index": 1
                 },
                 "2": {
+                  "text": "Fault",
                   "color": "red",
-                  "text": "POOR"
+                  "index": 2
+                },
+                "3": {
+                  "text": "Down \u00b7 Prometheus can't scrape this base: the panels below show its last data before it went Down",
+                  "color": "#6e7480",
+                  "index": 3
                 }
-              },
-              "type": "value"
+              }
             },
             {
+              "type": "special",
               "options": {
                 "match": "nan",
                 "result": {
-                  "color": "text",
-                  "text": "NO DATA"
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
                 }
-              },
-              "type": "special"
+              }
             },
             {
+              "type": "special",
               "options": {
                 "match": "null",
                 "result": {
-                  "color": "text",
-                  "text": "NO DATA"
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
                 }
-              },
-              "type": "special"
+              }
             }
           ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 311,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (\n    label_replace(3 * (up{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"down\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"relay\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"} == bool 0), \"check\", \"input\", \"\", \"\")\n  or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\", base=~\"$base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\")\n  or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\", base=~\"$base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\")\n  or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\", base=~\"$base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\", base=~\"$base\"}, \"check\", \"destinations\", \"\", \"\")\n  or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\")\n  or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\")\n  or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\", base=~\"$base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\", base=~\"$base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\")\n  or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\", base=~\"$base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\")\n)",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "Base health"
+        }
+      ],
+      "title": "Base health",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Whether the Relay is running (stopped, even deliberately, is a Fault), and how long it has run.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Running",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "Stopped",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 30
+      },
+      "id": 312,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_relay_running{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "Relay"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_relay_uptime_seconds{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "B",
+          "legendFormat": "Uptime"
+        }
+      ],
+      "title": "Relay",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Whether the Input is connected, and its kind (from sp_rtk_base_input_info; just \"Input\" on an older base).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Connected",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "Disconnected",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 30
+      },
+      "id": 313,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, kind) (\n    sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base) group_left (kind) label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")\n  or on (base) label_replace(sp_rtk_base_input_connected{job=\"sp-rtk-base\", base=~\"$base\"}, \"kind\", \"Input\", \"\", \"\")\n)",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Input",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds since the Input last delivered RTCM. Over 60 s is a Fault.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No RTCM yet",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1641,28 +2030,41 @@
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 1
+                "color": "yellow",
+                "value": 10
               },
               {
                 "color": "red",
-                "value": 2
+                "value": 60
               }
             ]
-          }
-        }
+          },
+          "unit": "s",
+          "decimals": 0
+        },
+        "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 5,
-        "x": 0,
-        "y": 16
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 30
       },
-      "id": 60,
+      "id": 314,
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
-        "textMode": "value_and_name"
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1670,9 +2072,117 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_signal_quality{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "Last RTCM"
+        }
+      ],
+      "title": "Last RTCM",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "How well the antenna hears the satellites, as the base's own dashboard shows it. No reading while no MSM is arriving.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Good",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Marginal",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "2": {
+                  "text": "Poor",
+                  "color": "red",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 30
+      },
+      "id": 315,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_signal_quality{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "Signal Quality"
         }
       ],
       "title": "Signal Quality",
@@ -1683,14 +2193,494 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Band strength: mean C/N0 of the 4 strongest signals in each band. Green lines mark the Good thresholds: 41 dB-Hz for L2, 44 dB-Hz for L1. Gaps mean no data.",
+      "description": "How well the base hears its Bluetooth module. n/a (not a fault) when the Input isn't Bluetooth.",
       "fieldConfig": {
         "defaults": {
-          "unit": "suffix: dB-Hz",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Good",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Marginal",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "2": {
+                  "text": "Poor",
+                  "color": "red",
+                  "index": 2
+                },
+                "-1": {
+                  "text": "n/a",
+                  "color": "#8e8e8e",
+                  "index": 3
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 30
+      },
+      "id": 316,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "    label_replace(max by (base) (sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Bluetooth Input\", \"\", \"\")\n  or label_replace(max by (base, kind) (-1 * sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"}), \"kind\", \"Input is $1\", \"kind\", \"(.+)\")",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Bluetooth link strength",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "The latest Wi-Fi link strength in dBm, its Wi-Fi link band, and whether the link is the Uplink. \u2014 means no Wi-Fi interface. Disconnected (greyed) behind an Ethernet Uplink isn't counted against Base health.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Disconnected",
+                  "color": "#8e8e8e",
+                  "index": 0
+                },
+                "2": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": -77
+              },
+              {
+                "color": "green",
+                "value": -67
+              }
+            ]
+          },
+          "unit": "dBm",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 30
+      },
+      "id": 317,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base, interface, band, role) (\n    (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}) * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"}\n  + on (base, interface) group_left (role) (0 * (\n        label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 1, \"role\", \" \u00b7 the Uplink\", \"\", \"\")\n     or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 0, \"role\", \" \u00b7 not Uplink\", \"\", \"\")\n     or (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} != sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"})\n  ))\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} + 1, \"role\", \" \u00b7 not in use\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} == 0)\n  or label_replace(0 * sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} + 2, \"role\", \"\", \"\", \"\") and on (base, interface) (sp_rtk_base_network_link_up{job=\"sp-rtk-base\", base=~\"$base\", kind=\"wifi\"} != 0)\n     unless on (base, interface) (sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"} and on (base, interface) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"} == sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}))\n)",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{interface}} {{band}}{{role}}"
+        }
+      ],
+      "title": "Wi-Fi link strength",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "SoC temperature. Amber from 70 \u00b0C, red from 80 \u00b0C (Degraded). \u2014 on a host without a Pi temperature sensor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "celsius",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 30
+      },
+      "id": 318,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "CPU temperature"
+        }
+      ],
+      "title": "CPU temperature",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Undervoltage events in the last 24 h: a weak power supply. Any in the last hour makes the base Degraded. \u2014 on a host without a Pi undervoltage sensor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "\u2014",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 30
+      },
+      "id": 319,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "round(max by (base) (increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\", base=~\"$base\"}[24h])))",
+          "range": false,
+          "refId": "A",
+          "legendFormat": "Undervoltage events",
+          "instant": true
+        }
+      ],
+      "title": "Undervoltage events (24 h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "RTCM bytes per second arriving from the Input.",
+      "fieldConfig": {
+        "defaults": {
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "Bps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 34
+      },
+      "id": 320,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (base) (rate(sp_rtk_base_input_bytes_received{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval]))",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "RTCM in"
+        }
+      ],
+      "title": "Input bytes/s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Mean C/N0 of the 4 strongest signals in each band. The lines are 41 and 44 dB-Hz. Gaps mean no reading.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
             "thresholdsStyle": {
               "mode": "line"
             }
+          },
+          "color": {
+            "mode": "palette-classic"
           },
           "thresholds": {
             "mode": "absolute",
@@ -1700,7 +2690,7 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 41
               },
               {
@@ -1708,25 +2698,30 @@
                 "value": 44
               }
             ]
-          }
-        }
+          },
+          "unit": "suffix: dB-Hz"
+        },
+        "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 5,
-        "y": 16
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 34
       },
-      "id": 61,
+      "id": 321,
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull",
-            "min"
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
           ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "targets": [
@@ -1735,12 +2730,14 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_signal_band_strength_dbhz{base=~\"$base\"}",
-          "legendFormat": "{{base}} {{band}}",
-          "refId": "A"
+          "editorMode": "code",
+          "expr": "max by (band) (sp_rtk_base_signal_band_strength_dbhz{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{band}}"
         }
       ],
-      "title": "Band strength (L1 / L2)",
+      "title": "Band strength L1 / L2",
       "type": "timeseries"
     },
     {
@@ -1748,14 +2745,285 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Usable satellites: satellites with a signal at 35 dB-Hz or more. Reference lines at 10 (Marginal) and 15 (Good).",
+      "description": "Wi-Fi link strength, one line per Wi-Fi link band (5 GHz blue, 2.4 GHz aqua), so a band change shows. Green line Good (\u2265 -67 dBm), red line Poor (\u2264 -78 dBm). Empty with no Wi-Fi interface, or while the link is Disconnected; behind an Ethernet Uplink an idle radio isn't counted against Base health.",
       "fieldConfig": {
         "defaults": {
-          "min": 0,
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
             "thresholdsStyle": {
               "mode": "line"
             }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": -78
+              },
+              {
+                "color": "green",
+                "value": -67
+              }
+            ]
+          },
+          "unit": "dBm",
+          "noValue": "No Wi-Fi link band reading: no Wi-Fi interface, or the link is Disconnected"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*\u00b7 5GHz$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*\u00b7 2[.]4GHz$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#1fb8b8"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*\u00b7 6GHz$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9085e9"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "id": 322,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, band) (sp_rtk_base_wifi_link_strength_dbm{job=\"sp-rtk-base\", base=~\"$base\"}\n  * on (base, interface) group_left (band) sp_rtk_base_wifi_link_band{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{interface}} \u00b7 {{band}}"
+        }
+      ],
+      "title": "Wi-Fi link strength by Wi-Fi link band",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "How well the base hears its Bluetooth module, in relative dB (0 = comfortable, negative = that many dB below). Not satellite reception.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "suffix: dB",
+          "noValue": "n/a: the Input isn't Bluetooth (or no reading)"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 42
+      },
+      "id": 323,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_bluetooth_link_median_db{job=\"sp-rtk-base\", base=~\"$base\"} unless on (base) sp_rtk_base_input_info{job=\"sp-rtk-base\", base=~\"$base\", kind!=\"bluetooth\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "median"
+        }
+      ],
+      "title": "Bluetooth link strength",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "CPU busy (all cores, not idle or iowait) and memory used (from the kernel's available figure), as % of capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 42
+      },
+      "id": 324,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\", mode=~\"idle|iowait\"}[$__rate_interval]))\n         / sum by (base) (rate(sp_rtk_base_host_cpu_seconds_total{job=\"sp-rtk-base\", base=~\"$base\"}[$__rate_interval])))",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "CPU busy"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - max by (base) (sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\", base=~\"$base\"})\n         / max by (base) (sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\", base=~\"$base\"}))",
+          "range": true,
+          "refId": "B",
+          "legendFormat": "Memory used"
+        }
+      ],
+      "title": "CPU busy and memory used",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "SoC temperature. Amber line 70 \u00b0C, red line 80 \u00b0C, where a Pi throttles.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
           },
           "thresholds": {
             "mode": "absolute",
@@ -1766,198 +3034,38 @@
               },
               {
                 "color": "orange",
-                "value": 10
-              },
-              {
-                "color": "green",
-                "value": 15
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 7,
-        "x": 17,
-        "y": 16
-      },
-      "id": 62,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_signal_usable_satellites{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Usable satellites",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
-      },
-      "id": 101,
-      "panels": [],
-      "title": "\u25b6 Throughput",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Rate of RTCM bytes arriving from the GPS input source.  Primary 'is data flowing' signal \u2014 should be non-zero and stable while the GPS is feeding.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull",
-            "max"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_input_bytes_received{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "{{base}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Input bytes/s (RTCM in)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Internal hub-processing rates.  Frames Parsed is the RTCM-decoding rate; Chunks Distributed is the per-second hand-off to destinations.  They should track each other closely; a large gap (parsed >> distributed) means destinations aren't keeping up.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_frames_parsed{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "frames parsed \u2014 {{base}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_chunks_distributed{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "chunks out \u2014 {{base}}",
-          "refId": "B"
-        }
-      ],
-      "title": "Hub processing rate (frames + chunks)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Seconds since the GPS sent its last byte.  Climbs ~1 per second when the GPS goes silent.  Stays under a few seconds during normal operation.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 10
+                "value": 70
               },
               {
                 "color": "red",
-                "value": 30
+                "value": 80
               }
             ]
           },
-          "custom": {
-            "thresholdsStyle": {
-              "mode": "line"
-            }
-          }
-        }
+          "unit": "celsius",
+          "noValue": "No temperature sensor on this host"
+        },
+        "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 31
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 42
       },
-      "id": 12,
+      "id": 325,
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "values": [
-            "lastNotNull",
-            "max"
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
           ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "targets": [
@@ -1966,45 +3074,75 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_input_seconds_since_last_data{base=~\"$base\"}",
-          "legendFormat": "{{base}}",
-          "refId": "A"
+          "editorMode": "code",
+          "expr": "max by (base) (sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\", base=~\"$base\"})",
+          "range": true,
+          "refId": "A",
+          "legendFormat": "cpu-thermal"
         }
       ],
-      "title": "Seconds Since Last RTCM",
+      "title": "CPU temperature",
       "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 38
-      },
-      "id": 102,
-      "panels": [],
-      "title": "\u25b6 Per-Destination Health",
-      "type": "row"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Snapshot per destination across selected base stations.  Connected/Errors/Queue are colour-coded; bytes are formatted human-readable.",
+      "description": "Each Destination now: connected, and rates over the last 5 min.",
       "fieldConfig": {
         "defaults": {
           "custom": {
             "align": "auto",
-            "filterable": false
+            "filterable": false,
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No reading",
+                  "color": "#8e8e8e",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u2014",
+                  "color": "#8e8e8e",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "No Destinations",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "connected"
+              "options": "Connected"
             },
             "properties": [
               {
@@ -2013,22 +3151,83 @@
                   {
                     "type": "value",
                     "options": {
+                      "1": {
+                        "text": "Connected",
+                        "color": "green",
+                        "index": 0
+                      },
                       "0": {
+                        "text": "Disconnected",
                         "color": "red",
-                        "text": "\u2717"
+                        "index": 1
                       }
                     }
                   },
                   {
-                    "type": "value",
+                    "type": "special",
                     "options": {
-                      "1": {
-                        "color": "green",
-                        "text": "\u2713"
+                      "match": "nan",
+                      "result": {
+                        "text": "No reading",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "\u2014",
+                        "color": "#8e8e8e",
+                        "index": 1
                       }
                     }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Drops/s"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.001
+                    }
+                  ]
+                }
               },
               {
                 "id": "custom.cellOptions",
@@ -2041,16 +3240,20 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "queue_depth"
+              "options": "Queue depth"
             },
             "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "text",
                       "value": null
                     },
                     {
@@ -2071,7 +3274,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "errors"
+              "options": "Errors/s"
             },
             "properties": [
               {
@@ -2080,12 +3283,12 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "text",
                       "value": null
                     },
                     {
                       "color": "red",
-                      "value": 1
+                      "value": 0.001
                     }
                   ]
                 }
@@ -2097,38 +3300,33 @@
                 }
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bytes_sent"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "decbytes"
-              }
-            ]
           }
         ]
       },
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 50
       },
-      "id": 20,
+      "id": 326,
       "options": {
+        "cellHeight": "sm",
         "footer": {
+          "show": false,
           "reducer": [
             "sum"
           ],
-          "show": false,
           "countRows": false,
           "fields": ""
         },
-        "showHeader": true
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Destination",
+            "desc": false
+          }
+        ]
       },
       "targets": [
         {
@@ -2136,9 +3334,11 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}",
+          "editorMode": "code",
+          "expr": "max by (destination) (sp_rtk_base_dest_connected{job=\"sp-rtk-base\", base=~\"$base\"})",
           "format": "table",
           "instant": true,
+          "range": false,
           "refId": "connected"
         },
         {
@@ -2146,108 +3346,92 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_dest_bytes_sent{base=~\"$base\"}",
+          "editorMode": "code",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_bytes_sent{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
-          "refId": "bytes_sent"
+          "range": false,
+          "refId": "bytes"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_dest_messages_sent{base=~\"$base\"}",
+          "editorMode": "code",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_sent{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
-          "refId": "msgs_sent"
+          "range": false,
+          "refId": "messages"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_dest_messages_dropped{base=~\"$base\"}",
+          "editorMode": "code",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_messages_dropped{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
           "format": "table",
           "instant": true,
-          "refId": "dropped"
+          "range": false,
+          "refId": "drops"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sp_rtk_base_dest_errors{base=~\"$base\"}",
+          "editorMode": "code",
+          "expr": "max by (destination) (sp_rtk_base_dest_queue_depth{job=\"sp-rtk-base\", base=~\"$base\"})",
           "format": "table",
           "instant": true,
+          "range": false,
+          "refId": "queue"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (destination) (rate(sp_rtk_base_dest_errors{job=\"sp-rtk-base\", base=~\"$base\"}[5m]))",
+          "format": "table",
+          "instant": true,
+          "range": false,
           "refId": "errors"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}",
-          "format": "table",
-          "instant": true,
-          "refId": "queue_depth"
         }
       ],
-      "title": "Destination Status",
+      "title": "Destinations",
       "transformations": [
         {
-          "id": "joinByField",
-          "options": {
-            "byField": "destination",
-            "mode": "outer"
-          }
+          "id": "merge",
+          "options": {}
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true,
-              "Time 4": true,
-              "Time 5": true,
-              "base 1": true,
-              "base 2": true,
-              "base 3": true,
-              "base 4": true,
-              "base 5": true,
-              "__name__": true,
-              "__name__ 1": true,
-              "__name__ 2": true,
-              "__name__ 3": true,
-              "__name__ 4": true,
-              "__name__ 5": true,
-              "job": true,
-              "instance": true,
-              "env": true,
-              "env 1": true,
-              "env 2": true,
-              "env 3": true,
-              "env 4": true,
-              "env 5": true
+              "Time": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "destination": 0,
+              "Value #connected": 1,
+              "Value #bytes": 2,
+              "Value #messages": 3,
+              "Value #drops": 4,
+              "Value #queue": 5,
+              "Value #errors": 6
             },
             "renameByName": {
-              "Value #connected": "connected",
-              "Value #bytes_sent": "bytes_sent",
-              "Value #msgs_sent": "messages_sent",
-              "Value #dropped": "dropped",
-              "Value #errors": "errors",
-              "Value #queue_depth": "queue_depth"
-            },
-            "indexByName": {
-              "base": 0,
-              "destination": 1,
-              "connected": 2,
-              "bytes_sent": 3,
-              "messages_sent": 4,
-              "dropped": 5,
-              "errors": 6,
-              "queue_depth": 7
+              "destination": "Destination",
+              "Value #connected": "Connected",
+              "Value #bytes": "Bytes/s",
+              "Value #messages": "Messages/s",
+              "Value #drops": "Drops/s",
+              "Value #queue": "Queue depth",
+              "Value #errors": "Errors/s"
             }
           }
         }
@@ -2255,347 +3439,56 @@
       "type": "table"
     },
     {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 57
       },
-      "id": 103,
-      "panels": [],
-      "title": "\u25b6 Per-Destination Activity",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Bytes/s being sent to each destination.  Tracks input * (active destinations).  Zero on a destination = it's either disconnected or paused.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 49
-      },
-      "id": 30,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_dest_bytes_sent{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Bytes/s per destination",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Messages/s being sent to each destination.  Useful when destinations have different filter policies and bytes/s diverges.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 49
-      },
-      "id": 31,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_dest_messages_sent{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Messages/s per destination",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Per-destination drop rate \u2014 messages discarded because the destination's outbound queue was full.  Should be 0; sustained non-zero means the destination is consistently slower than the input.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 56
-      },
-      "id": 40,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull",
-            "max"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_dest_messages_dropped{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Drops/s per destination",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Per-destination queue depth.  Non-zero = momentarily buffered (fine); sustained climb = destination not keeping up.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 56
-      },
-      "id": 41,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "lastNotNull",
-            "max"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_dest_queue_depth{base=~\"$base\"}",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Queue depth per destination",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 63
-      },
-      "id": 104,
-      "panels": [],
-      "title": "\u25b6 Reliability",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "1 = connected, 0 = disconnected, per destination over time.  Drops to 0 indicate a flap.",
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 64
-      },
-      "id": 50,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "lastNotNull"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sp_rtk_base_dest_connected{base=~\"$base\"}",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Destinations connected over time",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Rate of errors per destination.  Spikes indicate an output misbehaving (NTRIP caster down, SurePath auth expired, TCP server saturated).",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 64
-      },
-      "id": 51,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "values": [
-            "mean",
-            "lastNotNull",
-            "max"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(sp_rtk_base_dest_errors{base=~\"$base\"}[$__rate_interval])",
-          "legendFormat": "{{base}} / {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Destination errors/s",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 71
-      },
-      "id": 200,
-      "panels": [],
-      "title": "\u25b6 Logs (requires Loki + log shipping)",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "${DS_LOKI}"
-      },
-      "description": "Live logs from sp-rtk-base.service, filtered by the $base selector at the top.  Requires logs to be shipped to Loki with at least the `base` and `service` labels set \u2014 see the README in this directory for the agent-side recipe.",
-      "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 72
-      },
-      "id": 201,
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
-      },
-      "targets": [
+      "id": 330,
+      "panels": [
         {
           "datasource": {
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "{base=~\"$base\", service=\"sp-rtk-base\"}",
-          "queryType": "range",
-          "refId": "A"
+          "description": "sp-rtk-base.service logs for this base. Needs logs shipped to Loki with the `base` and `service` labels: see docs/monitoring/README.md, Logs.",
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 58
+          },
+          "id": 331,
+          "options": {
+            "showTime": true,
+            "showLabels": false,
+            "showCommonLabels": false,
+            "wrapLogMessage": true,
+            "prettifyLogMessage": false,
+            "enableLogDetails": true,
+            "dedupStrategy": "none",
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "${DS_LOKI}"
+              },
+              "expr": "{base=~\"$base\", service=\"sp-rtk-base\"}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Logs \u00b7 sp-rtk-base.service",
+          "type": "logs"
         }
       ],
-      "title": "Logs \u00b7 sp-rtk-base.service",
-      "type": "logs"
+      "title": "Logs \u00b7 $base (needs Loki)",
+      "type": "row",
+      "repeat": "base"
     }
   ],
   "refresh": "30s",
@@ -2656,7 +3549,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(sp_rtk_base_relay_running, base)",
+        "definition": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"sp-rtk-base\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
         "hide": 0,
         "includeAll": true,
         "allValue": ".*",
@@ -2665,14 +3558,15 @@
         "name": "base",
         "options": [],
         "query": {
-          "query": "label_values(sp_rtk_base_relay_running, base)",
+          "query": "query_result(max by (base, title) (label_join( (label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 0, \"health\", \"OK\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 1, \"health\", \"Degraded\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 2, \"health\", \"Fault\", \"\", \"\") or label_replace((max by (base) ( label_replace(3 * (up{job=\"sp-rtk-base\"} == bool 0), \"check\", \"down\", \"\", \"\") or label_replace(2 * (sp_rtk_base_relay_running{job=\"sp-rtk-base\"} == bool 0), \"check\", \"relay\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_connected{job=\"sp-rtk-base\"} == bool 0), \"check\", \"input\", \"\", \"\") or label_replace(2 * (sp_rtk_base_input_seconds_since_last_data{job=\"sp-rtk-base\"} > bool 60), \"check\", \"rtcm\", \"\", \"\") or label_replace(sp_rtk_base_signal_quality{job=\"sp-rtk-base\"} >= bool 1, \"check\", \"signal_quality\", \"\", \"\") or label_replace(sp_rtk_base_active_destinations{job=\"sp-rtk-base\"} < bool sp_rtk_base_total_destinations{job=\"sp-rtk-base\"}, \"check\", \"destinations\", \"\", \"\") or label_replace(sp_rtk_base_bluetooth_link_strength{job=\"sp-rtk-base\"} == bool 2, \"check\", \"bluetooth\", \"\", \"\") or label_replace((sp_rtk_base_wifi_link_strength{job=\"sp-rtk-base\"} == bool 2) * on (base, interface) (sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == bool 1), \"check\", \"wifi_uplink\", \"\", \"\") or label_replace(sp_rtk_base_host_cpu_temperature_celsius{job=\"sp-rtk-base\"} >= bool 80, \"check\", \"cpu_temperature\", \"\", \"\") or label_replace(increase(sp_rtk_base_host_undervoltage_events_total{job=\"sp-rtk-base\"}[1h]) > bool 0, \"check\", \"undervoltage\", \"\", \"\") or label_replace(sp_rtk_base_host_memory_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_memory_total_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"memory\", \"\", \"\") or label_replace(sp_rtk_base_host_root_filesystem_available_bytes{job=\"sp-rtk-base\"} / sp_rtk_base_host_root_filesystem_size_bytes{job=\"sp-rtk-base\"} < bool 0.1, \"check\", \"root_filesystem\", \"\", \"\") )) == 3, \"health\", \"Down\", \"\", \"\")) * on (base) group_left (version) (max by (base, version) (label_replace(sp_rtk_base_build_info{job=\"sp-rtk-base\"}, \"version\", \"v$1\", \"version\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"version\", \"version \u2014\", \"\", \"\")) * on (base) group_left (kind) (max by (base, kind) (label_replace(sp_rtk_base_input_info{job=\"sp-rtk-base\"}, \"kind\", \"$1 Input\", \"kind\", \"(.+)\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"kind\", \"Input \u2014\", \"\", \"\")) * on (base) group_left (uplink) (max by (base, uplink) (label_replace(label_replace(max by (base, uplink) ( label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"ethernet\"} == 1, \"uplink\", \"Ethernet\", \"\", \"\") or label_replace(sp_rtk_base_network_link_uplink{job=\"sp-rtk-base\", kind=\"wifi\"} == 1, \"uplink\", \"Wi-Fi\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} == 1, \"uplink\", \"Other\", \"\", \"\") or label_replace(sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"} != sp_rtk_base_network_uplink_other{job=\"sp-rtk-base\"}, \"uplink\", \"No reading\", \"\", \"\") ), \"uplink\", \"$1 Uplink\", \"uplink\", \"(Ethernet|Wi-Fi|Other)\"), \"uplink\", \"Uplink: No reading\", \"uplink\", \"No reading\")) or on (base) label_replace(max by (base) (up{job=\"sp-rtk-base\"}), \"uplink\", \"Uplink \u2014\", \"\", \"\")), \"title\", \" \u00b7 \", \"base\", \"health\", \"version\", \"kind\", \"uplink\" )))",
           "refId": "StandardVariableQuery"
         },
-        "refresh": 1,
-        "regex": "",
+        "refresh": 2,
+        "regex": "/^(?=.*\\bbase=\"(?<value>[^\"]+)\")(?=.*\\btitle=\"(?<text>[^\"]+)\")/",
         "skipUrlSync": false,
         "sort": 1,
-        "type": "query"
+        "type": "query",
+        "description": "Every base Prometheus scrapes for the sp-rtk-base job, Down ones included. Each option reads base \u00b7 Base health \u00b7 version \u00b7 Input kind \u00b7 Uplink, as of the last time-range refresh."
       }
     ]
   },
@@ -2684,6 +3578,6 @@
   "timezone": "browser",
   "title": "SP-Base \u00b7 Unified Base Station Overview",
   "uid": "sp-rtk-base-overview",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

@@ -107,7 +107,7 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     )
     expect(card.get_by_test_id("network-freshness")).to_contain_text("Updated")
     expect(card.get_by_test_id("network-link-wlan0-uplink")).to_have_text("Uplink")
-    expect(card.get_by_test_id("network-link-eth0-uplink")).to_have_count(0)
+    expect(card.get_by_test_id("network-link-eth0-uplink")).to_be_hidden()
     wlan0 = card.get_by_test_id("network-link-wlan0")
     eth0 = card.get_by_test_id("network-link-eth0")
     # The Uplink comes first.
@@ -120,7 +120,7 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(wlan0.get_by_test_id("network-link-wlan0-address")).to_contain_text(
         "192.0.2.20/24"
     )
-    expect(wlan0.get_by_test_id("network-link-wlan0-speed")).to_have_count(0)
+    expect(wlan0.get_by_test_id("network-link-wlan0-speed")).to_be_hidden()
     strength = wlan0.get_by_test_id("network-link-wlan0-strength")
     expect(strength).to_contain_text("Wi-Fi link")
     expect(strength).to_contain_text("Good")
@@ -137,7 +137,7 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(wlan0.get_by_test_id("network-link-wlan0-counters")).to_contain_text(
         "11 failed sends"
     )
-    expect(eth0.get_by_test_id("network-link-eth0-network")).to_have_count(0)
+    expect(eth0.get_by_test_id("network-link-eth0-network")).to_be_hidden()
     expect(eth0).to_contain_text("Ethernet · eth0")
     expect(eth0.get_by_test_id("network-link-eth0-state")).to_have_text("Connected")
     expect(eth0.get_by_test_id("network-link-eth0-speed")).to_contain_text("100 Mbit/s")
@@ -211,7 +211,7 @@ def test_no_uplink_when_links_are_up_but_nothing_routes(
     )
     expect(card.get_by_test_id("network-link-eth0-state")).to_have_text("Connected")
     expect(card.get_by_test_id("network-link-wlan0-state")).to_have_text("Connected")
-    expect(card.get_by_text("Uplink", exact=True)).to_have_count(0)
+    expect(card.get_by_text("Uplink", exact=True).filter(visible=True)).to_have_count(0)
 
 
 @pytest.mark.e2e

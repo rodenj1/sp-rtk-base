@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from nicegui import ui
 
 from sp_rtk_base import services as services_mod
+from sp_rtk_base.models.bluetooth_link_models import BluetoothLinkReading
 from sp_rtk_base.services import (
     get_bluetooth_link_service,
     get_config_service,
@@ -29,10 +31,16 @@ from sp_rtk_base.services import (
 )
 from sp_rtk_base.services.bluetooth_link.monitor import is_bluetooth_input
 from sp_rtk_base.services.relay_service import RelayStartRefusedError
-from sp_rtk_base.ui.components.bluetooth_link import bluetooth_link_row
-from sp_rtk_base.ui.components.network_card import network_card
+from sp_rtk_base.ui.components.bluetooth_link import BluetoothLinkRow
+from sp_rtk_base.ui.components.network_card import NetworkCard
 from sp_rtk_base.ui.components.signal_quality import signal_quality_heading
-from sp_rtk_base.ui.components.status_card import status_indicator, status_metric
+from sp_rtk_base.ui.components.status_card import (
+    StatusIndicator,
+    StatusMetric,
+    set_text,
+    set_visible,
+    swap_class,
+)
 from sp_rtk_base.ui.formatting import format_byte_rate as _format_byte_rate
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
@@ -162,6 +170,293 @@ def _format_uptime(seconds: float | None) -> str:
     return f"{y}y {d:02d}d"
 
 
+# --- Dashboard sections, built once and updated in place ---
+#
+# Every element NiceGUI creates and later deletes leaves a little memory
+# behind in the browser, so a dashboard that cleared and rebuilt its
+# cards on every status refresh grew without bound while it stayed on
+# screen, until the Pi ran short of memory and the page reloaded itself
+# (rtk_development#177).  Each section below is built once when the page
+# loads; a refresh changes text, colours and visibility, and creates or
+# deletes elements only when the page's structure changes.
+
+
+def _rate_text(rate: float | None, fmt: Callable[[float], str]) -> str:
+    """A per-second rate, or "—" before there is a baseline."""
+    return fmt(rate) if rate is not None else "—"
+
+
+def _caption(text: str = "") -> ui.label:
+    """An orange warning caption under a card's metrics, hidden at first."""
+    label = ui.label(text).classes("text-orange text-caption q-mt-xs")
+    label.set_visibility(False)
+    return label
+
+
+def _show_caption(label: ui.label, text: str | None) -> None:
+    """Show *text* in *label*, or hide (and empty) it for ``None``."""
+    set_text(label, text or "")
+    set_visible(label, text is not None)
+
+
+class _RunningCard:
+    """A metrics card that says "Not running" when there is nothing to show."""
+
+    def __init__(self, title: str) -> None:
+        ui.label(title).classes("text-subtitle2 text-grey-4")
+        self._not_running = ui.label("Not running").classes("text-grey-6")
+        self._running_parts: list[ui.element | StatusMetric] = []
+
+    def _set_running(self, running: bool) -> None:
+        set_visible(self._not_running, not running)
+        for part in self._running_parts:
+            part.set_visibility(running)
+
+
+class _InputCard(_RunningCard):
+    """The Input Source card."""
+
+    def __init__(self) -> None:
+        super().__init__("Input Source")
+        self._connected = ui.label("").classes("text-red")
+        self._connected_color = "red"
+        self._source = StatusMetric("Source", "", "input")
+        self._bluetooth = BluetoothLinkRow(None)
+        # Per-second rate is the primary signal — 0 B/s reads as "nothing
+        # flowing" immediately, where a stuck running total just looks like
+        # a big number.  Total is shown small underneath as context.
+        self._received = StatusMetric("Received", "—", "download", subvalue="")
+        self._messages = StatusMetric("Messages", "—", "message", subvalue="")
+        self._no_data = _caption()
+        self._reconnects = _caption()
+        self._running_parts = [
+            self._connected,
+            self._source,
+            self._received,
+            self._messages,
+        ]
+        self.update(None)
+
+    def update(
+        self,
+        inp: Any | None,
+        *,
+        bluetooth: BluetoothLinkReading | None = None,
+        bytes_rate: float | None = None,
+        msgs_rate: float | None = None,
+    ) -> None:
+        """Show the Relay's input status (``None``: not running)."""
+        self._set_running(inp is not None)
+        if inp is None:
+            self._bluetooth.set_visibility(False)
+            _show_caption(self._no_data, None)
+            _show_caption(self._reconnects, None)
+            return
+        connected: bool = getattr(inp, "connected", False)
+        color = "green" if connected else "red"
+        set_text(self._connected, "Connected" if connected else "Disconnected")
+        swap_class(self._connected, f"text-{self._connected_color}", f"text-{color}")
+        self._connected_color = color
+        self._source.update(getattr(inp, "source_type", "unknown"))
+        if is_bluetooth_input(inp):
+            self._bluetooth.update(bluetooth)
+            self._bluetooth.set_visibility(True)
+        else:
+            self._bluetooth.set_visibility(False)
+        bytes_in = int(getattr(inp, "bytes_received", 0))
+        self._received.update(
+            _rate_text(bytes_rate, _format_byte_rate),
+            f"total: {_format_bytes(bytes_in)}",
+        )
+        msgs_in = int(getattr(inp, "messages_received", 0))
+        self._messages.update(
+            _rate_text(msgs_rate, lambda r: _format_count_rate(r, " msg/s")),
+            f"total: {msgs_in}",
+        )
+        secs = getattr(inp, "seconds_since_last_data", -1.0)
+        no_data = f"⚠ No data for {secs:.0f}s" if secs > 10 else None
+        reconnects: int = getattr(inp, "reconnect_attempts", 0)
+        reconnect_text = (
+            f"Reconnect attempts: {reconnects}"
+            if secs < 0 and not connected and reconnects > 0
+            else None
+        )
+        _show_caption(self._no_data, no_data)
+        _show_caption(self._reconnects, reconnect_text)
+
+
+class _ThroughputCard(_RunningCard):
+    """The Throughput card."""
+
+    def __init__(self) -> None:
+        super().__init__("Throughput")
+        self._bytes = StatusMetric("Bytes In", "—", "download", subvalue="")
+        self._chunks = StatusMetric("Chunks Out", "—", "upload", subvalue="")
+        self._warnings = _caption()
+        self._running_parts = [self._bytes, self._chunks]
+        self.update(None)
+
+    def update(
+        self,
+        status: Any | None,
+        *,
+        bytes_rate: float | None = None,
+        chunks_rate: float | None = None,
+    ) -> None:
+        """Show the Relay's throughput (``None``: not running)."""
+        self._set_running(status is not None)
+        if status is None:
+            _show_caption(self._warnings, None)
+            return
+        self._bytes.update(
+            _rate_text(bytes_rate, _format_byte_rate),
+            f"total: {_format_bytes(int(status.bytes_received))}",
+        )
+        self._chunks.update(
+            _rate_text(chunks_rate, _format_count_rate),
+            f"total: {int(status.chunks_distributed)}",
+        )
+        warnings = status.no_data_warnings
+        _show_caption(
+            self._warnings,
+            f"⚠ {warnings} no-data warnings" if warnings and warnings > 0 else None,
+        )
+
+
+class _DestinationsCard(_RunningCard):
+    """The Destinations summary card."""
+
+    def __init__(self) -> None:
+        super().__init__("Destinations")
+        self._active = StatusMetric("Active", "", "output")
+        self._errors = _caption()
+        self._dropped = _caption()
+        self._running_parts = [self._active]
+        self.update(None)
+
+    def update(self, status: Any | None) -> None:
+        """Show the destinations' summary (``None``: not running)."""
+        self._set_running(status is not None)
+        if status is None:
+            _show_caption(self._errors, None)
+            _show_caption(self._dropped, None)
+            return
+        self._active.update(
+            f"{status.active_destination_count}/{status.total_destination_count}"
+        )
+        total_errors = sum(getattr(d, "errors", 0) for d in status.destinations)
+        total_dropped = sum(
+            getattr(d, "messages_dropped", 0) for d in status.destinations
+        )
+        _show_caption(
+            self._errors,
+            f"⚠ {total_errors} total errors" if total_errors > 0 else None,
+        )
+        _show_caption(
+            self._dropped,
+            f"⚠ {total_dropped} messages dropped" if total_dropped > 0 else None,
+        )
+
+
+class _DestinationRow:
+    """One destination's row in Destination details."""
+
+    def __init__(self, name: str) -> None:
+        self.row = (
+            ui.row()
+            .classes("items-center gap-4 q-py-xs w-full")
+            .props(f"data-testid=destination-row-{name}")
+        )
+        self._color = "red"
+        with self.row:
+            self._dot = ui.icon("circle").classes("text-red").style("font-size: 10px")
+            ui.label(name).classes("text-grey-2").style("min-width: 120px")
+            self._bytes = ui.label("").classes("text-grey-4 text-caption")
+            self._errors = ui.badge("", color="red").props("outline")
+            self._dropped = ui.badge("", color="orange").props("outline")
+            self._queue = ui.label("").classes("text-grey-5 text-caption")
+        for hidden in (self._errors, self._dropped, self._queue):
+            hidden.set_visibility(False)
+
+    def update(self, dest: Any) -> None:
+        connected: bool = getattr(dest, "connected", False)
+        errors: int = getattr(dest, "errors", 0)
+        dropped: int = getattr(dest, "messages_dropped", 0)
+        queue: int = getattr(dest, "queue_depth", 0)
+        color = "green" if connected else "red"
+        swap_class(self._dot, f"text-{self._color}", f"text-{color}")
+        self._color = color
+        set_text(self._bytes, _format_bytes(getattr(dest, "bytes_sent", 0)))
+        for badge, count, text in (
+            (self._errors, errors, f"{errors} err"),
+            (self._dropped, dropped, f"{dropped} drop"),
+        ):
+            text = text if count > 0 else ""
+            if badge.text != text:
+                badge.text = text
+            set_visible(badge, count > 0)
+        _show_caption(self._queue, f"Q:{queue}" if queue > 0 else None)
+
+
+class _DestinationDetails:
+    """The per-destination rows, keyed by destination name.
+
+    A destination's row is created when it first appears in the Relay
+    status and deleted when it goes; the rest are updated in place.
+    """
+
+    def __init__(self) -> None:
+        self._card = ui.card().classes("w-full q-pa-md")
+        with self._card:
+            ui.label("Destination Details").classes(
+                "text-subtitle2 text-grey-4 q-mb-sm"
+            )
+            self._rows_box = ui.column().classes("w-full gap-0")
+        self._card.set_visibility(False)
+        self._rows: dict[str, _DestinationRow] = {}
+
+    def update(self, destinations: list[Any]) -> None:
+        """Show *destinations* (empty: hide the card)."""
+        names = [str(getattr(d, "name", "unknown")) for d in destinations]
+        for gone in [n for n in self._rows if n not in names]:
+            self._rows.pop(gone).row.delete()
+        for index, (name, dest) in enumerate(zip(names, destinations, strict=True)):
+            row = self._rows.get(name)
+            if row is None:
+                with self._rows_box:
+                    row = self._rows[name] = _DestinationRow(name)
+            if list(self._rows_box.default_slot.children).index(row.row) != index:
+                row.row.move(target_index=index)
+            row.update(dest)
+        set_visible(self._card, bool(names))
+
+
+class _ErrorBanner:
+    """The "Issues Detected" banner; its lines change only with the issues."""
+
+    def __init__(self) -> None:
+        self._card = (
+            ui.card()
+            .classes("w-full q-pa-sm")
+            .style("background-color: #3d1515; border-left: 4px solid #ff4444")
+        )
+        with self._card:
+            ui.label("⚠ Issues Detected").classes("text-subtitle2 text-red-3")
+            self._lines = ui.column().classes("w-full gap-0")
+        self._card.set_visibility(False)
+        self._errors: list[str] = []
+
+    def update(self, errors: list[str]) -> None:
+        """Show *errors* (none: hide the banner)."""
+        if errors != self._errors:
+            self._lines.clear()
+            with self._lines:
+                for err in errors:
+                    ui.label(f"• {err}").classes("text-caption text-red-4 q-ml-sm")
+            self._errors = list(errors)
+        set_visible(self._card, bool(errors))
+
+
 @ui.page("/", dark=True)
 def dashboard_page() -> None:
     """Render the dashboard page."""
@@ -187,7 +482,10 @@ def dashboard_page() -> None:
         # ``config_status_label`` explains which page to visit.
         with ui.card().classes("w-full q-pa-md"):
             with ui.row().classes("items-center justify-between w-full"):
-                status_container = ui.row().classes("items-center gap-4")
+                with ui.row().classes("items-center gap-4"):
+                    indicator = StatusIndicator(relay.is_running)
+                    uptime_label = ui.label("").classes("text-grey-4")
+                    uptime_label.set_visibility(False)
                 primary_btn = ui.button(
                     "Start", icon="play_arrow", on_click=lambda: _toggle_relay()
                 ).props("color=green")
@@ -211,19 +509,26 @@ def dashboard_page() -> None:
 
         # --- Metrics cards ---
         with ui.row().classes("w-full gap-4 q-mt-md sp-metric-row"):
-            input_card = ui.card().classes("flex-1 q-pa-md")
-            throughput_card = ui.card().classes("flex-1 q-pa-md")
-            dest_card = ui.card().classes("flex-1 q-pa-md")
+            with ui.card().classes("flex-1 q-pa-md"):
+                input_view = _InputCard()
+            with ui.card().classes("flex-1 q-pa-md"):
+                throughput_view = _ThroughputCard()
+            with ui.card().classes("flex-1 q-pa-md"):
+                destinations_view = _DestinationsCard()
 
         # --- Network card: the Network links and the Uplink ---
-        net_card = (
+        # The sampler's snapshot, so every viewer sees the same throughput
+        # (never this page's own rate tracking).
+        with (
             ui.card()
             .classes("w-full q-pa-md q-mt-md")
             .props("data-testid=network-card")
-        )
+        ):
+            network_view = NetworkCard(network_link.current())
 
         # --- Destination details ---
-        dest_details_container = ui.column().classes("w-full gap-2 q-mt-md")
+        with ui.column().classes("w-full gap-2 q-mt-md"):
+            details_view = _DestinationDetails()
 
         # --- Auto-start banner (in_progress / failure surface) ---
         #
@@ -233,9 +538,13 @@ def dashboard_page() -> None:
         # for the current browser session.
         auto_start_banner = ui.column().classes("w-full q-mt-md")
         auto_start_dismissed_states: set[str] = set()
+        auto_start_shown: dict[str, tuple[str, int, str | None] | None] = {
+            "value": None
+        }
 
         # --- Error banner ---
-        error_banner = ui.column().classes("w-full q-mt-md")
+        with ui.column().classes("w-full q-mt-md"):
+            error_view = _ErrorBanner()
 
         # --- Event log ---
         with ui.card().classes("w-full q-pa-md q-mt-md"):
@@ -339,186 +648,56 @@ def dashboard_page() -> None:
             else:
                 config_status_label.set_visibility(False)
 
-            # Status indicator
-            status_container.clear()
-            with status_container:
-                status_indicator(running)
-                if status and status.uptime_seconds is not None:
-                    ui.label(
-                        f"Uptime: {_format_uptime(status.uptime_seconds)}"
-                    ).classes("text-grey-4")
+            # Each section is updated in place: see the note above
+            # ``_RunningCard``.
+            indicator.update(running)
+            uptime = status.uptime_seconds if status else None
+            if uptime is not None:
+                set_text(uptime_label, f"Uptime: {_format_uptime(uptime)}")
+            set_visible(uptime_label, uptime is not None)
 
-            # Network card: the sampler's snapshot, so every viewer sees the
-            # same throughput (never this page's own rate tracking).
-            net_card.clear()
-            with net_card:
-                network_card(network_link.current())
+            network_view.update(network_link.current())
 
-            # Input card
-            input_card.clear()
-            with input_card:
-                ui.label("Input Source").classes("text-subtitle2 text-grey-4")
-                if status and status.input:
-                    inp: Any = status.input
-                    connected: bool = getattr(inp, "connected", False)
-                    color = "green" if connected else "red"
-                    ui.label(f"{'Connected' if connected else 'Disconnected'}").classes(
-                        f"text-{color}"
-                    )
-                    status_metric(
-                        "Source", getattr(inp, "source_type", "unknown"), "input"
-                    )
-                    if is_bluetooth_input(inp):
-                        bluetooth_link_row(bluetooth_link.current())
+            inp: Any = status.input if status else None
+            if inp:
+                input_view.update(
+                    inp,
+                    bluetooth=bluetooth_link.current(),
+                    bytes_rate=_rate(
+                        "input_bytes", int(getattr(inp, "bytes_received", 0)), now
+                    ),
+                    msgs_rate=_rate(
+                        "input_msgs", int(getattr(inp, "messages_received", 0)), now
+                    ),
+                )
+            else:
+                input_view.update(None)
 
-                    # Per-second rate is the primary signal — 0 B/s
-                    # reads as "nothing flowing" immediately, where a
-                    # stuck running total just looks like a big number.
-                    # Total is shown small underneath as context.
-                    bytes_in = int(getattr(inp, "bytes_received", 0))
-                    bytes_rate = _rate("input_bytes", bytes_in, now)
-                    status_metric(
-                        "Received",
-                        (
-                            _format_byte_rate(bytes_rate)
-                            if bytes_rate is not None
-                            else "—"
-                        ),
-                        "download",
-                        subvalue=f"total: {_format_bytes(bytes_in)}",
-                    )
-                    msgs_in = int(getattr(inp, "messages_received", 0))
-                    msgs_rate = _rate("input_msgs", msgs_in, now)
-                    status_metric(
-                        "Messages",
-                        (
-                            _format_count_rate(msgs_rate, " msg/s")
-                            if msgs_rate is not None
-                            else "—"
-                        ),
-                        "message",
-                        subvalue=f"total: {msgs_in}",
-                    )
-                    secs = getattr(inp, "seconds_since_last_data", -1.0)
-                    if secs >= 0:
-                        if secs > 10:
-                            ui.label(f"⚠ No data for {secs:.0f}s").classes(
-                                "text-orange text-caption q-mt-xs"
-                            )
-                    elif not connected:
-                        reconnects: int = getattr(inp, "reconnect_attempts", 0)
-                        if reconnects > 0:
-                            ui.label(f"Reconnect attempts: {reconnects}").classes(
-                                "text-orange text-caption q-mt-xs"
-                            )
-                else:
-                    ui.label("Not running").classes("text-grey-6")
+            if status:
+                throughput_view.update(
+                    status,
+                    bytes_rate=_rate("thru_bytes", int(status.bytes_received), now),
+                    chunks_rate=_rate("chunks", int(status.chunks_distributed), now),
+                )
+            else:
+                throughput_view.update(None)
+            destinations_view.update(status)
+            details_view.update(list(status.destinations) if status else [])
 
-            # Throughput card
-            throughput_card.clear()
-            with throughput_card:
-                ui.label("Throughput").classes("text-subtitle2 text-grey-4")
-                if status:
-                    bytes_thru = int(status.bytes_received)
-                    bytes_thru_rate = _rate("thru_bytes", bytes_thru, now)
-                    status_metric(
-                        "Bytes In",
-                        (
-                            _format_byte_rate(bytes_thru_rate)
-                            if bytes_thru_rate is not None
-                            else "—"
-                        ),
-                        "download",
-                        subvalue=f"total: {_format_bytes(bytes_thru)}",
-                    )
-                    chunks = int(status.chunks_distributed)
-                    chunks_rate = _rate("chunks", chunks, now)
-                    status_metric(
-                        "Chunks Out",
-                        (
-                            _format_count_rate(chunks_rate)
-                            if chunks_rate is not None
-                            else "—"
-                        ),
-                        "upload",
-                        subvalue=f"total: {chunks}",
-                    )
-                    if status.no_data_warnings and status.no_data_warnings > 0:
-                        ui.label(
-                            f"⚠ {status.no_data_warnings} no-data warnings"
-                        ).classes("text-orange text-caption q-mt-xs")
-                else:
-                    ui.label("Not running").classes("text-grey-6")
-
-            # Destinations summary card
-            dest_card.clear()
-            with dest_card:
-                ui.label("Destinations").classes("text-subtitle2 text-grey-4")
-                if status:
-                    status_metric(
-                        "Active",
-                        f"{status.active_destination_count}/{status.total_destination_count}",
-                        "output",
-                    )
-                    total_errors = sum(
-                        getattr(d, "errors", 0) for d in status.destinations
-                    )
-                    if total_errors > 0:
-                        ui.label(f"⚠ {total_errors} total errors").classes(
-                            "text-orange text-caption q-mt-xs"
-                        )
-                    total_dropped = sum(
-                        getattr(d, "messages_dropped", 0) for d in status.destinations
-                    )
-                    if total_dropped > 0:
-                        ui.label(f"⚠ {total_dropped} messages dropped").classes(
-                            "text-orange text-caption q-mt-xs"
-                        )
-                else:
-                    ui.label("Not running").classes("text-grey-6")
-
-            # Per-destination details
-            dest_details_container.clear()
-            if status and status.destinations:
-                with dest_details_container:
-                    with ui.card().classes("w-full q-pa-md"):
-                        ui.label("Destination Details").classes(
-                            "text-subtitle2 text-grey-4 q-mb-sm"
-                        )
-                        for dest in status.destinations:
-                            _render_dest_row(dest)
-
-            # Auto-start lifecycle banner (re-rendered every tick so
+            # Auto-start lifecycle banner (checked every tick so
             # transitions in_progress → succeeded / failed are visible).
             _refresh_auto_start_banner()
 
             # Error banner for critical issues
-            error_banner.clear()
+            errors: list[str] = []
             if status:
-                errors: list[str] = []
                 if status.input and not getattr(status.input, "connected", True):
                     errors.append("Input source is disconnected")
                 for dest in status.destinations:
                     last_err = getattr(dest, "last_error", None)
                     if last_err:
                         errors.append(f"{dest.name}: {last_err}")
-
-                if errors:
-                    with error_banner:
-                        with (
-                            ui.card()
-                            .classes("w-full q-pa-sm")
-                            .style(
-                                "background-color: #3d1515; border-left: 4px solid #ff4444"
-                            )
-                        ):
-                            ui.label("⚠ Issues Detected").classes(
-                                "text-subtitle2 text-red-3"
-                            )
-                            for err in errors:
-                                ui.label(f"• {err}").classes(
-                                    "text-caption text-red-4 q-ml-sm"
-                                )
+            error_view.update(errors)
 
         def _refresh_auto_start_banner() -> None:
             """Render the auto-start lifecycle banner.
@@ -530,26 +709,31 @@ def dashboard_page() -> None:
             a stale "failed" banner without it reappearing every
             polling tick.
             """
-            auto_start_banner.clear()
             snapshot = services_mod.auto_start_status
             state = snapshot.state
             # Skipped starts need no banner: the disabled Start button
             # already says what to configure.
-            if state in (
+            hidden = state in (
                 "idle",
                 "succeeded",
                 "succeeded_user",
                 "skipped_no_input",
                 "skipped_no_destinations",
-            ):
+            ) or (state in auto_start_dismissed_states)
+            # Redrawn only when what it shows changes (see ``_RunningCard``).
+            shown = None if hidden else (state, snapshot.attempts, snapshot.last_error)
+            if shown == auto_start_shown["value"]:
                 return
-            if state in auto_start_dismissed_states:
+            auto_start_shown["value"] = shown
+            auto_start_banner.clear()
+            if shown is None:
                 return
 
             total = len(services_mod.AUTO_START_BACKOFF_SECONDS)
 
             def _dismiss(current_state: str = state) -> None:
                 auto_start_dismissed_states.add(current_state)
+                auto_start_shown["value"] = None
                 auto_start_banner.clear()
 
             with auto_start_banner:
@@ -607,27 +791,6 @@ def dashboard_page() -> None:
                         ui.label(hint).classes(
                             "text-caption text-grey-4 q-ml-md q-mt-xs"
                         )
-
-        def _render_dest_row(dest: Any) -> None:
-            """Render a single destination status row."""
-            name: str = getattr(dest, "name", "unknown")
-            connected: bool = getattr(dest, "connected", False)
-            bytes_sent: int = getattr(dest, "bytes_sent", 0)
-            errors: int = getattr(dest, "errors", 0)
-            dropped: int = getattr(dest, "messages_dropped", 0)
-            queue: int = getattr(dest, "queue_depth", 0)
-
-            color = "green" if connected else "red"
-            with ui.row().classes("items-center gap-4 q-py-xs w-full"):
-                ui.icon("circle").classes(f"text-{color}").style("font-size: 10px")
-                ui.label(name).classes("text-grey-2").style("min-width: 120px")
-                ui.label(_format_bytes(bytes_sent)).classes("text-grey-4 text-caption")
-                if errors > 0:
-                    ui.badge(f"{errors} err", color="red").props("outline")
-                if dropped > 0:
-                    ui.badge(f"{dropped} drop", color="orange").props("outline")
-                if queue > 0:
-                    ui.label(f"Q:{queue}").classes("text-grey-5 text-caption")
 
         def _render_event(evt: dict[str, object]) -> None:
             """Render a single event entry in the log."""

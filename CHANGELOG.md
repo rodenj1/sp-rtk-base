@@ -11,6 +11,21 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.14.1 (2026-11-15)
+
+### Fixed
+
+- **The Dashboard no longer grows the browser's memory and CPU until the
+  page reloads itself** (rtk_development#177). Every refresh used to
+  delete and rebuild each card, and the Signal Quality chip and card on
+  their own timer; NiceGUI keeps some browser memory for every element it
+  deletes, so a Dashboard left open on a base's desktop slowed the Pi for
+  8–10 hours and then reloaded. Each card is now built once and updated
+  in place. On test-base, with the Dashboard open for 10 hours, the Pi's
+  memory stayed at about 650 MB and its CPU at about 0.7 cores, and the
+  page never reloaded (on 0.14.0: +118 MB and 1.1 → 2.0 cores in 2.5
+  hours).
+
 ## v0.14.0 (2026-11-11)
 
 ### New metrics on /metrics

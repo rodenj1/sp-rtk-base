@@ -20,5 +20,7 @@ def test_no_bluetooth_link_row_while_the_relay_is_stopped(
 
     expect(page.get_by_text("Input Source", exact=True)).to_be_visible()
     expect(page.get_by_text("Not running").first).to_be_visible()
-    expect(page.get_by_test_id("bluetooth-link-row")).to_have_count(0)
-    expect(page.get_by_text("Bluetooth link", exact=True)).to_have_count(0)
+    expect(page.get_by_test_id("bluetooth-link-row")).to_be_hidden()
+    expect(
+        page.get_by_text("Bluetooth link", exact=True).filter(visible=True)
+    ).to_have_count(0)

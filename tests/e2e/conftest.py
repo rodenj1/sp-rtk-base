@@ -86,6 +86,11 @@ E2E_NEEDS_PYTHON_APP = "100.0.0"
 #: notes are only in its GitHub Release, one with no notes anywhere.
 E2E_RELEASE_BODY_APP = "97.0.0"
 E2E_NO_NOTES_APP = "98.0.0"
+#: The Network page's polls on the e2e server, in seconds: the Uplink card's
+#: (2 s in production) and the saved list's (5 s), shortened so its tests see
+#: as many polls in a quarter of the time (fake Network link host only).
+E2E_NETWORK_STATUS_POLL_S = 0.5
+E2E_NETWORK_SAVED_POLL_S = 1.0
 #: ``CHANGELOG.md`` at the Available update's tag adds these sections.
 E2E_CHANGELOG = (
     "## v99.0.0 (2026-10-20)\n\n"
@@ -301,6 +306,9 @@ def running_server(
             tmp_path_factory.mktemp("network-links") / "network-links.json"
         )
     env["SP_RTK_BASE_FAKE_NETWORK_LINKS"] = str(network_links_file)
+    # and the Network page polls it (and nmcli) faster than every 2 s / 5 s.
+    env["SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S"] = str(E2E_NETWORK_STATUS_POLL_S)
+    env["SP_RTK_BASE_FAKE_NETWORK_SAVED_POLL_S"] = str(E2E_NETWORK_SAVED_POLL_S)
     # The Portal page asks this (real, idle) agent, not /run's.
     env["SP_RTK_BASE_PORTAL_AGENT_SOCKET"] = str(portal_agent_socket)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects

@@ -31,11 +31,16 @@ from sp_rtk_base.models.network_link_models import (
     StationReading,
     WifiReading,
 )
-from tests.e2e.conftest import running_server
+from tests.e2e.conftest import (
+    E2E_NETWORK_SAVED_POLL_S,
+    E2E_NETWORK_STATUS_POLL_S,
+    running_server,
+)
 
-#: The polls' intervals, in ms: the Uplink card's and the saved list's.
-STATUS_POLL_MS = 2000
-SAVED_POLL_MS = 5000
+#: The polls' intervals on the e2e server, in ms: the Uplink card's and the
+#: saved list's.
+STATUS_POLL_MS = round(E2E_NETWORK_STATUS_POLL_S * 1000)
+SAVED_POLL_MS = round(E2E_NETWORK_SAVED_POLL_S * 1000)
 
 #: Every NiceGUI element's id on the page (``c<N>``).
 _ELEMENT_IDS_JS = """() => Array.from(document.querySelectorAll('[id]'))
@@ -156,7 +161,7 @@ def _settled_ids(page: Page) -> set[str]:
     """The page's element ids once a saved-list poll goes by unchanged."""
     previous = _element_ids(page)
     for _ in range(10):
-        page.wait_for_timeout(SAVED_POLL_MS + 500)
+        page.wait_for_timeout(SAVED_POLL_MS + STATUS_POLL_MS // 4)
         current = _element_ids(page)
         if current == previous:
             return current
@@ -192,7 +197,9 @@ def test_polls_keep_the_same_elements_while_the_readings_change(
 
     baseline = _settled_ids(page)
     _write_uplink(network_links_file, "wlan0", signal_dbm=-80)
-    for i in range(6):  # two saved-list polls, six of the Uplink card's
+    # Six of the Uplink card's polls (and three of the saved list's; two at
+    # production's 2 s / 5 s).
+    for i in range(6):
         page.wait_for_timeout(STATUS_POLL_MS)
         current = _element_ids(page)
         assert current == baseline, (

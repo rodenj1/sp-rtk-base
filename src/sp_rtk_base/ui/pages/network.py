@@ -25,6 +25,7 @@ the dashboard).
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 
 from nicegui import ui
@@ -38,6 +39,7 @@ from sp_rtk_base.models.net_provision_models import (
 )
 from sp_rtk_base.models.network_link_models import NetworkLink, NetworkLinkSnapshot
 from sp_rtk_base.services import get_network_link_service, get_network_service
+from sp_rtk_base.services.network_link.reader import FAKE_NETWORK_LINKS_ENV
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
 from sp_rtk_base.ui import network_link_status as shown
 from sp_rtk_base.ui import wifi_bands
@@ -64,6 +66,34 @@ logger = logging.getLogger(__name__)
 # otherwise left to the manual Rescan button.
 _STATUS_POLL_INTERVAL_SECONDS = 2.0
 _SAVED_POLL_INTERVAL_SECONDS = 5.0
+
+# The e2e tests shorten both polls, so they see as many polls in less time.
+# Honoured only on the fake Network link host; not a user setting.
+STATUS_POLL_ENV = "SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S"
+SAVED_POLL_ENV = "SP_RTK_BASE_FAKE_NETWORK_SAVED_POLL_S"
+
+
+def _fake_network_timing(env: str, default: float) -> float:
+    """A poll interval; only the fake Network link host (e2e) may shorten it."""
+    value = os.environ.get(env)
+    if not os.environ.get(FAKE_NETWORK_LINKS_ENV) or not value:
+        return default
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = 0.0
+    if not seconds > 0:
+        logger.warning("Ignoring %s=%r: not a positive number of seconds", env, value)
+        return default
+    return seconds
+
+
+def network_poll_intervals() -> tuple[float, float]:
+    """The Uplink card's and the saved list's poll intervals, in seconds."""
+    return (
+        _fake_network_timing(STATUS_POLL_ENV, _STATUS_POLL_INTERVAL_SECONDS),
+        _fake_network_timing(SAVED_POLL_ENV, _SAVED_POLL_INTERVAL_SECONDS),
+    )
 
 
 def _signal_icon(signal: int) -> str:
@@ -770,8 +800,9 @@ def network_page() -> None:
             except RuntimeError:
                 return  # Elements deleted — user navigated away
 
-        ui.timer(_STATUS_POLL_INTERVAL_SECONDS, _refresh_status)
-        ui.timer(_SAVED_POLL_INTERVAL_SECONDS, _refresh_saved)
+        status_poll_s, saved_poll_s = network_poll_intervals()
+        ui.timer(status_poll_s, _refresh_status)
+        ui.timer(saved_poll_s, _refresh_saved)
         ui.timer(0.1, _refresh_status, once=True)
         ui.timer(0.1, _refresh_saved, once=True)
         ui.timer(0.1, _refresh_scan, once=True)

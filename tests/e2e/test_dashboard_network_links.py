@@ -101,6 +101,15 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(card.get_by_test_id("network-uplink")).to_have_text(
         "Wi-Fi (wlan0)", timeout=SOON_MS
     )
+    # A Wi-Fi-only reading left by an earlier test has the same Uplink, so
+    # wait for this reading's two links before reading anything else.
+    links = card.locator(
+        "[data-testid=network-link-wlan0], [data-testid=network-link-eth0]"
+    )
+    expect(links).to_have_count(2, timeout=SOON_MS)
+    # The Uplink comes first.
+    expect(links.nth(0)).to_have_attribute("data-testid", "network-link-wlan0")
+    expect(links.nth(1)).to_have_attribute("data-testid", "network-link-eth0")
     expect(card).to_contain_text(
         "Link health only: whether the caster and Portal are reachable "
         "shows under Destinations."
@@ -110,11 +119,6 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(card.get_by_test_id("network-link-eth0-uplink")).to_be_hidden()
     wlan0 = card.get_by_test_id("network-link-wlan0")
     eth0 = card.get_by_test_id("network-link-eth0")
-    # The Uplink comes first.
-    order = card.locator(
-        "[data-testid=network-link-wlan0], [data-testid=network-link-eth0]"
-    ).evaluate_all("columns => columns.map(c => c.dataset.testid)")
-    assert order == ["network-link-wlan0", "network-link-eth0"]
     expect(wlan0).to_contain_text("Wi-Fi · wlan0")
     expect(wlan0.get_by_test_id("network-link-wlan0-state")).to_have_text("Connected")
     expect(wlan0.get_by_test_id("network-link-wlan0-address")).to_contain_text(

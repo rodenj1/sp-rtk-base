@@ -23,6 +23,13 @@ Six jobs run on every push/PR to `main`:
 | **Integration** | 3.12 | `uv run pytest tests/integration --no-cov`: real services through the REST API with local TCP / NTRIP simulators. Not in the default `pytest` run, so this job is what runs them | ✅ |
 | **Build distribution** | 3.12 | `uv build` (sdist + wheel) — proves packaging still works | ✅ |
 
+Job order: everything waits for **pre-commit**. Lint, the plumbing
+version guard and **E2E** then start together; the unit **Test** matrix
+follows lint, and **Integration** follows the matrix. E2E does not wait
+for lint or the unit tests, so the slowest job starts as early as
+possible. **Build distribution** waits for the unit tests, E2E and
+Integration.
+
 Additional advisory steps:
 - `pylint` runs with `continue-on-error: true` — its exit code is
   surfaced as a workflow annotation only.

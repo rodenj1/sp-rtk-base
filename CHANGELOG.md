@@ -11,6 +11,18 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.14.2 (2026-11-16)
+
+### Fixed
+
+- **The Network page no longer grows the browser's memory while it stays
+  open** (rtk_development#178), the same leak 0.14.1 fixed on the
+  Dashboard. Every 2 s the page deleted and rebuilt its Uplink card, and
+  every 5 s each row of Saved Networks. The Uplink card is now built once
+  and updated in place. A saved network's row is added when the network
+  appears, removed when it goes, and otherwise updated in place.
+  The other pages were checked and already update in place.
+
 ## v0.14.1 (2026-11-15)
 
 ### Fixed

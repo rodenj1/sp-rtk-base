@@ -32,6 +32,7 @@ from sp_rtk_base.models.network_link_models import (
     WifiReading,
 )
 from tests.e2e.conftest import (
+    E2E_NETWORK_REDRAW_MARGIN_MS,
     E2E_NETWORK_SAVED_POLL_S,
     E2E_NETWORK_STATUS_POLL_S,
     running_server,
@@ -158,10 +159,11 @@ def _element_ids(page: Page) -> set[str]:
 
 
 def _settled_ids(page: Page) -> set[str]:
-    """The page's element ids once a saved-list poll goes by unchanged."""
+    """The page's element ids once a saved-list poll (and its redraw) goes
+    by unchanged."""
     previous = _element_ids(page)
     for _ in range(10):
-        page.wait_for_timeout(SAVED_POLL_MS + STATUS_POLL_MS // 4)
+        page.wait_for_timeout(SAVED_POLL_MS + E2E_NETWORK_REDRAW_MARGIN_MS)
         current = _element_ids(page)
         if current == previous:
             return current

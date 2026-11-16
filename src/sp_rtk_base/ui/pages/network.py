@@ -25,11 +25,12 @@ the dashboard).
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from nicegui import ui
 
+from sp_rtk_base.fake_timing import fake_timing
 from sp_rtk_base.models.net_provision_models import (
     BandChangePending,
     BandChangeRefused,
@@ -64,8 +65,8 @@ logger = logging.getLogger(__name__)
 # `nmcli connection show` read.  The scan list is NOT auto-polled — a
 # WiFi scan takes real radio time, so it's loaded once on page entry and
 # otherwise left to the manual Rescan button.
-_STATUS_POLL_INTERVAL_SECONDS = 2.0
-_SAVED_POLL_INTERVAL_SECONDS = 5.0
+_STATUS_POLL_S = 2.0
+_SAVED_POLL_S = 5.0
 
 # The e2e tests shorten both polls, so they see as many polls in less time.
 # Honoured only on the fake Network link host; not a user setting.
@@ -73,26 +74,24 @@ STATUS_POLL_ENV = "SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S"
 SAVED_POLL_ENV = "SP_RTK_BASE_FAKE_NETWORK_SAVED_POLL_S"
 
 
-def _fake_network_timing(env: str, default: float) -> float:
-    """A poll interval; only the fake Network link host (e2e) may shorten it."""
-    value = os.environ.get(env)
-    if not os.environ.get(FAKE_NETWORK_LINKS_ENV) or not value:
-        return default
-    try:
-        seconds = float(value)
-    except ValueError:
-        seconds = 0.0
-    if not seconds > 0:
-        logger.warning("Ignoring %s=%r: not a positive number of seconds", env, value)
-        return default
-    return seconds
+@dataclass(frozen=True)
+class NetworkPollIntervals:
+    """How often the Network page polls, in seconds."""
+
+    status_s: float  # the Uplink card
+    saved_s: float  # the saved list
 
 
-def network_poll_intervals() -> tuple[float, float]:
-    """The Uplink card's and the saved list's poll intervals, in seconds."""
-    return (
-        _fake_network_timing(STATUS_POLL_ENV, _STATUS_POLL_INTERVAL_SECONDS),
-        _fake_network_timing(SAVED_POLL_ENV, _SAVED_POLL_INTERVAL_SECONDS),
+def network_poll_intervals() -> NetworkPollIntervals:
+    """The Uplink card's and the saved list's poll intervals; only the fake
+    Network link host (e2e) may shorten them."""
+    return NetworkPollIntervals(
+        status_s=fake_timing(
+            STATUS_POLL_ENV, _STATUS_POLL_S, gate_env=FAKE_NETWORK_LINKS_ENV
+        ),
+        saved_s=fake_timing(
+            SAVED_POLL_ENV, _SAVED_POLL_S, gate_env=FAKE_NETWORK_LINKS_ENV
+        ),
     )
 
 
@@ -800,9 +799,9 @@ def network_page() -> None:
             except RuntimeError:
                 return  # Elements deleted — user navigated away
 
-        status_poll_s, saved_poll_s = network_poll_intervals()
-        ui.timer(status_poll_s, _refresh_status)
-        ui.timer(saved_poll_s, _refresh_saved)
+        polls = network_poll_intervals()
+        ui.timer(polls.status_s, _refresh_status)
+        ui.timer(polls.saved_s, _refresh_saved)
         ui.timer(0.1, _refresh_status, once=True)
         ui.timer(0.1, _refresh_saved, once=True)
         ui.timer(0.1, _refresh_scan, once=True)

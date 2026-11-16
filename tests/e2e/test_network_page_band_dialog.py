@@ -22,6 +22,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import (
+    E2E_NETWORK_REDRAW_MARGIN_MS,
     E2E_NETWORK_SAVED_POLL_S,
     E2E_NETWORK_STATUS_POLL_S,
     running_server,
@@ -45,11 +46,21 @@ esac
 exit 0
 """
 
-# Longer than one of the saved list's polls and two of the status card's
-# (on the e2e server): a dialog still open after this has outlived a redraw
-# of both.
-PAST_A_POLL_MS = round(
-    (E2E_NETWORK_SAVED_POLL_S + E2E_NETWORK_STATUS_POLL_S / 2) * 1000
+# On production's 2 s / 5 s polls this wait was 6 s: three of the status
+# card's polls and 1.2 of the saved list's.  It still spans at least as many
+# of each on the e2e server (rtk_development#192), plus the time a redraw
+# takes to land, so a dialog still open after it has outlived redraws of both.
+STATUS_POLLS_SPANNED = 6.0 / 2.0
+SAVED_POLLS_SPANNED = 6.0 / 5.0
+PAST_THE_POLLS_MS = (
+    round(
+        max(
+            STATUS_POLLS_SPANNED * E2E_NETWORK_STATUS_POLL_S,
+            SAVED_POLLS_SPANNED * E2E_NETWORK_SAVED_POLL_S,
+        )
+        * 1000
+    )
+    + E2E_NETWORK_REDRAW_MARGIN_MS
 )
 
 
@@ -102,7 +113,7 @@ def test_the_band_dialog_hears_the_network_and_outlives_the_polls(
     expect(two_four).to_be_enabled()
     expect(five).to_be_enabled()
 
-    page.wait_for_timeout(PAST_A_POLL_MS)
+    page.wait_for_timeout(PAST_THE_POLLS_MS)
     expect(dialog).to_be_visible()
 
     # The active network asks to confirm the reconnect: that dialog, too,
@@ -110,7 +121,7 @@ def test_the_band_dialog_hears_the_network_and_outlives_the_polls(
     five.click()
     confirm = page.get_by_role("dialog").filter(has_text="Use 5 GHz for 'Cats'?")
     expect(confirm).to_be_visible()
-    page.wait_for_timeout(PAST_A_POLL_MS)
+    page.wait_for_timeout(PAST_THE_POLLS_MS)
     expect(confirm).to_be_visible()
     confirm.get_by_role("button", name="Cancel").click()
     expect(confirm).to_be_hidden()

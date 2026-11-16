@@ -84,17 +84,24 @@ def clock() -> FakeClock:
     return FakeClock()
 
 
-@pytest.fixture
-def client(fake: RecordingFake, clock: FakeClock) -> Iterator[TestClient]:
+def _survey_client(
+    fake: RecordingFake, clock: FakeClock, **survey_options: float
+) -> Iterator[TestClient]:
+    """The survey API over the fake driver and a SurveyService on *clock*."""
     device = DeviceService()
     device.set_driver(fake)
     device._state = DeviceConnectionState.CONNECTED  # pyright: ignore[reportPrivateUsage]
-    survey = SurveyService(device, clock=clock, sleep=clock.sleep)
+    survey = SurveyService(device, clock=clock, sleep=clock.sleep, **survey_options)
     app = create_api_app()
     app.dependency_overrides[get_device_service] = lambda: device
     app.dependency_overrides[get_survey_service] = lambda: survey
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client(fake: RecordingFake, clock: FakeClock) -> Iterator[TestClient]:
+    yield from _survey_client(fake, clock)
 
 
 def _wait_for_outcome(client: TestClient, outcome: str) -> dict[str, Any]:
@@ -702,15 +709,7 @@ class TestRestart:
 @pytest.fixture
 def fast_client(fake: RecordingFake, clock: FakeClock) -> Iterator[TestClient]:
     """The survey API over a SurveyService that reads the receiver every 0.1 s."""
-    device = DeviceService()
-    device.set_driver(fake)
-    device._state = DeviceConnectionState.CONNECTED  # pyright: ignore[reportPrivateUsage]
-    survey = SurveyService(device, clock=clock, sleep=clock.sleep, read_interval_s=0.1)
-    app = create_api_app()
-    app.dependency_overrides[get_device_service] = lambda: device
-    app.dependency_overrides[get_survey_service] = lambda: survey
-    with TestClient(app) as test_client:
-        yield test_client
+    yield from _survey_client(fake, clock, read_interval_s=0.1)
 
 
 class TestReadInterval:

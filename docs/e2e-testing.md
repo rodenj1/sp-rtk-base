@@ -90,7 +90,7 @@ uv run pytest tests/e2e --no-cov
 ```
 
 That runs serially, in file order. To run it the way CI does, on four
-pytest-xdist workers in random order (about 2–3 min instead of 8):
+pytest-xdist workers in random order (about 2¼ min instead of 8½):
 
 ```bash
 uv run pytest tests/e2e --no-cov -n 4 --dist worksteal -p randomly
@@ -157,8 +157,9 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_network_page_uplink.py` | Network page's Uplink block from the same fake host, on its own appliance-mode server: a Wi-Fi Uplink with its Wi-Fi link strength and dBm while a cable is in, an Ethernet Uplink, and No Uplink |
 | `test_network_page_stable_elements.py`, `test_network_page_band_dialog.py` | The Network page's polls update it in place, and a Band dialog outlives them. With the fake Network link host in use, the server shortens the page's Uplink and saved-list polls (2 s / 5 s) to `E2E_NETWORK_STATUS_POLL_S` / `E2E_NETWORK_SAVED_POLL_S` in `conftest.py` (0.5 s / 1.0 s) through `SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S` / `_SAVED_POLL_S`, and the tests' waits derive from those values |
 
-Total: **about 120 tests, ≈3 min wall-clock** on a developer box (the table lists the main files; `tests/e2e/` has the rest).
-(+2 from `tests/e2e/test_survey_cancel.py` — progress-card-visible-immediately regression and the full Start → Cancel-Survey-In flow.)
+Total: **241 tests, about 8½ min serially or 2¼ min on four workers
+(`-n 4`)** on a 4-core developer box (the table lists the main files;
+`tests/e2e/` has the rest).
 (`test_survey_station_averaged.py` runs a 60 s survey — the shortest
 allowed — in observation time; with the fake receiver read every 0.1 s
 (`SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`) it takes about 6 s.)
@@ -189,8 +190,9 @@ def test_my_new_thing(page: Page, base_url: str) -> None:
     expect(page.locator("text=Hello")).to_be_visible()
 ```
 
-`page`, `base_url`, and `api_base_url` are session-scoped — the server
-starts once for the whole `pytest tests/e2e` run.
+`base_url` and `api_base_url` are session-scoped (`page` is a fresh
+Playwright page per test): the server starts once per pytest process,
+so once for a serial run and once per worker under `-n 4`.
 
 ### 2. Prefer stable selectors
 

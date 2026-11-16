@@ -27,6 +27,7 @@ from typing import Literal
 from pydantic import ValidationError
 from sp_rtk_base_relay.exceptions import ConfigurationError
 
+from sp_rtk_base.fake_timing import fake_timing
 from sp_rtk_base.portal_agent.client import read_status
 from sp_rtk_base.portal_agent.protocol import socket_path
 from sp_rtk_base.services.bluetooth_link.service import BluetoothLinkService
@@ -48,6 +49,7 @@ from sp_rtk_base.services.profile_store import ProfileStore
 from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedError
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
 from sp_rtk_base.services.survey_service import (
+    FAKE_READ_INTERVAL_ENV,
     FIXED_SETTLE_S,
     READ_INTERVAL_S,
     STALL_ABORT_S,
@@ -63,6 +65,9 @@ from sp_rtk_base.update.host_setup import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Set to "1" to run against the fake GPS (e2e), never on a real base station.
+FAKE_GPS_ENV = "SP_RTK_BASE_FAKE_GPS"
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +150,7 @@ def _bluetooth_opener() -> BluetoothOpenerFactory:
 
     The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
     """
-    if os.environ.get("SP_RTK_BASE_FAKE_GPS") == "1":
+    if os.environ.get(FAKE_GPS_ENV) == "1":
         from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
 
         return FakeBluetoothLinkOpener
@@ -173,28 +178,28 @@ host_resources_service: HostResourcesService = HostResourcesService(
 )
 
 
-def _fake_gps_timing(env: str, default: float) -> float:
-    """A survey timing (stall, settling, read interval); only the fake GPS (e2e) may shorten it."""
-    value = os.environ.get(env)
-    if os.environ.get("SP_RTK_BASE_FAKE_GPS") != "1" or not value:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        logger.warning("Ignoring %s=%r: not a number of seconds", env, value)
-        return default
+def _fake_gps_timing(env: str, default: float, *, allow_zero: bool = False) -> float:
+    """A survey timing (stall, settling, read interval); only the fake GPS
+    (e2e) may shorten it."""
+    return fake_timing(
+        env, default, gate_env=FAKE_GPS_ENV, gate_value="1", allow_zero=allow_zero
+    )
 
 
 survey_service: SurveyService = SurveyService(
     device_service,
+    # A warning at 0 s warns the moment RTK Fixed is missing; an abort at 0 s
+    # would abort on the first read, so it must be positive.
     stall_warning_s=_fake_gps_timing(
-        "SP_RTK_BASE_FAKE_STALL_WARNING_S", STALL_WARNING_S
+        "SP_RTK_BASE_FAKE_STALL_WARNING_S", STALL_WARNING_S, allow_zero=True
     ),
     stall_abort_s=_fake_gps_timing("SP_RTK_BASE_FAKE_STALL_ABORT_S", STALL_ABORT_S),
-    fixed_settle_s=_fake_gps_timing("SP_RTK_BASE_FAKE_FIXED_SETTLE_S", FIXED_SETTLE_S),
-    read_interval_s=_fake_gps_timing(
-        "SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S", READ_INTERVAL_S
+    # 0 s: an RTK Fixed counts the moment it forms (no settling).
+    fixed_settle_s=_fake_gps_timing(
+        "SP_RTK_BASE_FAKE_FIXED_SETTLE_S", FIXED_SETTLE_S, allow_zero=True
     ),
+    # Never 0: the survey would read the receiver in a loop with no pause.
+    read_interval_s=_fake_gps_timing(FAKE_READ_INTERVAL_ENV, READ_INTERVAL_S),
 )
 correction_verification_service: CorrectionSourceVerificationService = (
     CorrectionSourceVerificationService()

@@ -46,6 +46,9 @@ def test_save_tcp_input_button_persists_to_config(
     """
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
+    # Through the form, not ``clean_config``: that fixture wipes only
+    # Destinations and Correction sources and leaves the Input profile as
+    # the last test saved it.
     page.get_by_label("Source Type").click()
     page.get_by_role("option", name="tcp", exact=True).click()
 

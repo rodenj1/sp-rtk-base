@@ -47,9 +47,13 @@ from sp_rtk_base.services.update_guard import UpdateGuard
 
 logger = logging.getLogger(__name__)
 
-# The station samples the receiver's position once a second; each accepted
-# observation counts one second towards the minimum duration.
-SAMPLE_INTERVAL_S: float = 1.0
+# The station reads the receiver's position once a second.  Only the fake GPS
+# (e2e) may read faster: that changes the pacing alone, never what an
+# Observation is worth.
+READ_INTERVAL_S: float = 1.0
+# Each accepted read (an Observation) counts this much observation time
+# towards the minimum duration, whatever the read interval.
+OBSERVATION_S: float = 1.0
 
 # An application-averaged survey that hasn't completed by the time the
 # wall-clock time reaches max(this, HARD_CAP_MULTIPLE x the minimum duration)
@@ -197,11 +201,13 @@ class SurveyService:
         stall_warning_s: float = STALL_WARNING_S,
         stall_abort_s: float = STALL_ABORT_S,
         fixed_settle_s: float = FIXED_SETTLE_S,
+        read_interval_s: float = READ_INTERVAL_S,
     ) -> None:
         self._device = device
         self._stall_warning_s = stall_warning_s
         self._stall_abort_s = stall_abort_s
         self._fixed_settle_s = fixed_settle_s
+        self._read_interval_s = read_interval_s
         self._clock = clock
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
@@ -545,8 +551,8 @@ class SurveyService:
                     self._finish("aborted", "accuracy_not_reached")
                     logger.warning("Survey-in aborted: accuracy not reached in time")
                     return
-                # Once a second, however long the read itself took.
-                next_sample_at += SAMPLE_INTERVAL_S
+                # Once a read interval, however long the read itself took.
+                next_sample_at += self._read_interval_s
                 await self._sleep(max(0.0, next_sample_at - self._clock()))
         except asyncio.CancelledError:
             raise
@@ -689,7 +695,7 @@ class SurveyService:
         lat, lon, alt = ecef_to_llh(*averaging.mean())
         self._progress = self._progress.model_copy(
             update={
-                "duration_seconds": int(averaging.count * SAMPLE_INTERVAL_S),
+                "duration_seconds": int(averaging.count * OBSERVATION_S),
                 "observations": averaging.count,
                 "mean_accuracy_mm": averaging.accuracy_m() * 1000.0,
                 "latitude": lat,

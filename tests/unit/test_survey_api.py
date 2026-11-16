@@ -4,7 +4,8 @@ Seam under test: the survey HTTP API (``POST /api/device/configure/survey-in``,
 ``GET /api/device/survey-in``, ``POST /api/device/cancel-survey-in``) via
 TestClient, over a real DeviceService, a real SurveyService and the fake
 driver. The SurveyService takes an injected clock and sleep, so a survey
-that samples once a second runs instantly.
+that reads the receiver once a second (or every ``read_interval_s``) runs
+instantly.
 """
 
 from __future__ import annotations
@@ -696,3 +697,82 @@ class TestRestart:
         assert progress["outcome"] is None
         assert base["mode"] == "disabled"
         client.post(CANCEL)
+
+
+@pytest.fixture
+def fast_client(fake: RecordingFake, clock: FakeClock) -> Iterator[TestClient]:
+    """The survey API over a SurveyService that reads the receiver every 0.1 s."""
+    device = DeviceService()
+    device.set_driver(fake)
+    device._state = DeviceConnectionState.CONNECTED  # pyright: ignore[reportPrivateUsage]
+    survey = SurveyService(device, clock=clock, sleep=clock.sleep, read_interval_s=0.1)
+    app = create_api_app()
+    app.dependency_overrides[get_device_service] = lambda: device
+    app.dependency_overrides[get_survey_service] = lambda: survey
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+class TestReadInterval:
+    """A faster read interval paces the reads; each Observation is still 1 s."""
+
+    def test_a_faster_read_interval_completes_after_60_observations_in_about_6_s(
+        self, fast_client: TestClient, fake: RecordingFake, clock: FakeClock
+    ) -> None:
+        x, y, z = TRUE_ECEF
+        fake.script_survey_positions([_fix(x, y, z)] * 60)
+        started = clock.now
+
+        fast_client.post(
+            START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 1000}
+        )
+        progress = _wait_for_outcome(fast_client, "completed")
+
+        assert progress["observations"] == 60
+        assert progress["duration_seconds"] == 60  # observation time, not 6 s
+        # 60 reads, 0.1 s apart: the 60th comes 5.9 s after the first
+        assert clock.now - started == pytest.approx(5.9, abs=0.05)
+        assert fake.get_base_config().mode is BaseMode.FIXED
+
+    def test_it_completes_only_at_the_60th_observation_not_the_60th_read(
+        self, fast_client: TestClient, fake: RecordingFake, clock: FakeClock
+    ) -> None:
+        x, y, z = TRUE_ECEF
+        no_fix = SurveyPosition(
+            ecef_x_m=0.0,
+            ecef_y_m=0.0,
+            ecef_z_m=0.0,
+            accuracy_3d_m=99.0,
+            rtk_status="none",
+            fix_ok=False,
+            correction_age_s=None,
+        )
+        # 59 fixes, 20 reads that aren't accepted, then the 60th fix
+        fake.script_survey_positions(
+            [_fix(x, y, z)] * 59 + [no_fix] * 20 + [_fix(x, y, z)]
+        )
+        started = clock.now
+
+        fast_client.post(
+            START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 1000}
+        )
+        progress = _wait_for_outcome(fast_client, "completed")
+
+        assert progress["observations"] == 60
+        assert progress["duration_seconds"] == 60
+        # the 80th read, 7.9 s after the first: not at the 60th read (5.9 s)
+        assert clock.now - started == pytest.approx(7.9, abs=0.05)
+
+    def test_by_default_the_receiver_is_still_read_once_a_second(
+        self, client: TestClient, fake: RecordingFake, clock: FakeClock
+    ) -> None:
+        x, y, z = TRUE_ECEF
+        fake.script_survey_positions([_fix(x, y, z)] * 60)
+        started = clock.now
+
+        client.post(START, json={"min_duration_seconds": 60, "accuracy_limit_mm": 1000})
+        progress = _wait_for_outcome(client, "completed")
+
+        assert progress["duration_seconds"] == 60
+        # 60 reads, a second apart: the 60th comes 59 s after the first
+        assert clock.now - started == pytest.approx(59.0, abs=0.05)

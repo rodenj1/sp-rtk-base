@@ -69,6 +69,10 @@ addopts = [
     "--cov-fail-under=90",
     "--strict-markers",
     "--strict-config",
+    # pytest-randomly is off by default so the unit suite (and every
+    # other default run) keeps its fixed order.  The CI e2e job opts in
+    # with `-p randomly`; see docs/e2e-testing.md.
+    "-p", "no:randomly",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -248,6 +252,8 @@ dev = [
     "types-PyYAML",
     "pytest-playwright>=0.8.0",
     "playwright>=1.60.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-randomly>=5.0.0",
 ]
 
 # Commitizen — enforces Conventional Commits 1.0.0 on commit messages

@@ -89,6 +89,33 @@ Run the full e2e suite:
 uv run pytest tests/e2e --no-cov
 ```
 
+That runs serially, in file order. To run it the way CI does, on four
+pytest-xdist workers in random order (about 2–3 min instead of 8):
+
+```bash
+uv run pytest tests/e2e --no-cov -n 4 --dist worksteal -p randomly
+```
+
+Each worker starts its own server, fake agent socket and browsers
+through the session fixtures. Keep it at 4: more workers on a big box
+can push the timing-sensitive tests past their limits.
+
+Random order comes from pytest-randomly, which the default options turn
+off (`-p no:randomly` in `pyproject.toml`), so the unit suite and any
+plain `pytest` run keep a fixed order; `-p randomly` turns it back on.
+The run prints its seed in the header, `Using --randomly-seed=N`. To
+reproduce a failure from CI, rerun with that seed, in parallel or
+serially:
+
+```bash
+uv run pytest tests/e2e --no-cov -n 4 --dist worksteal -p randomly --randomly-seed=N
+uv run pytest tests/e2e --no-cov -p randomly --randomly-seed=N
+```
+
+Failed tests are never rerun automatically (no pytest-rerunfailures):
+a test that fails at one seed has an order dependency to fix, not to
+retry.
+
 Run a single test in headed mode (browser window visible) for
 debugging:
 
@@ -206,12 +233,13 @@ so neighbours don't pollute each other.
 
 ## CI integration
 
-The `e2e` job in `.github/workflows/ci.yml` runs after the unit-test
-matrix succeeds (it depends on `test`).  On failure, the workflow
-uploads:
+The `e2e` job in `.github/workflows/ci.yml` starts once pre-commit
+passes. It runs the suite with `-n 4 --dist worksteal -p randomly` (see
+"Running locally"), so its log shows the seed. The workflow uploads:
 
-- `pytest-e2e-junit.xml`  — JUnit XML for the GitHub test-results UI
-- `test-results/`         — Playwright traces / videos if any were
+- `pytest-e2e-junit.xml`  — JUnit XML for the GitHub test-results UI,
+  one file for all four workers (always)
+- `test-results/`         — on failure, Playwright traces / videos if any were
   produced (pytest-playwright writes these by default on failure when
   `--tracing=retain-on-failure` is set; see roadmap below).
 

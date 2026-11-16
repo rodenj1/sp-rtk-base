@@ -253,9 +253,19 @@ jobs:
         # --no-cov: the e2e suite intentionally runs out-of-process so
         # in-process coverage is meaningless here (and would fail the
         # 90% gate).  Coverage is enforced by the `test` job.
+        # -n 4 --dist worksteal: four xdist workers, each with its own
+        # server and browsers (rtk_development#185).  Fixed at 4, not
+        # `auto`, and only here: a local `pytest tests/e2e` stays serial.
+        # -p randomly: random order (off in the default addopts), so an
+        # order dependency fails reproducibly.  The header prints
+        # "Using --randomly-seed=N"; rerun with that seed to reproduce.
+        # No reruns of any kind.  The controller writes the single
+        # JUnit file for all workers.
         run: |
           uv run pytest tests/e2e \
             --no-cov \
+            -n 4 --dist worksteal \
+            -p randomly \
             --junitxml=pytest-e2e-junit.xml \
             -ra
 

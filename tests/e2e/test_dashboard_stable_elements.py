@@ -235,7 +235,11 @@ def test_an_added_destination_gets_a_row_and_the_rest_stay(
     expect(row_a).to_be_visible()
     row_a_id = row_a.get_attribute("id")
 
+    # The new destination joins the Relay on its next start. A refresh
+    # while it is stopped hides Destination details; the rows stay.
     _relay(relay_running, "stop")
+    expect(page.get_by_text("Stopped", exact=True)).to_be_visible()
+    expect(page.get_by_text("Destination Details")).to_be_hidden()
     _add_output(relay_running, "e2e-out-b")
     try:
         _relay(relay_running, "start")

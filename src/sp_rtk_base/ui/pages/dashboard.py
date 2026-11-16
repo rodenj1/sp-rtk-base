@@ -402,7 +402,9 @@ class _DestinationDetails:
     """The per-destination rows, keyed by destination name.
 
     A destination's row is created when it first appears in the Relay
-    status and deleted when it goes; the rest are updated in place.
+    status and deleted when it goes; the rest are updated in place.  While
+    the Relay isn't running the card is hidden and its rows kept, so a
+    stop and start doesn't re-create them.
     """
 
     def __init__(self) -> None:
@@ -415,8 +417,12 @@ class _DestinationDetails:
         self._card.set_visibility(False)
         self._rows: dict[str, _DestinationRow] = {}
 
-    def update(self, destinations: list[Any]) -> None:
-        """Show *destinations* (empty: hide the card)."""
+    def update(self, destinations: list[Any] | None) -> None:
+        """Show *destinations* (empty: hide the card; ``None``: the Relay
+        isn't running, so hide the card and keep the rows)."""
+        if destinations is None:
+            set_visible(self._card, False)
+            return
         names = [str(getattr(d, "name", "unknown")) for d in destinations]
         for gone in [n for n in self._rows if n not in names]:
             self._rows.pop(gone).row.delete()
@@ -682,7 +688,7 @@ def dashboard_page() -> None:
             else:
                 throughput_view.update(None)
             destinations_view.update(status)
-            details_view.update(list(status.destinations) if status else [])
+            details_view.update(list(status.destinations) if status else None)
 
             # Auto-start lifecycle banner (checked every tick so
             # transitions in_progress → succeeded / failed are visible).

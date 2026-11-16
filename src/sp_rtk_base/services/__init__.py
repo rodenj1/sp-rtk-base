@@ -49,6 +49,7 @@ from sp_rtk_base.services.relay_service import RelayService, RelayStartRefusedEr
 from sp_rtk_base.services.signal_quality.service import SignalQualityService
 from sp_rtk_base.services.survey_service import (
     FIXED_SETTLE_S,
+    READ_INTERVAL_S,
     STALL_ABORT_S,
     STALL_WARNING_S,
     SurveyService,
@@ -173,7 +174,7 @@ host_resources_service: HostResourcesService = HostResourcesService(
 
 
 def _fake_gps_timing(env: str, default: float) -> float:
-    """A survey timing (stall, settling); only the fake GPS (e2e) may shorten it."""
+    """A survey timing (stall, settling, read interval); only the fake GPS (e2e) may shorten it."""
     value = os.environ.get(env)
     if os.environ.get("SP_RTK_BASE_FAKE_GPS") != "1" or not value:
         return default
@@ -191,6 +192,9 @@ survey_service: SurveyService = SurveyService(
     ),
     stall_abort_s=_fake_gps_timing("SP_RTK_BASE_FAKE_STALL_ABORT_S", STALL_ABORT_S),
     fixed_settle_s=_fake_gps_timing("SP_RTK_BASE_FAKE_FIXED_SETTLE_S", FIXED_SETTLE_S),
+    read_interval_s=_fake_gps_timing(
+        "SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S", READ_INTERVAL_S
+    ),
 )
 correction_verification_service: CorrectionSourceVerificationService = (
     CorrectionSourceVerificationService()

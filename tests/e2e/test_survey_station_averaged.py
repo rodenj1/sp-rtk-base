@@ -4,8 +4,10 @@ The fake receiver is connected without a Receiver survey-in (sentinel port
 ``FAKE-NO-SVIN``), so a plain Survey-in started on the Survey page is
 averaged by the station itself, which commits the fixed base on its own.
 
-The completion test runs a real 60 s survey (the shortest allowed), so it
-takes about a minute.
+The completion test runs a 60 s survey (the shortest allowed) in observation
+time. The e2e server reads the fake receiver every 0.1 s
+(``SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S``), and each Observation still
+counts one second, so it completes in about 6 s.
 """
 
 from __future__ import annotations
@@ -82,10 +84,11 @@ def test_a_station_averaged_survey_completes_and_commits_the_fixed_base(
         timeout=10_000
     )
     expect(page.locator("text=Active — collecting").first).to_be_visible(timeout=10_000)
-    # The station counts the minimum duration in observation time: ~60 s
+    # The station counts the minimum duration in observation time: 60
+    # Observations, read 0.1 s apart, so ~6 s of wall-clock time
     expect(
         page.locator("text=Survey complete — position committed!").first
-    ).to_be_visible(timeout=100_000)
+    ).to_be_visible(timeout=30_000)
 
     progress = _survey(page, api_base_url)
     assert progress["outcome"] == "completed", progress

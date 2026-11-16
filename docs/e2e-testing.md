@@ -128,11 +128,13 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_survey_station_averaged.py` | Survey-in on a receiver without a Receiver survey-in (`FAKE-NO-SVIN`): the station averages, commits the fixed base, cancels to rover mode; "Averaged by the receiver" on the normal fake |
 | `test_dashboard_network_links.py` | Dashboard Network card against a fake host (`SP_RTK_BASE_FAKE_NETWORK_LINKS`, a JSON `HostReading` the sampler reads every 2 s): Wi-Fi only, both links with the Wi-Fi Uplink first and its Wi-Fi details (network, band, bitrate, failed sends), No Uplink, the setup access point (Wi-Fi Disconnected with its reason), and a sampler with No reading (every value "—" except the counters) |
 | `test_network_page_uplink.py` | Network page's Uplink block from the same fake host, on its own appliance-mode server: a Wi-Fi Uplink with its Wi-Fi link strength and dBm while a cable is in, an Ethernet Uplink, and No Uplink |
+| `test_network_page_stable_elements.py`, `test_network_page_band_dialog.py` | The Network page's polls update it in place, and a Band dialog outlives them. With the fake Network link host in use, the server shortens the page's Uplink and saved-list polls (2 s / 5 s) to `E2E_NETWORK_STATUS_POLL_S` / `E2E_NETWORK_SAVED_POLL_S` in `conftest.py` (0.5 s / 1.0 s) through `SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S` / `_SAVED_POLL_S`, and the tests' waits derive from those values |
 
 Total: **about 120 tests, ≈3 min wall-clock** on a developer box (the table lists the main files; `tests/e2e/` has the rest).
 (+2 from `tests/e2e/test_survey_cancel.py` — progress-card-visible-immediately regression and the full Start → Cancel-Survey-In flow.)
-(`test_survey_station_averaged.py` runs a real 60 s survey — the shortest
-allowed — so it adds about a minute.)
+(`test_survey_station_averaged.py` runs a 60 s survey — the shortest
+allowed — in observation time; with the fake receiver read every 0.1 s
+(`SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`) it takes about 6 s.)
 
 
 All tests that require an active device session use the
@@ -233,7 +235,12 @@ unset never see it.
 3. With the fake GPS on, `services/__init__.py` also honours
    `SP_RTK_BASE_FAKE_STALL_WARNING_S` and `SP_RTK_BASE_FAKE_STALL_ABORT_S`,
    which `conftest.py` sets to 2 s and 15 s so the browser can see a
-   Corrected survey-in's Stall warning (60 s) and abort (10 min).
+   Corrected survey-in's Stall warning (60 s) and abort (10 min), and
+   `SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`, which it sets to 0.1 s so a
+   station-averaged Survey-in reads the receiver ten times a second. That
+   changes only the pacing: each Observation still counts one second, so a
+   60 s survey completes after 60 Observations (about 6 s) and still reports
+   `duration_seconds` = 60.
 4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and

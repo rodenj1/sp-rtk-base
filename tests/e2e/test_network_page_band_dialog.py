@@ -21,7 +21,11 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.conftest import running_server
+from tests.e2e.conftest import (
+    E2E_NETWORK_SAVED_POLL_S,
+    E2E_NETWORK_STATUS_POLL_S,
+    running_server,
+)
 
 PROFILE = "netplan-wlan0-Cats"
 
@@ -41,9 +45,12 @@ esac
 exit 0
 """
 
-# Longer than the saved list's 5 s poll and two of the status card's 2 s
-# ones: a dialog still open after this has outlived a redraw of both.
-PAST_A_POLL_MS = 6000
+# Longer than one of the saved list's polls and two of the status card's
+# (on the e2e server): a dialog still open after this has outlived a redraw
+# of both.
+PAST_A_POLL_MS = round(
+    (E2E_NETWORK_SAVED_POLL_S + E2E_NETWORK_STATUS_POLL_S / 2) * 1000
+)
 
 
 @pytest.fixture(scope="module")

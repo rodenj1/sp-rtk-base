@@ -131,8 +131,9 @@ uv run playwright show-trace test-results/.../trace.zip
 
 Total: **about 120 tests, ≈3 min wall-clock** on a developer box (the table lists the main files; `tests/e2e/` has the rest).
 (+2 from `tests/e2e/test_survey_cancel.py` — progress-card-visible-immediately regression and the full Start → Cancel-Survey-In flow.)
-(`test_survey_station_averaged.py` runs a real 60 s survey — the shortest
-allowed — so it adds about a minute.)
+(`test_survey_station_averaged.py` runs a 60 s survey — the shortest
+allowed — in observation time; with the fake receiver read every 0.1 s
+(`SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`) it takes about 6 s.)
 
 
 All tests that require an active device session use the
@@ -233,7 +234,12 @@ unset never see it.
 3. With the fake GPS on, `services/__init__.py` also honours
    `SP_RTK_BASE_FAKE_STALL_WARNING_S` and `SP_RTK_BASE_FAKE_STALL_ABORT_S`,
    which `conftest.py` sets to 2 s and 15 s so the browser can see a
-   Corrected survey-in's Stall warning (60 s) and abort (10 min).
+   Corrected survey-in's Stall warning (60 s) and abort (10 min), and
+   `SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`, which it sets to 0.1 s so a
+   station-averaged Survey-in reads the receiver ten times a second. That
+   changes only the pacing: each Observation still counts one second, so a
+   60 s survey completes after 60 Observations (about 6 s) and still reports
+   `duration_seconds` = 60.
 4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and

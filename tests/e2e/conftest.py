@@ -288,6 +288,9 @@ def running_server(
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
     env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
+    # A station-averaged Survey-in reads the receiver every 0.1 s, not once a
+    # second: each Observation still counts 1 s, so a 60 s survey takes ~6 s.
+    env["SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S"] = "0.1"
     # The update check reads PyPI and GitHub from this directory, never the
     # network.
     env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)

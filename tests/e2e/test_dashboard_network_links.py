@@ -276,9 +276,23 @@ def test_the_setup_access_point_shows_wifi_disconnected_with_its_reason(
             wifi=(wifi,),
         )
 
-    _write(network_links, reading(WLAN0_ASSOCIATED))
+    # The server keeps a link's history (its link changes) across gaps in
+    # the readings, so wlan0 may still carry an earlier test's changes. A
+    # reading without it clears that: wait until it has gone.
+    _write(
+        network_links,
+        HostReading(
+            interfaces=(ETH0,), addresses=ADDRESSES, egress=EgressReading(source=None)
+        ),
+    )
     page.goto(f"{base_url}/")
     card = page.get_by_test_id("network-card")
+    expect(card.get_by_test_id("network-link-eth0-state")).to_have_text(
+        "Connected", timeout=SOON_MS
+    )
+    expect(card.get_by_test_id("network-link-wlan0")).to_have_count(0)
+
+    _write(network_links, reading(WLAN0_ASSOCIATED))
     expect(card.get_by_test_id("network-link-wlan0-network")).to_contain_text(
         "Test", timeout=SOON_MS
     )

@@ -31,8 +31,8 @@ def test_save_tcp_input_button_persists_to_config(
     """Type a TCP host/port, click **Save Input Config**, verify persistence.
 
     Steps:
-    1. Navigate to ``/input`` — the default source is TCP, so the
-       host/port text inputs are visible immediately.
+    1. Navigate to ``/input`` and choose TCP: an earlier test may have
+       left another source saved on the shared server.
     2. Fill the Host and Port fields with values that are distinct
        from the defaults (``127.0.0.1`` / ``5015``).
     3. Click **Save Input Config**.
@@ -46,6 +46,8 @@ def test_save_tcp_input_button_persists_to_config(
     """
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
+    page.get_by_label("Source Type").click()
+    page.get_by_role("option", name="tcp", exact=True).click()
 
     # Distinct sentinel values so we don't false-positive on the
     # defaults that the form populates on first render.

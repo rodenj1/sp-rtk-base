@@ -8,6 +8,14 @@ actions, and a scan list of nearby networks the operator can join (or
 a hidden SSID typed manually). Each nearby network shows the Wi-Fi
 bands it's heard on and expands to the signal on each, when the
 adapter has 5 GHz.
+
+The Uplink card and the saved list are polled, so they are built once and
+updated in place: a saved network's row is created when it appears and
+deleted when it goes, and otherwise only its text, colours and visibility
+change. Every element NiceGUI creates and later deletes leaves a little
+memory behind in the browser, so a page left on screen that redrew them
+on every poll grew without bound (rtk_development#178, as #177 found on
+the dashboard).
 """
 
 # pyright: reportUnknownMemberType=false
@@ -17,6 +25,7 @@ adapter has 5 GHz.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from nicegui import ui
 
@@ -32,13 +41,22 @@ from sp_rtk_base.services import get_network_link_service, get_network_service
 from sp_rtk_base.services.network_service import NetworkNotConfiguredError
 from sp_rtk_base.ui import network_link_status as shown
 from sp_rtk_base.ui import wifi_bands
-from sp_rtk_base.ui.components.status_card import status_metric
+from sp_rtk_base.ui.components.network_card import (
+    shown_metric,
+    update_shown_metric,
+)
+from sp_rtk_base.ui.components.status_card import (
+    Tooltip,
+    set_text,
+    set_visible,
+    swap_class,
+)
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.validators import is_non_empty
 
 logger = logging.getLogger(__name__)
 
-# The Uplink block redraws from the Network link sampler's snapshot,
+# The Uplink block updates from the Network link sampler's snapshot,
 # which is in memory and refreshed every 2 s, so it runs no nmcli at all
 # (in particular no Wi-Fi scan).  The saved list is a cheap
 # `nmcli connection show` read.  The scan list is NOT auto-polled — a
@@ -60,6 +78,178 @@ def _signal_icon(signal: int) -> str:
     return "network_wifi_1_bar"
 
 
+def _set_icon(icon: ui.icon, name: str) -> None:
+    """Show icon *name*, sending nothing when it hasn't changed."""
+    if icon.name != name:
+        icon.name = name
+
+
+#: The Uplink card's readings: label, how it's shown, ``data-testid`` suffix.
+_UPLINK_READINGS: tuple[
+    tuple[str, Callable[[NetworkLink], shown.Shown | None], str], ...
+] = (
+    ("Wi-Fi link", shown.wifi_strength, "strength"),
+    ("Network", shown.wifi_network, "network"),
+    ("Band", shown.wifi_band, "band"),
+    ("Address", shown.address, "address"),
+)
+
+_NOT_CONFIGURED = "Network provisioning is not configured on this device."
+
+
+class _UplinkCard:
+    """The Uplink card: which link outbound traffic leaves by, its readings
+    (the same as the dashboard's Network card), a stronger-band suggestion,
+    and a note when provisioning isn't configured. Built once, then updated
+    in place."""
+
+    def __init__(self, on_band: Callable[[SavedWifiConnection], None]) -> None:
+        self._uplink_color = "white"
+        self._band_for: SavedWifiConnection | None = None
+        with ui.card().classes("w-full q-pa-md"):
+            with ui.row().classes("items-center gap-3"):
+                self._icon = ui.icon("wifi_off").classes("text-grey-4 text-3xl")
+                with ui.column().classes("gap-0"):
+                    ui.label("Uplink").classes("text-caption text-grey-5")
+                    self._uplink = (
+                        ui.label("")
+                        .classes("text-body1 text-white font-bold")
+                        .props("data-testid=network-page-uplink")
+                    )
+            # Separate readings, as on the dashboard's Network card.
+            self._readings = ui.row().classes("q-mt-sm gap-x-8 gap-y-2")
+            with self._readings:
+                self._metrics = [
+                    (shown_metric(label, None, f"network-page-{suffix}"), fn)
+                    for label, fn, suffix in _UPLINK_READINGS
+                ]
+            self._readings.set_visibility(False)
+            self._stronger = ui.row().classes("items-center gap-2 q-mt-sm no-wrap")
+            with self._stronger:
+                ui.icon("lightbulb").classes("text-amber-4")
+                self._stronger_text = (
+                    ui.label("")
+                    .classes("text-caption text-amber-4")
+                    .props('data-testid="network-page-stronger-band"')
+                )
+                self._stronger_use = ui.button("", on_click=self._use_band).props(
+                    "flat dense color=amber no-caps "
+                    'data-testid="network-page-stronger-band-use"'
+                )
+                self._on_band = on_band
+            self._stronger.set_visibility(False)
+            self._not_configured = ui.label(_NOT_CONFIGURED).classes(
+                "text-caption text-grey-6 q-mt-sm"
+            )
+            self._not_configured.set_visibility(False)
+
+    def _use_band(self) -> None:
+        if self._band_for is not None:
+            self._on_band(self._band_for)
+
+    def update(
+        self,
+        configured: bool,
+        snapshot: NetworkLinkSnapshot,
+        suggestion: wifi_bands.BandSuggestion | None,
+        active: SavedWifiConnection | None,
+    ) -> None:
+        """Show *snapshot*; elements are changed, never re-created."""
+        uplink = shown.uplink(snapshot)
+        link = snapshot.uplink_link()
+        if link is not None:
+            icon = shown.KIND_ICON[link.kind]
+        elif snapshot.uplink is not None:
+            icon = "vpn_lock"
+        else:
+            icon = "wifi_off"
+        _set_icon(self._icon, icon)
+        set_text(self._uplink, uplink.text)
+        swap_class(self._uplink, f"text-{self._uplink_color}", f"text-{uplink.color}")
+        self._uplink_color = uplink.color
+
+        for metric, fn in self._metrics:
+            update_shown_metric(metric, fn(link) if link is not None else None)
+        set_visible(self._readings, link is not None)
+
+        self._band_for = active if suggestion is not None else None
+        # Emptied when hidden, so no stale suggestion lingers in the page.
+        set_text(self._stronger_text, suggestion.text if suggestion else "")
+        set_text(self._stronger_use, suggestion.button if suggestion else "")
+        set_visible(self._stronger, suggestion is not None)
+
+        set_visible(self._not_configured, not configured)
+
+
+class _SavedRow:
+    """One saved Wi-Fi network: its name, Active and band badges, and its
+    Band / Switch / Forget buttons. Built when the network appears, then
+    updated in place until it goes."""
+
+    def __init__(
+        self,
+        conn: SavedWifiConnection,
+        has_5ghz: bool | None,
+        *,
+        on_band: Callable[[SavedWifiConnection], None],
+        on_switch: Callable[[str], object],
+        on_forget: Callable[[str, bool], object],
+    ) -> None:
+        self.conn = conn
+        self._icon_color = "grey-5"
+        with (
+            ui.card()
+            .classes("w-full q-pa-sm")
+            .props('data-testid="network-saved-row"') as self.card
+        ):
+            with ui.row().classes("items-center justify-between w-full"):
+                with ui.row().classes("items-center gap-3"):
+                    self._icon = ui.icon("wifi").classes("text-grey-5 text-xl")
+                    ui.label(conn.name).classes("text-body1 text-white")
+                    self._active = ui.badge("Active", color="green")
+                    self._band = ui.badge("", color="blue-grey").props(
+                        'data-testid="network-saved-band"'
+                    )
+                    self._undone = (
+                        ui.icon("undo")
+                        .classes("text-orange-4")
+                        .props('data-testid="network-saved-band-undone"')
+                    )
+                    with self._undone:
+                        self._undone_tip = Tooltip(None)
+                with ui.row().classes("gap-2"):
+                    self._band_btn = ui.button(
+                        "Band",
+                        icon="settings_input_antenna",
+                        on_click=lambda: on_band(self.conn),
+                    ).props("flat dense color=white no-caps")
+                    self._switch_btn = ui.button(
+                        "Switch", on_click=lambda: on_switch(self.conn.name)
+                    ).props("flat dense color=primary")
+                    ui.button(
+                        "Forget",
+                        on_click=lambda: on_forget(self.conn.name, self.conn.active),
+                    ).props("flat dense color=negative")
+        self.update(conn, has_5ghz)
+
+    def update(self, conn: SavedWifiConnection, has_5ghz: bool | None) -> None:
+        """Show *conn*; elements are changed, never re-created."""
+        self.conn = conn
+        color = "green-4" if conn.active else "grey-5"
+        swap_class(self._icon, f"text-{self._icon_color}", f"text-{color}")
+        self._icon_color = color
+        set_visible(self._active, conn.active)
+        badge = wifi_bands.band_badge(conn, has_5ghz=has_5ghz)
+        # Emptied when hidden, so no stale band lingers in the page.
+        set_text(self._band, badge or "")
+        set_visible(self._band, badge is not None)
+        note = wifi_bands.reverted_note(conn)
+        self._undone_tip.update(note)
+        set_visible(self._undone, note is not None)
+        set_visible(self._band_btn, wifi_bands.shows_band_control(has_5ghz=has_5ghz))
+        set_visible(self._switch_btn, not conn.active)
+
+
 @ui.page("/network", dark=True)
 def network_page() -> None:
     """Render the network status, WiFi scan, and join dialog."""
@@ -73,15 +263,21 @@ def network_page() -> None:
     with page_layout("Network"):
         ui.label("Network").classes("text-h4 text-white q-mb-md")
         # Every dialog on the page is made in here. NiceGUI deletes a dialog
-        # along with the container it was made in, and the status card and
-        # saved list are cleared on their poll, so a dialog opened from them
-        # would vanish within seconds. This one is never cleared.
+        # along with the container it was made in, and a saved network's row
+        # is deleted when the network goes, so a dialog opened from it would
+        # vanish with it. This one is never cleared.
         dialog_host = ui.element()
-        status_container = ui.column().classes("w-full gap-3")
+        uplink_card = _UplinkCard(on_band=lambda c: _open_band_dialog(c))
 
         ui.label("Saved Networks").classes("text-h5 text-white q-mt-lg")
         saved_status_label = ui.label("").classes("text-caption text-grey-6 q-mb-sm")
+        no_saved_label = ui.label("No saved WiFi networks.").classes(
+            "text-grey-6 q-pa-md"
+        )
+        no_saved_label.set_visibility(False)
         saved_list = ui.column().classes("w-full gap-2")
+        # The saved list's rows, by profile name, in the order shown.
+        saved_rows: dict[str, _SavedRow] = {}
 
         with ui.row().classes("items-center justify-between w-full q-mt-lg"):
             ui.label("Nearby WiFi Networks").classes("text-h5 text-white")
@@ -110,80 +306,22 @@ def network_page() -> None:
             with dialog_host:
                 return ui.dialog()
 
-        def _render_status_card(
-            configured: bool, snapshot: NetworkLinkSnapshot
-        ) -> None:
-            uplink = shown.uplink(snapshot)
-            link = snapshot.uplink_link()
-            if link is not None:
-                icon = shown.KIND_ICON[link.kind]
-            elif snapshot.uplink is not None:
-                icon = "vpn_lock"
-            else:
-                icon = "wifi_off"
-            with ui.card().classes("w-full q-pa-md"):
-                with ui.row().classes("items-center gap-3"):
-                    ui.icon(icon).classes("text-grey-4 text-3xl")
-                    with ui.column().classes("gap-0"):
-                        ui.label("Uplink").classes("text-caption text-grey-5")
-                        ui.label(uplink.text).classes(
-                            f"text-body1 text-{uplink.color} font-bold"
-                        ).props("data-testid=network-page-uplink")
-                if link is not None:
-                    # Separate readings, as on the dashboard's Network card.
-                    with ui.row().classes("q-mt-sm gap-x-8 gap-y-2"):
-                        for label, value, suffix in (
-                            ("Wi-Fi link", shown.wifi_strength(link), "strength"),
-                            ("Network", shown.wifi_network(link), "network"),
-                            ("Band", shown.wifi_band(link), "band"),
-                            ("Address", shown.address(link), "address"),
-                        ):
-                            if value is not None:
-                                status_metric(
-                                    label,
-                                    value.text,
-                                    subvalue=value.sub,
-                                    value_color=value.color,
-                                    tooltip=value.tooltip,
-                                    testid=f"network-page-{suffix}",
-                                )
-                    _render_stronger_band(link)
-                if not configured:
-                    ui.label(
-                        "Network provisioning is not configured on this device."
-                    ).classes("text-caption text-grey-6 q-mt-sm")
-
-        def _render_stronger_band(link: NetworkLink) -> None:
-            """Suggest the band the page's last scan hears the active network
-            on more strongly; never scans by itself."""
-            active = next((c for c in last_saved if c.active), None)
-            if active is None or link.wifi is None:
-                return  # Not on Wi-Fi: an Ethernet uplink has no band
-            mhz = None
-            if link.wifi.frequency_mhz is not None:
-                mhz = link.wifi.frequency_mhz.value
-            suggestion = wifi_bands.stronger_band(
-                active, mhz, last_scan, has_5ghz=last_has_5ghz[0]
-            )
-            if suggestion is None:
-                return
-            with ui.row().classes("items-center gap-2 q-mt-sm no-wrap"):
-                ui.icon("lightbulb").classes("text-amber-4")
-                ui.label(suggestion.text).classes("text-caption text-amber-4").props(
-                    'data-testid="network-page-stronger-band"'
-                )
-                ui.button(
-                    suggestion.button, on_click=lambda: _open_band_dialog(active)
-                ).props(
-                    "flat dense color=amber no-caps "
-                    'data-testid="network-page-stronger-band-use"'
-                )
-
         async def _do_refresh_status() -> None:
             configured = await svc.is_configured()
-            status_container.clear()
-            with status_container:
-                _render_status_card(configured, network_link.current())
+            snapshot = network_link.current()
+            link = snapshot.uplink_link()
+            # Suggest the band the page's last scan hears the active network
+            # on more strongly; never scans by itself.
+            active = next((c for c in last_saved if c.active), None)
+            suggestion = None
+            if active is not None and link is not None and link.wifi is not None:
+                mhz = None
+                if link.wifi.frequency_mhz is not None:
+                    mhz = link.wifi.frequency_mhz.value
+                suggestion = wifi_bands.stronger_band(
+                    active, mhz, last_scan, has_5ghz=last_has_5ghz[0]
+                )
+            uplink_card.update(configured, snapshot, suggestion, active)
 
         async def _refresh_status() -> None:
             try:
@@ -213,49 +351,6 @@ def network_page() -> None:
                 f"on the new network to continue — if it fails, '{ap_ssid}' "
                 f"will appear again in about {fallback_minutes} min."
             )
-
-        def _render_saved_row(conn: SavedWifiConnection, has_5ghz: bool | None) -> None:
-            with ui.card().classes("w-full q-pa-sm"):
-                with ui.row().classes("items-center justify-between w-full"):
-                    with ui.row().classes("items-center gap-3"):
-                        ui.icon("wifi").classes(
-                            "text-green-4 text-xl"
-                            if conn.active
-                            else "text-grey-5 text-xl"
-                        )
-                        ui.label(conn.name).classes("text-body1 text-white")
-                        if conn.active:
-                            ui.badge("Active", color="green")
-                        badge = wifi_bands.band_badge(conn, has_5ghz=has_5ghz)
-                        if badge is not None:
-                            ui.badge(badge, color="blue-grey").props(
-                                'data-testid="network-saved-band"'
-                            )
-                        note = wifi_bands.reverted_note(conn)
-                        if note is not None:
-                            ui.icon("undo").classes("text-orange-4").props(
-                                'data-testid="network-saved-band-undone"'
-                            ).tooltip(note)
-                    with ui.row().classes("gap-2"):
-                        if wifi_bands.shows_band_control(has_5ghz=has_5ghz):
-                            ui.button(
-                                "Band",
-                                icon="settings_input_antenna",
-                                on_click=lambda _e, c=conn: _open_band_dialog(c),
-                            ).props("flat dense color=white no-caps")
-                        if not conn.active:
-                            ui.button(
-                                "Switch",
-                                on_click=lambda _e, name=conn.name: _open_switch_dialog(
-                                    name
-                                ),
-                            ).props("flat dense color=primary")
-                        ui.button(
-                            "Forget",
-                            on_click=lambda _e, name=conn.name, active=conn.active: (
-                                _open_forget_dialog(name, active)
-                            ),
-                        ).props("flat dense color=negative")
 
         def _open_band_dialog(conn: SavedWifiConnection) -> None:
             """Offer Auto, 2.4 GHz and 5 GHz, each with what the page's scan
@@ -470,18 +565,39 @@ def network_page() -> None:
 
             last_saved[:] = connections
             last_has_5ghz[0] = has_5ghz
-            saved_list.clear()
-            if error is not None:
-                saved_status_label.text = error
-                return
+            set_text(saved_status_label, error or "")
+            set_visible(no_saved_label, error is None and not connections)
+            _show_saved(connections, has_5ghz)
 
-            saved_status_label.text = ""
-            with saved_list:
-                if not connections:
-                    ui.label("No saved WiFi networks.").classes("text-grey-6 q-pa-md")
-                    return
-                for conn in connections:
-                    _render_saved_row(conn, has_5ghz)
+        def _show_saved(
+            connections: list[SavedWifiConnection], has_5ghz: bool | None
+        ) -> None:
+            """Bring the rows up to date: a row is created for a network that
+            appeared and deleted for one that went; the rest are updated."""
+            names = [c.name for c in connections]
+            for name in [n for n in saved_rows if n not in names]:
+                saved_list.remove(saved_rows.pop(name).card)
+            for index, conn in enumerate(connections):
+                row = saved_rows.get(conn.name)
+                if row is None:
+                    with saved_list:
+                        row = _SavedRow(
+                            conn,
+                            has_5ghz,
+                            on_band=_open_band_dialog,
+                            on_switch=_open_switch_dialog,
+                            on_forget=_open_forget_dialog,
+                        )
+                    saved_rows[conn.name] = row
+                else:
+                    row.update(conn, has_5ghz)
+                if saved_list.default_slot.children.index(row.card) != index:
+                    row.card.move(saved_list, target_index=index)
+            # Rebuilt in the order nmcli lists them, so the next poll's
+            # lookups match what's on screen.
+            ordered = {name: saved_rows[name] for name in names}
+            saved_rows.clear()
+            saved_rows.update(ordered)
 
         async def _refresh_saved() -> None:
             try:

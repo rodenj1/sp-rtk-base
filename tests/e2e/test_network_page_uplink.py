@@ -100,7 +100,7 @@ def test_a_wifi_uplink_shows_its_link_strength_and_band_even_with_a_cable_in(
     address = page.get_by_test_id("network-page-address")
     expect(address).to_contain_text("Address")
     expect(address).to_contain_text("192.0.2.20/24")
-    expect(page.get_by_text("Signal:")).to_have_count(0)
+    expect(page.get_by_text("Signal:")).to_be_hidden()
 
 
 @pytest.mark.e2e
@@ -113,8 +113,8 @@ def test_an_ethernet_uplink_has_no_link_strength(
     expect(page.get_by_test_id("network-page-uplink")).to_have_text(
         "Ethernet (eth0)", timeout=SOON_MS
     )
-    expect(page.get_by_test_id("network-page-strength")).to_have_count(0)
-    expect(page.get_by_test_id("network-page-band")).to_have_count(0)
+    expect(page.get_by_test_id("network-page-strength")).to_be_hidden()
+    expect(page.get_by_test_id("network-page-band")).to_be_hidden()
     expect(page.get_by_test_id("network-page-address")).to_contain_text("192.0.2.10/24")
 
 

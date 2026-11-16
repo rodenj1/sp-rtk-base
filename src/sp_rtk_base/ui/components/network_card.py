@@ -44,7 +44,9 @@ _ALWAYS: tuple[tuple[str, Callable[[NetworkLink], shown.Shown], str], ...] = (
 )
 
 
-def _metric(label: str, value: shown.Shown | None, testid: str) -> StatusMetric:
+def shown_metric(label: str, value: shown.Shown | None, testid: str) -> StatusMetric:
+    """A metric showing *value*, hidden while it is ``None``; its tooltip
+    always exists, so a later update can give it one."""
     metric = StatusMetric(
         label,
         value.text if value else "",
@@ -58,7 +60,8 @@ def _metric(label: str, value: shown.Shown | None, testid: str) -> StatusMetric:
     return metric
 
 
-def _update_metric(metric: StatusMetric, value: shown.Shown | None) -> None:
+def update_shown_metric(metric: StatusMetric, value: shown.Shown | None) -> None:
+    """Show *value* in *metric* in place, or hide it for ``None``."""
     if value is not None:
         metric.update(
             value.text, value.sub, value_color=value.color, tooltip=value.tooltip
@@ -100,11 +103,11 @@ class _LinkColumn:
                 self._state_sub.set_visibility(bool(state.sub))
             with ui.grid(columns=2).classes("gap-x-6 gap-y-2"):
                 self._optional = [
-                    (_metric(label, fn(link), f"{testid}-{suffix}"), fn)
+                    (shown_metric(label, fn(link), f"{testid}-{suffix}"), fn)
                     for label, fn, suffix in _OPTIONAL
                 ]
                 self._always = [
-                    (_metric(label, fn(link), f"{testid}-{suffix}"), fn)
+                    (shown_metric(label, fn(link), f"{testid}-{suffix}"), fn)
                     for label, fn, suffix in _ALWAYS
                 ]
 
@@ -118,9 +121,9 @@ class _LinkColumn:
         set_text(self._state_sub, f"— {state.sub}" if state.sub else "")
         set_visible(self._state_sub, bool(state.sub))
         for metric, fn in self._optional:
-            _update_metric(metric, fn(link))
+            update_shown_metric(metric, fn(link))
         for metric, always_fn in self._always:
-            _update_metric(metric, always_fn(link))
+            update_shown_metric(metric, always_fn(link))
 
 
 def _layout(snapshot: NetworkLinkSnapshot) -> tuple[tuple[str, str], ...]:

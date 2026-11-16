@@ -13,12 +13,13 @@ rebuilt its metrics every refresh grew without bound (rtk_development#177).
 from __future__ import annotations
 
 from nicegui import ui
+from nicegui.elements.mixins.text_element import TextElement
 
 
-def set_text(label: ui.label, text: str) -> None:
-    """Set *label*'s text, sending nothing when it hasn't changed."""
-    if label.text != text:
-        label.text = text
+def set_text(element: TextElement, text: str) -> None:
+    """Set *element*'s text, sending nothing when it hasn't changed."""
+    if element.text != text:
+        element.text = text
 
 
 def swap_class(element: ui.element, old: str, new: str) -> None:

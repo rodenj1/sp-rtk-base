@@ -233,6 +233,13 @@ def test_a_sampler_with_no_reading_shows_every_value_as_a_dash_but_the_counters(
     )
     page.goto(f"{base_url}/")
     card = page.get_by_test_id("network-card")
+    # An earlier test's reading can still be fresh, with the same band and
+    # traffic but no Ethernet speed. Only this reading gives eth0 a speed,
+    # so wait for it before the readings stop: a link that never gave its
+    # speed has it Not supported (hidden), not "—".
+    expect(card.get_by_test_id("network-link-eth0-speed")).to_contain_text(
+        "100 Mbit/s", timeout=SOON_MS
+    )
     expect(card.get_by_test_id("network-link-wlan0-band")).to_contain_text(
         "5 GHz", timeout=SOON_MS
     )

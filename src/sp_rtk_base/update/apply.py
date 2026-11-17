@@ -54,6 +54,7 @@ from pathlib import Path
 
 from sp_rtk_base.update.fake_release_source import fetch_from_env
 from sp_rtk_base.update.health import (
+    HEALTH_GRACE_S,
     HEALTH_HOLD_S,
     HEALTH_TIMEOUT_S,
     HealthCheck,
@@ -110,9 +111,10 @@ CONFIG_DIR_ENV = "SP_RTK_BASE_UPDATE_CONFIG_DIR"
 HEALTH_URL_ENV = "SP_RTK_BASE_UPDATE_HEALTH_URL"
 HEALTH_TIMEOUT_ENV = "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S"
 HEALTH_HOLD_ENV = "SP_RTK_BASE_UPDATE_HEALTH_HOLD_S"
+HEALTH_GRACE_ENV = "SP_RTK_BASE_UPDATE_HEALTH_GRACE_S"
 SYSTEMCTL_ENV = "SP_RTK_BASE_UPDATE_SYSTEMCTL"
 """Override the health check's endpoint (else read from the app's unit),
-its 90 s and 30 s, and the ``systemctl`` it reads the app's environment
+its 90 s, 30 s and 15 s, and the ``systemctl`` it reads the app's environment
 and ``NRestarts`` with (tests)."""
 
 _PIP_ERROR_LINES = 5
@@ -510,6 +512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         url=os.environ.get(HEALTH_URL_ENV) or systemd_health_url(systemctl),
         timeout_s=_float_env(HEALTH_TIMEOUT_ENV, HEALTH_TIMEOUT_S),
         hold_s=_float_env(HEALTH_HOLD_ENV, HEALTH_HOLD_S),
+        grace_s=_float_env(HEALTH_GRACE_ENV, HEALTH_GRACE_S),
         restarts=systemd_restarts(systemctl),
     )
     updater = Updater(

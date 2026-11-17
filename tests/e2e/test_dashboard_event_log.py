@@ -3,15 +3,42 @@
 The Event log streams relay events over ``/api/events/ws``.  Here
 Playwright stands in for that WebSocket, so a test decides exactly which
 events the Dashboard's own script receives and renders.
+
+The Dashboard also backfills the log from the server, and every event the
+server has logged stays there for good, so this module runs its own server:
+on the shared one any earlier test that starts the Relay leaves events behind
+and "No events yet" never shows.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Locator, Page, WebSocketRoute, expect
+
+from tests.e2e.conftest import running_server
+
+
+@pytest.fixture(scope="module")
+def own_server(
+    tmp_path_factory: pytest.TempPathFactory,
+    fake_pypi_dir: Path,
+    update_dir: Path,
+    host_setup_file: Path,
+    portal_agent_socket: Path,
+) -> Iterator[str]:
+    """A server no other module logs events on, so its backfill is empty."""
+    with running_server(
+        tmp_path_factory,
+        fake_pypi_dir,
+        update_dir,
+        host_setup_file,
+        portal_agent_socket,
+    ) as url:
+        yield url
 
 
 def _serve_events(*events: Mapping[str, object]) -> Callable[[WebSocketRoute], None]:
@@ -30,7 +57,7 @@ def _event_log(page: Page) -> Locator:
 
 @pytest.mark.e2e
 def test_live_event_text_is_shown_as_text_not_markup(
-    page: Page, base_url: str, clean_config: None
+    page: Page, own_server: str
 ) -> None:
     """Markup in an event (a Bluetooth name, a caster's reply) is just text."""
     hostile = '<img src=x onerror="window.__eventLogInjected = true">'
@@ -38,7 +65,7 @@ def test_live_event_text_is_shown_as_text_not_markup(
         "**/api/events/ws",
         _serve_events({"event_type": "<b>input.error</b>", "message": hostile}),
     )
-    page.goto("/")
+    page.goto(f"{own_server}/")
 
     log = _event_log(page)
     expect(log.get_by_text(hostile, exact=True)).to_be_visible()
@@ -49,7 +76,7 @@ def test_live_event_text_is_shown_as_text_not_markup(
 
 @pytest.mark.e2e
 def test_live_events_keep_their_badge_colours_order_and_cap(
-    page: Page, base_url: str, clean_config: None
+    page: Page, own_server: str
 ) -> None:
     """Newest first, coloured by type, never more than 50 rows."""
     page.route_web_socket(
@@ -61,7 +88,7 @@ def test_live_events_keep_their_badge_colours_order_and_cap(
             {"event_type": "input.error", "message": "failed"},
         ),
     )
-    page.goto("/")
+    page.goto(f"{own_server}/")
 
     log = _event_log(page)
     expect(log.get_by_text("failed", exact=True)).to_be_visible()
@@ -81,24 +108,22 @@ def test_live_events_keep_their_badge_colours_order_and_cap(
 
 
 @pytest.mark.e2e
-def test_an_empty_log_says_no_events_yet(
-    page: Page, base_url: str, clean_config: None
-) -> None:
+def test_an_empty_log_says_no_events_yet(page: Page, own_server: str) -> None:
     page.route_web_socket("**/api/events/ws", _serve_events())
-    page.goto("/")
+    page.goto(f"{own_server}/")
     expect(_event_log(page).get_by_text("No events yet", exact=True)).to_be_visible()
 
 
 @pytest.mark.e2e
 def test_no_events_yet_goes_with_the_first_live_event(
-    page: Page, base_url: str, clean_config: None
+    page: Page, own_server: str
 ) -> None:
     """The placeholder for an empty log gives way to live events (issue #53)."""
     page.route_web_socket(
         "**/api/events/ws",
         _serve_events({"event_type": "input.connected", "message": "first"}),
     )
-    page.goto("/")
+    page.goto(f"{own_server}/")
     log = _event_log(page)
     expect(log.get_by_text("first", exact=True)).to_be_visible()
     expect(log.get_by_text("No events yet", exact=True)).to_have_count(0)

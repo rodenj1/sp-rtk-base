@@ -208,6 +208,9 @@ jobs:
   # See docs/e2e-testing.md for design notes and tests/e2e/conftest.py
   # for the fixtures.  Runs on Python 3.12 only because the matrix
   # already exercises 3.10-3.13 at the unit-test level.
+  # Gated on pre-commit only, so it runs alongside lint and the unit
+  # matrix instead of after them; `build` still waits for all of them
+  # (rtk_development#189, "E2E gate").
   # ------------------------------------------------------------------
   e2e:
     name: E2E (Playwright)
@@ -215,7 +218,7 @@ jobs:
     # install browsers on.  Return to ubuntu-latest once Playwright
     # supports it.
     runs-on: ubuntu-24.04
-    needs: test
+    needs: pre-commit
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -250,9 +253,19 @@ jobs:
         # --no-cov: the e2e suite intentionally runs out-of-process so
         # in-process coverage is meaningless here (and would fail the
         # 90% gate).  Coverage is enforced by the `test` job.
+        # -n 4 --dist worksteal: four xdist workers, each with its own
+        # server and browsers (rtk_development#185).  Fixed at 4, not
+        # `auto`, and only here: a local `pytest tests/e2e` stays serial.
+        # -p randomly: random order (off in the default addopts), so an
+        # order dependency fails reproducibly.  The header prints
+        # "Using --randomly-seed=N"; rerun with that seed to reproduce.
+        # No reruns of any kind.  The controller writes the single
+        # JUnit file for all workers.
         run: |
           uv run pytest tests/e2e \
             --no-cov \
+            -n 4 --dist worksteal \
+            -p randomly \
             --junitxml=pytest-e2e-junit.xml \
             -ra
 

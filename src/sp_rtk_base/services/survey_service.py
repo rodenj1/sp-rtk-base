@@ -47,9 +47,15 @@ from sp_rtk_base.services.update_guard import UpdateGuard
 
 logger = logging.getLogger(__name__)
 
-# The station samples the receiver's position once a second; each accepted
-# observation counts one second towards the minimum duration.
-SAMPLE_INTERVAL_S: float = 1.0
+# The station reads the receiver's position once a second.  Only the fake GPS
+# (e2e) may read faster: that changes the pacing alone, never what an
+# Observation is worth.
+READ_INTERVAL_S: float = 1.0
+# Each accepted read (an Observation) counts this much observation time
+# towards the minimum duration, whatever the read interval.
+OBSERVATION_S: float = 1.0
+# Names the read interval, in seconds, on the fake GPS (e2e) only.
+FAKE_READ_INTERVAL_ENV = "SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S"
 
 # An application-averaged survey that hasn't completed by the time the
 # wall-clock time reaches max(this, HARD_CAP_MULTIPLE x the minimum duration)
@@ -197,11 +203,13 @@ class SurveyService:
         stall_warning_s: float = STALL_WARNING_S,
         stall_abort_s: float = STALL_ABORT_S,
         fixed_settle_s: float = FIXED_SETTLE_S,
+        read_interval_s: float = READ_INTERVAL_S,
     ) -> None:
         self._device = device
         self._stall_warning_s = stall_warning_s
         self._stall_abort_s = stall_abort_s
         self._fixed_settle_s = fixed_settle_s
+        self._read_interval_s = read_interval_s
         self._clock = clock
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
@@ -463,24 +471,24 @@ class SurveyService:
         hard_cap_s = max(HARD_CAP_MIN_S, HARD_CAP_MULTIPLE * limits.min_duration_s)
         limit_m = limits.accuracy_limit_mm / 1000.0
         averaging = _Averaging()
-        next_sample_at = started_at
+        next_read_at = started_at
         last_growth_at = started_at  # the start, or the last Observation
-        last_sample_wall: float | None = None
+        last_read_began: float | None = None
         fixed_since: float | None = None  # when the current Fixed began
         last_fixed: tuple[float, float, float] | None = None
         excursion = 0  # Fixed samples in a row beyond a jump from the reference
         try:
             while True:
                 # Bench diagnosis (#197), on the real (monotonic) clock, not
-                # the injectable one: how often the survey really samples,
+                # the injectable one: how often the survey really reads,
                 # and how long each read takes.
                 read_began = time.monotonic()
                 position = await self._device.get_survey_position()
                 read_done = time.monotonic()
                 self._position_read_s.add(read_done - read_began)
-                if last_sample_wall is not None:
-                    self._sample_interval_s.add(read_began - last_sample_wall)
-                last_sample_wall = read_began
+                if last_read_began is not None:
+                    self._sample_interval_s.add(read_began - last_read_began)
+                last_read_began = read_began
                 fixed = position.fix_ok and position.rtk_status == "fixed"
                 excursion_sample = False
                 if fixed and limits.corrected and _fresh(position):
@@ -545,9 +553,9 @@ class SurveyService:
                     self._finish("aborted", "accuracy_not_reached")
                     logger.warning("Survey-in aborted: accuracy not reached in time")
                     return
-                # Once a second, however long the read itself took.
-                next_sample_at += SAMPLE_INTERVAL_S
-                await self._sleep(max(0.0, next_sample_at - self._clock()))
+                # Once a read interval, however long the read itself took.
+                next_read_at += self._read_interval_s
+                await self._sleep(max(0.0, next_read_at - self._clock()))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -689,7 +697,7 @@ class SurveyService:
         lat, lon, alt = ecef_to_llh(*averaging.mean())
         self._progress = self._progress.model_copy(
             update={
-                "duration_seconds": int(averaging.count * SAMPLE_INTERVAL_S),
+                "duration_seconds": int(averaging.count * OBSERVATION_S),
                 "observations": averaging.count,
                 "mean_accuracy_mm": averaging.accuracy_m() * 1000.0,
                 "latitude": lat,

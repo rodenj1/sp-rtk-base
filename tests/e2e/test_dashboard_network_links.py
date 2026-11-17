@@ -101,6 +101,15 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(card.get_by_test_id("network-uplink")).to_have_text(
         "Wi-Fi (wlan0)", timeout=SOON_MS
     )
+    # A Wi-Fi-only reading left by an earlier test has the same Uplink, so
+    # wait for this reading's two links before reading anything else.
+    links = card.locator(
+        "[data-testid=network-link-wlan0], [data-testid=network-link-eth0]"
+    )
+    expect(links).to_have_count(2, timeout=SOON_MS)
+    # The Uplink comes first.
+    expect(links.nth(0)).to_have_attribute("data-testid", "network-link-wlan0")
+    expect(links.nth(1)).to_have_attribute("data-testid", "network-link-eth0")
     expect(card).to_contain_text(
         "Link health only: whether the caster and Portal are reachable "
         "shows under Destinations."
@@ -110,11 +119,6 @@ def test_both_links_with_the_wifi_uplink_listed_first(
     expect(card.get_by_test_id("network-link-eth0-uplink")).to_be_hidden()
     wlan0 = card.get_by_test_id("network-link-wlan0")
     eth0 = card.get_by_test_id("network-link-eth0")
-    # The Uplink comes first.
-    order = card.locator(
-        "[data-testid=network-link-wlan0], [data-testid=network-link-eth0]"
-    ).evaluate_all("columns => columns.map(c => c.dataset.testid)")
-    assert order == ["network-link-wlan0", "network-link-eth0"]
     expect(wlan0).to_contain_text("Wi-Fi · wlan0")
     expect(wlan0.get_by_test_id("network-link-wlan0-state")).to_have_text("Connected")
     expect(wlan0.get_by_test_id("network-link-wlan0-address")).to_contain_text(
@@ -229,6 +233,13 @@ def test_a_sampler_with_no_reading_shows_every_value_as_a_dash_but_the_counters(
     )
     page.goto(f"{base_url}/")
     card = page.get_by_test_id("network-card")
+    # An earlier test's reading can still be fresh, with the same band and
+    # traffic but no Ethernet speed. Only this reading gives eth0 a speed,
+    # so wait for it before the readings stop: a link that never gave its
+    # speed has it Not supported (hidden), not "—".
+    expect(card.get_by_test_id("network-link-eth0-speed")).to_contain_text(
+        "100 Mbit/s", timeout=SOON_MS
+    )
     expect(card.get_by_test_id("network-link-wlan0-band")).to_contain_text(
         "5 GHz", timeout=SOON_MS
     )
@@ -272,9 +283,23 @@ def test_the_setup_access_point_shows_wifi_disconnected_with_its_reason(
             wifi=(wifi,),
         )
 
-    _write(network_links, reading(WLAN0_ASSOCIATED))
+    # The server keeps a link's history (its link changes) across gaps in
+    # the readings, so wlan0 may still carry an earlier test's changes. A
+    # reading without it clears that: wait until it has gone.
+    _write(
+        network_links,
+        HostReading(
+            interfaces=(ETH0,), addresses=ADDRESSES, egress=EgressReading(source=None)
+        ),
+    )
     page.goto(f"{base_url}/")
     card = page.get_by_test_id("network-card")
+    expect(card.get_by_test_id("network-link-eth0-state")).to_have_text(
+        "Connected", timeout=SOON_MS
+    )
+    expect(card.get_by_test_id("network-link-wlan0")).to_have_count(0)
+
+    _write(network_links, reading(WLAN0_ASSOCIATED))
     expect(card.get_by_test_id("network-link-wlan0-network")).to_contain_text(
         "Test", timeout=SOON_MS
     )

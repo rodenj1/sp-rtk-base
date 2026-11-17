@@ -4,8 +4,7 @@ The app reads them from the Portal agent's status (the socket is faked
 here) and raises them in the backfill and live, with the Relay stopped.
 
 These entries stay in the app's Event log for good, so this module runs its
-own server (and fake agent) rather than leave them in the shared one, where
-"No events yet" is expected.
+own server (and fake agent) rather than leave them in the shared one.
 """
 
 from __future__ import annotations

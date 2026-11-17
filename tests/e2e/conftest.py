@@ -31,6 +31,9 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from sp_rtk_base.services.network_link.reader import FAKE_NETWORK_LINKS_ENV
+from sp_rtk_base.services.survey_service import FAKE_READ_INTERVAL_ENV
+from sp_rtk_base.ui.pages.network import SAVED_POLL_ENV, STATUS_POLL_ENV
 from sp_rtk_base.update.host_setup import PLUMBING_VERSION
 from tests.fixtures.fake_agent_socket import FakeAgentSocket
 from tests.fixtures.fake_github import FakeGitHub
@@ -86,6 +89,14 @@ E2E_NEEDS_PYTHON_APP = "100.0.0"
 #: notes are only in its GitHub Release, one with no notes anywhere.
 E2E_RELEASE_BODY_APP = "97.0.0"
 E2E_NO_NOTES_APP = "98.0.0"
+#: The Network page's polls on the e2e server, in seconds: the Uplink card's
+#: (2 s in production) and the saved list's (5 s), shortened so its tests see
+#: as many polls in a quarter of the time (fake Network link host only).
+E2E_NETWORK_STATUS_POLL_S = 0.5
+E2E_NETWORK_SAVED_POLL_S = 1.0
+#: How long after a Network page poll fires its redraw has surely reached the
+#: browser: the margin a test waits past a poll, not a poll interval itself.
+E2E_NETWORK_REDRAW_MARGIN_MS = 250
 #: ``CHANGELOG.md`` at the Available update's tag adds these sections.
 E2E_CHANGELOG = (
     "## v99.0.0 (2026-10-20)\n\n"
@@ -288,6 +299,9 @@ def running_server(
     env["SP_RTK_BASE_FAKE_STALL_ABORT_S"] = "15"
     # and a Fixed's settling time (30 s), so Fixed time starts counting soon.
     env["SP_RTK_BASE_FAKE_FIXED_SETTLE_S"] = "1"
+    # A station-averaged Survey-in reads the receiver every 0.1 s, not once a
+    # second: each Observation still counts 1 s, so a 60 s survey takes ~6 s.
+    env[FAKE_READ_INTERVAL_ENV] = "0.1"
     # The update check reads PyPI and GitHub from this directory, never the
     # network.
     env["SP_RTK_BASE_FAKE_PYPI_DIR"] = str(fake_pypi_dir)
@@ -300,7 +314,10 @@ def running_server(
         network_links_file = (
             tmp_path_factory.mktemp("network-links") / "network-links.json"
         )
-    env["SP_RTK_BASE_FAKE_NETWORK_LINKS"] = str(network_links_file)
+    env[FAKE_NETWORK_LINKS_ENV] = str(network_links_file)
+    # and the Network page polls it (and nmcli) faster than every 2 s / 5 s.
+    env[STATUS_POLL_ENV] = str(E2E_NETWORK_STATUS_POLL_S)
+    env[SAVED_POLL_ENV] = str(E2E_NETWORK_SAVED_POLL_S)
     # The Portal page asks this (real, idle) agent, not /run's.
     env["SP_RTK_BASE_PORTAL_AGENT_SOCKET"] = str(portal_agent_socket)
     # NiceGUI's ui.run() flips into "screen test" mode when it detects

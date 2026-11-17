@@ -89,6 +89,33 @@ Run the full e2e suite:
 uv run pytest tests/e2e --no-cov
 ```
 
+That runs serially, in file order. To run it the way CI does, on four
+pytest-xdist workers in random order (about 2¼ min instead of 8½):
+
+```bash
+uv run pytest tests/e2e --no-cov -n 4 --dist worksteal -p randomly
+```
+
+Each worker starts its own server, fake agent socket and browsers
+through the session fixtures. Keep it at 4: more workers on a big box
+can push the timing-sensitive tests past their limits.
+
+Random order comes from pytest-randomly, which the default options turn
+off (`-p no:randomly` in `pyproject.toml`), so the unit suite and any
+plain `pytest` run keep a fixed order; `-p randomly` turns it back on.
+The run prints its seed in the header, `Using --randomly-seed=N`. To
+reproduce a failure from CI, rerun with that seed, in parallel or
+serially:
+
+```bash
+uv run pytest tests/e2e --no-cov -n 4 --dist worksteal -p randomly --randomly-seed=N
+uv run pytest tests/e2e --no-cov -p randomly --randomly-seed=N
+```
+
+Failed tests are never rerun automatically (no pytest-rerunfailures):
+a test that fails at one seed has an order dependency to fix, not to
+retry.
+
 Run a single test in headed mode (browser window visible) for
 debugging:
 
@@ -128,11 +155,14 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_survey_station_averaged.py` | Survey-in on a receiver without a Receiver survey-in (`FAKE-NO-SVIN`): the station averages, commits the fixed base, cancels to rover mode; "Averaged by the receiver" on the normal fake |
 | `test_dashboard_network_links.py` | Dashboard Network card against a fake host (`SP_RTK_BASE_FAKE_NETWORK_LINKS`, a JSON `HostReading` the sampler reads every 2 s): Wi-Fi only, both links with the Wi-Fi Uplink first and its Wi-Fi details (network, band, bitrate, failed sends), No Uplink, the setup access point (Wi-Fi Disconnected with its reason), and a sampler with No reading (every value "—" except the counters) |
 | `test_network_page_uplink.py` | Network page's Uplink block from the same fake host, on its own appliance-mode server: a Wi-Fi Uplink with its Wi-Fi link strength and dBm while a cable is in, an Ethernet Uplink, and No Uplink |
+| `test_network_page_stable_elements.py`, `test_network_page_band_dialog.py` | The Network page's polls update it in place, and a Band dialog outlives them. With the fake Network link host in use, the server shortens the page's Uplink and saved-list polls (2 s / 5 s) to `E2E_NETWORK_STATUS_POLL_S` / `E2E_NETWORK_SAVED_POLL_S` in `conftest.py` (0.5 s / 1.0 s) through `SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S` / `_SAVED_POLL_S`, and the tests' waits derive from those values |
 
-Total: **about 120 tests, ≈3 min wall-clock** on a developer box (the table lists the main files; `tests/e2e/` has the rest).
-(+2 from `tests/e2e/test_survey_cancel.py` — progress-card-visible-immediately regression and the full Start → Cancel-Survey-In flow.)
-(`test_survey_station_averaged.py` runs a real 60 s survey — the shortest
-allowed — so it adds about a minute.)
+Total: **241 tests, about 8½ min serially or 2¼ min on four workers
+(`-n 4`)** on a 4-core developer box (the table lists the main files;
+`tests/e2e/` has the rest).
+(`test_survey_station_averaged.py` runs a 60 s survey — the shortest
+allowed — in observation time; with the fake receiver read every 0.1 s
+(`SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`) it takes about 6 s.)
 
 
 All tests that require an active device session use the
@@ -160,8 +190,9 @@ def test_my_new_thing(page: Page, base_url: str) -> None:
     expect(page.locator("text=Hello")).to_be_visible()
 ```
 
-`page`, `base_url`, and `api_base_url` are session-scoped — the server
-starts once for the whole `pytest tests/e2e` run.
+`base_url` and `api_base_url` are session-scoped (`page` is a fresh
+Playwright page per test): the server starts once per pytest process,
+so once for a serial run and once per worker under `-n 4`.
 
 ### 2. Prefer stable selectors
 
@@ -204,12 +235,13 @@ so neighbours don't pollute each other.
 
 ## CI integration
 
-The `e2e` job in `.github/workflows/ci.yml` runs after the unit-test
-matrix succeeds (it depends on `test`).  On failure, the workflow
-uploads:
+The `e2e` job in `.github/workflows/ci.yml` starts once pre-commit
+passes. It runs the suite with `-n 4 --dist worksteal -p randomly` (see
+"Running locally"), so its log shows the seed. The workflow uploads:
 
-- `pytest-e2e-junit.xml`  — JUnit XML for the GitHub test-results UI
-- `test-results/`         — Playwright traces / videos if any were
+- `pytest-e2e-junit.xml`  — JUnit XML for the GitHub test-results UI,
+  one file for all four workers (always)
+- `test-results/`         — on failure, Playwright traces / videos if any were
   produced (pytest-playwright writes these by default on failure when
   `--tracing=retain-on-failure` is set; see roadmap below).
 
@@ -233,7 +265,12 @@ unset never see it.
 3. With the fake GPS on, `services/__init__.py` also honours
    `SP_RTK_BASE_FAKE_STALL_WARNING_S` and `SP_RTK_BASE_FAKE_STALL_ABORT_S`,
    which `conftest.py` sets to 2 s and 15 s so the browser can see a
-   Corrected survey-in's Stall warning (60 s) and abort (10 min).
+   Corrected survey-in's Stall warning (60 s) and abort (10 min), and
+   `SP_RTK_BASE_FAKE_SURVEY_READ_INTERVAL_S`, which it sets to 0.1 s so a
+   station-averaged Survey-in reads the receiver ten times a second. That
+   changes only the pacing: each Observation still counts one second, so a
+   60 s survey completes after 60 Observations (about 6 s) and still reports
+   `duration_seconds` = 60.
 4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and

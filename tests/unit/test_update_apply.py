@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,7 +30,11 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.update.apply import main
-from sp_rtk_base.update.health import app_health_url, systemd_health_url
+from sp_rtk_base.update.health import (
+    _REQUEST_TIMEOUT_S,  # pyright: ignore[reportPrivateUsage]
+    app_health_url,
+    systemd_health_url,
+)
 from sp_rtk_base.update.state import (
     ProgressRecord,
     UpdateFiles,
@@ -62,9 +67,14 @@ INSTALL_COMMAND = (
 
 CONFIG = "deployment:\n  mode: appliance\n"
 
-# The health check's 90 s and 30 s, shortened.
-HEALTH_TIMEOUT_S = "1.5"
+# The health check's 90 s and 30 s, shortened. The deadline stays longer than
+# one request's timeout, so a single late answer (a stalled test machine) is
+# retried rather than failing a healthy version.
+HEALTH_TIMEOUT_S = "60"
 HEALTH_HOLD_S = "0.3"
+WAITED_OUT_HEALTH_TIMEOUT_S = "1.5"
+"""The deadline when a version never answers right, so the test waits it
+out (see :meth:`Host.health_timeout_s`)."""
 
 
 class FakeHealth:
@@ -154,6 +164,9 @@ class Host:
         """The target tag's ``deploy/plumbing-version``; ``None``: no file."""
         self.host_plumbing = "1"
         """``SP_RTK_BASE_PLUMBING`` in the unit (``install.sh`` writes it)."""
+        self.waits_out_health_check: bool | None = None
+        """Whether the health check gets the short deadline; ``None``: when
+        a version is ``broken`` or ``wrong_relay``."""
         (self.venv / "bin").mkdir(parents=True)
         (self.venv / "installed").write_text(f"{RUNNING.app} {RUNNING.relay}\n")
         python = self.venv / "bin" / "python"
@@ -249,10 +262,21 @@ class Host:
             "SP_RTK_BASE_UPDATE_CONFIG_DIR": str(self.config_dir),
             "SP_RTK_BASE_FAKE_PYPI_DIR": str(self.pypi_dir),
             "SP_RTK_BASE_UPDATE_HEALTH_URL": self.health.url,
-            "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S": HEALTH_TIMEOUT_S,
+            "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S": self.health_timeout_s(),
             "SP_RTK_BASE_UPDATE_HEALTH_HOLD_S": HEALTH_HOLD_S,
             "SP_RTK_BASE_UPDATE_SYSTEMCTL": str(self.systemctl),
         }
+
+    def health_timeout_s(self) -> str:
+        """Short only when a version never answers right, so the check
+        waits the deadline out; ``waits_out_health_check`` overrides."""
+        never_healthy = self.health.broken | self.health.wrong_relay
+        waited_out = (
+            bool(never_healthy)
+            if self.waits_out_health_check is None
+            else self.waits_out_health_check
+        )
+        return WAITED_OUT_HEALTH_TIMEOUT_S if waited_out else HEALTH_TIMEOUT_S
 
     def request(self, app: str = TARGET_APP, relay: str = TARGET_RELAY) -> None:
         self.files.write_request(UpdateRequest(app=app, relay=relay))
@@ -1054,6 +1078,12 @@ def test_the_updater_can_run_without_the_web_app() -> None:
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+def test_a_late_answer_leaves_time_to_ask_again() -> None:
+    """A healthy version gets more than one request's timeout to answer, so
+    one answer lost to a stalled test machine doesn't fail it."""
+    assert float(HEALTH_TIMEOUT_S) > 2 * _REQUEST_TIMEOUT_S
+
+
 def test_the_console_script_is_declared() -> None:
     pyproject = (REPO_ROOT / "pyproject.toml").read_text()
     assert 'sp-rtk-base-apply-update = "sp_rtk_base.update.apply:run"' in pyproject
@@ -1088,7 +1118,7 @@ class TestTheUnit:
     def _systemd(self, host: Host, *, stop_during: str | None = None) -> list[str]:
         """Run the unit; return the systemctl calls made (other than
         ``show``). ``stop_during``: the ``ExecStart`` line containing it is
-        killed part-way, as ``TimeoutStartSec`` would."""
+        killed once it reports ``verifying``, as ``TimeoutStartSec`` would."""
         shim = host.venv / "bin" / "sp-rtk-base-apply-update"
         shim.write_text(
             f'#!/usr/bin/env bash\nexec "{sys.executable}" -m '
@@ -1111,11 +1141,9 @@ class TestTheUnit:
         for line in _unit_lines("ExecStart"):
             prefixes, command = _prefixes(line)
             if stop_during is not None and stop_during in command:
-                try:
-                    subprocess.run(to_command(command), env=env, timeout=0.7)
-                except subprocess.TimeoutExpired:
-                    result = "timeout"
-                    break
+                self._kill_once_verifying(host, to_command(command), env)
+                result = "timeout"
+                break
             done = subprocess.run(to_command(command), env=env, check=False)
             if done.returncode != 0 and "-" not in prefixes:
                 result = "exit-code"
@@ -1128,6 +1156,26 @@ class TestTheUnit:
                 check="-" not in prefixes,
             )
         return host.systemctl_calls
+
+    @staticmethod
+    def _kill_once_verifying(
+        host: Host, command: list[str], env: dict[str, str]
+    ) -> None:
+        """Run ``command`` and kill it, as ``TimeoutStartSec`` would, as soon
+        as the updater reports ``verifying``: mid-check, however long the
+        line takes to get there."""
+        line = subprocess.Popen(command, env=env)
+        try:
+            deadline = time.monotonic() + 60
+            while (status := host.files.read_status()) is None or (
+                status.phase != "verifying"
+            ):
+                assert line.poll() is None, f"ended before verifying: {status!r}"
+                assert time.monotonic() < deadline, f"never verifying: {status!r}"
+                time.sleep(0.01)
+        finally:
+            line.kill()
+            line.wait()
 
     RESTARTS = [
         "restart sp-rtk-base.service",
@@ -1146,8 +1194,8 @@ class TestTheUnit:
         ]
         assert calls == self.RESTARTS
         status = host.status()
-        assert status.phase == "done"
-        assert status.to == TARGET
+        assert status.phase == "done", status
+        assert status.to == TARGET, status
         assert host.installed == TARGET
         assert not host.files.request_path.exists()
         assert not host.venv_prev.exists()
@@ -1161,7 +1209,8 @@ class TestTheUnit:
 
         self._systemd(host)
 
-        assert host.status().phase == "done"
+        status = host.status()
+        assert status.phase == "done", status
         assert not host.venv_prev.exists()
 
     def test_a_refusal_restarts_nothing(self, host: Host) -> None:
@@ -1171,8 +1220,9 @@ class TestTheUnit:
 
         assert calls == []
         assert host.pip_calls == []
-        assert host.status().phase == "failed"
-        assert host.status().error == NEWER_RELEASE
+        status = host.status()
+        assert status.phase == "failed", status
+        assert status.error == NEWER_RELEASE, status
 
     def test_a_host_setup_refusal_restarts_nothing(self, host: Host) -> None:
         host.required_plumbing = 2
@@ -1182,7 +1232,8 @@ class TestTheUnit:
 
         assert calls == []
         assert host.pip_calls == []
-        assert host.status().reason == "host_setup"
+        status = host.status()
+        assert status.reason == "host_setup", status
 
     def test_a_pip_failure_restarts_nothing(self, host: Host) -> None:
         host.request()
@@ -1192,9 +1243,9 @@ class TestTheUnit:
 
         assert calls == []
         status = host.status()
-        assert status.phase == "failed"
-        assert status.reason == "install_failed"
-        assert status.rolled_back
+        assert status.phase == "failed", status
+        assert status.reason == "install_failed", status
+        assert status.rolled_back, status
         assert host.installed == RUNNING
         assert host.config == CONFIG
 
@@ -1208,13 +1259,13 @@ class TestTheUnit:
         # The new version's restart, then the old one's.
         assert calls == self.RESTARTS + self.RESTARTS
         status = host.status()
-        assert status.phase == "failed"
-        assert status.reason == "failed_to_start"
-        assert status.rolled_back
-        assert status.rollback_error is None
-        assert status.from_ == RUNNING
-        assert status.to == TARGET
-        assert status.finished_at is not None
+        assert status.phase == "failed", status
+        assert status.reason == "failed_to_start", status
+        assert status.rolled_back, status
+        assert status.rollback_error is None, status
+        assert status.from_ == RUNNING, status
+        assert status.to == TARGET, status
+        assert status.finished_at is not None, status
         assert host.installed == RUNNING
         assert host.config == CONFIG
         # The old version was health-checked too.
@@ -1226,17 +1277,18 @@ class TestTheUnit:
         host.request()
         host.pip(fails=False, rewrites_config=True)
         host.health.broken.add(TARGET_APP)  # still checking when the unit stops
+        host.waits_out_health_check = False  # the stop comes first
 
         calls = self._systemd(host, stop_during="--verify")
 
         assert calls == self.RESTARTS + self.RESTARTS
         status = host.status()
-        assert status.phase == "failed"
-        assert status.reason == "stopped"
-        assert status.rolled_back
-        assert status.error is not None
-        assert "verifying" in status.error
-        assert "timeout" in status.error
+        assert status.phase == "failed", status
+        assert status.reason == "stopped", status
+        assert status.rolled_back, status
+        assert status.error is not None, status
+        assert "verifying" in status.error, status
+        assert "timeout" in status.error, status
         assert host.installed == RUNNING
         assert host.config == CONFIG
         assert not host.files.rollback_marker_path.exists()
@@ -1250,13 +1302,13 @@ class TestTheUnit:
 
         assert calls == self.RESTARTS + self.RESTARTS
         status = host.status()
-        assert status.phase == "failed"
-        assert status.reason == "failed_to_start"
-        assert not status.rolled_back
-        assert status.error is not None
-        assert TARGET_APP in status.error
-        assert status.rollback_error is not None
-        assert RUNNING.app in status.rollback_error
+        assert status.phase == "failed", status
+        assert status.reason == "failed_to_start", status
+        assert not status.rolled_back, status
+        assert status.error is not None, status
+        assert TARGET_APP in status.error, status
+        assert status.rollback_error is not None, status
+        assert RUNNING.app in status.rollback_error, status
         assert host.venv_prev.exists()
         assert not host.files.rollback_marker_path.exists()
 
@@ -1268,9 +1320,9 @@ class TestTheUnit:
         self._systemd(host)
 
         status = host.status()
-        assert status.phase == "failed"
-        assert status.reason == "failed_to_start"
-        assert status.rolled_back
+        assert status.phase == "failed", status
+        assert status.reason == "failed_to_start", status
+        assert status.rolled_back, status
         assert host.installed == RUNNING
 
     def test_a_second_trigger_without_a_request_restarts_nothing(
@@ -1283,7 +1335,8 @@ class TestTheUnit:
 
         assert calls == []
         assert len(host.pip_calls) == 1
-        assert host.status().phase == "done"
+        status = host.status()
+        assert status.phase == "done", status
 
     def test_a_planted_marker_gains_only_a_restart(self, host: Host) -> None:
         host.updater_wrote("done", to=TARGET.model_dump())
@@ -1293,7 +1346,8 @@ class TestTheUnit:
 
         assert calls == self.RESTARTS
         assert host.pip_calls == []
-        assert host.status().phase == "done"
+        status = host.status()
+        assert status.phase == "done", status
         assert not host.files.rollback_marker_path.exists()
 
     def test_verify_runs_the_old_code_from_the_snapshot(self) -> None:

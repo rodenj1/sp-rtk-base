@@ -27,41 +27,48 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import running_server
+from tests.e2e.stable_elements import Snapshot, assert_same_elements, snapshot
 
 #: The shortened status refresh interval, in seconds.
 POLL_S = 0.2
-
-#: Every NiceGUI element's id on the page (``c<N>``).
-_ELEMENT_IDS_JS = """() => Array.from(document.querySelectorAll('[id]'))
-    .map(e => e.id).filter(i => /^c\\d+$/.test(i))"""
 
 
 class StreamingSource:
     """A TCP input for the Relay: streams bytes while it is up.
 
-    ``drop()`` closes the connection and refuses new ones (the Relay's
-    input disconnects); ``restore()`` accepts again.
+    ``drop()`` closes the connection and stops listening, so the Relay's
+    input disconnects and its reconnects are refused; ``restore()`` listens
+    on the same port again.
     """
 
     def __init__(self) -> None:
-        self._server = socket.create_server(("127.0.0.1", 0))
-        self._server.settimeout(0.2)
+        self._server: socket.socket | None = self._listen(0)
         self.port: int = self._server.getsockname()[1]
+        self._lock = threading.Lock()
         self._up = threading.Event()
         self._up.set()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
+    @staticmethod
+    def _listen(port: int) -> socket.socket:
+        server = socket.create_server(("127.0.0.1", port))
+        server.settimeout(0.2)
+        return server
+
     def _serve(self) -> None:
         while not self._stop.is_set():
+            with self._lock:
+                server = self._server
+            if server is None:
+                self._stop.wait(0.05)
+                continue
             try:
-                conn, _ = self._server.accept()
+                conn, _ = server.accept()
             except OSError:
                 continue
             with conn:
-                if not self._up.is_set():
-                    continue
                 while self._up.is_set() and not self._stop.is_set():
                     try:
                         conn.sendall(os.urandom(200))
@@ -71,14 +78,21 @@ class StreamingSource:
 
     def drop(self) -> None:
         self._up.clear()
+        with self._lock:
+            if self._server is not None:
+                self._server.close()
+                self._server = None
 
     def restore(self) -> None:
+        with self._lock:
+            if self._server is None:
+                self._server = self._listen(self.port)
         self._up.set()
 
     def close(self) -> None:
         self._stop.set()
         self._thread.join(timeout=2)
-        self._server.close()
+        self.drop()
 
 
 def _free_port() -> int:
@@ -158,31 +172,23 @@ def relay_running(own_server: str, source: StreamingSource) -> Iterator[str]:
         httpx.post(f"{own_server}/api/relay/stop", timeout=15.0)
 
 
-def _element_ids(page: Page) -> set[str]:
-    return set(page.evaluate(_ELEMENT_IDS_JS))
-
-
-def _settled_ids(page: Page) -> set[str]:
-    """The page's element ids once two refreshes in a row agree."""
-    previous = _element_ids(page)
+def _settled(page: Page) -> Snapshot:
+    """The page's elements once two refreshes in a row agree."""
+    previous = snapshot(page)
     for _ in range(50):
         page.wait_for_timeout(int(POLL_S * 1000 * 2))
-        current = _element_ids(page)
-        if current == previous:
+        current = snapshot(page)
+        if current.same_elements(previous):
             return current
         previous = current
     return previous
 
 
 def _assert_stable_for(page: Page, refreshes: int) -> None:
-    baseline = _settled_ids(page)
+    baseline = _settled(page)
     for i in range(refreshes):
         page.wait_for_timeout(int(POLL_S * 1000))
-        current = _element_ids(page)
-        assert current == baseline, (
-            f"refresh {i + 1}: {len(current - baseline)} elements created, "
-            f"{len(baseline - current)} deleted"
-        )
+        assert_same_elements(baseline, snapshot(page), f"refresh {i + 1}")
 
 
 @pytest.mark.e2e
@@ -294,10 +300,10 @@ def test_signal_quality_refreshes_keep_the_same_elements(
         )
         expect(page.get_by_test_id(testid)).to_be_visible()
         # Signal Quality refreshes every 2 s on its own timer: cover three.
-        baseline = _settled_ids(page)
-        for _ in range(3):
+        baseline = _settled(page)
+        for i in range(3):
             page.wait_for_timeout(2_100)
-            assert _element_ids(page) == baseline
+            assert_same_elements(baseline, snapshot(page), f"refresh {i + 1}")
     finally:
         httpx.put(
             f"{own_server}/api/settings",

@@ -301,3 +301,8 @@ Format: <type>(<optional-scope>): <short subject in imperative mood>
 
 See https://www.conventionalcommits.org/en/v1.0.0/
 """
+
+# TEMPORARY (spec rodenj1/rtk_development#199): the unreleased protocol from the
+# sibling sp-rtk-portal checkout. Replace with the released version before push.
+[tool.uv.sources]
+sp-rtk-portal-protocol = { path = "../sp-rtk-portal/protocol", editable = true }

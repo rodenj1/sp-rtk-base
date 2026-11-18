@@ -70,7 +70,9 @@ Key design choices documented in `tests/e2e/conftest.py`:
    set.  The fixture pops those variables before `Popen`.
 5. **Server log captured to file.**  `stdout=open(log_path, "wb")`
    avoids the OS pipe-buffer deadlock that bit the first iteration,
-   and gives us a debuggable artifact on CI failures.
+   and gives us a debuggable artifact on CI failures: a failing test's
+   report ends with a "server log" section per running server, holding
+   the tail of what it logged since the test started.
 
 ## Running locally
 
@@ -156,6 +158,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_dashboard_network_links.py` | Dashboard Network card against a fake host (`SP_RTK_BASE_FAKE_NETWORK_LINKS`, a JSON `HostReading` the sampler reads every 2 s): Wi-Fi only, both links with the Wi-Fi Uplink first and its Wi-Fi details (network, band, bitrate, failed sends), No Uplink, the setup access point (Wi-Fi Disconnected with its reason), and a sampler with No reading (every value "—" except the counters) |
 | `test_network_page_uplink.py` | Network page's Uplink block from the same fake host, on its own appliance-mode server: a Wi-Fi Uplink with its Wi-Fi link strength and dBm while a cable is in, an Ethernet Uplink, and No Uplink |
 | `test_network_page_stable_elements.py`, `test_network_page_band_dialog.py` | The Network page's polls update it in place, and a Band dialog outlives them. With the fake Network link host in use, the server shortens the page's Uplink and saved-list polls (2 s / 5 s) to `E2E_NETWORK_STATUS_POLL_S` / `E2E_NETWORK_SAVED_POLL_S` in `conftest.py` (0.5 s / 1.0 s) through `SP_RTK_BASE_FAKE_NETWORK_STATUS_POLL_S` / `_SAVED_POLL_S`, and the tests' waits derive from those values |
+| `test_dashboard_stable_elements.py`, `stable_elements.py`, `test_stable_elements_check.py` | A Dashboard refresh updates the page in place: element ids stay the same while values change, through Relay stop/start, an added destination and the input dropping and returning. The shared check in `stable_elements.py` fails with each created or deleted element's `data-testid` (own or nearest ancestor's), classes and text, and says when the page reloaded. The test source refuses connections while dropped: one that accepts and closes them sends the Relay round a reconnect loop with no wait, whose events starve the server until NiceGUI's client times out and the page reloads (rtk_development#216) |
 
 Total: **241 tests, about 8½ min serially or 2¼ min on four workers
 (`-n 4`)** on a 4-core developer box (the table lists the main files;
@@ -241,9 +244,12 @@ passes. It runs the suite with `-n 4 --dist worksteal -p randomly` (see
 
 - `pytest-e2e-junit.xml`  — JUnit XML for the GitHub test-results UI,
   one file for all four workers (always)
-- `test-results/`         — on failure, Playwright traces / videos if any were
-  produced (pytest-playwright writes these by default on failure when
-  `--tracing=retain-on-failure` is set; see roadmap below).
+- `test-results/`         — on failure, the failing tests' Playwright
+  traces (the job runs with `--tracing retain-on-failure`, so a passing
+  test keeps none)
+
+A failing test's server log tail is in the job's log, in the test's
+report, not in the artifact.
 
 The Playwright browser binaries are cached at `~/.cache/ms-playwright`
 keyed on `uv.lock`, so subsequent runs skip the ~140 MB download.
@@ -353,8 +359,9 @@ priority order:
    — gated on stabilising the dashboard's live-data widgets first
    (they currently render "—" placeholders that flip to real values
    asynchronously and would flake snapshot diffs).
-3. **`--tracing=retain-on-failure`** in `pyproject.toml` so failed CI
-   runs upload a fully replayable trace.
+3. ~~**`--tracing=retain-on-failure`** so failed CI runs upload a fully
+   replayable trace.~~ ✅ Landed in the CI job's command
+   (rtk_development#216).
 4. ~~**Survey-In workflow** — click "Save Current Position" with a
    mocked GPS service so we can assert on the round-trip into the
    base-positions list.~~ ✅ Landed 2026-05-26 via FakeGpsDriver +

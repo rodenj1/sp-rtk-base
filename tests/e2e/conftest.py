@@ -23,7 +23,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from importlib.metadata import version as installed_version
 from pathlib import Path
 from typing import Any, cast
@@ -38,6 +38,47 @@ from sp_rtk_base.update.host_setup import PLUMBING_VERSION
 from tests.fixtures.fake_agent_socket import FakeAgentSocket
 from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.fake_pypi import FakePyPI
+
+#: The log file of each e2e server now running in this process, by base URL.
+_SERVER_LOGS: dict[str, Path] = {}
+#: How much of a server's log a failing test's report shows, in characters.
+_LOG_TAIL_CHARS = 8000
+#: Where each running server's log ended when the test started.
+_LOG_STARTS = pytest.StashKey[dict[str, int]]()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Note where each server's log ends as the test starts."""
+    item.stash[_LOG_STARTS] = {
+        url: path.stat().st_size for url, path in _SERVER_LOGS.items()
+    }
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """A failing test's report shows the tail of what each running server
+    logged since the test started (servers started during the test: all of
+    it). A server that logged nothing is left out."""
+    report = yield
+    if report.failed:
+        no_starts: dict[str, int] = {}
+        starts = item.stash.get(_LOG_STARTS, no_starts)
+        for url, path in _SERVER_LOGS.items():
+            try:
+                with path.open("rb") as fh:
+                    fh.seek(starts.get(url, 0))
+                    logged = fh.read().decode(errors="replace")
+            except OSError as exc:
+                logged = f"(could not read {path}: {exc})"
+            if not logged.strip():
+                continue
+            if len(logged) > _LOG_TAIL_CHARS:
+                logged = "…" + logged[-_LOG_TAIL_CHARS:]
+            report.sections.append((f"server log {url} ({report.when})", logged))
+    return report
 
 
 def _find_free_port() -> int:
@@ -365,8 +406,10 @@ def running_server(
                 f"sp-rtk-base did not become healthy on {base_url}.\n"
                 f"--- server log (tail) ---\n{tail}"
             ) from None
+        _SERVER_LOGS[base_url] = log_path
         yield base_url
     finally:
+        _SERVER_LOGS.pop(base_url, None)
         proc.terminate()
         try:
             proc.wait(timeout=10.0)

@@ -37,15 +37,12 @@ from tests.e2e.conftest import (
     E2E_NETWORK_STATUS_POLL_S,
     running_server,
 )
+from tests.e2e.stable_elements import Snapshot, assert_same_elements, snapshot
 
 #: The polls' intervals on the e2e server, in ms: the Uplink card's and the
 #: saved list's.
 STATUS_POLL_MS = round(E2E_NETWORK_STATUS_POLL_S * 1000)
 SAVED_POLL_MS = round(E2E_NETWORK_SAVED_POLL_S * 1000)
-
-#: Every NiceGUI element's id on the page (``c<N>``).
-_ELEMENT_IDS_JS = """() => Array.from(document.querySelectorAll('[id]'))
-    .map(e => e.id).filter(i => /^c\\d+$/.test(i))"""
 
 # The calls the Network page makes, answered from files in $NMCLI_STATE;
 # anything else succeeds with no output.
@@ -154,32 +151,24 @@ def server(
     _write_uplink(network_links_file, "wlan0")
 
 
-def _element_ids(page: Page) -> set[str]:
-    return set(page.evaluate(_ELEMENT_IDS_JS))
-
-
-def _settled_ids(page: Page) -> set[str]:
-    """The page's element ids once a saved-list poll (and its redraw) goes
-    by unchanged."""
-    previous = _element_ids(page)
+def _settled(page: Page) -> Snapshot:
+    """The page's elements once a saved-list poll (and its redraw) goes by
+    unchanged."""
+    previous = snapshot(page)
     for _ in range(10):
         page.wait_for_timeout(SAVED_POLL_MS + E2E_NETWORK_REDRAW_MARGIN_MS)
-        current = _element_ids(page)
-        if current == previous:
+        current = snapshot(page)
+        if current.same_elements(previous):
             return current
         previous = current
     return previous
 
 
 def _assert_stable_for(page: Page, ms: int) -> None:
-    baseline = _settled_ids(page)
+    baseline = _settled(page)
     for i in range(ms // STATUS_POLL_MS):
         page.wait_for_timeout(STATUS_POLL_MS)
-        current = _element_ids(page)
-        assert current == baseline, (
-            f"poll {i + 1}: {len(current - baseline)} elements created, "
-            f"{len(baseline - current)} deleted"
-        )
+        assert_same_elements(baseline, snapshot(page), f"poll {i + 1}")
 
 
 def _open(page: Page, url: str) -> None:
@@ -197,17 +186,13 @@ def test_polls_keep_the_same_elements_while_the_readings_change(
     expect(strength).to_be_visible()
     before = strength.inner_text()
 
-    baseline = _settled_ids(page)
+    baseline = _settled(page)
     _write_uplink(network_links_file, "wlan0", signal_dbm=-80)
     # Six of the Uplink card's polls (and three of the saved list's; two at
     # production's 2 s / 5 s).
     for i in range(6):
         page.wait_for_timeout(STATUS_POLL_MS)
-        current = _element_ids(page)
-        assert current == baseline, (
-            f"poll {i + 1}: {len(current - baseline)} elements created, "
-            f"{len(baseline - current)} deleted"
-        )
+        assert_same_elements(baseline, snapshot(page), f"poll {i + 1}")
 
     # The readings did change: the page was updated, not frozen.
     expect(strength).not_to_have_text(before)

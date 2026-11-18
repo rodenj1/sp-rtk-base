@@ -261,15 +261,21 @@ jobs:
         # "Using --randomly-seed=N"; rerun with that seed to reproduce.
         # No reruns of any kind.  The controller writes the single
         # JUnit file for all workers.
+        # --tracing retain-on-failure: a failing test leaves its Playwright
+        # trace under test-results/ (a passing one keeps none), for the
+        # step below.  A failing test's report in this step's log also
+        # holds the tail of its servers' logs (tests/e2e/conftest.py).
         run: |
           uv run pytest tests/e2e \
             --no-cov \
             -n 4 --dist worksteal \
             -p randomly \
+            --tracing retain-on-failure \
             --junitxml=pytest-e2e-junit.xml \
             -ra
 
-      - name: Upload Playwright trace + server log on failure
+      # Open a trace with `uv run playwright show-trace <trace.zip>`.
+      - name: Upload Playwright traces and JUnit report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

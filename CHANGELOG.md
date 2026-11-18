@@ -11,6 +11,14 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### Added
+
+- **The base keeps its own record of Remote sessions** (rtk_development#203,
+  ADR 0005): the Event log now shows each Wake, each Remote session start
+  (who, Operator or Shared user) and each end (who, and why: left, idle,
+  paused, lease expired, revoked, hard cap), next to the tunnel's opens and
+  closes. The Portal agent's status gains session ids and `remote_events`.
+
 ### Changed
 
 - **The Portal agent keeps its HTTPS connection to the Portal open between

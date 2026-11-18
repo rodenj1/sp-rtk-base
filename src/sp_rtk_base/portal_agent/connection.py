@@ -9,7 +9,9 @@ standing connection: each beat is a few small HTTPS requests.
 Each reply goes through :meth:`Connection._heard`: last contact, the
 metered flag, notices, and the agent config block (applied only when its
 revision changes, then persisted). A poll reply also goes through
-:meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled.
+:meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled
+and the Remote sessions it lists go to the base's own record
+(:class:`~.remote_record.RemoteRecord`).
 
 Check-ins carry the pause too, as polls do.
 
@@ -35,14 +37,12 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from pydantic import ValidationError
 from sp_rtk_portal_protocol import (
     AgentConfig,
     BaseKey,
     CheckIn,
     CheckInReply,
     LanAddress,
-    LiveSession,
     Poll,
     PollReply,
 )
@@ -56,6 +56,7 @@ from sp_rtk_base.portal_agent.portal_api import (
     UpgradeRequiredError,
 )
 from sp_rtk_base.portal_agent.protocol import UPDATE_TO_KEEP_USING, RemoteSession
+from sp_rtk_base.portal_agent.remote_record import RemoteRecord
 from sp_rtk_base.portal_agent.state import (
     Claim,
     load_agent_config,
@@ -109,8 +110,8 @@ class Connection:
         self.upgrade_message: str | None = None
         self.paused = paused
         """Remote access paused on site: polls say so and Wakes are ignored."""
-        self.sessions: list[RemoteSession] = []
-        """Live Remote sessions, from the last poll reply."""
+        self.record = RemoteRecord(claim.base_id, now)
+        """Live Remote sessions, and the Wakes, starts and ends the app logs."""
         self.unclaimed = False
         """The Portal answered 401 ``unclaimed``: the loop has ended."""
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
@@ -125,6 +126,11 @@ class Connection:
             ),
             app_port=app_port,
         )
+
+    @property
+    def sessions(self) -> list[RemoteSession]:
+        """Live Remote sessions, from the last poll reply."""
+        return self.record.live
 
     @property
     def poll_interval(self) -> int:
@@ -172,7 +178,9 @@ class Connection:
         """What a poll reply asks beyond the common part: a Wake opens the
         tunnel at the agent's own checked tunnel URL, never anywhere the
         reply names, unless remote access is paused."""
-        self.sessions = [] if self.paused else _sessions(reply.sessions)
+        self.record.heard(reply.sessions, reply.ended)
+        if self.paused:
+            self.record.forget_live()
         if reply.wake is not None:
             self._on_wake(reply.wake)
 
@@ -181,6 +189,7 @@ class Connection:
         if self.paused:
             logger.info("Ignoring a Wake: remote access is paused")
             return
+        self.record.wake(nonce)
         self.tunnel.wake(
             nonce,
             self.config.tunnel_url,
@@ -209,7 +218,7 @@ class Connection:
         save_paused(self._state_dir, paused)
         logger.info("Remote access %s", "paused" if paused else "resumed")
         if paused:
-            self.sessions = []
+            self.record.forget_live()
             await self.tunnel.close()
         try:
             await self._poll()
@@ -263,14 +272,3 @@ class Connection:
         self.needs_upgrade = True
         self.upgrade_message = exc.reply.message or UPDATE_TO_KEEP_USING
         self._check_in_due = self._now()  # first thing once accepted again
-
-
-def _sessions(reported: list[LiveSession]) -> list[RemoteSession]:
-    """The live Remote sessions a poll reply lists, skipping any malformed."""
-    sessions: list[RemoteSession] = []
-    for s in reported:
-        try:
-            sessions.append(RemoteSession.model_validate(s.to_json()))
-        except ValidationError:
-            logger.warning("Ignoring a malformed Remote session from the Portal")
-    return sessions

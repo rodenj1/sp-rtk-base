@@ -22,7 +22,6 @@ import pytest_asyncio
 from sp_rtk_portal_protocol import BaseKey
 from websockets.asyncio.server import ServerConnection, serve
 
-from sp_rtk_base.portal_agent import doorbell
 from sp_rtk_base.portal_agent.portal_api import PortalApi
 from sp_rtk_base.portal_agent.tunnel import connect_websocket
 
@@ -147,20 +146,3 @@ async def test_the_tunnel_websocket(no_ipv6: DualStackResolver) -> None:
             await ws.close()
 
     assert no_ipv6.families == [socket.AF_INET]
-
-
-async def test_the_doorbell(no_ipv6: DualStackResolver) -> None:
-    addresses = await asyncio.wait_for(doorbell.system_resolve(DUAL, 4500), PROMPTLY_S)
-
-    assert addresses == ["127.0.0.1"]
-    assert no_ipv6.families == [socket.AF_INET]
-    # ... and its UDP socket is an IPv4 one, which the unit allows.
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.settimeout(PROMPTLY_S)
-        sock = await doorbell.open_udp(addresses[0], lambda _data, _src: None)
-        try:
-            sock.sendto(b"keepalive", listener.getsockname())
-            assert listener.recv(64) == b"keepalive"
-        finally:
-            sock.close()

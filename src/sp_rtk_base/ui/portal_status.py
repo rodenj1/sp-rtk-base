@@ -103,22 +103,12 @@ UPGRADE_DETAIL = (
 )
 
 
-def wake_mode(status: AgentStatus) -> str | None:
-    """How the Portal wakes this base, for the page."""
-    if status.wake_mode == "doorbell":
-        return "Doorbell"
-    if status.wake_mode == "polling" and status.poll_interval:
+def connection(status: AgentStatus) -> str | None:
+    """How the base keeps in touch with the Portal, for the page."""
+    if status.poll_interval:
         metered = " (metered)" if status.metered else ""
         return f"Polling every {status.poll_interval} s{metered}"
     return None
-
-
-DOORBELL_HEALTH = {
-    "ok": "Working",
-    "unavailable": "Not heard by the Portal; polling meanwhile",
-    "ignored": "Ignored: its address isn't public; polling",
-}
-"""Doorbell health for the page; no row when there is no Doorbell."""
 
 
 def _view(status: AgentStatus) -> PortalView:
@@ -138,12 +128,9 @@ def _view(status: AgentStatus) -> PortalView:
                 _utc(status.last_contact) if status.last_contact else "never",
             ),
         )
-        mode = wake_mode(status)
+        mode = connection(status)
         if mode:
-            facts += (("Wake mode", mode),)
-        health = DOORBELL_HEALTH.get(status.doorbell or "off")
-        if health:
-            facts += (("Doorbell", health),)
+            facts += (("Connection", mode),)
     if status.needs_upgrade:
         headline = UPDATE_TO_KEEP_USING
         detail = (

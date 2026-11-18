@@ -350,7 +350,7 @@ the base's own web UI through `127.0.0.1:8080` only. Installed with the base
 but idle until the base is Claimed: it holds no key, contacts nothing and
 only answers the app on its control socket. The kernel denies it the LAN
 and all IPv6 but loopback, and it resolves names through public resolvers
-rather than the LAN's (usually the router); the Portal and Doorbell hosts
+rather than the LAN's (usually the router); the Portal host
 over DNS-over-HTTPS, as a LAN can intercept plain DNS.
 _Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
 
@@ -377,9 +377,9 @@ _Avoid_: connection, VPN, session (a Remote session is the Portal's)
 What a Claimed base's agent sends the Portal: a small HTTPS poll every
 20 s (60 s when metered), which is how the Portal knows it is online and
 how a Wake reaches it, and a slower Check-in every ~5 min with its
-version, Doorbell health and LAN addresses. Each reply carries the
-**agent config** (revisioned timings and addresses the agent checks
-before use) and any notices. Polls and Check-ins reuse one HTTPS
+version and LAN addresses. Each reply carries the **agent config**
+(revisioned timings and the tunnel URL, which the agent checks before use)
+and any notices. Polls and Check-ins reuse one HTTPS
 connection, kept while requests come at least every 90 s, so a poll costs
 its request and reply, not a new TLS handshake.
 _Avoid_: heartbeat, keepalive

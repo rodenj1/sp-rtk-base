@@ -21,26 +21,11 @@ from tests.fixtures.fake_portal import ORIGIN, FakeClock, FakePortal
 LAN = [LanAddress(address="192.168.1.20", interface="eth0", primary=True)]
 
 
-class FakeDns:
-    """``resolve(host, port)`` for the agent: answers from ``records``."""
-
-    def __init__(self) -> None:
-        self.records: dict[str, list[str]] = {}
-        self.asked: list[str] = []
-
-    async def __call__(self, host: str, port: int) -> list[str]:
-        self.asked.append(host)
-        if host not in self.records:
-            raise OSError(f"{host}: Name or service not known")
-        return list(self.records[host])
-
-
 class Running:
     def __init__(
         self, sock: Path, state: Path, portal: FakePortal, clock: FakeClock
     ) -> None:
         self.sock, self.state, self.portal, self.clock = sock, state, portal, clock
-        self.dns = FakeDns()
         self.lan: list[LanAddress] = list(LAN)
         self.protocol_version = PROTOCOL_VERSION
         self.agent: PortalAgent | None = None
@@ -54,7 +39,6 @@ class Running:
             now=self.clock.now,
             sleep=self.clock.sleep,
             name="pi-north",
-            resolve=self.dns,
             names=SystemNames(),
             lan_addresses=lambda: list(self.lan),
             protocol_version=self.protocol_version,

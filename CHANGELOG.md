@@ -11,11 +11,22 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### Changed
+
 - **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)
   on every 20 s poll. It lets a connection go after 90 s idle on its own,
   and reconnects when the Portal or the network closes one first.
+
+### Removed
+
+- **The Portal agent's Doorbell** (rtk_development#200, ADR 0006): the agent
+  no longer sends UDP keepalives or listens for rings, and its status and
+  the local Portal page no longer show a wake mode or Doorbell health. The
+  page shows the base's connection instead ("Polling every 20 s"). An agent
+  config block that still names a Doorbell host is accepted and the host
+  ignored.
 
 ## v0.14.3 (2026-11-18)
 

@@ -106,15 +106,15 @@ Re-running `install.sh` checks again and removes whichever file is stale;
 Public resolvers aren't always what they seem: some home networks (a
 Firewalla, for one) intercept every query to port 53, even one addressed
 to 1.1.1.1, and may answer the Portal's name with a LAN address, which the
-agent is denied. So the agent looks up the Portal host, and the Doorbell
-host, over **DNS-over-HTTPS** instead: an RFC 8484 query for A records to
+agent is denied. So the agent looks up the Portal host over
+**DNS-over-HTTPS** instead: an RFC 8484 query for A records to
 `https://1.1.1.1/dns-query` (Cloudflare), then `https://8.8.8.8/dns-query`
 (Google). Both are named by IP, so DoH needs no DNS, and both certificates
 cover those IPs. (Quad9's 9.9.9.9 needs HTTP/2 for DoH, which the agent's
 client doesn't speak.)
 
 - It keeps only public answers: a private, loopback or link-local one is
-  dropped and logged, as for the Doorbell host.
+  dropped and logged.
 - It connects to that address but as the host name: TLS (SNI and the
   certificate check) and the HTTP `Host` header are still the Portal's, so
   nothing else changes.

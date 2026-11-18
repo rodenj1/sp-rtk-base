@@ -106,14 +106,13 @@ async def test_a_claimed_agent_polls_every_20_s_and_checks_in_every_5_min(
     assert portal.agent_polls[0].body == {"state": "connected"}
 
 
-async def test_a_check_in_carries_the_version_doorbell_health_and_lan_addresses(
+async def test_a_check_in_carries_the_version_and_lan_addresses(
     running: Running, portal: FakePortal
 ) -> None:
     [check_in] = portal.check_ins
 
     assert check_in.body == {
         "software_version": __version__,
-        "doorbell": "off",
         "lan_addresses": [
             {"address": "192.168.1.20", "interface": "eth0", "primary": True}
         ],
@@ -121,7 +120,7 @@ async def test_a_check_in_carries_the_version_doorbell_health_and_lan_addresses(
     }
 
 
-async def test_the_agent_reports_its_last_contact_and_wake_mode(
+async def test_the_agent_reports_its_last_contact_and_poll_interval(
     running: Running, portal: FakePortal, clock: FakeClock
 ) -> None:
     await clock.run(seconds=45)
@@ -129,7 +128,6 @@ async def test_the_agent_reports_its_last_contact_and_wake_mode(
     status = await running.status()
     assert status.state == "connected"
     assert status.last_contact == portal.agent_polls[-1].at
-    assert status.wake_mode == "polling"
     assert status.poll_interval == 20
     assert not status.metered
 
@@ -322,62 +320,6 @@ async def test_a_wss_tunnel_url_on_the_portal_host_is_used(
     await clock.run(seconds=20)
 
     assert (await running.status()).tunnel_url == "wss://portal.test/t2"
-
-
-# --- Doorbell host ----------------------------------------------------------------
-
-
-async def _with_doorbell(running: Running, portal: FakePortal, clock: FakeClock):
-    portal.config = AgentConfig(
-        revision=2, doorbell_host="bell.example.com", doorbell_port=4500
-    )
-    await clock.run(seconds=20)  # applied
-    await clock.run(minutes=5)  # the next Check-in reports on it
-
-
-@pytest.mark.parametrize(
-    "address", ["192.168.1.5", "10.1.2.3", "172.16.0.9", "127.0.0.1", "169.254.1.1"]
-)
-async def test_a_doorbell_host_resolving_to_a_private_address_is_ignored(
-    running: Running,
-    portal: FakePortal,
-    clock: FakeClock,
-    caplog,
-    address: str,
-) -> None:
-    running.dns.records["bell.example.com"] = [address]
-    with caplog.at_level(logging.WARNING):
-        await _with_doorbell(running, portal, clock)
-
-    assert portal.check_ins[-1].body["doorbell"] == "ignored"
-    status = await running.status()
-    assert status.wake_mode == "polling"
-    assert status.doorbell == "ignored"
-    assert "bell.example.com" in caplog.text and address in caplog.text
-
-
-async def test_a_doorbell_host_is_resolved_again_before_each_use(
-    running: Running, portal: FakePortal, clock: FakeClock, caplog
-) -> None:
-    running.dns.records["bell.example.com"] = ["93.184.215.14"]
-    await _with_doorbell(running, portal, clock)
-    assert portal.check_ins[-1].body["doorbell"] == "unavailable"
-
-    # A later DNS change to a LAN address is caught.
-    running.dns.records["bell.example.com"] = ["93.184.215.14", "192.168.1.1"]
-    with caplog.at_level(logging.WARNING):
-        await clock.run(minutes=5)
-
-    assert portal.check_ins[-1].body["doorbell"] == "ignored"
-    assert "192.168.1.1" in caplog.text
-
-
-async def test_a_doorbell_host_that_doesnt_resolve_is_ignored(
-    running: Running, portal: FakePortal, clock: FakeClock
-) -> None:
-    await _with_doorbell(running, portal, clock)
-
-    assert portal.check_ins[-1].body["doorbell"] == "ignored"
 
 
 # --- Notices and upgrades ---------------------------------------------------------

@@ -16,7 +16,7 @@ One JSON object per line each way, on a Unix socket:
   "<for the Operator>"}``
 
 A reader ignores status fields it doesn't know. Once Claimed the status
-also carries the polling fields (``wake_mode``, ``poll_interval``,
+also carries the polling fields (``poll_interval``,
 ``metered``, ``notices``, ``needs_upgrade``, ...), the tunnel's
 (``tunnel``, ``tunnel_since``, ``tunnel_streams``, ``tunnel_events``) and
 the live Remote ``sessions``.
@@ -108,13 +108,10 @@ class AgentStatus(BaseModel):
     last_contact: datetime | None = None
     """The last time the Portal answered the agent."""
     # Connected: polling (ticket #87)
-    wake_mode: Literal["polling", "doorbell"] | None = None
     poll_interval: int | None = None
     """Seconds between polls now (the metered one when ``metered``)."""
     metered: bool = False
     """The Operator marked the base metered on the Portal."""
-    doorbell: str | None = None
-    """Doorbell health, as last Checked in (``off``, ``ignored``, ...)."""
     config_revision: int | None = None
     """The agent config revision in use; ``None`` on the built-in defaults."""
     tunnel_url: str | None = None

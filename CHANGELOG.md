@@ -11,6 +11,30 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+## v0.14.3 (2026-11-18)
+
+### Fixed
+
+- **The Relay no longer reconnects its input thousands of times a second
+  when the input accepts the connection and then closes it at once**
+  (rtk_development#218), e.g. a TCP source whose own upstream is down, or
+  a caster that accepts and drops. Each reconnect counted as a success, so
+  the Relay never waited; it flooded the log and the Dashboard's Recent
+  Events, and could make the web UI unresponsive. It now requires
+  sp-rtk-base-relay 4.2.3: until the input delivers data, each reconnect
+  waits longer than the last (2 s, doubling, up to 60 s). An input that has
+  delivered data still reconnects at once when it next drops.
+- **An Update no longer rolls back a healthy version that answers late
+  once** (rtk_development#215). After the 30 s hold, the health check asked
+  the new version once, and a busy Pi that stalled just after the restart
+  rolled it back with "started, then stopped answering". The new version
+  now has 15 s to answer again; a broken one is rolled back at most that
+  much later.
+- **Stopping and starting the Relay no longer rebuilds the Dashboard's
+  Destination details rows** (rtk_development#189), the last place the
+  in-place updates from 0.14.1 missed. While the Relay is stopped the card
+  is hidden and its rows kept.
+
 ## v0.14.2 (2026-11-16)
 
 ### Fixed

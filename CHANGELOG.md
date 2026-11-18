@@ -11,6 +11,12 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+- **The Portal agent keeps its HTTPS connection to the Portal open between
+  polls and Check-ins** (rtk_development#201), instead of letting it go
+  after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)
+  on every 20 s poll. It lets a connection go after 90 s idle on its own,
+  and reconnects when the Portal or the network closes one first.
+
 ## v0.14.3 (2026-11-18)
 
 ### Fixed

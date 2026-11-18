@@ -11,6 +11,15 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ## Unreleased
 
+### Removed
+
+- **The Portal agent's Doorbell** (rtk_development#200, ADR 0006): the agent
+  no longer sends UDP keepalives or listens for rings, and its status and
+  the local Portal page no longer show a wake mode or Doorbell health. The
+  page shows the base's connection instead ("Polling every 20 s"). An agent
+  config block that still names a Doorbell host is accepted and the host
+  ignored.
+
 ## v0.14.3 (2026-11-18)
 
 ### Fixed

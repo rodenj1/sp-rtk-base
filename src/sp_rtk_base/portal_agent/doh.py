@@ -53,8 +53,7 @@ class DnsReplyError(Exception):
 
 def is_public(address: str) -> bool:
     """Whether ``address`` is a global one: not private, loopback,
-    link-local, carrier-grade NAT, ... (the check the Doorbell host gets
-    too)."""
+    link-local, carrier-grade NAT, ..."""
     try:
         return ipaddress.ip_address(address.split("%", 1)[0]).is_global
     except ValueError:

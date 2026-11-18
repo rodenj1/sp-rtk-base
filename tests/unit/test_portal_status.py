@@ -225,47 +225,18 @@ async def _view_of(sock_path: Path, status: dict[str, object]):
 @pytest.mark.parametrize(
     ("extra", "mode"),
     [
-        ({"wake_mode": "polling", "poll_interval": 20}, "Polling every 20 s"),
-        (
-            {"wake_mode": "polling", "poll_interval": 60, "metered": True},
-            "Polling every 60 s (metered)",
-        ),
-        ({"wake_mode": "doorbell", "poll_interval": 20}, "Doorbell"),
+        ({"poll_interval": 20}, "Polling every 20 s"),
+        ({"poll_interval": 60, "metered": True}, "Polling every 60 s (metered)"),
     ],
 )
-async def test_connected_shows_the_wake_mode(
+async def test_connected_shows_how_the_base_keeps_in_touch(
     sock_path: Path, extra: dict[str, object], mode: str
 ) -> None:
     view = await _view_of(sock_path, CONNECTED | extra)
 
     assert ("Last contact", "2026-01-01 12:03 UTC") in view.facts
-    assert ("Wake mode", mode) in view.facts
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("doorbell", "shown"),
-    [
-        ("ok", "Working"),
-        ("unavailable", "Not heard by the Portal; polling meanwhile"),
-        ("ignored", "Ignored: its address isn't public; polling"),
-    ],
-)
-async def test_connected_shows_the_doorbell_health(
-    sock_path: Path, doorbell: str, shown: str
-) -> None:
-    extra: dict[str, object] = {"doorbell": doorbell}
-    view = await _view_of(sock_path, CONNECTED | extra)
-
-    assert ("Doorbell", shown) in view.facts
-
-
-@pytest.mark.asyncio
-async def test_without_a_doorbell_no_doorbell_row_is_shown(sock_path: Path) -> None:
-    extra: dict[str, object] = {"doorbell": "off"}
-    view = await _view_of(sock_path, CONNECTED | extra)
-
-    assert "Doorbell" not in dict(view.facts)
+    assert ("Connection", mode) in view.facts
+    assert not [f for f in dict(view.facts) if "Wake" in f or "Doorbell" in f]
 
 
 @pytest.mark.asyncio

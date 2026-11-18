@@ -11,13 +11,7 @@ metered flag, notices, and the agent config block (applied only when its
 revision changes, then persisted). A poll reply also goes through
 :meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled.
 
-When the agent config names a Doorbell host, the :class:`~.doorbell.Doorbell`
-sends keepalives; once a Check-in reply says the Portal hears them (wake
-mode Doorbell) the beat skips its poll unless the tunnel is open (only poll
-replies list the live Remote sessions), and a ring Wakes the base instead
-(:meth:`Connection._on_wake`). Check-ins carry the pause too, so the Portal
-learns it from a base that rarely polls. A change of Doorbell health brings the next
-Check-in forward to the next beat.
+Check-ins carry the pause too, as polls do.
 
 A 401 ``unclaimed`` means the base was Un-claimed on the Portal: the loop
 ends with :attr:`Connection.unclaimed` set, and the agent wipes its key.
@@ -28,8 +22,8 @@ none, whichever is longer; a refused Check-in is tried again after its
 ``Retry-After`` (else half the Check-in interval) while polls go on.
 
 A 426 means this agent's protocol version is no longer supported: it keeps
-its key and Claim, stops polling and its Doorbell keepalives (so nothing
-can ring it) and tries again once a day; the status says ``needs_upgrade``.
+its key and Claim, stops polling and tries again once a day; the status says
+``needs_upgrade``.
 """
 
 from __future__ import annotations
@@ -40,11 +34,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
 
 from pydantic import ValidationError
 from sp_rtk_portal_protocol import (
-    DOORBELL_OK,
     AgentConfig,
     BaseKey,
     CheckIn,
@@ -55,7 +47,7 @@ from sp_rtk_portal_protocol import (
     PollReply,
 )
 
-from sp_rtk_base.portal_agent import agent_config, doorbell
+from sp_rtk_base.portal_agent import agent_config
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
     PortalUnreachableError,
@@ -95,11 +87,9 @@ class Connection:
         now: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[None]],
         software_version: str,
-        resolve: doorbell.Resolve,
         lan_addresses: Callable[[], list[LanAddress]],
         tunnel_connect: Connect | None = None,
         app_port: int = APP_PORT,
-        open_udp: doorbell.OpenUdp = doorbell.open_udp,
         paused: bool = False,
     ) -> None:
         self._state_dir = state_dir
@@ -135,24 +125,6 @@ class Connection:
             ),
             app_port=app_port,
         )
-        self.bell = doorbell.Doorbell(
-            key=key,
-            now=now,
-            sleep=sleep,
-            resolve=resolve,
-            open_udp=open_udp,
-            on_ring=self._on_wake,
-            on_change=self._check_in_soon,
-        )
-
-    @property
-    def doorbell(self) -> str:
-        """Doorbell health (the ``DOORBELL_*`` values)."""
-        return self.bell.health
-
-    @property
-    def wake_mode(self) -> Literal["polling", "doorbell"]:
-        return "doorbell" if self.doorbell == DOORBELL_OK else "polling"
 
     @property
     def poll_interval(self) -> int:
@@ -164,29 +136,22 @@ class Connection:
         try:
             await self._beat()
         finally:
-            await self.bell.close()
             await self.tunnel.close()
 
     async def _beat(self) -> None:
         while True:
             try:
-                # No keepalives while too old: no return path for a ring.
-                await self.bell.follow(
-                    None if self.needs_upgrade else self.config.doorbell
-                )
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
                 backoff = 0.0
-                if self._polls_now:
-                    try:
-                        await self._poll()
-                    except RateLimitedError as exc:
-                        backoff = max(exc.retry_after or 0, 2 * self.poll_interval)
-                        logger.info("The Portal asked for fewer polls: %ss", backoff)
+                try:
+                    await self._poll()
+                except RateLimitedError as exc:
+                    backoff = max(exc.retry_after or 0, 2 * self.poll_interval)
+                    logger.info("The Portal asked for fewer polls: %ss", backoff)
                 delay = max(self.poll_interval, backoff)
             except UpgradeRequiredError as exc:
                 self._upgrade_required(exc)
-                await self.bell.follow(None)
                 delay = UPGRADE_RETRY_S
             except UnclaimedError as exc:
                 logger.warning("Un-claimed on the Portal: %s", exc)
@@ -196,13 +161,6 @@ class Connection:
                 logger.info("Couldn't reach the Portal, will retry: %s", exc)
                 delay = self.poll_interval
             await self._sleep(delay)
-
-    @property
-    def _polls_now(self) -> bool:
-        """Polling mode, or Doorbell mode while the tunnel is open: only a
-        poll reply says who is connected (the local page's Remote
-        sessions)."""
-        return self.wake_mode == "polling" or self.tunnel.state != "closed"
 
     async def _poll(self) -> None:
         state = "paused" if self.paused else "connected"
@@ -219,8 +177,7 @@ class Connection:
             self._on_wake(reply.wake)
 
     def _on_wake(self, nonce: str) -> None:
-        """A Wake, from a poll reply or a Doorbell ring; ignored while remote
-        access is paused."""
+        """A Wake from a poll reply; ignored while remote access is paused."""
         if self.paused:
             logger.info("Ignoring a Wake: remote access is paused")
             return
@@ -230,9 +187,6 @@ class Connection:
             idle_timeout=self.config.tunnel_idle_timeout,
             hard_cap=self.config.tunnel_hard_cap,
         )
-
-    def _check_in_soon(self) -> None:
-        self._check_in_due = self._now()
 
     async def _check_in_unless_limited(self) -> None:
         try:
@@ -269,7 +223,6 @@ class Connection:
             self._key,
             CheckIn(
                 software_version=self._version,
-                doorbell=self.doorbell,
                 lan_addresses=self._lan_addresses(),
                 paused=self.paused,
             ),
@@ -278,7 +231,6 @@ class Connection:
         self._check_in_due = self._now() + timedelta(
             seconds=self.config.check_in_interval
         )
-        self.bell.portal_says(reply.doorbell_heard, reply.ring_key)
         # Persisted here rather than on every poll, to spare the SD card.
         self.claim = dataclasses.replace(
             self.claim, last_contact=self.last_contact.isoformat()

@@ -6,14 +6,13 @@ when its revision differs from the one it holds, persists it
 (:func:`~sp_rtk_base.portal_agent.state.save_agent_config`) and, until it has
 one, uses the built-in defaults.
 
-The Portal is trusted with timings only. Its two levers on the agent's
-network behaviour are pinned here (spec #82, "The LAN behind the base"):
-
-- the tunnel URL must be ``wss://`` on the Portal's own host (the built-in
-  one, or the local override for development); anything else is ignored,
-  logged, and the built-in tunnel URL is used;
-- the Doorbell host is only kept as a name here: it is resolved and checked
-  before each use (:mod:`.doorbell`).
+The Portal is trusted with timings only. Its one lever on the agent's
+network behaviour is pinned here (spec #82, "The LAN behind the base"): the
+tunnel URL must be ``wss://`` on the Portal's own host (the built-in one, or
+the local override for development); anything else is ignored, logged, and
+the built-in tunnel URL is used. A block from a Portal before the Doorbell
+was dropped (ADR 0006) still names a Doorbell host and port: they are
+ignored, as any unknown field is.
 
 A timing outside its sane range is ignored and logged too, so a bad block
 can't make the agent hammer the Portal or go silent.
@@ -52,8 +51,6 @@ class EffectiveConfig:
     poll_interval: int
     metered_poll_interval: int
     check_in_interval: int
-    doorbell: tuple[str, int] | None
-    """Host and port, unresolved."""
     tunnel_url: str
     tunnel_idle_timeout: int
     tunnel_hard_cap: int
@@ -120,19 +117,8 @@ def effective(block: AgentConfig | None, portal_url: str) -> EffectiveConfig:
                 tunnel_url,
             )
 
-    doorbell = None
-    if source.doorbell_host:
-        port = source.doorbell_port
-        if port is not None and 0 < port < 65536:
-            doorbell = (source.doorbell_host, port)
-        else:
-            logger.warning(
-                "Ignoring the Doorbell %r: bad port %r", source.doorbell_host, port
-            )
-
     return EffectiveConfig(
         revision=block.revision if block is not None else None,
-        doorbell=doorbell,
         tunnel_url=tunnel_url,
         **timings,
     )

@@ -145,11 +145,10 @@ def test_an_expired_pairing_says_so_and_offers_connect_again(
 
 
 @pytest.mark.e2e
-def test_a_polling_base_shows_its_wake_mode_and_the_portals_notices(
+def test_a_polling_base_shows_its_connection_and_the_portals_notices(
     page: Page, base_url: str, portal_agent: FakeAgentSocket
 ) -> None:
     portal_agent.status = CONNECTED | {
-        "wake_mode": "polling",
         "poll_interval": 60,
         "metered": True,
         "notices": ["Protocol 1 ends on 2027-06-01."],
@@ -157,7 +156,7 @@ def test_a_polling_base_shows_its_wake_mode_and_the_portals_notices(
 
     page.goto(f"{base_url}/portal")
 
-    expect(page.get_by_test_id("portal-wake-mode")).to_have_text(
+    expect(page.get_by_test_id("portal-connection")).to_have_text(
         "Polling every 60 s (metered)", timeout=15_000
     )
     expect(page.get_by_test_id("portal-last-contact")).to_have_text(
@@ -166,24 +165,6 @@ def test_a_polling_base_shows_its_wake_mode_and_the_portals_notices(
     expect(page.get_by_test_id("portal-notice")).to_have_text(
         "Protocol 1 ends on 2027-06-01."
     )
-
-
-@pytest.mark.e2e
-def test_a_base_on_a_doorbell_shows_doorbell_as_its_wake_mode_and_its_health(
-    page: Page, base_url: str, portal_agent: FakeAgentSocket
-) -> None:
-    portal_agent.status = CONNECTED | {
-        "wake_mode": "doorbell",
-        "poll_interval": 20,
-        "doorbell": "ok",
-    }
-
-    page.goto(f"{base_url}/portal")
-
-    expect(page.get_by_test_id("portal-wake-mode")).to_have_text(
-        "Doorbell", timeout=15_000
-    )
-    expect(page.get_by_test_id("portal-doorbell")).to_have_text("Working")
 
 
 @pytest.mark.e2e

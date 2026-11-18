@@ -11,8 +11,8 @@ application's service layer:
 - ``ProfileStore`` — GPS receiver profile persistence (built-in + custom)
 - ``UpdateCheckService`` — checks PyPI for an Available update
 - ``UpdateService`` — requests an Update and follows it (ADR 0005)
-- ``PortalEvents`` — the Portal agent's tunnel opens and closes, in the
-  Event log
+- ``PortalEvents`` — the Portal agent's tunnel opens and closes, Wakes and
+  Remote sessions, in the Event log; and the live Remote sessions
 """
 
 from __future__ import annotations
@@ -285,7 +285,8 @@ wire_host_setup(update_service, update_check_service)
 portal_events: PortalEvents = PortalEvents(
     lambda: read_status(socket_path()), relay_service.publish_app_event
 )
-"""Tunnel opens and closes, read from the Portal agent, in the Event log."""
+"""Tunnel opens and closes, Wakes and Remote sessions, read from the Portal
+agent, in the Event log; and the live Remote sessions."""
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency injection helpers

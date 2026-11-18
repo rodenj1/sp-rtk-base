@@ -379,7 +379,9 @@ What a Claimed base's agent sends the Portal: a small HTTPS poll every
 how a Wake reaches it, and a slower Check-in every ~5 min with its
 version and LAN addresses. Each reply carries the **agent config**
 (revisioned timings and the tunnel URL, which the agent checks before use)
-and any notices.
+and any notices. Polls and Check-ins reuse one HTTPS
+connection, kept while requests come at least every 90 s, so a poll costs
+its request and reply, not a new TLS handshake.
 _Avoid_: heartbeat, keepalive
 
 **Paused** (remote access paused):

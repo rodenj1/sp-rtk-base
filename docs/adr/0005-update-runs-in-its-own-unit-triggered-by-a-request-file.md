@@ -31,6 +31,14 @@ it. The app reads the unit's enabled state and says so, and keeps the check
 and the Release notes. A switch in `config.yaml` would not hold, because the
 app can write that file.
 
+A version is healthy when, within 90 s of the restart, `/api/health` answers
+with SP-Base X and Relay Y; 30 s later (the hold), it answers with them again
+within a 15 s grace period; and systemd's `NRestarts` for the app hasn't gone
+up. The grace period exists because a busy Pi can stall for a few seconds just
+after a restart: one late answer after the hold must not roll back a healthy
+version. The cost is that a broken one is rolled back up to 15 s later. Health
+does not check that the Relay resumes or corrections flow.
+
 A new version that fails its health check is rolled back automatically.
 Before pip runs, the updater copies the venv to `venv.prev` and
 `/etc/sp-rtk-base/` to a snapshot, so the unit also needs write access to

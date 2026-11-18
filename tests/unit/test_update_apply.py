@@ -67,11 +67,15 @@ INSTALL_COMMAND = (
 
 CONFIG = "deployment:\n  mode: appliance\n"
 
-# The health check's 90 s and 30 s, shortened. The deadline stays longer than
-# one request's timeout, so a single late answer (a stalled test machine) is
-# retried rather than failing a healthy version.
+# The health check's 90 s and 30 s, shortened. The deadline and the grace
+# period stay longer than one request's timeout, so a single late answer (a
+# stalled test machine) is retried rather than failing a healthy version.
 HEALTH_TIMEOUT_S = "60"
 HEALTH_HOLD_S = "0.3"
+HEALTH_GRACE_S = "15"
+WAITED_OUT_HEALTH_GRACE_S = "0.5"
+"""The grace period when a version dies after the hold, so the test waits
+it out (see :meth:`Host.health_grace_s`)."""
 WAITED_OUT_HEALTH_TIMEOUT_S = "1.5"
 """The deadline when a version never answers right, so the test waits it
 out (see :meth:`Host.health_timeout_s`)."""
@@ -264,6 +268,7 @@ class Host:
             "SP_RTK_BASE_UPDATE_HEALTH_URL": self.health.url,
             "SP_RTK_BASE_UPDATE_HEALTH_TIMEOUT_S": self.health_timeout_s(),
             "SP_RTK_BASE_UPDATE_HEALTH_HOLD_S": HEALTH_HOLD_S,
+            "SP_RTK_BASE_UPDATE_HEALTH_GRACE_S": self.health_grace_s(),
             "SP_RTK_BASE_UPDATE_SYSTEMCTL": str(self.systemctl),
         }
 
@@ -277,6 +282,11 @@ class Host:
             else self.waits_out_health_check
         )
         return WAITED_OUT_HEALTH_TIMEOUT_S if waited_out else HEALTH_TIMEOUT_S
+
+    def health_grace_s(self) -> str:
+        """Short only when a version dies after the hold, so the check
+        waits the grace period out."""
+        return WAITED_OUT_HEALTH_GRACE_S if self.health.dies else HEALTH_GRACE_S
 
     def request(self, app: str = TARGET_APP, relay: str = TARGET_RELAY) -> None:
         self.files.write_request(UpdateRequest(app=app, relay=relay))

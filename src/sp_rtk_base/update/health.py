@@ -1,9 +1,12 @@
 """Whether a version is healthy after the update unit restarted it (ADR 0005).
 
 Healthy means: within :data:`HEALTH_TIMEOUT_S` of the restart, ``/api/health``
-on localhost answers with SP-Base X **and** Relay Y; it still answers
-:data:`HEALTH_HOLD_S` later; and systemd's ``NRestarts`` for
-``sp-rtk-base.service`` hasn't gone up. Whether the Relay resumes or
+on localhost answers with SP-Base X **and** Relay Y; :data:`HEALTH_HOLD_S`
+later, it answers with them again within :data:`HEALTH_GRACE_S`; and
+systemd's ``NRestarts`` for ``sp-rtk-base.service`` hasn't gone up. The
+grace period is there so one late answer (a busy Pi stalling just after a
+restart) doesn't roll back a healthy version; a broken one is rolled back
+at most that much later. Whether the Relay resumes or
 corrections flow is not checked: a slow Bluetooth reconnect isn't the
 release's fault.
 
@@ -40,6 +43,8 @@ HEALTH_TIMEOUT_S = 90.0
 """How long the restarted version has to answer with the right versions."""
 HEALTH_HOLD_S = 30.0
 """How long after that it must still answer."""
+HEALTH_GRACE_S = 15.0
+"""How long, after the hold, it has to answer again: three request timeouts."""
 APP_UNIT = "sp-rtk-base.service"
 _REQUEST_TIMEOUT_S = 5.0
 
@@ -114,6 +119,7 @@ class HealthCheck:
     url: str = HEALTH_URL
     timeout_s: float = HEALTH_TIMEOUT_S
     hold_s: float = HEALTH_HOLD_S
+    grace_s: float = HEALTH_GRACE_S
     fetch: Fetch = local_fetch
     restarts: Callable[[], int | None] = _SYSTEMD_RESTARTS
     sleep: Callable[[float], None] = time.sleep
@@ -130,9 +136,11 @@ class HealthCheck:
                 return f"{name} didn't start within {self.timeout_s:g} s: {problem}"
             self.sleep(poll_s)
         self.sleep(self.hold_s)
-        problem = self._probe(expected)
-        if problem is not None:
-            return f"{name} started, then stopped answering: {problem}"
+        grace_ends = self.clock() + self.grace_s
+        while (problem := self._probe(expected)) is not None:
+            if self.clock() >= grace_ends:
+                return f"{name} started, then stopped answering: {problem}"
+            self.sleep(poll_s)
         after = self.restarts()
         if before is not None and after is not None and after > before:
             return f"{name} started, but systemd restarted it {after - before} time(s)."

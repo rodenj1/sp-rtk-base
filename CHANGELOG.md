@@ -35,6 +35,11 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   Remote session instead. A version 1 Portal agent still polls and opens
   its tunnel only on a Wake. The agent's status reports its connection
   mode (holding, reconnecting, polling or unclaimed).
+- **Pausing remote access keeps the tunnel** (rtk_development#207): a
+  paused Portal agent keeps holding its tunnel (and keeps Checking in), so
+  the Portal still shows the base online with "Remote access paused".
+  Pausing ends the tunnel's open streams, and the agent refuses every new
+  one before it reaches the base's UI; resuming needs no reconnect.
 - **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)

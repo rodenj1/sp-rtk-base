@@ -11,7 +11,7 @@ Check-ins (ADRs 0002, 0006).
 
 It runs one loop. Each beat a version 2 agent first opens its tunnel to
 hold it if it isn't open (so at once on Claim and on start, and again on
-the beat after a drop), except while paused or refused as too old. Then
+the beat after a drop), except when refused as too old. Then
 it sends a Check-in when one is due (first thing, then every
 ``check_in_interval``), then a poll, then sleeps the poll interval (the
 metered one when the Operator marked the base metered).
@@ -23,7 +23,8 @@ revision changes, then persisted). A poll reply also goes through
 and the Remote sessions it lists go to the base's own record
 (:class:`~.remote_record.RemoteRecord`).
 
-Check-ins carry the pause too, as polls do.
+Check-ins carry the pause too, as polls do. A paused agent keeps its
+tunnel (and so its online state): it only refuses the streams in it.
 
 A 401 ``unclaimed`` means the base was Un-claimed on the Portal: the loop
 ends with :attr:`Connection.unclaimed` set, and the agent wipes its key.
@@ -124,7 +125,8 @@ class Connection:
         self.needs_upgrade = False
         self.upgrade_message: str | None = None
         self.paused = paused
-        """Remote access paused on site: polls say so and Wakes are ignored."""
+        """Remote access paused on site: polls say so, Wakes are ignored and
+        the tunnel refuses every stream."""
         self.record = RemoteRecord(claim.base_id, now)
         """Live Remote sessions, and the Wakes, starts and ends the app logs."""
         self.unclaimed = False
@@ -143,6 +145,7 @@ class Connection:
             ),
             app_port=app_port,
             ping_interval=lambda: self.config.ping_interval,
+            refusing=lambda: self.paused,
         )
 
     @property
@@ -172,9 +175,10 @@ class Connection:
 
     def _hold(self) -> None:
         """Open the tunnel to hold it, unless it's open (or opening: a
-        tunnel a Wake opened is left to run its course), remote access is
-        paused, or the Portal refuses this agent's protocol version."""
-        if self.holds and not self.paused and not self.needs_upgrade:
+        tunnel a Wake opened is left to run its course) or the Portal
+        refuses this agent's protocol version. A paused agent holds it too,
+        refusing its streams."""
+        if self.holds and not self.needs_upgrade:
             self.tunnel.hold(self.config.tunnel_url)
 
     async def _beat(self) -> None:
@@ -239,16 +243,17 @@ class Connection:
     async def set_paused(self, paused: bool) -> None:
         """Pause (or resume) remote access, and tell the Portal at once.
 
-        Pausing closes the tunnel, so live Remote sessions are cut here
-        whatever the Portal does; the Portal ends them and revokes their
-        tokens when it hears ``paused``. The pause is kept on disk.
+        Pausing ends every open stream and refuses new ones, so live Remote
+        sessions are cut here whatever the Portal does; the tunnel stays
+        open. The Portal ends the sessions and revokes their tokens when it
+        hears ``paused``. The pause is kept on disk.
         """
         self.paused = paused
         save_paused(self._state_dir, paused)
         logger.info("Remote access %s", "paused" if paused else "resumed")
         if paused:
             self.record.forget_live()
-            await self.tunnel.close()
+            await self.tunnel.end_streams()
         try:
             await self._poll()
         except UpgradeRequiredError as exc:

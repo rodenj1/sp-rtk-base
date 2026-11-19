@@ -9,7 +9,6 @@ tunnel together in sp-rtk-portal's seam-1 suite.
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
@@ -24,7 +23,13 @@ from wsproto.events import AcceptConnection, Request
 from sp_rtk_base.portal_agent.client import pause, resume
 from sp_rtk_base.portal_agent.state import Claim, save_claim
 from tests.fixtures.fake_portal import FakeClock, FakePortal
-from tests.fixtures.fake_tunnel import TUNNEL_URL, AppStub, TunnelEndpoint, app_stub
+from tests.fixtures.fake_tunnel import (
+    TUNNEL_URL,
+    AppStub,
+    TunnelEndpoint,
+    app_stub,
+    read_all,
+)
 from tests.fixtures.running_agent import Running
 
 pytestmark = pytest.mark.asyncio
@@ -193,20 +198,26 @@ async def test_a_refused_hold_is_tried_again_on_the_next_beat(
         await r.stop()
 
 
-async def test_paused_it_lets_go_of_the_tunnel_and_holds_it_again_once_resumed(
-    running: Running, endpoint: TunnelEndpoint, clock: FakeClock
+async def test_paused_it_keeps_holding_its_tunnel_but_refuses_every_stream(
+    running: Running, endpoint: TunnelEndpoint, clock: FakeClock, app: AppStub
 ) -> None:
     await holding(running, endpoint)
 
     await pause(running.sock)
-    await asyncio.wait_for(endpoint.closed.wait(), 5)
     await clock.run(minutes=5)
-    assert len(endpoint.opens) == 1
+    stream = await endpoint.open_stream()
+    await stream.write(b"GET /survey HTTP/1.1\r\n\r\n")
+
+    assert await read_all(stream) == b""
+    assert app.seen == []
+    assert not endpoint.closed.is_set()
+    assert (await running.status()).connection_mode == "holding"
 
     await resume(running.sock)
-    await clock.run(seconds=20)
-    await holding(running, endpoint)
-    assert len(endpoint.opens) == 2
+    stream = await endpoint.open_stream()
+    await stream.write(b"GET /survey HTTP/1.1\r\n\r\n")
+    assert (await read_all(stream)).endswith(b"base page /survey body=")
+    assert len(endpoint.opens) == 1  # the same tunnel throughout
 
 
 async def test_a_version_1_agent_only_polls(

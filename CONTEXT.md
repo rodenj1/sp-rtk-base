@@ -400,9 +400,10 @@ _Avoid_: heartbeat, keepalive
 **Paused** (remote access paused):
 The Operator's brake on remote use, on the base's local Portal page
 ("Pause remote access"). A paused agent keeps its key and Claim and keeps
-polling, but each poll says `paused` and it ignores Wakes; pausing closes
-the tunnel (and it isn't held while paused), and the Portal ends the live
-Remote sessions. Kept across
+polling, Checking in and holding its tunnel (so it stays online), but each
+poll says `paused` and it ignores Wakes; pausing ends the tunnel's open
+streams and it refuses every new one before it reaches the base's UI, and
+the Portal ends the live Remote sessions. Kept across
 restarts; only "Resume remote access" on the base undoes it. Each tunnel
 open and close also goes into the Event log.
 _Avoid_: disabled, offline (an offline base isn't polling at all)

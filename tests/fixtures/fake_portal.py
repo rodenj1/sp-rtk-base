@@ -31,6 +31,7 @@ from sp_rtk_portal_protocol import (
     ClaimStart,
     ClaimStarted,
     ClaimToken,
+    EndedSession,
     ErrorReply,
     LiveSession,
     Notice,
@@ -156,6 +157,8 @@ class FakePortal:
     """Put this Wake nonce in every poll reply (ticket #88)."""
     sessions: list[LiveSession] = field(default_factory=list)
     """Live Remote sessions for every poll reply (ticket #92)."""
+    ended: list[EndedSession] = field(default_factory=list)
+    """Recent Remote session ends for every poll reply (ticket #203)."""
     unclaimed: bool = False
     """The base was Un-claimed on the Portal: polls, Check-ins and releases
     get 401 ``unclaimed`` (ticket #93)."""
@@ -248,7 +251,10 @@ class FakePortal:
                 return httpx.Response(
                     200,
                     json=PollReply(
-                        **common, wake=self.wake, sessions=list(self.sessions)
+                        **common,
+                        wake=self.wake,
+                        sessions=list(self.sessions),
+                        ended=list(self.ended),
                     ).to_json(),
                 )
             return httpx.Response(200, json=CheckInReply(**common).to_json())

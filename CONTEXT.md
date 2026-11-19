@@ -392,3 +392,14 @@ the tunnel, and the Portal ends the live Remote sessions. Kept across
 restarts; only "Resume remote access" on the base undoes it. Each tunnel
 open and close also goes into the Event log.
 _Avoid_: disabled, offline (an offline base isn't polling at all)
+
+**Base-side record** (of Remote sessions):
+The base's own Event log entries about remote use, raised by the app from
+the agent's status (ADR 0005): each Wake the agent acts on (time only),
+each Remote session start (the user's email, Operator or Shared user) and
+each end (email and reason: `left`, `idle`, `paused`, `lease_expired`,
+`revoked`, `hard_cap`, or `unknown` when a session left the Portal's list
+with no end), next to the tunnel opens and closes. The Portal reports
+sessions by id, and the base keeps each start and end once. It lives under
+the Event log's own retention; the Portal can't change or delete it.
+_Avoid_: audit log (that is the Portal's)

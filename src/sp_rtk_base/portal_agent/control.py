@@ -207,6 +207,7 @@ class PortalAgent:
                 tunnel_streams=conn.tunnel.streams,
                 sessions=conn.sessions,
                 tunnel_events=list(conn.tunnel.events),
+                remote_events=list(conn.record.events),
             )
         if self._pairing is not None:
             p = self._pairing

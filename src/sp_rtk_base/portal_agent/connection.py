@@ -426,7 +426,10 @@ class Connection:
         except UpgradeRequiredError as exc:
             self._upgrade_required(exc)
         except (UnclaimedError, PortalUnreachableError, RateLimitedError) as exc:
-            logger.info("Couldn't tell the Portal yet, the next poll will: %s", exc)
+            logger.info(
+                "Couldn't tell the Portal yet; its next poll or Check-in will: %s",
+                exc,
+            )
 
     async def _check_in(self) -> None:
         reply = await self._api.check_in(self._key, self._check_in_message())

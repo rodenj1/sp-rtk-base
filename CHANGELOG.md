@@ -41,6 +41,11 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   5 min and on any change, and hears the agent config, metered flag,
   notices and Remote sessions (and each session's end) on the tunnel within
   a second of a change on the Portal.
+- **Pausing remote access keeps the tunnel** (rtk_development#207): a
+  paused Portal agent keeps holding its tunnel (and keeps Checking in), so
+  the Portal still shows the base online with "Remote access paused".
+  Pausing ends the tunnel's open streams, and the agent refuses every new
+  one before it reaches the base's UI; resuming needs no reconnect.
 - **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)

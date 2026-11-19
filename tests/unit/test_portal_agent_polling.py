@@ -106,7 +106,7 @@ async def test_a_claimed_agent_polls_every_20_s_and_checks_in_every_5_min(
     assert portal.agent_polls[0].body == {"state": "connected"}
 
 
-async def test_a_check_in_carries_the_version_and_lan_addresses(
+async def test_a_check_in_carries_the_version_lan_addresses_and_mode(
     running: Running, portal: FakePortal
 ) -> None:
     [check_in] = portal.check_ins
@@ -117,6 +117,7 @@ async def test_a_check_in_carries_the_version_and_lan_addresses(
             {"address": "192.168.1.20", "interface": "eth0", "primary": True}
         ],
         "paused": False,
+        "mode": "reconnecting",  # no tunnel here: it checks in over HTTPS
     }
 
 

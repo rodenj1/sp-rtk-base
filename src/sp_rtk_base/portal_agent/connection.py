@@ -11,14 +11,24 @@ Check-ins (ADRs 0002, 0006).
 
 It runs one loop. Each beat a version 2 agent first opens its tunnel to
 hold it if it isn't open (so at once on Claim and on start, and again on
-the beat after a drop), except while paused or refused as too old. Then
-it sends a Check-in when one is due (first thing, then every
-``check_in_interval``), then a poll, then sleeps the poll interval (the
-metered one when the Operator marked the base metered).
+the beat after a drop), except while paused or refused as too old, and
+waits for it to open or fail.
 
-Each reply goes through :meth:`Connection._heard`: last contact, the
-metered flag, notices, and the agent config block (applied only when its
-revision changes, then persisted). A poll reply also goes through
+While it holds its tunnel, the tunnel carries everything (ticket #205):
+no polls or Check-ins go over HTTPS. A Check-in goes on the tunnel when
+it opens, every ``check_in_interval`` and whenever its contents change
+(noticed within a beat); the Portal sends the agent config, metered flag,
+notices and live Remote sessions on connect and on every change, and each
+Remote session's end (:meth:`Connection._on_control`).
+
+Otherwise it sends a Check-in over HTTPS when one is due (first thing,
+then every ``check_in_interval``), then a poll, then sleeps the poll
+interval (the metered one when the Operator marked the base metered).
+
+Each reply (or update on the tunnel) goes through
+:meth:`Connection._heard`: last contact, the metered flag, notices, and
+the agent config block (applied only when its revision changes, then
+persisted). A poll reply also goes through
 :meth:`Connection._on_poll_reply`, which is where a Wake (#88) is handled
 and the Remote sessions it lists go to the base's own record
 (:class:`~.remote_record.RemoteRecord`).
@@ -53,9 +63,16 @@ from sp_rtk_portal_protocol import (
     BaseKey,
     CheckIn,
     CheckInReply,
+    EndedSession,
+    FrameError,
     LanAddress,
+    MessageError,
     Poll,
     PollReply,
+    TunnelClosed,
+    TunnelUpdate,
+    control_message,
+    read_control,
 )
 
 from sp_rtk_base.portal_agent import agent_config
@@ -130,6 +147,8 @@ class Connection:
         self.unclaimed = False
         """The Portal answered 401 ``unclaimed``: the loop has ended."""
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
+        self._sent: tuple[datetime | None, CheckIn] | None = None
+        """The tunnel (by when it opened) and Check-in last sent on it."""
         self.holds = api.protocol_version >= HOLDING_VERSION
         """This agent holds its tunnel open (else it only answers Wakes)."""
         self.tunnel = TunnelClient(
@@ -143,6 +162,7 @@ class Connection:
             ),
             app_port=app_port,
             ping_interval=lambda: self.config.ping_interval,
+            on_control=self._on_control,
         )
 
     @property
@@ -170,16 +190,21 @@ class Connection:
         finally:
             await self.tunnel.close()
 
-    def _hold(self) -> None:
+    async def _hold(self) -> None:
         """Open the tunnel to hold it, unless it's open (or opening: a
         tunnel a Wake opened is left to run its course), remote access is
-        paused, or the Portal refuses this agent's protocol version."""
+        paused, or the Portal refuses this agent's protocol version; then
+        wait until it is open or failed to open."""
         if self.holds and not self.paused and not self.needs_upgrade:
             self.tunnel.hold(self.config.tunnel_url)
+            await self.tunnel.opened()
 
     async def _beat(self) -> None:
         while True:
-            self._hold()
+            await self._hold()
+            if self.mode == "holding":
+                await self._sleep(await self._check_in_on_tunnel())
+                continue
             try:
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
@@ -201,6 +226,46 @@ class Connection:
                 logger.info("Couldn't reach the Portal, will retry: %s", exc)
                 delay = self.poll_interval
             await self._sleep(delay)
+
+    def _check_in_message(self) -> CheckIn:
+        return CheckIn(
+            software_version=self._version,
+            lan_addresses=self._lan_addresses(),
+            paused=self.paused,
+            mode=self.mode,
+        )
+
+    async def _check_in_on_tunnel(self) -> float:
+        """Send a Check-in on the held tunnel if this tunnel hasn't had one,
+        one is due, or it changed. Returns how long until the next beat."""
+        message = self._check_in_message()
+        sent = (self.tunnel.since, message)
+        if sent != self._sent or self._now() >= self._check_in_due:
+            try:
+                await self.tunnel.send_control(control_message(message))
+            except TunnelClosed:
+                return 0  # gone meanwhile: reconnect at once
+            self._sent = sent
+            self.last_contact = self._now()
+            self._checked_in()
+        due = (self._check_in_due - self._now()).total_seconds()
+        return max(0.0, min(self.poll_interval, due))
+
+    async def _on_control(self, payload: bytes) -> None:
+        """A control message from the Portal on the held tunnel: the agent
+        config, notices and live Remote sessions, or a session's end. A
+        malformed one closes the tunnel, as a bad frame does."""
+        try:
+            message = read_control(payload)
+        except MessageError as exc:
+            raise FrameError(str(exc)) from None
+        if isinstance(message, TunnelUpdate):
+            self._heard(message)
+            self.record.heard(message.sessions, [])
+            if self.paused:
+                self.record.forget_live()
+        elif isinstance(message, EndedSession):
+            self.record.ended(message)
 
     async def _poll(self) -> None:
         state = "paused" if self.paused else "connected"
@@ -257,15 +322,11 @@ class Connection:
             logger.info("Couldn't tell the Portal yet, the next poll will: %s", exc)
 
     async def _check_in(self) -> None:
-        reply = await self._api.check_in(
-            self._key,
-            CheckIn(
-                software_version=self._version,
-                lan_addresses=self._lan_addresses(),
-                paused=self.paused,
-            ),
-        )
+        reply = await self._api.check_in(self._key, self._check_in_message())
         self._heard(reply)
+        self._checked_in()
+
+    def _checked_in(self) -> None:
         self._check_in_due = self._now() + timedelta(
             seconds=self.config.check_in_interval
         )
@@ -275,7 +336,7 @@ class Connection:
         )
         save_claim_file(self._state_dir, self.claim)
 
-    def _heard(self, reply: PollReply | CheckInReply) -> None:
+    def _heard(self, reply: PollReply | CheckInReply | TunnelUpdate) -> None:
         self.last_contact = self._now()
         if self.needs_upgrade:
             logger.info("The Portal accepts this agent again")

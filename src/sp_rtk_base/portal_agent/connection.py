@@ -7,7 +7,8 @@ Check-ins (ADRs 0002, 0006).
 - **holding**: the tunnel is open and held (protocol version 2);
 - **reconnecting**: a version 2 agent whose tunnel isn't open (yet, or any
   more);
-- **polling**: a version 1 agent, reached only through Wakes.
+- **polling**: reached only through Wakes: a version 1 agent, or a version
+  2 agent that fell back to polling.
 
 It runs one loop. Each beat a version 2 agent first makes sure its tunnel
 is held (so it opens at once on Claim and on start), except when refused as
@@ -22,6 +23,17 @@ it opens, every ``check_in_interval`` and whenever its contents change
 (noticed within a beat); the Portal sends the agent config, metered flag,
 notices and live Remote sessions on connect and on every change, and each
 Remote session's end (:meth:`Connection._on_control`).
+
+**Fallback** (ticket #209). A network that won't let a WebSocket through
+(a proxy refusing upgrades) mustn't leave the base unreachable. After
+``fallback_failures`` (3) tunnel opens failed in a row (not counting a
+Portal's 503, nor any while HTTPS failed too:
+:attr:`~.reconnect.Reconnect.blocked`), the agent sends a
+Check-in over HTTPS saying ``polling``: if it gets through, the agent stops
+its reconnect backoff and polls like a version 1 agent, Wakes included, and
+tries its tunnel again every ``fallback_retry_interval`` (15 min), holding it
+from the first try that opens. If HTTPS fails too, nothing says the network
+rather than the Portal is at fault: it keeps backing off on the tunnel.
 
 Otherwise it sends a Check-in over HTTPS when one is due (first thing,
 then every ``check_in_interval``), then a poll, then sleeps the poll
@@ -159,6 +171,11 @@ class Connection:
         self.reconnect = Reconnect(cap=lambda: self.config.reconnect_backoff_cap)
         """The backoff between tries to open the held tunnel again after a
         drop; its ``failures`` counts the tries that failed in a row."""
+        self._fell_back = False
+        """The tunnel wouldn't open while HTTPS got through: polling instead
+        (until a try opens it, see :meth:`_falls_back`)."""
+        self._retry_at = self._now()
+        """When a fallen-back agent next tries its tunnel."""
         self.tunnel = TunnelClient(
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
             now=now,
@@ -186,11 +203,17 @@ class Connection:
 
     @property
     def mode(self) -> ConnectionMode:
-        if not self.holds:
-            return "polling"
-        if self.tunnel.state == "open" and self.tunnel.held:
+        if self.holds and self.tunnel.state == "open" and self.tunnel.held:
             return "holding"
+        if not self.holds or self._falls_back():
+            return "polling"
         return "reconnecting"
+
+    def _falls_back(self) -> bool:
+        """Fallen back to polling, and no tunnel opened since (one that
+        does resets :attr:`reconnect`'s failures, and holding takes over at
+        once)."""
+        return self._fell_back and self.reconnect.failures > 0
 
     async def run(self) -> None:
         """Hold the tunnel, poll and Check in until cancelled or Un-claimed
@@ -205,15 +228,60 @@ class Connection:
         version."""
         return self.holds and not self.needs_upgrade
 
+    def _keeps_holding(self) -> bool:
+        """Try the tunnel again after a drop or failed open (with backoff),
+        unless it may not be held now or the agent fell back to polling."""
+        return self._may_hold() and not self._falls_back()
+
     async def _hold(self) -> None:
         """Hold the tunnel open, unless it's held already (open, or waiting
         to reconnect), a tunnel a Wake opened is still running its course,
         or it may not be held now; then wait until an open in progress
         succeeds or fails. A paused agent holds it too, refusing its
-        streams."""
-        if self._may_hold():
-            self.tunnel.hold(lambda: self.config.tunnel_url, keep=self._may_hold)
-            await self.tunnel.opened()
+        streams. Fallen back to polling, it only tries once its retry is
+        due."""
+        if not self._may_hold():
+            return
+        if self._falls_back():
+            if self.tunnel.state != "closed" or self._now() < self._retry_at:
+                return
+            self._retry_at = self._now() + timedelta(
+                seconds=self.config.fallback_retry_interval
+            )
+            logger.info("Trying the tunnel again")
+        self.tunnel.hold(lambda: self.config.tunnel_url, keep=self._keeps_holding)
+        await self.tunnel.opened()
+        if self._fell_back and self.reconnect.failures == 0:
+            logger.info("The tunnel opened again: holding it, no more polling")
+            self._fell_back = False
+
+    async def _fall_back_if_due(self) -> None:
+        """After ``fallback_failures`` failed tunnel opens in a row, fall
+        back to polling if an ordinary signed HTTPS request (a Check-in
+        saying ``polling``) gets through. If it doesn't, the error goes on
+        (and the tunnel keeps backing off)."""
+        if (
+            self._fell_back
+            or not self._may_hold()
+            or self.reconnect.blocked < self.config.fallback_failures
+        ):
+            return
+        self._fell_back = True
+        try:
+            await self._check_in_unless_limited()
+        except BaseException:
+            self._fell_back = False
+            raise
+        logger.warning(
+            "The tunnel failed to open %s times in a row but HTTPS gets "
+            "through: polling instead, trying the tunnel every %s s",
+            self.reconnect.blocked,
+            self.config.fallback_retry_interval,
+        )
+        await self.tunnel.close()  # ends the backoff, so Wakes are answered
+        self._retry_at = self._now() + timedelta(
+            seconds=self.config.fallback_retry_interval
+        )
 
     async def _beat(self) -> None:
         while True:
@@ -222,6 +290,7 @@ class Connection:
                 await self._sleep(await self._check_in_on_tunnel())
                 continue
             try:
+                await self._fall_back_if_due()
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
                 backoff = 0.0
@@ -240,6 +309,7 @@ class Connection:
                 return
             except PortalUnreachableError as exc:
                 logger.info("Couldn't reach the Portal, will retry: %s", exc)
+                self.reconnect.unreachable()
                 delay = self.poll_interval
             await self._sleep(delay)
 

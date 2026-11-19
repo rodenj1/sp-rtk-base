@@ -114,7 +114,13 @@ UPGRADE_DETAIL = (
 
 
 def connection(status: AgentStatus) -> str | None:
-    """How the base keeps in touch with the Portal, for the page."""
+    """How the base keeps in touch with the Portal, for the page: its
+    connection mode (an agent from before held tunnels names none, and
+    polls)."""
+    if status.connection_mode == "holding":
+        return "Holding its tunnel to the Portal"
+    if status.connection_mode == "reconnecting":
+        return "Reconnecting its tunnel to the Portal"
     if status.poll_interval:
         metered = " (metered)" if status.metered else ""
         return f"Polling every {status.poll_interval} s{metered}"

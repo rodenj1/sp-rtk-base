@@ -49,7 +49,12 @@ def clock() -> FakeClock:
 
 @pytest.fixture()
 def portal(clock: FakeClock) -> FakePortal:
-    return FakePortal(clock)
+    """No tunnel opens here: the agent polls while reconnecting. Its
+    fallback to polling (an extra Check-in, ticket #209) is kept out of these
+    tests' hours."""
+    p = FakePortal(clock)
+    p.config = AgentConfig(revision=1, fallback_failures=100)
+    return p
 
 
 @pytest.fixture()

@@ -246,8 +246,8 @@ class TunnelClient:
                 self.reconnect.opened()
                 retry_after = None
             else:
-                self.reconnect.failed()
                 retry_after = failed.retry_after
+                self.reconnect.failed(portal_busy=retry_after is not None)
             if not keep():
                 return
             delay = self.reconnect.delay(retry_after)
@@ -422,6 +422,8 @@ class TunnelClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+        if self.state == "opening":  # cancelled before it opened or failed
+            self._set("closed")
 
 
 async def _to_app(stream: Stream, writer: asyncio.StreamWriter) -> None:

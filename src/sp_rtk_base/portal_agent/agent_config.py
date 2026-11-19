@@ -38,8 +38,11 @@ RANGES: dict[str, tuple[int, int]] = {
     "check_in_interval": (60, 86400),
     "ping_interval": (10, 600),
     "reconnect_backoff_cap": (60, 3600),
+    "fallback_failures": (1, 100),
+    "fallback_retry_interval": (60, 86400),
 }
-"""Seconds; a value outside its range is ignored."""
+"""Seconds (``fallback_failures`` is a count); a value outside its range is
+ignored."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,11 @@ class EffectiveConfig:
     """How often the held tunnel pings the Portal."""
     reconnect_backoff_cap: int
     """The longest wait between tries to open the tunnel again after a drop."""
+    fallback_failures: int
+    """Tunnel opens failed in a row after which the agent falls back to
+    polling (if its HTTPS gets through)."""
+    fallback_retry_interval: int
+    """How often a fallen-back agent tries its tunnel again."""
 
     def interval(self, metered: bool) -> int:
         return self.metered_poll_interval if metered else self.poll_interval

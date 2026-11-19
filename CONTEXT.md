@@ -382,7 +382,9 @@ _Avoid_: connection, VPN, session (a Remote session is the Portal's)
 
 **Connection mode**:
 How the Portal reaches a Claimed base: *holding* (its tunnel is open),
-*reconnecting* (it isn't, yet or any more), or *polling* (Wakes only).
+*reconnecting* (it isn't, yet or any more), or *polling* (Wakes only: a
+version 1 agent, or one that fell back because its network refuses the
+tunnel while HTTPS gets through; it tries the tunnel every 15 min).
 Paused is a flag on top, not a mode. The agent's status reports it.
 _Avoid_: wake mode
 

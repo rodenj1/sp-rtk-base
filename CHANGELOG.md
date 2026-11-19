@@ -18,6 +18,11 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   (who, Operator or Shared user) and each end (who, and why: left, idle,
   paused, lease expired, revoked, hard cap), next to the tunnel's opens and
   closes. The Portal agent's status gains session ids and `remote_events`.
+- **"Remote session active" banner on every page** (rtk_development#210):
+  while anyone uses the base through the Portal, each page names them
+  ("Remote session active: <email>, <email> via the Portal"), on `:8080`
+  and inside the Portal's frame; it clears within a few seconds of the last
+  Remote session ending.
 
 ### Changed
 

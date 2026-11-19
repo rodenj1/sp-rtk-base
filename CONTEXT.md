@@ -413,5 +413,8 @@ each end (email and reason: `left`, `idle`, `paused`, `lease_expired`,
 `revoked`, `hard_cap`, or `unknown` when a session left the Portal's list
 with no end), next to the tunnel opens and closes. The Portal reports
 sessions by id, and the base keeps each start and end once. It lives under
-the Event log's own retention; the Portal can't change or delete it.
+the Event log's own retention; the Portal can't change or delete it. While
+any Remote session is live, every base page also shows "Remote session
+active: <email>, <email> via the Portal", on `:8080` and in the Portal's
+frame alike.
 _Avoid_: audit log (that is the Portal's)

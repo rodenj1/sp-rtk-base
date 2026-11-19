@@ -13,6 +13,15 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ### Changed
 
+- **A Claimed base holds its tunnel to the Portal open** (rtk_development#204,
+  ADR 0006, protocol version 2): the Portal agent opens it on Claim and on
+  start with no Wake, pings the Portal every 50 s (the agent config's
+  `ping_interval`), and opens it again on its next beat after a drop, so
+  Open remotely reaches the base at once. The agent no longer closes the
+  tunnel on idle or hard-cap timers of its own: the Portal limits each
+  Remote session instead. A version 1 Portal agent still polls and opens
+  its tunnel only on a Wake. The agent's status reports its connection
+  mode (holding, reconnecting, polling or unclaimed).
 - **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)

@@ -66,6 +66,7 @@ async def running(
         ),
     )
     r = Running(sock, state, portal, clock)
+    r.protocol_version = 1  # it polls at once, so its agent config is saved
     await r.start()
     try:
         yield r

@@ -1,5 +1,9 @@
 """A Claimed agent polls, Checks in and follows the agent config (ticket #87).
 
+These agents speak protocol version 1, which only polls: a version 2 agent
+polls only once it fell back from its held tunnel (ticket #209, see
+``test_portal_agent_held_tunnel``).
+
 The agent runs behind its control socket against a fake Portal that checks
 every request's proof, on virtual time. The real Portal and agent poll
 together in sp-rtk-portal's seam-1 suite.
@@ -49,9 +53,8 @@ def clock() -> FakeClock:
 
 @pytest.fixture()
 def portal(clock: FakeClock) -> FakePortal:
-    """No tunnel opens here: the agent polls while reconnecting. Its
-    fallback to polling (an extra Check-in, ticket #209) is kept out of these
-    tests' hours."""
+    """A Portal whose agent config keeps a version 2 agent's fallback to
+    polling (an extra Check-in, ticket #209) out of these tests' hours."""
     p = FakePortal(clock)
     p.config = AgentConfig(revision=1, fallback_failures=100)
     return p
@@ -81,11 +84,16 @@ async def running(
     dirs: tuple[Path, Path], claimed: Path, portal: FakePortal, clock: FakeClock
 ) -> AsyncIterator[Running]:
     r = Running(dirs[0], claimed, portal, clock)
+    r.protocol_version = POLLING_VERSION
     await r.start()
     try:
         yield r
     finally:
         await r.stop()
+
+
+POLLING_VERSION = 1
+"""The protocol version of an agent that only polls."""
 
 
 def _gaps(seen: list[Seen]) -> list[float]:
@@ -107,7 +115,7 @@ async def test_a_claimed_agent_polls_every_20_s_and_checks_in_every_5_min(
         portal.agent_polls[15].at,
         portal.agent_polls[30].at,
     ]
-    assert {r.version for r in portal.requests} == {str(PROTOCOL_VERSION)}
+    assert {r.version for r in portal.requests} == {str(POLLING_VERSION)}
     assert portal.agent_polls[0].body == {"state": "connected"}
 
 
@@ -122,7 +130,7 @@ async def test_a_check_in_carries_the_version_lan_addresses_and_mode(
             {"address": "192.168.1.20", "interface": "eth0", "primary": True}
         ],
         "paused": False,
-        "mode": "reconnecting",  # no tunnel here: it checks in over HTTPS
+        "mode": "polling",
     }
 
 
@@ -231,6 +239,7 @@ async def test_without_a_config_the_agent_uses_its_built_in_defaults(
 ) -> None:
     portal.down = True
     r = Running(dirs[0], claimed, portal, clock)
+    r.protocol_version = POLLING_VERSION
     await r.start()
     try:
         status = await r.status()
@@ -347,7 +356,7 @@ async def test_notices_from_the_portal_are_shown(
 async def test_426_stops_polling_and_retries_once_a_day(
     running: Running, portal: FakePortal, clock: FakeClock
 ) -> None:
-    portal.min_version = PROTOCOL_VERSION + 1
+    portal.min_version = POLLING_VERSION + 1
     await clock.run(seconds=20)
     refused = len(portal.requests)
 
@@ -366,7 +375,7 @@ async def test_426_stops_polling_and_retries_once_a_day(
 async def test_a_426_without_a_message_says_to_update(
     running: Running, portal: FakePortal, clock: FakeClock
 ) -> None:
-    portal.min_version = PROTOCOL_VERSION + 1
+    portal.min_version = POLLING_VERSION + 1
     portal.upgrade_message = ""
 
     await clock.run(seconds=20)
@@ -379,19 +388,23 @@ async def test_a_426_without_a_message_says_to_update(
 async def test_after_an_upgrade_polling_resumes_with_the_same_claim(
     running: Running, portal: FakePortal, clock: FakeClock
 ) -> None:
-    portal.min_version = PROTOCOL_VERSION + 1
+    portal.config = AgentConfig(revision=2)  # the default fallback, after 3 tries
+    await clock.run(seconds=20)
+    portal.min_version = POLLING_VERSION + 1
     await clock.run(seconds=20)
     key = (running.state / "base_key.pem").read_bytes()
 
-    running.protocol_version = PROTOCOL_VERSION + 1  # sp-rtk-base upgraded
+    running.protocol_version = PROTOCOL_VERSION  # sp-rtk-base upgraded
     await running.restart()
+    # No tunnel opens here: it falls back to polling (after 3 tries).
+    await running.until_status(lambda s: s.connection_mode == "polling", "polling")
     await clock.run(seconds=40)
 
     status = await running.status()
     assert not status.needs_upgrade
     assert status.base_id == "k3mnp4qrst"
     assert (running.state / "base_key.pem").read_bytes() == key
-    assert portal.agent_polls[-1].version == str(PROTOCOL_VERSION + 1)
+    assert portal.agent_polls[-1].version == str(PROTOCOL_VERSION)
     assert set(_gaps(portal.agent_polls[-3:])) == {20}
 
 

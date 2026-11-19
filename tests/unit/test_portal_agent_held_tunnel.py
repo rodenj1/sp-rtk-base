@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sp_rtk_portal_protocol import (
+    CHECK_IN_PATH,
+    POLL_PATH,
     PROTOCOL_VERSION,
     AgentConfig,
     BaseKey,
@@ -214,6 +216,33 @@ async def test_a_refused_hold_is_tried_again_within_2_min(
         await r.stop()
 
 
+async def test_reconnecting_it_makes_no_https_request_but_the_fallback_s_check_in(
+    dirs: tuple[Path, Path],
+    claimed: None,
+    portal: FakePortal,
+    clock: FakeClock,
+    endpoint: TunnelEndpoint,
+) -> None:
+    """Reconnecting is backoff only: no polls or Check-ins over HTTPS. The
+    first HTTPS request is the Check-in that decides the fallback, after 3
+    refused opens; polls come only after it."""
+    endpoint.refuse_held = True
+    r = Running(*dirs, portal, clock)
+    await r.start(tunnel_connect=endpoint.connector())
+    try:
+        await r.until_true(lambda: len(endpoint.opens) == 2)
+        await clock.run(seconds=1)
+        assert portal.requests == []
+
+        await r.until_status(lambda s: s.connection_mode == "polling", "polling")
+        first, *rest = portal.requests
+        assert first.path == CHECK_IN_PATH
+        assert first.body["mode"] == "polling"
+        assert {s.path for s in rest} <= {POLL_PATH}
+    finally:
+        await r.stop()
+
+
 async def test_paused_it_keeps_holding_its_tunnel_but_refuses_every_stream(
     running: Running, endpoint: TunnelEndpoint, clock: FakeClock, app: AppStub
 ) -> None:
@@ -281,6 +310,25 @@ async def test_holding_it_checks_in_on_the_tunnel_and_neither_polls_nor_checks_i
     assert len(check_ins) == 3  # on connect, then every 5 min
     assert {c.mode for c in check_ins} == {"holding"}
     assert {c.paused for c in check_ins} == {False}
+
+
+async def test_holding_it_checks_in_within_20_s_of_a_change_even_when_metered(
+    running: Running, endpoint: TunnelEndpoint, clock: FakeClock
+) -> None:
+    await holding(running, endpoint)
+    tunnel = await endpoint.wait_open()
+    metered = TunnelUpdate(config=AgentConfig(revision=5), metered=True)
+    await tunnel.send_control(control_message(metered))
+    await running.until_status(lambda s: s.metered, "metered")
+    await clock.run(seconds=20)  # its beats go on at the metered interval
+    sent = len([m for m in endpoint.controls if isinstance(m, CheckIn)])
+
+    running.lan = []  # the base's LAN address goes away
+    await clock.run(seconds=20)
+
+    check_ins = [m for m in endpoint.controls if isinstance(m, CheckIn)]
+    assert len(check_ins) == sent + 1
+    assert check_ins[-1].lan_addresses == []
 
 
 async def test_the_portal_s_updates_and_ends_on_the_tunnel_reach_the_status(

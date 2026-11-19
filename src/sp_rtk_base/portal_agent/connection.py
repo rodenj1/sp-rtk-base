@@ -6,7 +6,7 @@ Check-ins (ADRs 0002, 0006).
 
 - **holding**: the tunnel is open and held (protocol version 2);
 - **reconnecting**: a version 2 agent whose tunnel isn't open (yet, or any
-  more);
+  more): it only backs off and tries again, with no polls or Check-ins;
 - **polling**: reached only through Wakes: a version 1 agent, or a version
   2 agent that fell back to polling.
 
@@ -20,7 +20,8 @@ on the beat.
 While it holds its tunnel, the tunnel carries everything (ticket #205):
 no polls or Check-ins go over HTTPS. A Check-in goes on the tunnel when
 it opens, every ``check_in_interval`` and whenever its contents change
-(noticed within a beat); the Portal sends the agent config, metered flag,
+(noticed within :data:`HOLDING_BEAT_S`, metered or not: it costs no
+HTTPS); the Portal sends the agent config, metered flag,
 notices and live Remote sessions on connect and on every change, and each
 Remote session's end (:meth:`Connection._on_control`).
 
@@ -34,8 +35,11 @@ its reconnect backoff and polls like a version 1 agent, Wakes included, and
 tries its tunnel again every ``fallback_retry_interval`` (15 min), holding it
 from the first try that opens. If HTTPS fails too, nothing says the network
 rather than the Portal is at fault: it keeps backing off on the tunnel.
+That Check-in is the only HTTPS request a reconnecting agent makes, so the
+Portal's 2 min grace after the drop decides its online state.
 
-Otherwise it sends a Check-in over HTTPS when one is due (first thing,
+Polling (a version 1 agent, a fallen-back one, or one the Portal refused
+as too old) it sends a Check-in over HTTPS when one is due (first thing,
 then every ``check_in_interval``), then a poll, then sleeps the poll
 interval (the metered one when the Operator marked the base metered).
 
@@ -74,20 +78,22 @@ from pathlib import Path
 
 from sp_rtk_portal_protocol import (
     HOLDING_VERSION,
+    MODE_HOLDING,
+    MODE_POLLING,
+    MODE_RECONNECTING,
     AgentConfig,
     BaseKey,
     CheckIn,
     CheckInReply,
+    ConnectionMode,
     EndedSession,
-    FrameError,
     LanAddress,
-    MessageError,
     Poll,
     PollReply,
     TunnelClosed,
     TunnelUpdate,
     control_message,
-    read_control,
+    read_control_frame,
 )
 
 from sp_rtk_base.portal_agent import agent_config
@@ -100,7 +106,6 @@ from sp_rtk_base.portal_agent.portal_api import (
 )
 from sp_rtk_base.portal_agent.protocol import (
     UPDATE_TO_KEEP_USING,
-    ConnectionMode,
     RemoteSession,
 )
 from sp_rtk_base.portal_agent.reconnect import Reconnect
@@ -123,6 +128,10 @@ logger = logging.getLogger(__name__)
 
 UPGRADE_RETRY_S = 24 * 3600
 """After a 426, try again once a day (sp-rtk-base may have been Updated)."""
+
+HOLDING_BEAT_S = 20
+"""How often an agent holding its tunnel looks for a change to Check in
+about (metered or not: a Check-in on the tunnel costs no HTTPS)."""
 
 
 class Connection:
@@ -166,14 +175,16 @@ class Connection:
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
         self._sent: tuple[datetime | None, CheckIn] | None = None
         """The tunnel (by when it opened) and Check-in last sent on it."""
-        self.holds = api.protocol_version >= HOLDING_VERSION
-        """This agent holds its tunnel open (else it only answers Wakes)."""
+        api.poll_interval = lambda: self.poll_interval
+        self.can_hold = api.protocol_version >= HOLDING_VERSION
+        """This agent's protocol version holds its tunnel open (a version 1
+        agent only answers Wakes)."""
         self.reconnect = Reconnect(cap=lambda: self.config.reconnect_backoff_cap)
         """The backoff between tries to open the held tunnel again after a
         drop; its ``failures`` counts the tries that failed in a row."""
         self._fell_back = False
-        """The tunnel wouldn't open while HTTPS got through: polling instead
-        (until a try opens it, see :meth:`_falls_back`)."""
+        """Set when the agent falls back to polling; cleared once a try opens
+        the tunnel again (:meth:`_on_fallback` already says no from then)."""
         self._retry_at = self._now()
         """When a fallen-back agent next tries its tunnel."""
         self.tunnel = TunnelClient(
@@ -203,16 +214,16 @@ class Connection:
 
     @property
     def mode(self) -> ConnectionMode:
-        if self.holds and self.tunnel.state == "open" and self.tunnel.held:
-            return "holding"
-        if not self.holds or self._falls_back():
-            return "polling"
-        return "reconnecting"
+        if self.can_hold and self.tunnel.state == "open" and self.tunnel.held:
+            return MODE_HOLDING
+        if not self.can_hold or self._on_fallback():
+            return MODE_POLLING
+        return MODE_RECONNECTING
 
-    def _falls_back(self) -> bool:
-        """Fallen back to polling, and no tunnel opened since (one that
-        does resets :attr:`reconnect`'s failures, and holding takes over at
-        once)."""
+    def _on_fallback(self) -> bool:
+        """Polling instead of holding: fell back, and no tunnel opened since
+        (one that does resets :attr:`reconnect`'s failures, and holding takes
+        over at once)."""
         return self._fell_back and self.reconnect.failures > 0
 
     async def run(self) -> None:
@@ -223,15 +234,16 @@ class Connection:
         finally:
             await self.tunnel.close()
 
-    def _may_hold(self) -> bool:
-        """Hold the tunnel, unless the Portal refuses this agent's protocol
-        version."""
-        return self.holds and not self.needs_upgrade
+    def _hold_allowed(self) -> bool:
+        """It can hold its tunnel and the Portal hasn't refused its protocol
+        version (a 426)."""
+        return self.can_hold and not self.needs_upgrade
 
-    def _keeps_holding(self) -> bool:
-        """Try the tunnel again after a drop or failed open (with backoff),
-        unless it may not be held now or the agent fell back to polling."""
-        return self._may_hold() and not self._falls_back()
+    def _backs_off(self) -> bool:
+        """After a drop or failed open the tunnel is tried again with
+        backoff (reconnecting), rather than every ``fallback_retry_interval``
+        (fallen back) or not at all (:meth:`_hold_allowed` says no)."""
+        return self._hold_allowed() and not self._on_fallback()
 
     async def _hold(self) -> None:
         """Hold the tunnel open, unless it's held already (open, or waiting
@@ -240,16 +252,14 @@ class Connection:
         succeeds or fails. A paused agent holds it too, refusing its
         streams. Fallen back to polling, it only tries once its retry is
         due."""
-        if not self._may_hold():
+        if not self._hold_allowed():
             return
-        if self._falls_back():
+        if self._on_fallback():
             if self.tunnel.state != "closed" or self._now() < self._retry_at:
                 return
-            self._retry_at = self._now() + timedelta(
-                seconds=self.config.fallback_retry_interval
-            )
+            self._retry_later()
             logger.info("Trying the tunnel again")
-        self.tunnel.hold(lambda: self.config.tunnel_url, keep=self._keeps_holding)
+        self.tunnel.hold(lambda: self.config.tunnel_url, keep=self._backs_off)
         await self.tunnel.opened()
         if self._fell_back and self.reconnect.failures == 0:
             logger.info("The tunnel opened again: holding it, no more polling")
@@ -261,8 +271,7 @@ class Connection:
         saying ``polling``) gets through. If it doesn't, the error goes on
         (and the tunnel keeps backing off)."""
         if (
-            self._fell_back
-            or not self._may_hold()
+            not self._backs_off()
             or self.reconnect.blocked < self.config.fallback_failures
         ):
             return
@@ -279,6 +288,11 @@ class Connection:
             self.config.fallback_retry_interval,
         )
         await self.tunnel.close()  # ends the backoff, so Wakes are answered
+        self._retry_later()
+
+    def _retry_later(self) -> None:
+        """A fallen-back agent tries its tunnel next in
+        ``fallback_retry_interval``."""
         self._retry_at = self._now() + timedelta(
             seconds=self.config.fallback_retry_interval
         )
@@ -286,20 +300,16 @@ class Connection:
     async def _beat(self) -> None:
         while True:
             await self._hold()
-            if self.mode == "holding":
+            if self.mode == MODE_HOLDING:
                 await self._sleep(await self._check_in_on_tunnel())
                 continue
             try:
                 await self._fall_back_if_due()
-                if self._now() >= self._check_in_due:
-                    await self._check_in_unless_limited()
-                backoff = 0.0
-                try:
-                    await self._poll()
-                except RateLimitedError as exc:
-                    backoff = max(exc.retry_after or 0, 2 * self.poll_interval)
-                    logger.info("The Portal asked for fewer polls: %ss", backoff)
-                delay = max(self.poll_interval, backoff)
+                if self._backs_off():
+                    # Reconnecting: the tunnel's backoff only, no HTTPS.
+                    delay = float(self.poll_interval)
+                else:
+                    delay = await self._poll_beat()
             except UpgradeRequiredError as exc:
                 self._upgrade_required(exc)
                 delay = UPGRADE_RETRY_S
@@ -312,6 +322,19 @@ class Connection:
                 self.reconnect.unreachable()
                 delay = self.poll_interval
             await self._sleep(delay)
+
+    async def _poll_beat(self) -> float:
+        """A Check-in over HTTPS if one is due, then a poll. Returns how
+        long until the next beat."""
+        if self._now() >= self._check_in_due:
+            await self._check_in_unless_limited()
+        backoff = 0.0
+        try:
+            await self._poll()
+        except RateLimitedError as exc:
+            backoff = max(exc.retry_after or 0, 2 * self.poll_interval)
+            logger.info("The Portal asked for fewer polls: %ss", backoff)
+        return max(self.poll_interval, backoff)
 
     def _check_in_message(self) -> CheckIn:
         return CheckIn(
@@ -335,21 +358,16 @@ class Connection:
             self.last_contact = self._now()
             self._checked_in()
         due = (self._check_in_due - self._now()).total_seconds()
-        return max(0.0, min(self.poll_interval, due))
+        return max(0.0, min(HOLDING_BEAT_S, due))
 
     async def _on_control(self, payload: bytes) -> None:
         """A control message from the Portal on the held tunnel: the agent
         config, notices and live Remote sessions, or a session's end. A
         malformed one closes the tunnel, as a bad frame does."""
-        try:
-            message = read_control(payload)
-        except MessageError as exc:
-            raise FrameError(str(exc)) from None
+        message = read_control_frame(payload)
         if isinstance(message, TunnelUpdate):
             self._heard(message)
-            self.record.heard(message.sessions, [])
-            if self.paused:
-                self.record.forget_live()
+            self.record.heard(message.sessions, [], paused=self.paused)
         elif isinstance(message, EndedSession):
             self.record.ended(message)
 
@@ -363,9 +381,7 @@ class Connection:
         """What a poll reply asks beyond the common part: a Wake opens the
         tunnel at the agent's own checked tunnel URL, never anywhere the
         reply names, unless remote access is paused."""
-        self.record.heard(reply.sessions, reply.ended)
-        if self.paused:
-            self.record.forget_live()
+        self.record.heard(reply.sessions, reply.ended, paused=self.paused)
         if reply.wake is not None:
             self._on_wake(reply.wake)
 
@@ -402,7 +418,7 @@ class Connection:
         if paused:
             self.record.forget_live()
             await self.tunnel.end_streams()
-        if self.mode == "holding":
+        if self.mode == MODE_HOLDING:
             await self._check_in_on_tunnel()  # it says paused (or not)
             return
         try:

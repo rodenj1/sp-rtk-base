@@ -382,7 +382,9 @@ _Avoid_: connection, VPN, session (a Remote session is the Portal's)
 
 **Connection mode**:
 How the Portal reaches a Claimed base: *holding* (its tunnel is open),
-*reconnecting* (it isn't, yet or any more), or *polling* (Wakes only: a
+*reconnecting* (it isn't, yet or any more: the agent only backs off and
+tries again, sending nothing over HTTPS but the one Check-in that decides
+a fallback), or *polling* (Wakes only: a
 version 1 agent, or one that fell back because its network refuses the
 tunnel while HTTPS gets through; it tries the tunnel every 15 min).
 Paused is a flag on top, not a mode. The agent's status reports it.
@@ -395,11 +397,13 @@ Wake reaches it, and a slower Check-in every ~5 min with its
 version and LAN addresses. Each reply carries the **agent config**
 (revisioned timings and the tunnel URL, which the agent checks before use)
 and any notices. Polls and Check-ins reuse one HTTPS
-connection, kept while requests come at least every 90 s, so a poll costs
-its request and reply, not a new TLS handshake.
+connection, kept for the poll interval plus 30 s (until the Portal or the
+network closes it first), so a poll costs its request and reply, not a new
+TLS handshake.
 While the base holds its tunnel it sends no polls: its Check-ins (with
 its connection mode) go on the tunnel as control messages, on connect,
-every ~5 min and on any change, and the Portal sends the agent config,
+every ~5 min and on any change (noticed within 20 s, metered or not), and
+the Portal sends the agent config,
 notices and live Remote sessions (and each session's end) on the tunnel
 on connect and on every change.
 _Avoid_: heartbeat, keepalive

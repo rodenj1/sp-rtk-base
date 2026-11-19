@@ -45,6 +45,7 @@ from sp_rtk_base.portal_agent.portal_api import (
     UpgradeRequiredError,
 )
 from sp_rtk_base.portal_agent.protocol import (
+    MODE_UNCLAIMED,
     UPDATE_TO_KEEP_USING,
     AgentState,
     AgentStatus,
@@ -217,10 +218,10 @@ class PortalAgent:
                 user_code=p.started.user_code,
                 approve_url=p.started.verification_uri_complete,
                 expires_at=p.expires_at,
-                connection_mode="unclaimed",
+                connection_mode=MODE_UNCLAIMED,
             )
         return AgentStatus(
-            state="not_connected", message=self._message, connection_mode="unclaimed"
+            state="not_connected", message=self._message, connection_mode=MODE_UNCLAIMED
         )
 
     async def start_claim(self) -> AgentStatus:

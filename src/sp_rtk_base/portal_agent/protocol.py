@@ -18,8 +18,9 @@ One JSON object per line each way, on a Unix socket:
 A reader ignores status fields it doesn't know. Once Claimed the status
 also carries the polling fields (``poll_interval``,
 ``metered``, ``notices``, ``needs_upgrade``, ...), the tunnel's
-(``tunnel``, ``tunnel_since``, ``tunnel_streams``, ``tunnel_events``) and
-the live Remote ``sessions``.
+(``tunnel``, ``tunnel_since``, ``tunnel_streams``, ``tunnel_events``),
+the live Remote ``sessions`` and the ``remote_events`` the app raises as
+Event log entries (Wakes, Remote session starts and ends).
 """
 
 from __future__ import annotations
@@ -79,6 +80,36 @@ class RemoteSession(BaseModel):
     since: datetime
     shared: bool = False
     """A Shared user rather than the Operator."""
+    id: str = ""
+    """The Portal's id for it; empty from a Portal older than protocol
+    package 0.10.0."""
+
+
+REMOTE_SESSION_ENDED_UNKNOWN = "unknown"
+"""The end reason of a Remote session that left the Portal's list without
+an end (a Portal restart, or a Portal too old to send ends)."""
+
+
+class RemoteEvent(BaseModel):
+    """A Wake, or a Remote session's start or end: the base's own record of
+    Remote sessions, which the app's Event log shows (ADR 0005)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: str
+    """Unique and stable (the same session's start always has the same
+    id), so a reader can tell which ones it has seen."""
+    event: Literal["wake", "session_started", "session_ended"]
+    at: datetime
+    """When it happened: the Wake heard, the session started or ended."""
+    who: str | None = None
+    """The user's email (sessions only)."""
+    shared: bool = False
+    """A Shared user rather than the Operator (sessions only)."""
+    reason: str | None = None
+    """Why it ended (``session_ended``): one of the protocol's
+    ``END_REASONS``, :data:`REMOTE_SESSION_ENDED_UNKNOWN`, or a newer
+    Portal's own word."""
 
 
 class TunnelEvent(BaseModel):
@@ -142,6 +173,9 @@ class AgentStatus(BaseModel):
     tunnel_events: list[TunnelEvent] = []
     """The latest tunnel opens and closes since the agent started, oldest
     first (at most :data:`~.tunnel.TUNNEL_EVENTS`)."""
+    remote_events: list[RemoteEvent] = []
+    """The latest Wakes and Remote session starts and ends since the agent
+    started, oldest first (at most :data:`~.remote_record.REMOTE_EVENTS`)."""
 
 
 def socket_path() -> Path:

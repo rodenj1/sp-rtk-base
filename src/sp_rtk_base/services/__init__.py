@@ -421,6 +421,15 @@ def get_update_service() -> UpdateService:
     return update_service
 
 
+def get_portal_events() -> PortalEvents:
+    """Get the singleton PortalEvents instance.
+
+    A singleton because it alone reads the Portal agent's status for the
+    Event log and every page's "Remote session active" banner.
+    """
+    return portal_events
+
+
 def get_profile_store() -> ProfileStore:
     """Get the singleton ProfileStore instance.
 

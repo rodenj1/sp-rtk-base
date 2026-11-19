@@ -8,7 +8,7 @@ here, in a covered module.
 from __future__ import annotations
 
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +27,7 @@ from sp_rtk_base.portal_agent.protocol import (
     UPDATE_TO_KEEP_USING,
     AgentState,
     AgentStatus,
+    RemoteSession,
 )
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 
@@ -55,6 +56,15 @@ DETAILS: dict[AgentState, str] = {
 }
 
 NO_SESSIONS = "Nobody is using this base remotely."
+
+
+def remote_session_banner(sessions: Iterable[RemoteSession]) -> str | None:
+    """The page-wide banner while anyone is on a Remote session (each user
+    named once, in the agent's order); ``None`` while nobody is (#210)."""
+    who = list(dict.fromkeys(s.who for s in sessions))
+    if not who:
+        return None
+    return f"Remote session active: {', '.join(who)} via the Portal"
 
 
 @dataclass(frozen=True)

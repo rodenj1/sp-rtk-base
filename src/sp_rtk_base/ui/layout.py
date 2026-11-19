@@ -14,9 +14,11 @@ from nicegui import ui
 from sp_rtk_base import __version__ as app_version
 from sp_rtk_base.services import (
     get_config_service,
+    get_portal_events,
     get_update_check_service,
     get_update_service,
 )
+from sp_rtk_base.ui.portal_status import remote_session_banner
 from sp_rtk_base.ui.update_progress import KIND_COLOURS, Banner, banner
 from sp_rtk_base.ui.update_status import badge_text
 from sp_rtk_base.update.state import UpdateStatus
@@ -25,6 +27,11 @@ _UPDATE_POLL_S = 1.0
 """How often the header badge and the page-wide banner look for a new check
 result or Update status (an in-memory read and a ``stat`` of ``status.json``,
 which is parsed again only when it changed)."""
+
+_REMOTE_SESSION_POLL_S = 1.0
+"""How often the "Remote session active" banner looks at the live Remote
+sessions (in memory; :class:`PortalEvents` reads the agent every 2 s), so
+it shows and clears within a few seconds."""
 
 # Navigation structure: list of (section_header | None, label, path, icon)
 # A None section_header means "no header before this item".
@@ -144,6 +151,7 @@ def page_layout(title: str) -> Iterator[None]:
 
     with ui.column().classes("w-full q-pa-md"):
         _update_banner()
+        _remote_session_banner()
         yield
 
     # Footer with version
@@ -228,6 +236,39 @@ def _update_banner() -> None:
 
     render()
     ui.timer(_UPDATE_POLL_S, render)
+
+
+def _remote_session_banner() -> None:
+    """The page-wide "Remote session active" banner, while anyone uses the
+    base through the Portal (on ``:8080`` and in the Portal's frame alike).
+
+    Reads the live Remote sessions :class:`PortalEvents` last read from the
+    agent (every 2 s), not the agent's socket itself."""
+    events = get_portal_events()
+    holder = ui.column().classes("w-full q-gutter-none")
+    shown: list[str | None] = [None]
+
+    def render() -> None:
+        text = remote_session_banner(events.live_sessions)
+        if text == shown[0]:
+            return
+        shown[0] = text
+        holder.clear()
+        if text is None:
+            return
+        with (
+            holder,
+            ui.row()
+            .classes("w-full items-center q-pa-sm rounded-borders no-wrap")
+            .style("background: #6a1b9a"),
+        ):
+            ui.icon("cloud").classes("text-white")
+            ui.label(text).classes("text-white").props(
+                'data-testid="remote-session-banner"'
+            )
+
+    render()
+    ui.timer(_REMOTE_SESSION_POLL_S, render)
 
 
 def _nav_link(label: str, path: str, icon: str, drawer: ui.left_drawer) -> None:

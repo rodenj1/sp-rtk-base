@@ -11,11 +11,13 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.portal_agent.control import serve
+from sp_rtk_base.portal_agent.protocol import RemoteSession
 from sp_rtk_base.ui.portal_status import (
     connect,
     countdown,
     pause_remote_access,
     portal_view,
+    remote_session_banner,
     resume_remote_access,
     unclaim,
 )
@@ -380,3 +382,22 @@ async def test_the_real_agent_answers_un_claim(sock_path: Path) -> None:
         await server.wait_closed()
 
     assert view.headline == "Not connected"
+
+
+def _live(who: str) -> RemoteSession:
+    return RemoteSession(who=who, since=datetime(2026, 1, 1, 12, tzinfo=timezone.utc))
+
+
+def test_the_remote_session_banner_names_everyone_on_a_remote_session() -> None:
+    assert remote_session_banner([]) is None
+    assert (
+        remote_session_banner([_live("op@example.com")])
+        == "Remote session active: op@example.com via the Portal"
+    )
+    # Two sessions of one user (two devices) name them once.
+    assert (
+        remote_session_banner(
+            [_live("op@example.com"), _live("sam@example.com"), _live("op@example.com")]
+        )
+        == "Remote session active: op@example.com, sam@example.com via the Portal"
+    )

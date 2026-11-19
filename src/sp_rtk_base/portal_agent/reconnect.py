@@ -7,6 +7,11 @@ each failed open after that doubles the window the next wait is drawn from
 config (~10 min). A refusal's ``Retry-After`` (the Portal's 503 when it is
 admitting too many opens) is a floor on the next wait. A tunnel that opens
 starts it all over.
+
+It also counts what the fallback to polling (#209) goes by: the failures in
+a row that may be the network refusing WebSockets (:attr:`Reconnect.blocked`).
+A 503 asking to come back later isn't one (the Portal got the open), nor is
+a failure while the agent's HTTPS failed too (nothing gets through).
 """
 
 from __future__ import annotations
@@ -31,12 +36,22 @@ class Reconnect:
         self._uniform = uniform
         self.failures = 0
         """Tries that failed in a row since the tunnel last opened."""
+        self.blocked = 0
+        """Of those, the ones in a row since the Portal last answered an open
+        (a 503) or the agent's HTTPS last failed."""
 
     def opened(self) -> None:
-        self.failures = 0
+        self.failures = self.blocked = 0
 
-    def failed(self) -> None:
+    def failed(self, portal_busy: bool = False) -> None:
+        """A try failed; ``portal_busy``: the Portal refused it for now."""
         self.failures += 1
+        self.blocked = 0 if portal_busy else self.blocked + 1
+
+    def unreachable(self) -> None:
+        """The agent's HTTPS failed too: the failures so far say nothing
+        about WebSockets."""
+        self.blocked = 0
 
     def delay(self, retry_after: float | None = None) -> float:
         """Seconds to wait before the next try."""

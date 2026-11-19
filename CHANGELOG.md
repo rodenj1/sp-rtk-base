@@ -59,6 +59,14 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   503's `Retry-After` is a floor on the next wait. A tunnel that opens
   starts it over. Before, it tried again on its next 20 s beat, so a Portal
   restart brought every base back at once.
+- **A base whose network won't let its tunnel open falls back to polling**
+  (rtk_development#209): after 3 tunnel opens fail in a row while its HTTPS
+  Check-in gets through, the Portal agent polls (and answers Wakes) as a
+  version 1 agent does, and tries its tunnel again every 15 min (the agent
+  config's `fallback_failures` and `fallback_retry_interval`). If its HTTPS
+  fails too, it keeps backing off on the tunnel instead. The local Portal
+  page's Connection row shows the mode: "Holding its tunnel to the Portal",
+  "Reconnecting its tunnel to the Portal" or "Polling every 20 s".
 
 ### Removed
 

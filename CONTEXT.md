@@ -369,8 +369,10 @@ The tunnel is one websocket from the agent to its own Portal (signed with
 the base key), carrying the Portal's streams to the base's UI on
 `127.0.0.1:8080` and nowhere else. A Claimed base holds it open while it's
 online (ADR 0006, protocol version 2): the agent opens it on Claim and on
-start, pings the Portal every 50 s, and opens it again after a drop; the
-Portal never pings, and closes a tunnel silent for 120 s. Each Remote
+start, pings the Portal every 50 s, and opens it again after a drop (after
+a random 0-60 s, then backing off with jitter up to ~10 min, and never
+sooner than a 503's `Retry-After`, so a Portal restart doesn't bring every
+base back at once); the Portal never pings, and closes a tunnel silent for 120 s. Each Remote
 session has its own idle close and hard cap on the Portal; the tunnel has
 none. A Wake is how a base that isn't holding its tunnel (an older,
 version 1 agent) is reached: a poll reply carrying only a one-time nonce,

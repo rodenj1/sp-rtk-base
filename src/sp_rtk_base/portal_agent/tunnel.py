@@ -3,8 +3,9 @@
 A Claimed base holds its tunnel open (ADR 0006, protocol version 2): the
 agent opens its tunnel URL (already pinned to ``wss://`` on the Portal's
 own host by :mod:`.agent_config`) with a GET signed by the base key and no
-nonce, and keeps it open (:meth:`TunnelClient.hold`). It pings the Portal
-every ``ping_interval``; the Portal never pings, and closes a held tunnel
+nonce, and keeps it open (:meth:`TunnelClient.hold`): after a drop or a
+failed open it tries again, backing off (:class:`~.reconnect.Reconnect`).
+It pings the Portal every ``ping_interval``; the Portal never pings, and closes a held tunnel
 that sent nothing for its silence timeout. The Portal limits each Remote
 session (idle close, hard cap) on its side; the tunnel itself has no
 timers here.
@@ -51,6 +52,7 @@ import secrets
 import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from ssl import SSLContext
 from typing import Any, Literal, Protocol
@@ -63,6 +65,7 @@ from websockets.exceptions import InvalidStatus, WebSocketException
 
 from sp_rtk_base.portal_agent.doh import Names
 from sp_rtk_base.portal_agent.protocol import TunnelEvent
+from sp_rtk_base.portal_agent.reconnect import Reconnect
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +166,21 @@ def rewrite_head(head: bytes) -> bytes | None:
     return b"\r\n".join(out) + b"\r\n\r\n"
 
 
+@dataclass(frozen=True)
+class Failed:
+    """A tunnel that didn't open."""
+
+    retry_after: float | None = None
+    """The refusal's ``Retry-After``, in seconds."""
+
+
+def _retry_after(value: str | None) -> float | None:
+    """A ``Retry-After`` in seconds (an HTTP date isn't used here)."""
+    if value is None or not value.strip().isdigit():
+        return None
+    return float(value)
+
+
 class TunnelClient:
     """The agent's end of the tunnel: at most one at a time."""
 
@@ -176,6 +194,7 @@ class TunnelClient:
         app_port: int = APP_PORT,
         ping_interval: Callable[[], float] = lambda: 50,
         on_control: Callable[[bytes], Awaitable[None]] | None = None,
+        reconnect: Reconnect | None = None,
         refusing: Callable[[], bool] = lambda: False,
     ) -> None:
         self._headers = headers
@@ -185,6 +204,8 @@ class TunnelClient:
         self._app_port = app_port
         self._ping_interval = ping_interval
         self._on_control = on_control
+        self.reconnect = reconnect if reconnect is not None else Reconnect()
+        """The backoff between tries to open the held tunnel again."""
         self.refusing = refusing
         """True while every new stream is to be refused (paused)."""
         self.state: TunnelState = "closed"
@@ -193,7 +214,7 @@ class TunnelClient:
         """The tunnel open now was opened to hold, not on a Wake."""
         self._tunnel: Tunnel | None = None
         self._serving: set[Stream] = set()
-        self._task: asyncio.Task[None] | None = None
+        self._task: asyncio.Task[Any] | None = None
         self._settled = asyncio.Event()
         self._settled.set()
         self.events: deque[TunnelEvent] = deque(maxlen=TUNNEL_EVENTS)
@@ -203,32 +224,60 @@ class TunnelClient:
     def streams(self) -> int:
         return self._tunnel.streams if self._tunnel is not None else 0
 
-    def hold(self, url: str) -> None:
-        """Open the tunnel at ``url`` (the checked tunnel URL) with no
-        nonce, to hold it open. Ignored while a tunnel is open or opening."""
-        if self.state == "closed":
-            self._start(None, url)
+    @property
+    def _busy(self) -> bool:
+        """A tunnel is open or opening, or waiting to be held again."""
+        return self._task is not None and not self._task.done()
+
+    def hold(self, url: Callable[[], str], keep: Callable[[], bool]) -> None:
+        """Open the tunnel at ``url()`` (the checked tunnel URL) with no
+        nonce, to hold it open, and open it again after each drop or failed
+        open, after :attr:`reconnect`'s delay, for as long as ``keep()``.
+        Ignored while a tunnel is open, opening or waiting to be held
+        again."""
+        if not self._busy:
+            self._opening()
+            self._task = asyncio.ensure_future(self._hold(url, keep))
+
+    async def _hold(self, url: Callable[[], str], keep: Callable[[], bool]) -> None:
+        while True:
+            failed = await self._run(None, url())
+            if failed is None:
+                self.reconnect.opened()
+                retry_after = None
+            else:
+                self.reconnect.failed()
+                retry_after = failed.retry_after
+            if not keep():
+                return
+            delay = self.reconnect.delay(retry_after)
+            logger.info("Opening the tunnel again in %.0f s", delay)
+            await self._sleep(delay)
+            if not keep():
+                return
 
     def wake(self, nonce: str, url: str) -> None:
         """Open the tunnel at ``url`` (the checked tunnel URL), echoing
-        ``nonce``. Ignored while a tunnel is open or opening."""
-        if self.state != "closed":
+        ``nonce``. Ignored while a tunnel is open or opening, or waiting to
+        be held again (a Wake mustn't cut a reconnect's backoff short)."""
+        if self._busy:
             logger.info("Ignoring a Wake: the tunnel is already %s", self.state)
             return
         if not nonce or len(nonce) > MAX_NONCE:
             logger.warning("Ignoring a Wake with a malformed nonce")
             return
-        self._start(nonce, url)
+        self._opening()
+        self._task = asyncio.ensure_future(self._run(nonce, url))
+
+    def _opening(self) -> None:
+        self.held = False
+        if self.state != "opening":
+            self._settled.clear()
+            self._set("opening")
 
     async def opened(self) -> None:
         """Wait until a tunnel that is opening is open, or failed to open."""
         await self._settled.wait()
-
-    def _start(self, nonce: str | None, url: str) -> None:
-        self.held = False
-        self._settled.clear()
-        self._set("opening")
-        self._task = asyncio.ensure_future(self._run(nonce, url))
 
     def _set(self, state: TunnelState) -> None:
         previous = self.state
@@ -246,7 +295,10 @@ class TunnelClient:
             TunnelEvent(id=secrets.token_hex(8), event=event, at=self.since)
         )
 
-    async def _run(self, nonce: str | None, url: str) -> None:
+    async def _run(self, nonce: str | None, url: str) -> Failed | None:
+        """Open the tunnel and serve it until it closes; ``None`` once it
+        has, or how opening it failed."""
+        self._opening()
         try:
             ws = await self._connect(url, self._headers(url, nonce))
         except InvalidStatus as exc:
@@ -255,11 +307,11 @@ class TunnelClient:
                 exc.response.status_code,
             )
             self._set("closed")
-            return
+            return Failed(_retry_after(exc.response.headers.get("Retry-After")))
         except (OSError, asyncio.TimeoutError, WebSocketException) as exc:
             logger.warning("Couldn't open the tunnel: %s", exc)
             self._set("closed")
-            return
+            return Failed()
         tunnel = Tunnel(
             ws.send,
             role="agent",
@@ -293,6 +345,7 @@ class TunnelClient:
                 await ws.close()
             self._tunnel = None
             self._set("closed")
+        return None
 
     @staticmethod
     async def _receive(ws: WebSocket, tunnel: Tunnel) -> None:

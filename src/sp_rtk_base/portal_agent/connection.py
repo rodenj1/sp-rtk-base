@@ -9,10 +9,12 @@ Check-ins (ADRs 0002, 0006).
   more);
 - **polling**: a version 1 agent, reached only through Wakes.
 
-It runs one loop. Each beat a version 2 agent first opens its tunnel to
-hold it if it isn't open (so at once on Claim and on start, and again on
-the beat after a drop), except when refused as too old, and waits for
-it to open or fail.
+It runs one loop. Each beat a version 2 agent first makes sure its tunnel
+is held (so it opens at once on Claim and on start), except when refused as
+too old, and waits for an open to succeed or fail. Holding is its own
+task: after a drop or a failed open it tries again after a random, growing
+delay (:class:`~.reconnect.Reconnect`, :attr:`Connection.reconnect`), not
+on the beat.
 
 While it holds its tunnel, the tunnel carries everything (ticket #205):
 no polls or Check-ins go over HTTPS. A Check-in goes on the tunnel when
@@ -89,6 +91,7 @@ from sp_rtk_base.portal_agent.protocol import (
     ConnectionMode,
     RemoteSession,
 )
+from sp_rtk_base.portal_agent.reconnect import Reconnect
 from sp_rtk_base.portal_agent.remote_record import RemoteRecord
 from sp_rtk_base.portal_agent.state import (
     Claim,
@@ -153,6 +156,9 @@ class Connection:
         """The tunnel (by when it opened) and Check-in last sent on it."""
         self.holds = api.protocol_version >= HOLDING_VERSION
         """This agent holds its tunnel open (else it only answers Wakes)."""
+        self.reconnect = Reconnect(cap=lambda: self.config.reconnect_backoff_cap)
+        """The backoff between tries to open the held tunnel again after a
+        drop; its ``failures`` counts the tries that failed in a row."""
         self.tunnel = TunnelClient(
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
             now=now,
@@ -165,6 +171,7 @@ class Connection:
             app_port=app_port,
             ping_interval=lambda: self.config.ping_interval,
             on_control=self._on_control,
+            reconnect=self.reconnect,
             refusing=lambda: self.paused,
         )
 
@@ -193,14 +200,19 @@ class Connection:
         finally:
             await self.tunnel.close()
 
+    def _may_hold(self) -> bool:
+        """Hold the tunnel, unless the Portal refuses this agent's protocol
+        version."""
+        return self.holds and not self.needs_upgrade
+
     async def _hold(self) -> None:
-        """Open the tunnel to hold it, unless it's open (or opening: a
-        tunnel a Wake opened is left to run its course) or the Portal
-        refuses this agent's protocol version, then wait until it is open
-        or failed to open. A paused agent holds it too, refusing its
+        """Hold the tunnel open, unless it's held already (open, or waiting
+        to reconnect), a tunnel a Wake opened is still running its course,
+        or it may not be held now; then wait until an open in progress
+        succeeds or fails. A paused agent holds it too, refusing its
         streams."""
-        if self.holds and not self.needs_upgrade:
-            self.tunnel.hold(self.config.tunnel_url)
+        if self._may_hold():
+            self.tunnel.hold(lambda: self.config.tunnel_url, keep=self._may_hold)
             await self.tunnel.opened()
 
     async def _beat(self) -> None:

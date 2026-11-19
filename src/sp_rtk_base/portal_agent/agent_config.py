@@ -37,6 +37,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "metered_poll_interval": (10, 3600),
     "check_in_interval": (60, 86400),
     "ping_interval": (10, 600),
+    "reconnect_backoff_cap": (60, 3600),
 }
 """Seconds; a value outside its range is ignored."""
 
@@ -53,6 +54,8 @@ class EffectiveConfig:
     tunnel_url: str
     ping_interval: int
     """How often the held tunnel pings the Portal."""
+    reconnect_backoff_cap: int
+    """The longest wait between tries to open the tunnel again after a drop."""
 
     def interval(self, metered: bool) -> int:
         return self.metered_poll_interval if metered else self.poll_interval

@@ -1,6 +1,7 @@
 """A Claimed agent holds its tunnel open (ADR 0006, protocol version 2,
 ticket #204): it opens it with no Wake on start, pings every 50 s, never
-closes it on a timer of its own, and opens it again after a drop.
+closes it on a timer of its own, and opens it again after a drop (after a
+random, growing delay, #206).
 
 The agent runs behind its control socket against a fake Portal (polls) and a
 fake tunnel endpoint, on virtual time. The real Portal and agent hold the
@@ -157,7 +158,7 @@ async def test_the_ping_interval_comes_from_the_agent_config(
     ]
 
 
-async def test_after_the_portal_closes_it_the_agent_reconnects_on_its_next_beat(
+async def test_after_the_portal_closes_it_the_agent_reconnects_within_60_s(
     running: Running, endpoint: TunnelEndpoint, clock: FakeClock
 ) -> None:
     await holding(running, endpoint)
@@ -169,14 +170,14 @@ async def test_after_the_portal_closes_it_the_agent_reconnects_on_its_next_beat(
     )
     assert status.tunnel == "closed"
 
-    await clock.run(seconds=20)
+    await clock.run(seconds=60)  # its first retry: a random 0-60 s
     await holding(running, endpoint)
     assert len(endpoint.opens) == 2
     status = await running.status()
     assert [e.event for e in status.tunnel_events] == ["opened", "closed", "opened"]
 
 
-async def test_a_refused_hold_is_tried_again_on_the_next_beat(
+async def test_a_refused_hold_is_tried_again_within_2_min(
     dirs: tuple[Path, Path],
     claimed: None,
     portal: FakePortal,
@@ -191,7 +192,7 @@ async def test_a_refused_hold_is_tried_again_on_the_next_beat(
         assert (await r.status()).connection_mode == "reconnecting"
 
         endpoint.refuse_held = False
-        await clock.run(seconds=20)
+        await clock.run(seconds=120)  # after one failure: a random 0-120 s
         await holding(r, endpoint)
         assert [o.accepted for o in endpoint.opens] == [False, True]
     finally:

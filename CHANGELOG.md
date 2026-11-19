@@ -29,8 +29,8 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 - **A Claimed base holds its tunnel to the Portal open** (rtk_development#204,
   ADR 0006, protocol version 2): the Portal agent opens it on Claim and on
   start with no Wake, pings the Portal every 50 s (the agent config's
-  `ping_interval`), and opens it again on its next beat after a drop, so
-  Open remotely reaches the base at once. The agent no longer closes the
+  `ping_interval`), and opens it again after a drop, so Open remotely
+  reaches the base at once. The agent no longer closes the
   tunnel on idle or hard-cap timers of its own: the Portal limits each
   Remote session instead. A version 1 Portal agent still polls and opens
   its tunnel only on a Wake. The agent's status reports its connection
@@ -45,6 +45,14 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)
   on every 20 s poll. It lets a connection go after 90 s idle on its own,
   and reconnects when the Portal or the network closes one first.
+
+- **After its tunnel drops, the Portal agent spreads its reconnects out**
+  (rtk_development#206): its first retry waits a random 0-60 s, then each
+  failed open doubles the window the next wait is drawn from (full jitter),
+  up to the agent config's `reconnect_backoff_cap` (default 10 min), and a
+  503's `Retry-After` is a floor on the next wait. A tunnel that opens
+  starts it over. Before, it tried again on its next 20 s beat, so a Portal
+  restart brought every base back at once.
 
 ### Removed
 

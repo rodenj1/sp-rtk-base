@@ -26,6 +26,11 @@ nowhere else. Each stream carries one HTTP request, or one websocket:
   connection after its response and the stream ends there;
 - after that the bytes pass through untouched.
 
+While remote access is paused on site the agent keeps its tunnel but
+refuses every new stream before it reaches the base's UI
+(:attr:`TunnelClient.refusing`), and ends the open ones when the pause
+starts (:meth:`TunnelClient.end_streams`).
+
 Any frame the protocol package refuses (an unknown type, a payload on a
 new-stream frame, ...) or a text message closes the whole tunnel, and the
 agent logs why.
@@ -165,6 +170,7 @@ class TunnelClient:
         connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
         ping_interval: Callable[[], float] = lambda: 50,
+        refusing: Callable[[], bool] = lambda: False,
     ) -> None:
         self._headers = headers
         self._now = now
@@ -172,11 +178,14 @@ class TunnelClient:
         self._connect = connect
         self._app_port = app_port
         self._ping_interval = ping_interval
+        self.refusing = refusing
+        """True while every new stream is to be refused (paused)."""
         self.state: TunnelState = "closed"
         self.since: datetime | None = None
         self.held = False
         """The tunnel open now was opened to hold, not on a Wake."""
         self._tunnel: Tunnel | None = None
+        self._serving: set[Stream] = set()
         self._task: asyncio.Task[None] | None = None
         self.events: deque[TunnelEvent] = deque(maxlen=TUNNEL_EVENTS)
         """Opens and closes (not refused or failed attempts)."""
@@ -280,6 +289,21 @@ class TunnelClient:
             await tunnel.ping()
 
     async def _serve(self, stream: Stream) -> None:
+        if self.refusing():
+            logger.info("Refused a stream: remote access is paused")
+            return
+        self._serving.add(stream)
+        try:
+            await self._serve_request(stream)
+        finally:
+            self._serving.discard(stream)
+
+    async def end_streams(self) -> None:
+        """End every open stream; the tunnel itself stays open."""
+        for stream in list(self._serving):
+            await stream.close()
+
+    async def _serve_request(self, stream: Stream) -> None:
         head = bytearray()
         while b"\r\n\r\n" not in head:
             chunk = await stream.read()

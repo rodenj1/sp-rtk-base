@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sp_rtk_portal_protocol import BaseKey, EndedSession, LiveSession
+from wsproto import ConnectionType, WSConnection
+from wsproto.events import AcceptConnection, Request
 
 from sp_rtk_base.portal_agent.client import (
     AgentUnavailableError,
@@ -27,7 +29,7 @@ from sp_rtk_base.portal_agent.client import (
 from sp_rtk_base.portal_agent.protocol import AgentStatus
 from sp_rtk_base.portal_agent.state import Claim, save_claim
 from tests.fixtures.fake_portal import FakeClock, FakePortal
-from tests.fixtures.fake_tunnel import AppStub, TunnelEndpoint, app_stub
+from tests.fixtures.fake_tunnel import AppStub, TunnelEndpoint, app_stub, read_all
 from tests.fixtures.running_agent import Running
 
 pytestmark = pytest.mark.asyncio
@@ -195,15 +197,23 @@ async def test_once_resumed_a_wake_opens_the_tunnel_again(
     assert len(endpoint.opens) == 1
 
 
-async def test_pausing_closes_an_open_tunnel(
+async def test_pausing_ends_open_streams_but_not_the_tunnel(
     running: Running, portal: FakePortal, endpoint: TunnelEndpoint
 ) -> None:
     await wake(running, portal, endpoint)
+    stream = await endpoint.open_stream()
+    ws = WSConnection(ConnectionType.CLIENT)
+    await stream.write(ws.send(Request(host="whatever", target="/ws")))
+    events: list[object] = []
+    while not any(isinstance(e, AcceptConnection) for e in events):
+        ws.receive_data(await asyncio.wait_for(stream.read(), 5))
+        events += list(ws.events())
 
     status = await pause(running.sock)
 
-    assert status.tunnel == "closed"
-    await asyncio.wait_for(endpoint.closed.wait(), 5)
+    assert await read_all(stream) == b""
+    assert status.tunnel == "open"
+    assert not endpoint.closed.is_set()
 
 
 # --- What the local page shows about remote use -------------------------------------

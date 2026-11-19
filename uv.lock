@@ -3006,7 +3006,7 @@ requires-dist = [
     { name = "pyubx2", specifier = ">=1.2.43" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sp-rtk-base-relay", specifier = ">=4.2.3,<5" },
-    { name = "sp-rtk-portal-protocol", editable = "../sp-rtk-portal/protocol" },
+    { name = "sp-rtk-portal-protocol", git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=907fb6fbb3785c9a539bf3faba38b22213716f60" },
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=14" },
@@ -3049,13 +3049,10 @@ wheels = [
 [[package]]
 name = "sp-rtk-portal-protocol"
 version = "0.10.0"
-source = { editable = "../sp-rtk-portal/protocol" }
+source = { git = "https://github.com/rodenj1/sp-rtk-portal?subdirectory=protocol&rev=907fb6fbb3785c9a539bf3faba38b22213716f60#907fb6fbb3785c9a539bf3faba38b22213716f60" }
 dependencies = [
     { name = "cryptography" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "cryptography", specifier = ">=42" }]
 
 [[package]]
 name = "starlette"

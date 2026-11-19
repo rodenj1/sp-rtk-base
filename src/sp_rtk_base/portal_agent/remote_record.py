@@ -5,7 +5,8 @@ sessions into :class:`~.protocol.RemoteEvent`\\ s the app raises as Event log
 entries: each Wake the agent acts on, each Remote session's start (who,
 Operator or Shared user) and each end (who, why). The Portal reports live
 sessions with ids and recent ends with their reasons; a poll reply carries
-both today, and the tunnel's control messages carry the same shapes later.
+both; a held tunnel's control messages carry the same shapes, an end at a
+time (:meth:`RemoteRecord.ended`).
 The record keeps each session's start and end once, however often the
 Portal repeats them, and an end it never saw live still gets its start. A
 session that leaves the Portal's list with no end (a Portal restart) ends
@@ -76,6 +77,13 @@ class RemoteRecord:
             if gone.id and gone.id not in still and gone.id not in ended_ids:
                 self._end(gone, REMOTE_SESSION_ENDED_UNKNOWN, self._now())
         self.live = sessions
+
+    def ended(self, end: EndedSession) -> None:
+        """One Remote session ended (the tunnel's Session ended message)."""
+        for e, session in _ends([end]):
+            self._start(session)
+            self._end(session, e.reason, datetime.fromisoformat(e.at))
+            self.live = [s for s in self.live if s.id != session.id]
 
     def forget_live(self) -> None:
         """Remote access paused here: no session is live any more (the

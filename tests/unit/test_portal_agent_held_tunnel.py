@@ -10,6 +10,7 @@ tunnel together in sp-rtk-portal's seam-1 suite.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
@@ -17,7 +18,18 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sp_rtk_portal_protocol import PROTOCOL_VERSION, AgentConfig, BaseKey
+from sp_rtk_portal_protocol import (
+    PROTOCOL_VERSION,
+    AgentConfig,
+    BaseKey,
+    CheckIn,
+    EndedSession,
+    LiveSession,
+    Notice,
+    TunnelUpdate,
+    control_message,
+)
+from sp_rtk_portal_protocol.tunnel import Frame, Kind, encode
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import AcceptConnection, Request
 
@@ -144,8 +156,11 @@ async def test_it_pings_every_50_s_and_keeps_the_tunnel_for_hours_used_or_not(
 async def test_the_ping_interval_comes_from_the_agent_config(
     running: Running, portal: FakePortal, endpoint: TunnelEndpoint, clock: FakeClock
 ) -> None:
-    portal.config = AgentConfig(revision=2, ping_interval=30)
-    await clock.run(seconds=20)  # the poll that brings it
+    await holding(running, endpoint)
+    tunnel = await endpoint.wait_open()
+    config = AgentConfig(revision=2, ping_interval=30)
+    await tunnel.send_control(control_message(TunnelUpdate(config=config)))
+    await running.until_status(lambda s: s.config_revision == 2, "the new config")
     await running.stop()
     await running.start(tunnel_connect=endpoint.connector())
     await holding(running, endpoint)
@@ -248,3 +263,61 @@ async def test_an_unclaimed_agent_has_no_connection(
         assert (await r.status()).connection_mode == "unclaimed"
     finally:
         await r.stop()
+
+
+# --- Control messages on the held tunnel (ticket #205) -----------------------------
+
+
+async def test_holding_it_checks_in_on_the_tunnel_and_neither_polls_nor_checks_in(
+    running: Running, portal: FakePortal, endpoint: TunnelEndpoint, clock: FakeClock
+) -> None:
+    await holding(running, endpoint)
+    https = len(portal.requests)
+
+    await clock.run(minutes=10)
+
+    assert len(portal.requests) == https
+    check_ins = [m for m in endpoint.controls if isinstance(m, CheckIn)]
+    assert len(check_ins) == 3  # on connect, then every 5 min
+    assert {c.mode for c in check_ins} == {"holding"}
+    assert {c.paused for c in check_ins} == {False}
+
+
+async def test_the_portal_s_updates_and_ends_on_the_tunnel_reach_the_status(
+    running: Running, endpoint: TunnelEndpoint
+) -> None:
+    await holding(running, endpoint)
+    tunnel = await endpoint.wait_open()
+    live = LiveSession(who="op@example.com", since="2026-01-01T12:00:00+00:00", id="7")
+    update = TunnelUpdate(
+        config=AgentConfig(revision=5),
+        metered=True,
+        notices=[Notice(text="Moving soon")],
+        sessions=[live],
+    )
+
+    await tunnel.send_control(control_message(update))
+    status = await running.until_status(lambda s: s.config_revision == 5, "update")
+    assert status.metered
+    assert status.notices == ["Moving soon"]
+    assert [s.who for s in status.sessions] == ["op@example.com"]
+
+    end = EndedSession(
+        id="7", who=live.who, since=live.since, at=live.since, reason="idle"
+    )
+    await tunnel.send_control(control_message(end))
+    status = await running.until_status(lambda s: not s.sessions, "the end")
+    assert [(e.event, e.reason) for e in status.remote_events] == [
+        ("session_started", None),
+        ("session_ended", "idle"),
+    ]
+
+
+async def test_a_malformed_control_message_closes_the_tunnel(
+    running: Running, endpoint: TunnelEndpoint
+) -> None:
+    await holding(running, endpoint)
+
+    await endpoint.send_raw(encode(Frame(Kind.CONTROL, 0, b"not json")))
+
+    await asyncio.wait_for(endpoint.closed.wait(), 5)

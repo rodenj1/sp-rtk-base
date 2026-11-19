@@ -395,6 +395,11 @@ version and LAN addresses. Each reply carries the **agent config**
 and any notices. Polls and Check-ins reuse one HTTPS
 connection, kept while requests come at least every 90 s, so a poll costs
 its request and reply, not a new TLS handshake.
+While the base holds its tunnel it sends no polls: its Check-ins (with
+its connection mode) go on the tunnel as control messages, on connect,
+every ~5 min and on any change, and the Portal sends the agent config,
+notices and live Remote sessions (and each session's end) on the tunnel
+on connect and on every change.
 _Avoid_: heartbeat, keepalive
 
 **Paused** (remote access paused):

@@ -27,6 +27,11 @@ nowhere else. Each stream carries one HTTP request, or one websocket:
   connection after its response and the stream ends there;
 - after that the bytes pass through untouched.
 
+A held tunnel also carries control messages both ways (ticket #205): the
+agent's Check-ins (:meth:`TunnelClient.send_control`), and the Portal's
+config, notices and Remote sessions (``on_control``). A Woken tunnel
+carries none.
+
 While remote access is paused on site the agent keeps its tunnel but
 refuses every new stream before it reaches the base's UI
 (:attr:`TunnelClient.refusing`), and ends the open ones when the pause
@@ -188,6 +193,7 @@ class TunnelClient:
         connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
         ping_interval: Callable[[], float] = lambda: 50,
+        on_control: Callable[[bytes], Awaitable[None]] | None = None,
         reconnect: Reconnect | None = None,
         refusing: Callable[[], bool] = lambda: False,
     ) -> None:
@@ -197,6 +203,7 @@ class TunnelClient:
         self._connect = connect
         self._app_port = app_port
         self._ping_interval = ping_interval
+        self._on_control = on_control
         self.reconnect = reconnect if reconnect is not None else Reconnect()
         """The backoff between tries to open the held tunnel again."""
         self.refusing = refusing
@@ -208,6 +215,8 @@ class TunnelClient:
         self._tunnel: Tunnel | None = None
         self._serving: set[Stream] = set()
         self._task: asyncio.Task[Any] | None = None
+        self._settled = asyncio.Event()
+        self._settled.set()
         self.events: deque[TunnelEvent] = deque(maxlen=TUNNEL_EVENTS)
         """Opens and closes (not refused or failed attempts)."""
 
@@ -263,11 +272,18 @@ class TunnelClient:
     def _opening(self) -> None:
         self.held = False
         if self.state != "opening":
+            self._settled.clear()
             self._set("opening")
+
+    async def opened(self) -> None:
+        """Wait until a tunnel that is opening is open, or failed to open."""
+        await self._settled.wait()
 
     def _set(self, state: TunnelState) -> None:
         previous = self.state
         self.state, self.since = state, self._now()
+        if state != "opening":
+            self._settled.set()
         if previous == "opening" and state == "open":
             self._event("opened")
         elif previous == "open" and state == "closed":
@@ -296,7 +312,12 @@ class TunnelClient:
             logger.warning("Couldn't open the tunnel: %s", exc)
             self._set("closed")
             return Failed()
-        tunnel = Tunnel(ws.send, role="agent", on_new_stream=self._serve)
+        tunnel = Tunnel(
+            ws.send,
+            role="agent",
+            on_new_stream=self._serve,
+            on_control=self._on_control if nonce is None else None,
+        )
         self._tunnel = tunnel
         self.held = nonce is None
         self._set("open")
@@ -333,6 +354,17 @@ class TunnelClient:
             if isinstance(message, str):
                 raise FrameError("a text message (frames are binary)")
             await tunnel.feed(message)
+
+    async def send_control(self, payload: bytes) -> None:
+        """Send a control message on the open tunnel. Raises
+        :class:`~sp_rtk_portal_protocol.TunnelClosed` when there is none
+        (or it went while sending)."""
+        if self._tunnel is None:
+            raise TunnelClosed("the tunnel is closed")
+        try:
+            await self._tunnel.send_control(payload)
+        except (WebSocketException, OSError) as exc:
+            raise TunnelClosed(str(exc)) from exc
 
     async def _ping(self, tunnel: Tunnel) -> None:
         """Ping the Portal every ``ping_interval``: it keeps the tunnel

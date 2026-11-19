@@ -6,7 +6,7 @@ the agent's tunnel unit tests.
   expected Wake nonce, or with no nonce from an agent holding its tunnel) as
   the real Portal does, then drives the tunnel with the protocol package's
   ``Tunnel`` (Portal role), or sends raw frames. It notes when each ``PING``
-  came.
+  came, and each control message the agent sent.
 - :func:`connect_via` is the agent's ``tunnel_connect``: it records the URL
   the agent asked for and connects to the endpoint instead.
 - :class:`AppStub` plays sp-rtk-base on ``:8080``: an HTTP route and an echo
@@ -29,11 +29,13 @@ from aiohttp import WSMsgType, web
 from sp_rtk_portal_protocol import (
     HOLDING_VERSION,
     VERSION_HEADER,
+    Message,
     ProofError,
     ReplayCache,
     Stream,
     Tunnel,
     proof_from_authorization,
+    read_control,
     verify_proof,
 )
 from sp_rtk_portal_protocol.tunnel import Kind, signed_url
@@ -65,6 +67,8 @@ class TunnelEndpoint:
     opens: list[Open] = field(default_factory=list)
     pings: list[datetime] = field(default_factory=list)
     """When each ``PING`` frame arrived (virtual time)."""
+    controls: list[Message | None] = field(default_factory=list)
+    """Each control message the agent sent, in order."""
     connection: ServerConnection | None = None
     tunnel: Tunnel | None = None
     closed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -115,7 +119,7 @@ class TunnelEndpoint:
 
     async def _handle(self, conn: ServerConnection) -> None:
         self.connection, self.closed = conn, asyncio.Event()
-        self.tunnel = Tunnel(conn.send, role="portal")
+        self.tunnel = Tunnel(conn.send, role="portal", on_control=self._control)
         try:
             async for message in conn:
                 if isinstance(message, bytes):
@@ -127,6 +131,9 @@ class TunnelEndpoint:
         finally:
             self.tunnel.close()
             self.closed.set()
+
+    async def _control(self, payload: bytes) -> None:
+        self.controls.append(read_control(payload))
 
     async def wait_open(self) -> Tunnel:
         for _ in range(500):

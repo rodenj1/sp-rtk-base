@@ -202,6 +202,7 @@ class PortalAgent:
                 tunnel_url=conn.config.tunnel_url,
                 notices=conn.notices,
                 needs_upgrade=conn.needs_upgrade,
+                connection_mode=conn.mode,
                 tunnel=conn.tunnel.state,
                 tunnel_since=conn.tunnel.since,
                 tunnel_streams=conn.tunnel.streams,
@@ -215,8 +216,11 @@ class PortalAgent:
                 user_code=p.started.user_code,
                 approve_url=p.started.verification_uri_complete,
                 expires_at=p.expires_at,
+                connection_mode="unclaimed",
             )
-        return AgentStatus(state="not_connected", message=self._message)
+        return AgentStatus(
+            state="not_connected", message=self._message, connection_mode="unclaimed"
+        )
 
     async def start_claim(self) -> AgentStatus:
         """Ask the Portal for a pairing code. Raises :class:`ClaimStartError`."""
@@ -289,7 +293,8 @@ class PortalAgent:
         self.start()
 
     def start(self) -> None:
-        """Start polling if Claimed (and not already). Needs a running loop."""
+        """Start the Connection (holding the tunnel, polling) if Claimed (and
+        not already). Needs a running loop."""
         if self._claim is None or self._key is None or self._connection_task:
             return
         self._connection = Connection(

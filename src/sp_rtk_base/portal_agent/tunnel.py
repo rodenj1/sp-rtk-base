@@ -1,10 +1,18 @@
-"""The tunnel a Wake opens: the Portal's streams to the base's own UI.
+"""The tunnel: the Portal's streams to the base's own UI.
 
-A Wake is a poll reply carrying only a one-time nonce. The agent then opens
-its tunnel URL (already pinned to ``wss://`` on the Portal's own host by
-:mod:`.agent_config`) with a GET signed by the base key whose proof echoes
-the nonce. A forged Wake can therefore only cause a tunnel attempt the
-Portal refuses.
+A Claimed base holds its tunnel open (ADR 0006, protocol version 2): the
+agent opens its tunnel URL (already pinned to ``wss://`` on the Portal's
+own host by :mod:`.agent_config`) with a GET signed by the base key and no
+nonce, and keeps it open (:meth:`TunnelClient.hold`). It pings the Portal
+every ``ping_interval``; the Portal never pings, and closes a held tunnel
+that sent nothing for its silence timeout. The Portal limits each Remote
+session (idle close, hard cap) on its side; the tunnel itself has no
+timers here.
+
+A Wake (a poll reply carrying only a one-time nonce) opens the tunnel the
+same way, but with a proof that echoes the nonce (:meth:`TunnelClient.wake`):
+that is how an agent that isn't holding its tunnel is reached. A forged
+Wake can therefore only cause a tunnel attempt the Portal refuses.
 
 Inside, the protocol package's :class:`~sp_rtk_portal_protocol.Tunnel`
 carries the Portal's streams. A stream names no destination (the framing
@@ -20,15 +28,7 @@ nowhere else. Each stream carries one HTTP request, or one websocket:
 
 Any frame the protocol package refuses (an unknown type, a payload on a
 new-stream frame, ...) or a text message closes the whole tunnel, and the
-agent logs why. The Portal closes the tunnel when its last Remote session
-ends; the agent then goes back to polling only.
-
-The agent doesn't rely on that alone: a Portal that never closes (a bug, or
-a compromised Portal) can't hold the tunnel open for ever. The agent closes
-it itself after ``tunnel_idle_timeout`` with no stream open, and once it has
-been open longer than ``tunnel_hard_cap + tunnel_idle_timeout`` (the
-Portal's own limits, plus the idle time as slack). A later Wake opens a new
-one.
+agent logs why.
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ import secrets
 import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from ssl import SSLContext
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
-from sp_rtk_portal_protocol import FrameError, Stream, Tunnel
+from sp_rtk_portal_protocol import FrameError, Stream, Tunnel, TunnelClosed
 from sp_rtk_portal_protocol.tunnel import MAX_DATA
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus, WebSocketException
@@ -121,8 +121,9 @@ async def _connect(
         additional_headers=headers,
         max_size=MAX_DATA + 64,
         open_timeout=15,
-        ping_interval=20,
-        ping_timeout=20,
+        # The agent's own PING frames keep the tunnel alive (every
+        # ``ping_interval``); the library's pings would only add traffic.
+        ping_interval=None,
         # IPv4 only: the agent's unit gives it no IPv6 (passed through to
         # the event loop's create_connection, so only A records are used).
         family=socket.AF_INET,
@@ -158,21 +159,23 @@ class TunnelClient:
     def __init__(
         self,
         *,
-        headers: Callable[[str, str], dict[str, str]],
+        headers: Callable[[str, str | None], dict[str, str]],
         now: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         connect: Connect = connect_websocket,
         app_port: int = APP_PORT,
+        ping_interval: Callable[[], float] = lambda: 50,
     ) -> None:
         self._headers = headers
         self._now = now
         self._sleep = sleep
-        self._active = 0
-        self._idle_since: datetime | None = None
         self._connect = connect
         self._app_port = app_port
+        self._ping_interval = ping_interval
         self.state: TunnelState = "closed"
         self.since: datetime | None = None
+        self.held = False
+        """The tunnel open now was opened to hold, not on a Wake."""
         self._tunnel: Tunnel | None = None
         self._task: asyncio.Task[None] | None = None
         self.events: deque[TunnelEvent] = deque(maxlen=TUNNEL_EVENTS)
@@ -182,21 +185,27 @@ class TunnelClient:
     def streams(self) -> int:
         return self._tunnel.streams if self._tunnel is not None else 0
 
-    def wake(self, nonce: str, url: str, *, idle_timeout: int, hard_cap: int) -> None:
+    def hold(self, url: str) -> None:
+        """Open the tunnel at ``url`` (the checked tunnel URL) with no
+        nonce, to hold it open. Ignored while a tunnel is open or opening."""
+        if self.state == "closed":
+            self._start(None, url)
+
+    def wake(self, nonce: str, url: str) -> None:
         """Open the tunnel at ``url`` (the checked tunnel URL), echoing
-        ``nonce``. Ignored while a tunnel is open or opening. The agent
-        closes it after ``idle_timeout`` s with no stream, or once it has
-        been open ``hard_cap + idle_timeout`` s."""
+        ``nonce``. Ignored while a tunnel is open or opening."""
         if self.state != "closed":
             logger.info("Ignoring a Wake: the tunnel is already %s", self.state)
             return
         if not nonce or len(nonce) > MAX_NONCE:
             logger.warning("Ignoring a Wake with a malformed nonce")
             return
+        self._start(nonce, url)
+
+    def _start(self, nonce: str | None, url: str) -> None:
+        self.held = False
         self._set("opening")
-        self._task = asyncio.ensure_future(
-            self._run(nonce, url, timedelta(seconds=idle_timeout), hard_cap)
-        )
+        self._task = asyncio.ensure_future(self._run(nonce, url))
 
     def _set(self, state: TunnelState) -> None:
         previous = self.state
@@ -212,9 +221,7 @@ class TunnelClient:
             TunnelEvent(id=secrets.token_hex(8), event=event, at=self.since)
         )
 
-    async def _run(
-        self, nonce: str, url: str, idle_timeout: timedelta, hard_cap: int
-    ) -> None:
+    async def _run(self, nonce: str | None, url: str) -> None:
         try:
             ws = await self._connect(url, self._headers(url, nonce))
         except InvalidStatus as exc:
@@ -228,27 +235,26 @@ class TunnelClient:
             logger.warning("Couldn't open the tunnel: %s", exc)
             self._set("closed")
             return
-        tunnel = Tunnel(ws.send, role="agent", on_new_stream=self._serve_stream)
+        tunnel = Tunnel(ws.send, role="agent", on_new_stream=self._serve)
         self._tunnel = tunnel
+        self.held = nonce is None
         self._set("open")
-        self._active, self._idle_since = 0, self.since
-        logger.info("Tunnel open")
+        logger.info("Tunnel open%s", "" if self.held else " (Woken)")
         receive = asyncio.ensure_future(self._receive(ws, tunnel))
-        backstop = asyncio.ensure_future(
-            self._backstop(idle_timeout, idle_timeout + timedelta(seconds=hard_cap))
-        )
+        ping = asyncio.ensure_future(self._ping(tunnel))
         try:
-            await asyncio.wait({receive, backstop}, return_when=asyncio.FIRST_COMPLETED)
-            if receive.done():
-                receive.result()
+            await asyncio.wait({receive, ping}, return_when=asyncio.FIRST_COMPLETED)
+            for task in (receive, ping):
+                if task.done():
+                    task.result()
         except FrameError as exc:
             logger.warning(
                 "Closing the tunnel: refused a frame from the Portal: %s", exc
             )
-        except (WebSocketException, OSError) as exc:
+        except (WebSocketException, OSError, TunnelClosed) as exc:
             logger.info("Tunnel closed: %s", exc or type(exc).__name__)
         finally:
-            for task in (receive, backstop):
+            for task in (receive, ping):
                 task.cancel()
                 with contextlib.suppress(BaseException):
                     await task
@@ -266,41 +272,12 @@ class TunnelClient:
                 raise FrameError("a text message (frames are binary)")
             await tunnel.feed(message)
 
-    async def _backstop(self, idle_timeout: timedelta, lifetime: timedelta) -> None:
-        """Return when the tunnel has had no stream for ``idle_timeout``, or
-        has been open for ``lifetime``, whatever the Portal does."""
-        assert self.since is not None
-        closes_at = self.since + lifetime
+    async def _ping(self, tunnel: Tunnel) -> None:
+        """Ping the Portal every ``ping_interval``: it keeps the tunnel
+        (and any NAT on the way) alive; the Portal never pings."""
         while True:
-            now = self._now()
-            if now >= closes_at:
-                logger.warning(
-                    "Closing the tunnel: open for %d s, past its hard cap",
-                    lifetime.total_seconds(),
-                )
-                return
-            wake_at = closes_at
-            if self._active == 0 and self._idle_since is not None:
-                idle_ends = self._idle_since + idle_timeout
-                if now >= idle_ends:
-                    logger.info(
-                        "Closing the tunnel: no stream for %d s",
-                        idle_timeout.total_seconds(),
-                    )
-                    return
-                wake_at = min(wake_at, idle_ends)
-            else:
-                wake_at = min(wake_at, now + idle_timeout)
-            await self._sleep((wake_at - now).total_seconds())
-
-    async def _serve_stream(self, stream: Stream) -> None:
-        self._active += 1
-        try:
-            await self._serve(stream)
-        finally:
-            self._active -= 1
-            if self._active == 0:
-                self._idle_since = self._now()
+            await self._sleep(self._ping_interval())
+            await tunnel.ping()
 
     async def _serve(self, stream: Stream) -> None:
         head = bytearray()

@@ -92,6 +92,7 @@ async def running(
     sock, state = dirs
     _claim(state, clock)
     r = Running(sock, state, portal, clock)
+    r.protocol_version = 1  # a polling agent: its tunnel opens on a Wake
     await r.start(tunnel_connect=endpoint.connector(), app_port=app.port)
     try:
         yield r

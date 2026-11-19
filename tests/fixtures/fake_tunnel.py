@@ -3,8 +3,10 @@ the agent's tunnel unit tests.
 
 - :class:`TunnelEndpoint` is a websocket server on a free local port playing
   ``/agent/tunnel``: it checks the open's proof (signed GET, echoing the
-  expected Wake nonce) as the real Portal does, then drives the tunnel with
-  the protocol package's ``Tunnel`` (Portal role), or sends raw frames.
+  expected Wake nonce, or with no nonce from an agent holding its tunnel) as
+  the real Portal does, then drives the tunnel with the protocol package's
+  ``Tunnel`` (Portal role), or sends raw frames. It notes when each ``PING``
+  came.
 - :func:`connect_via` is the agent's ``tunnel_connect``: it records the URL
   the agent asked for and connects to the endpoint instead.
 - :class:`AppStub` plays sp-rtk-base on ``:8080``: an HTTP route and an echo
@@ -20,10 +22,12 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from aiohttp import WSMsgType, web
 from sp_rtk_portal_protocol import (
+    HOLDING_VERSION,
     VERSION_HEADER,
     ProofError,
     ReplayCache,
@@ -32,7 +36,7 @@ from sp_rtk_portal_protocol import (
     proof_from_authorization,
     verify_proof,
 )
-from sp_rtk_portal_protocol.tunnel import signed_url
+from sp_rtk_portal_protocol.tunnel import Kind, signed_url
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.http11 import Request, Response
@@ -56,7 +60,11 @@ class TunnelEndpoint:
     clock: FakeClock
     nonce: str | None = None
     """The Wake nonce the next open must echo."""
+    refuse_held: bool = False
+    """Refuse opens with no nonce (else accepted from version 2 on)."""
     opens: list[Open] = field(default_factory=list)
+    pings: list[datetime] = field(default_factory=list)
+    """When each ``PING`` frame arrived (virtual time)."""
     connection: ServerConnection | None = None
     tunnel: Tunnel | None = None
     closed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -91,13 +99,18 @@ class TunnelEndpoint:
             )
             self._replays.remember(proof, now=self.clock.now())
             nonce = proof.nonce
-            ok = self.nonce is not None and proof.nonce == self.nonce
+            version = int(request.headers.get(VERSION_HEADER) or 0)
+            if nonce is None:
+                ok = not self.refuse_held and version >= HOLDING_VERSION
+            else:
+                ok = self.nonce is not None and proof.nonce == self.nonce
         except ProofError:
             ok = False
         self.opens.append(Open(url, nonce, request.headers.get(VERSION_HEADER), ok))
         if not ok:
             return conn.respond(403, "refused")
-        self.nonce = None  # one-time
+        if nonce is not None:
+            self.nonce = None  # one-time
         return None
 
     async def _handle(self, conn: ServerConnection) -> None:
@@ -106,6 +119,8 @@ class TunnelEndpoint:
         try:
             async for message in conn:
                 if isinstance(message, bytes):
+                    if message[:1] == bytes([Kind.PING]):
+                        self.pings.append(self.clock.now())
                     await self.tunnel.feed(message)
         except Exception:
             pass

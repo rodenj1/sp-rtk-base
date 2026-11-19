@@ -205,9 +205,12 @@ class PortalApi:
             await self._client.aclose()
             self._client = None
 
-    def tunnel_headers(self, key: BaseKey, url: str, nonce: str) -> dict[str, str]:
+    def tunnel_headers(
+        self, key: BaseKey, url: str, nonce: str | None
+    ) -> dict[str, str]:
         """Headers of the tunnel open: a GET signed for ``url`` whose proof
-        echoes the Wake ``nonce``, and the protocol version."""
+        echoes the Wake ``nonce`` (none when holding the tunnel), and the
+        protocol version."""
         return {
             "Authorization": key.authorization(
                 "GET", signed_url(url), now=self._now(), nonce=nonce

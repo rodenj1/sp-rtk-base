@@ -1,10 +1,20 @@
-"""A Claimed base's contact with the Portal: polls and Check-ins (ADR 0002).
+"""A Claimed base's contact with the Portal: its held tunnel, polls and
+Check-ins (ADRs 0002, 0006).
 
-:class:`Connection` runs one loop for as long as the base is Claimed. Each
-beat it sends a Check-in when one is due (first thing, then every
+:class:`Connection` runs for as long as the base is Claimed. Its
+:attr:`~Connection.mode` says how the Portal reaches the base:
+
+- **holding**: the tunnel is open and held (protocol version 2);
+- **reconnecting**: a version 2 agent whose tunnel isn't open (yet, or any
+  more);
+- **polling**: a version 1 agent, reached only through Wakes.
+
+It runs one loop. Each beat a version 2 agent first opens its tunnel to
+hold it if it isn't open (so at once on Claim and on start, and again on
+the beat after a drop), except while paused or refused as too old. Then
+it sends a Check-in when one is due (first thing, then every
 ``check_in_interval``), then a poll, then sleeps the poll interval (the
-metered one when the Operator marked the base metered). There is no
-standing connection: each beat is a few small HTTPS requests.
+metered one when the Operator marked the base metered).
 
 Each reply goes through :meth:`Connection._heard`: last contact, the
 metered flag, notices, and the agent config block (applied only when its
@@ -38,6 +48,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from sp_rtk_portal_protocol import (
+    HOLDING_VERSION,
     AgentConfig,
     BaseKey,
     CheckIn,
@@ -55,7 +66,11 @@ from sp_rtk_base.portal_agent.portal_api import (
     UnclaimedError,
     UpgradeRequiredError,
 )
-from sp_rtk_base.portal_agent.protocol import UPDATE_TO_KEEP_USING, RemoteSession
+from sp_rtk_base.portal_agent.protocol import (
+    UPDATE_TO_KEEP_USING,
+    ConnectionMode,
+    RemoteSession,
+)
 from sp_rtk_base.portal_agent.remote_record import RemoteRecord
 from sp_rtk_base.portal_agent.state import (
     Claim,
@@ -115,6 +130,8 @@ class Connection:
         self.unclaimed = False
         """The Portal answered 401 ``unclaimed``: the loop has ended."""
         self._check_in_due = datetime.min.replace(tzinfo=self.last_contact.tzinfo)
+        self.holds = api.protocol_version >= HOLDING_VERSION
+        """This agent holds its tunnel open (else it only answers Wakes)."""
         self.tunnel = TunnelClient(
             headers=lambda url, nonce: api.tunnel_headers(key, url, nonce),
             now=now,
@@ -125,6 +142,7 @@ class Connection:
                 else functools.partial(connect_websocket, names=api.names)
             ),
             app_port=app_port,
+            ping_interval=lambda: self.config.ping_interval,
         )
 
     @property
@@ -136,16 +154,32 @@ class Connection:
     def poll_interval(self) -> int:
         return self.config.interval(self.metered)
 
+    @property
+    def mode(self) -> ConnectionMode:
+        if not self.holds:
+            return "polling"
+        if self.tunnel.state == "open" and self.tunnel.held:
+            return "holding"
+        return "reconnecting"
+
     async def run(self) -> None:
-        """Poll and Check in until cancelled or Un-claimed on the Portal
-        (either also closes the tunnel)."""
+        """Hold the tunnel, poll and Check in until cancelled or Un-claimed
+        on the Portal (either also closes the tunnel)."""
         try:
             await self._beat()
         finally:
             await self.tunnel.close()
 
+    def _hold(self) -> None:
+        """Open the tunnel to hold it, unless it's open (or opening: a
+        tunnel a Wake opened is left to run its course), remote access is
+        paused, or the Portal refuses this agent's protocol version."""
+        if self.holds and not self.paused and not self.needs_upgrade:
+            self.tunnel.hold(self.config.tunnel_url)
+
     async def _beat(self) -> None:
         while True:
+            self._hold()
             try:
                 if self._now() >= self._check_in_due:
                     await self._check_in_unless_limited()
@@ -190,12 +224,7 @@ class Connection:
             logger.info("Ignoring a Wake: remote access is paused")
             return
         self.record.wake(nonce)
-        self.tunnel.wake(
-            nonce,
-            self.config.tunnel_url,
-            idle_timeout=self.config.tunnel_idle_timeout,
-            hard_cap=self.config.tunnel_hard_cap,
-        )
+        self.tunnel.wake(nonce, self.config.tunnel_url)
 
     async def _check_in_unless_limited(self) -> None:
         try:

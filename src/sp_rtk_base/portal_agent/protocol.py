@@ -60,6 +60,12 @@ version (HTTP 426): the local page's headline, and the agent's message when
 the Portal's reply has none."""
 
 
+ConnectionMode = Literal["holding", "reconnecting", "polling", "unclaimed"]
+"""How the Portal reaches the base: its held tunnel (``holding``), not yet
+or not any more (``reconnecting``), only through Wakes (``polling``), or not
+at all (``unclaimed``). Paused is a flag on top, not a mode."""
+
+
 class RemoteSession(BaseModel):
     """A live Remote session on this base, as the Portal last reported it.
 
@@ -151,9 +157,12 @@ class AgentStatus(BaseModel):
     needs_upgrade: bool = False
     """The Portal no longer supports this agent's protocol version (426); it
     retries once a day. ``message`` is the Portal's explanation."""
-    # Connected: the tunnel (ticket #88)
+    # Connected: the tunnel (tickets #88, #204)
+    connection_mode: ConnectionMode | None = None
+    """How the Portal reaches the base now (``None`` from an older agent)."""
     tunnel: Literal["closed", "opening", "open"] | None = None
-    """The tunnel a Wake opens; ``closed`` between Remote sessions."""
+    """The tunnel: held open while ``holding``; a polling base's opens on a
+    Wake and is ``closed`` between Remote sessions."""
     tunnel_since: datetime | None = None
     """When the tunnel last changed state (opened, or closed)."""
     tunnel_streams: int = 0

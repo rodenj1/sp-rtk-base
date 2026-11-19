@@ -38,7 +38,7 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 - **While it holds its tunnel, the Portal agent talks to the Portal on it**
   (rtk_development#205): it makes no HTTPS polls or Check-ins, sends its
   Check-ins (now with its connection mode) on the tunnel on connect, every
-  5 min and on any change, and hears the agent config, metered flag,
+  5 min and on any change (noticed within 20 s, metered or not), and hears the agent config, metered flag,
   notices and Remote sessions (and each session's end) on the tunnel within
   a second of a change on the Portal.
 - **Pausing remote access keeps the tunnel** (rtk_development#207): a
@@ -49,8 +49,9 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 - **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)
-  on every 20 s poll. It lets a connection go after 90 s idle on its own,
-  and reconnects when the Portal or the network closes one first.
+  on every 20 s poll. It lets a connection go on its own only once it sat
+  idle 30 s past the poll interval (whatever the interval), and reconnects
+  when the Portal or the network closes one first.
 
 - **After its tunnel drops, the Portal agent spreads its reconnects out**
   (rtk_development#206): its first retry waits a random 0-60 s, then each
@@ -58,7 +59,9 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   up to the agent config's `reconnect_backoff_cap` (default 10 min), and a
   503's `Retry-After` is a floor on the next wait. A tunnel that opens
   starts it over. Before, it tried again on its next 20 s beat, so a Portal
-  restart brought every base back at once.
+  restart brought every base back at once. While reconnecting it makes no
+  HTTPS polls or Check-ins, so the Portal shows the base offline 2 min after
+  the drop.
 - **A base whose network won't let its tunnel open falls back to polling**
   (rtk_development#209): after 3 tunnel opens fail in a row while its HTTPS
   Check-in gets through, the Portal agent polls (and answers Wakes) as a

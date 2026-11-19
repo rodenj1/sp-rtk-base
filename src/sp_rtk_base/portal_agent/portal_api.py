@@ -46,13 +46,14 @@ from sp_rtk_base.portal_agent.doh import Names, SystemNames
 TIMEOUT_S = 10.0
 RELEASE_TIMEOUT_S = 5.0
 """A release is best effort: the Operator waits for it on the local page."""
-KEEPALIVE_S = 90.0
-"""How long the agent keeps an idle HTTPS connection to the Portal, by its
-own clock: past the 60 s metered poll interval, so polls and Check-ins reuse
-one connection instead of a new TCP connection and TLS handshake each
-(~6 kB). Past it the agent starts afresh rather than trust a connection a
-NAT may have forgotten without a word. The Portal or Cloudflare closing it
-first is fine: the next request opens a new one."""
+KEEPALIVE_MARGIN_S = 30.0
+"""How much longer than its poll interval the agent keeps an idle HTTPS
+connection to the Portal, by its own clock (:attr:`PortalApi.poll_interval`):
+so polls and Check-ins, whatever the interval, reuse one connection instead
+of a new TCP connection and TLS handshake each (~6 kB). Idle past that (a
+request that never came) the agent starts afresh rather than trust a
+connection a NAT may have forgotten without a word. The Portal or Cloudflare
+closing it first is fine: the next request opens a new one."""
 
 
 class PortalUnreachableError(Exception):
@@ -146,8 +147,8 @@ def ipv4_transport(
     HTTP.
 
     Idle connections don't expire on the pool's own timer:
-    :class:`PortalApi` keeps them for :data:`KEEPALIVE_S` on the agent's
-    clock."""
+    :class:`PortalApi` keeps them on the agent's clock
+    (:data:`KEEPALIVE_MARGIN_S`)."""
     transport = httpx.AsyncHTTPTransport(
         local_address="0.0.0.0",
         verify=verify,
@@ -194,6 +195,9 @@ class PortalApi:
         self._client: httpx.AsyncClient | None = None
         self._idle_since: datetime | None = None
         """When the last request ended (``None`` while one is under way)."""
+        self.poll_interval: Callable[[], float] = lambda: 60
+        """The agent's poll interval now: an idle connection is kept that
+        long, plus :data:`KEEPALIVE_MARGIN_S`."""
         self._busy = 0
 
     @property
@@ -228,7 +232,8 @@ class PortalApi:
         if (
             self._client is not None
             and self._idle_since is not None
-            and (self._now() - self._idle_since).total_seconds() > KEEPALIVE_S
+            and (self._now() - self._idle_since).total_seconds()
+            > self.poll_interval() + KEEPALIVE_MARGIN_S
         ):
             await self.aclose()  # idle too long: don't trust its connection
         # Made on first use: an unclaimed, idle agent opens nothing.

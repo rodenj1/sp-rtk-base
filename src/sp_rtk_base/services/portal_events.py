@@ -23,8 +23,18 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from sp_rtk_portal_protocol import (
+    END_HARD_CAP,
+    END_IDLE,
+    END_LEASE_EXPIRED,
+    END_LEFT,
+    END_PAUSED,
+    END_REVOKED,
+)
+
 from sp_rtk_base.portal_agent.client import AgentUnavailableError
 from sp_rtk_base.portal_agent.protocol import (
+    REMOTE_SESSION_ENDED_UNKNOWN,
     AgentStatus,
     RemoteEvent,
     RemoteSession,
@@ -48,14 +58,14 @@ MESSAGES = {
 ROLES = {False: ("operator", "Operator"), True: ("shared_user", "Shared user")}
 """``RemoteEvent.shared`` as the entry's ``role`` and in words."""
 
-END_REASONS = {
-    "left": "left",
-    "idle": "idle: nobody had the Session bar open",
-    "paused": "remote access paused on the base",
-    "lease_expired": "its link's lease expired",
-    "revoked": "access revoked on the Portal",
-    "hard_cap": "reached its time limit",
-    "unknown": "reason unknown",
+END_REASON_WORDS = {
+    END_LEFT: "left",
+    END_IDLE: "idle: nobody had the Session bar open",
+    END_PAUSED: "remote access paused on the base",
+    END_LEASE_EXPIRED: "its link's lease expired",
+    END_REVOKED: "access revoked on the Portal",
+    END_HARD_CAP: "reached its time limit",
+    REMOTE_SESSION_ENDED_UNKNOWN: "reason unknown",
 }
 """End reasons in words; any other is shown as is."""
 
@@ -81,11 +91,11 @@ def log_entry(event: TunnelEvent | RemoteEvent) -> dict[str, Any]:
     if event.event == "session_started":
         message = f"Remote session started: {event.who} ({role_words})"
     else:
-        reason = event.reason or "unknown"
+        reason = event.reason or REMOTE_SESSION_ENDED_UNKNOWN
         payload["reason"] = reason
         message = (
             f"Remote session ended: {event.who} ({role_words}),"
-            f" {END_REASONS.get(reason, reason)}"
+            f" {END_REASON_WORDS.get(reason, reason)}"
         )
     return {
         "event_type": f"portal.remote_{event.event}",

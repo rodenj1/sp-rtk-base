@@ -28,9 +28,10 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
+from sp_rtk_portal_protocol import ConnectionMode as ClaimedMode
 
 SOCKET_ENV = "SP_RTK_BASE_PORTAL_AGENT_SOCKET"
 """Overrides :data:`DEFAULT_SOCKET_PATH` (development and e2e)."""
@@ -60,10 +61,14 @@ version (HTTP 426): the local page's headline, and the agent's message when
 the Portal's reply has none."""
 
 
-ConnectionMode = Literal["holding", "reconnecting", "polling", "unclaimed"]
-"""How the Portal reaches the base: its held tunnel (``holding``), not yet
-or not any more (``reconnecting``), only through Wakes (``polling``), or not
-at all (``unclaimed``). Paused is a flag on top, not a mode."""
+MODE_UNCLAIMED: Final = "unclaimed"
+"""The connection mode of a base that isn't Claimed: the Portal doesn't
+reach it at all."""
+
+ConnectionMode = ClaimedMode | Literal["unclaimed"]
+"""How the Portal reaches the base: one of the protocol's connection modes
+(``MODE_HOLDING``, ``MODE_RECONNECTING``, ``MODE_POLLING``) once Claimed,
+else :data:`MODE_UNCLAIMED`. Paused is a flag on top, not a mode."""
 
 
 class RemoteSession(BaseModel):

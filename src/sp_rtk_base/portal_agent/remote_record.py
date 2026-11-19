@@ -61,8 +61,16 @@ class RemoteRecord:
         if not any(e.id == event_id for e in self.events):
             self.events.append(RemoteEvent(id=event_id, event="wake", at=self._now()))
 
-    def heard(self, live: Iterable[LiveSession], ended: Iterable[EndedSession]) -> None:
-        """The Portal's list of live Remote sessions and its recent ends."""
+    def heard(
+        self,
+        live: Iterable[LiveSession],
+        ended: Iterable[EndedSession],
+        *,
+        paused: bool = False,
+    ) -> None:
+        """The Portal's list of live Remote sessions and its recent ends.
+        ``paused``: remote access is paused here, so none stays live
+        whatever the Portal says (its next reply says how each ended)."""
         sessions = _sessions(live)
         ends = _ends(ended)
         ended_ids = {end.id for end, _ in ends}
@@ -70,19 +78,17 @@ class RemoteRecord:
             if session.id and session.id not in ended_ids:
                 self._start(session)
         for end, session in ends:
-            self._start(session)
-            self._end(session, end.reason, datetime.fromisoformat(end.at))
+            self._end_with_start(end, session)
         still = {s.id for s in sessions}
         for gone in self.live:
             if gone.id and gone.id not in still and gone.id not in ended_ids:
                 self._end(gone, REMOTE_SESSION_ENDED_UNKNOWN, self._now())
-        self.live = sessions
+        self.live = [] if paused else sessions
 
     def ended(self, end: EndedSession) -> None:
         """One Remote session ended (the tunnel's Session ended message)."""
         for e, session in _ends([end]):
-            self._start(session)
-            self._end(session, e.reason, datetime.fromisoformat(e.at))
+            self._end_with_start(e, session)
             self.live = [s for s in self.live if s.id != session.id]
 
     def forget_live(self) -> None:
@@ -93,6 +99,12 @@ class RemoteRecord:
     def _start(self, session: RemoteSession) -> None:
         if _remember(self._started, session.id):
             self._log(session, "session_started", session.since)
+
+    def _end_with_start(self, end: EndedSession, session: RemoteSession) -> None:
+        """An end the Portal reported, logged with its start (once each),
+        so a session never seen live still has one."""
+        self._start(session)
+        self._end(session, end.reason, datetime.fromisoformat(end.at))
 
     def _end(self, session: RemoteSession, reason: str, at: datetime) -> None:
         if _remember(self._ended, session.id):

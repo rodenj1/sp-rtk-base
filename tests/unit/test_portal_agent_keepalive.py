@@ -21,7 +21,11 @@ import pytest
 import pytest_asyncio
 from sp_rtk_portal_protocol import BaseKey
 
-from sp_rtk_base.portal_agent.portal_api import KEEPALIVE_S, PortalApi, ipv4_transport
+from sp_rtk_base.portal_agent.portal_api import (
+    KEEPALIVE_MARGIN_S,
+    PortalApi,
+    ipv4_transport,
+)
 from tests.fixtures.tls import TestCa
 
 pytestmark = pytest.mark.asyncio
@@ -142,13 +146,29 @@ async def test_requests_a_poll_interval_apart_share_one_connection(
     assert portal.connections == 1
 
 
-async def test_a_connection_idle_longer_than_the_keepalive_is_replaced(
+async def test_a_longer_poll_interval_keeps_the_connection_as_long(
     api: PortalApi, portal: KeepAlivePortal, clock: Clock
+) -> None:
+    """Only the Portal or the network closing it makes a new connection,
+    whatever the poll interval."""
+    api.poll_interval = lambda: 300
+    for _ in range(3):
+        await api.release(KEY)
+        clock.advance(300)
+    await api.release(KEY)
+
+    assert portal.connections == 1
+
+
+@pytest.mark.parametrize("interval", [20, 60, 300])
+async def test_a_connection_idle_well_past_the_poll_interval_is_replaced(
+    api: PortalApi, portal: KeepAlivePortal, clock: Clock, interval: int
 ) -> None:
     """A NAT may have forgotten a long-idle connection without a word: the
     agent doesn't wait out a timeout on it."""
+    api.poll_interval = lambda: interval
     await api.release(KEY)
-    clock.advance(KEEPALIVE_S + 1)
+    clock.advance(interval + KEEPALIVE_MARGIN_S + 1)
     await api.release(KEY)
 
     assert portal.connections == 2

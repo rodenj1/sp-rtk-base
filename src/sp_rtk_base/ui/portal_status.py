@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+from sp_rtk_portal_protocol import MODE_HOLDING, MODE_RECONNECTING
+
 from sp_rtk_base.portal_agent.client import (
     AgentUnavailableError,
     ClaimFailedError,
@@ -113,13 +115,13 @@ UPGRADE_DETAIL = (
 )
 
 
-def connection(status: AgentStatus) -> str | None:
-    """How the base keeps in touch with the Portal, for the page: its
-    connection mode (an agent from before held tunnels names none, and
+def connection_mode_words(status: AgentStatus) -> str | None:
+    """How the base keeps in touch with the Portal, in words for the page:
+    its connection mode (an agent from before held tunnels names none, and
     polls)."""
-    if status.connection_mode == "holding":
+    if status.connection_mode == MODE_HOLDING:
         return "Holding its tunnel to the Portal"
-    if status.connection_mode == "reconnecting":
+    if status.connection_mode == MODE_RECONNECTING:
         return "Reconnecting its tunnel to the Portal"
     if status.poll_interval:
         metered = " (metered)" if status.metered else ""
@@ -144,7 +146,7 @@ def _view(status: AgentStatus) -> PortalView:
                 _utc(status.last_contact) if status.last_contact else "never",
             ),
         )
-        mode = connection(status)
+        mode = connection_mode_words(status)
         if mode:
             facts += (("Connection", mode),)
     if status.needs_upgrade:

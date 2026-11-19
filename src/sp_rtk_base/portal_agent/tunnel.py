@@ -338,13 +338,17 @@ class TunnelClient:
         finally:
             for task in (receive, ping):
                 task.cancel()
-                with contextlib.suppress(BaseException):
-                    await task
-            tunnel.close()
-            with contextlib.suppress(Exception):
-                await ws.close()
-            self._tunnel = None
-            self._set("closed")
+            try:
+                # Not each awaited in a suppress(BaseException): that would
+                # also swallow a close() landing now, and the hold would go
+                # on to sleep before its next try, with close() waiting.
+                await asyncio.gather(receive, ping, return_exceptions=True)
+            finally:
+                tunnel.close()
+                with contextlib.suppress(Exception):
+                    await ws.close()
+                self._tunnel = None
+                self._set("closed")
         return None
 
     @staticmethod
@@ -418,9 +422,13 @@ class TunnelClient:
 
     async def close(self) -> None:
         if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+            task = self._task
+            task.cancel()
+            # asyncio.wait, not suppress(CancelledError): a caller cancelled
+            # while it waits here stays cancelled.
+            await asyncio.wait({task})
+            if not task.cancelled():
+                task.result()
             self._task = None
         if self.state == "opening":  # cancelled before it opened or failed
             self._set("closed")

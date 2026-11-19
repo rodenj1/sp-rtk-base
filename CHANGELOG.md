@@ -103,6 +103,10 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   Destination details rows** (rtk_development#189), the last place the
   in-place updates from 0.14.1 missed. While the Relay is stopped the card
   is hidden and its rows kept.
+- **The Portal agent always stops when asked, even as its tunnel drops**
+  (rtk_development#199). A stop (shutdown, Un-claim) that landed while the
+  agent tidied up after a drop was lost: the agent waited to open the
+  tunnel again, and the stop waited for it forever.
 
 ## v0.14.2 (2026-11-16)
 

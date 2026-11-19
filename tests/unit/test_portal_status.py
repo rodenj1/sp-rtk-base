@@ -229,6 +229,18 @@ async def _view_of(sock_path: Path, status: dict[str, object]):
     [
         ({"poll_interval": 20}, "Polling every 20 s"),
         ({"poll_interval": 60, "metered": True}, "Polling every 60 s (metered)"),
+        (
+            {"poll_interval": 20, "connection_mode": "holding"},
+            "Holding its tunnel to the Portal",
+        ),
+        (
+            {"poll_interval": 20, "connection_mode": "reconnecting"},
+            "Reconnecting its tunnel to the Portal",
+        ),
+        (
+            {"poll_interval": 60, "metered": True, "connection_mode": "polling"},
+            "Polling every 60 s (metered)",
+        ),
     ],
 )
 async def test_connected_shows_how_the_base_keeps_in_touch(

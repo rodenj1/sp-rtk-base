@@ -301,8 +301,3 @@ Format: <type>(<optional-scope>): <short subject in imperative mood>
 
 See https://www.conventionalcommits.org/en/v1.0.0/
 """
-
-# TEMPORARY (spec rodenj1/rtk_development#199): the unreleased protocol 0.10.0,
-# pinned to its sp-rtk-portal commit. Drop once 0.10.0 is on PyPI.
-[tool.uv.sources]
-sp-rtk-portal-protocol = { git = "https://github.com/rodenj1/sp-rtk-portal", subdirectory = "protocol", rev = "907fb6fbb3785c9a539bf3faba38b22213716f60" }

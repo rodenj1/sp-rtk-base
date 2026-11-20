@@ -22,7 +22,6 @@ from sp_rtk_portal_protocol import BaseKey
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
 
-from sp_rtk_base.portal_agent import doorbell
 from sp_rtk_base.portal_agent.control import ClaimStartError, PortalAgent
 from sp_rtk_base.portal_agent.portal_api import (
     PortalApi,
@@ -219,24 +218,6 @@ async def test_the_tunnel_forgets_an_address_it_cant_reach(
         )
 
     assert names.forgotten == [HOST]
-
-
-async def test_the_doorbell_host_is_looked_up_like_the_portal_host() -> None:
-    asked: list[str] = []
-
-    async def system(host: str, port: int) -> list[str]:
-        asked.append(host)
-        return ["192.168.50.180"]
-
-    resolve = doorbell.resolve_with(Names(address="104.21.39.51"), system)
-    assert await resolve("doorbell.test", 4500) == ["104.21.39.51"]
-    assert asked == []
-
-    # DoH said to connect by name: the system resolver answers (and the
-    # Doorbell's own check refuses a LAN answer, as before).
-    resolve = doorbell.resolve_with(Names(address=None), system)
-    assert await resolve("doorbell.test", 4500) == ["192.168.50.180"]
-    assert await doorbell.checked_address("doorbell.test", 4500, resolve) is None
 
 
 async def test_the_agent_reaches_the_portal_where_its_names_say(

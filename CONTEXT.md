@@ -350,7 +350,7 @@ the base's own web UI through `127.0.0.1:8080` only. Installed with the base
 but idle until the base is Claimed: it holds no key, contacts nothing and
 only answers the app on its control socket. The kernel denies it the LAN
 and all IPv6 but loopback, and it resolves names through public resolvers
-rather than the LAN's (usually the router); the Portal and Doorbell hosts
+rather than the LAN's (usually the router); the Portal host
 over DNS-over-HTTPS, as a LAN can intercept plain DNS.
 _Avoid_: client, daemon, connector, tunnel (the tunnel is what it opens)
 
@@ -364,29 +364,71 @@ for every Claim, served unauthenticated by `/api/portal/identity`. Kept in
 the agent's state directory, so restarts and reinstalls keep it.
 _Avoid_: register, pair (pairing is the step, Claim the result), link
 
-**Wake** / **tunnel**:
-A Wake is the Portal asking a base to open its tunnel: a poll reply
-carrying only a one-time nonce. The agent then opens the tunnel, one
-websocket to its own Portal (signed with the base key, echoing the nonce),
-carrying the Portal's streams to the base's UI on `127.0.0.1:8080` and
-nowhere else. Open only while someone uses the base remotely; the Portal
-closes it 2 minutes after the last remote user leaves.
+**Tunnel** / **Wake**:
+The tunnel is one websocket from the agent to its own Portal (signed with
+the base key), carrying the Portal's streams to the base's UI on
+`127.0.0.1:8080` and nowhere else. A Claimed base holds it open while it's
+online (ADR 0006, protocol version 2): the agent opens it on Claim and on
+start, pings the Portal every 50 s, and opens it again after a drop (after
+a random 0-60 s, then backing off with jitter up to ~10 min, and never
+sooner than a 503's `Retry-After`, so a Portal restart doesn't bring every
+base back at once); the Portal never pings, and closes a tunnel silent for 120 s. Each Remote
+session has its own idle close and hard cap on the Portal; the tunnel has
+none. A Wake is how a base that isn't holding its tunnel (an older,
+version 1 agent) is reached: a poll reply carrying only a one-time nonce,
+which the agent echoes when it opens the tunnel; that tunnel closes with
+the last Remote session.
 _Avoid_: connection, VPN, session (a Remote session is the Portal's)
+
+**Connection mode**:
+How the Portal reaches a Claimed base: *holding* (its tunnel is open),
+*reconnecting* (it isn't, yet or any more: the agent only backs off and
+tries again, sending nothing over HTTPS but the one Check-in that decides
+a fallback), or *polling* (Wakes only: a
+version 1 agent, or one that fell back because its network refuses the
+tunnel while HTTPS gets through; it tries the tunnel every 15 min).
+Paused is a flag on top, not a mode. The agent's status reports it.
+_Avoid_: wake mode
 
 **Poll** / **Check-in**:
 What a Claimed base's agent sends the Portal: a small HTTPS poll every
-20 s (60 s when metered), which is how the Portal knows it is online and
-how a Wake reaches it, and a slower Check-in every ~5 min with its
-version, Doorbell health and LAN addresses. Each reply carries the
-**agent config** (revisioned timings and addresses the agent checks
-before use) and any notices.
+20 s (60 s when metered), which tells the Portal it is online and is how a
+Wake reaches it, and a slower Check-in every ~5 min with its
+version and LAN addresses. Each reply carries the **agent config**
+(revisioned timings and the tunnel URL, which the agent checks before use)
+and any notices. Polls and Check-ins reuse one HTTPS
+connection, kept for the poll interval plus 30 s (until the Portal or the
+network closes it first), so a poll costs its request and reply, not a new
+TLS handshake.
+While the base holds its tunnel it sends no polls: its Check-ins (with
+its connection mode) go on the tunnel as control messages, on connect,
+every ~5 min and on any change (noticed within 20 s, metered or not), and
+the Portal sends the agent config,
+notices and live Remote sessions (and each session's end) on the tunnel
+on connect and on every change.
 _Avoid_: heartbeat, keepalive
 
 **Paused** (remote access paused):
 The Operator's brake on remote use, on the base's local Portal page
 ("Pause remote access"). A paused agent keeps its key and Claim and keeps
-polling, but each poll says `paused` and it ignores Wakes; pausing closes
-the tunnel, and the Portal ends the live Remote sessions. Kept across
+polling, Checking in and holding its tunnel (so it stays online), but each
+poll says `paused` and it ignores Wakes; pausing ends the tunnel's open
+streams and it refuses every new one before it reaches the base's UI, and
+the Portal ends the live Remote sessions. Kept across
 restarts; only "Resume remote access" on the base undoes it. Each tunnel
 open and close also goes into the Event log.
 _Avoid_: disabled, offline (an offline base isn't polling at all)
+
+**Base-side record** (of Remote sessions):
+The base's own Event log entries about remote use, raised by the app from
+the agent's status (ADR 0005): each Wake the agent acts on (time only),
+each Remote session start (the user's email, Operator or Shared user) and
+each end (email and reason: `left`, `idle`, `paused`, `lease_expired`,
+`revoked`, `hard_cap`, or `unknown` when a session left the Portal's list
+with no end), next to the tunnel opens and closes. The Portal reports
+sessions by id, and the base keeps each start and end once. It lives under
+the Event log's own retention; the Portal can't change or delete it. While
+any Remote session is live, every base page also shows "Remote session
+active: <email>, <email> via the Portal", on `:8080` and in the Portal's
+frame alike.
+_Avoid_: audit log (that is the Portal's)

@@ -8,11 +8,13 @@ here, in a covered module.
 from __future__ import annotations
 
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+
+from sp_rtk_portal_protocol import MODE_HOLDING, MODE_RECONNECTING
 
 from sp_rtk_base.portal_agent.client import (
     AgentUnavailableError,
@@ -27,6 +29,7 @@ from sp_rtk_base.portal_agent.protocol import (
     UPDATE_TO_KEEP_USING,
     AgentState,
     AgentStatus,
+    RemoteSession,
 )
 from sp_rtk_base.update.host_setup import INSTALL_COMMAND
 
@@ -55,6 +58,15 @@ DETAILS: dict[AgentState, str] = {
 }
 
 NO_SESSIONS = "Nobody is using this base remotely."
+
+
+def remote_session_banner(sessions: Iterable[RemoteSession]) -> str | None:
+    """The page-wide banner while anyone is on a Remote session (each user
+    named once, in the agent's order); ``None`` while nobody is (#210)."""
+    who = list(dict.fromkeys(s.who for s in sessions))
+    if not who:
+        return None
+    return f"Remote session active: {', '.join(who)} via the Portal"
 
 
 @dataclass(frozen=True)
@@ -103,22 +115,18 @@ UPGRADE_DETAIL = (
 )
 
 
-def wake_mode(status: AgentStatus) -> str | None:
-    """How the Portal wakes this base, for the page."""
-    if status.wake_mode == "doorbell":
-        return "Doorbell"
-    if status.wake_mode == "polling" and status.poll_interval:
+def connection_mode_words(status: AgentStatus) -> str | None:
+    """How the base keeps in touch with the Portal, in words for the page:
+    its connection mode (an agent from before held tunnels names none, and
+    polls)."""
+    if status.connection_mode == MODE_HOLDING:
+        return "Holding its tunnel to the Portal"
+    if status.connection_mode == MODE_RECONNECTING:
+        return "Reconnecting its tunnel to the Portal"
+    if status.poll_interval:
         metered = " (metered)" if status.metered else ""
         return f"Polling every {status.poll_interval} s{metered}"
     return None
-
-
-DOORBELL_HEALTH = {
-    "ok": "Working",
-    "unavailable": "Not heard by the Portal; polling meanwhile",
-    "ignored": "Ignored: its address isn't public; polling",
-}
-"""Doorbell health for the page; no row when there is no Doorbell."""
 
 
 def _view(status: AgentStatus) -> PortalView:
@@ -138,12 +146,9 @@ def _view(status: AgentStatus) -> PortalView:
                 _utc(status.last_contact) if status.last_contact else "never",
             ),
         )
-        mode = wake_mode(status)
+        mode = connection_mode_words(status)
         if mode:
-            facts += (("Wake mode", mode),)
-        health = DOORBELL_HEALTH.get(status.doorbell or "off")
-        if health:
-            facts += (("Doorbell", health),)
+            facts += (("Connection", mode),)
     if status.needs_upgrade:
         headline = UPDATE_TO_KEEP_USING
         detail = (

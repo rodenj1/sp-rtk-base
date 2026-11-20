@@ -46,6 +46,14 @@ from sp_rtk_base.portal_agent.doh import Names, SystemNames
 TIMEOUT_S = 10.0
 RELEASE_TIMEOUT_S = 5.0
 """A release is best effort: the Operator waits for it on the local page."""
+KEEPALIVE_MARGIN_S = 30.0
+"""How much longer than its poll interval the agent keeps an idle HTTPS
+connection to the Portal, by its own clock (:attr:`PortalApi.poll_interval`):
+so polls and Check-ins, whatever the interval, reuse one connection instead
+of a new TCP connection and TLS handshake each (~6 kB). Idle past that (a
+request that never came) the agent starts afresh rather than trust a
+connection a NAT may have forgotten without a word. The Portal or Cloudflare
+closing it first is fine: the next request opens a new one."""
 
 
 class PortalUnreachableError(Exception):
@@ -136,16 +144,25 @@ def ipv4_transport(
 
     With ``names`` (the agent's :class:`~.doh.DohResolver`), it connects to
     the address they give for the host, still as the host for TLS and
-    HTTP."""
-    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", verify=verify)
+    HTTP.
+
+    Idle connections don't expire on the pool's own timer:
+    :class:`PortalApi` keeps them on the agent's clock
+    (:data:`KEEPALIVE_MARGIN_S`)."""
+    transport = httpx.AsyncHTTPTransport(
+        local_address="0.0.0.0",
+        verify=verify,
+        limits=httpx.Limits(keepalive_expiry=None),
+    )
     if names is not None:
         # httpx has no option for a network backend; its pool takes one.
-        # The same pool httpx makes (its default limits), with that backend.
+        # The same pool httpx makes (its default limits, no idle expiry),
+        # with that backend.
         transport._pool = httpcore.AsyncConnectionPool(  # pyright: ignore[reportPrivateUsage]
             ssl_context=ssl_context(verify),
             max_connections=100,
             max_keepalive_connections=20,
-            keepalive_expiry=5.0,
+            keepalive_expiry=None,
             local_address="0.0.0.0",
             network_backend=_NamedBackend(names),
         )
@@ -176,6 +193,12 @@ class PortalApi:
         self._now = now
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        self._idle_since: datetime | None = None
+        """When the last request ended (``None`` while one is under way)."""
+        self.poll_interval: Callable[[], float] = lambda: 60
+        """The agent's poll interval now: an idle connection is kept that
+        long, plus :data:`KEEPALIVE_MARGIN_S`."""
+        self._busy = 0
 
     @property
     def host(self) -> str:
@@ -186,9 +209,12 @@ class PortalApi:
             await self._client.aclose()
             self._client = None
 
-    def tunnel_headers(self, key: BaseKey, url: str, nonce: str) -> dict[str, str]:
+    def tunnel_headers(
+        self, key: BaseKey, url: str, nonce: str | None
+    ) -> dict[str, str]:
         """Headers of the tunnel open: a GET signed for ``url`` whose proof
-        echoes the Wake ``nonce``, and the protocol version."""
+        echoes the Wake ``nonce`` (none when holding the tunnel), and the
+        protocol version."""
         return {
             "Authorization": key.authorization(
                 "GET", signed_url(url), now=self._now(), nonce=nonce
@@ -203,6 +229,13 @@ class PortalApi:
         message: Message,
         timeout: float = TIMEOUT_S,
     ) -> httpx.Response:
+        if (
+            self._client is not None
+            and self._idle_since is not None
+            and (self._now() - self._idle_since).total_seconds()
+            > self.poll_interval() + KEEPALIVE_MARGIN_S
+        ):
+            await self.aclose()  # idle too long: don't trust its connection
         # Made on first use: an unclaimed, idle agent opens nothing.
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -216,12 +249,18 @@ class PortalApi:
             VERSION_HEADER: str(self.protocol_version),
             "Content-Type": "application/json",
         }
+        self._busy += 1
+        self._idle_since = None
         try:
             return await self._client.post(
                 url, content=body, headers=headers, timeout=timeout
             )
         except httpx.HTTPError as exc:
             raise PortalUnreachableError(str(exc) or type(exc).__name__) from exc
+        finally:
+            self._busy -= 1
+            if not self._busy:
+                self._idle_since = self._now()
 
     async def start_claim(self, key: BaseKey, message: ClaimStart) -> ClaimStarted:
         resp = await self._post(key, CLAIMS_PATH, message)

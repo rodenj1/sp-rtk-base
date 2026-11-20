@@ -11,11 +11,13 @@ from pathlib import Path
 import pytest
 
 from sp_rtk_base.portal_agent.control import serve
+from sp_rtk_base.portal_agent.protocol import RemoteSession
 from sp_rtk_base.ui.portal_status import (
     connect,
     countdown,
     pause_remote_access,
     portal_view,
+    remote_session_banner,
     resume_remote_access,
     unclaim,
 )
@@ -225,47 +227,30 @@ async def _view_of(sock_path: Path, status: dict[str, object]):
 @pytest.mark.parametrize(
     ("extra", "mode"),
     [
-        ({"wake_mode": "polling", "poll_interval": 20}, "Polling every 20 s"),
+        ({"poll_interval": 20}, "Polling every 20 s"),
+        ({"poll_interval": 60, "metered": True}, "Polling every 60 s (metered)"),
         (
-            {"wake_mode": "polling", "poll_interval": 60, "metered": True},
+            {"poll_interval": 20, "connection_mode": "holding"},
+            "Holding its tunnel to the Portal",
+        ),
+        (
+            {"poll_interval": 20, "connection_mode": "reconnecting"},
+            "Reconnecting its tunnel to the Portal",
+        ),
+        (
+            {"poll_interval": 60, "metered": True, "connection_mode": "polling"},
             "Polling every 60 s (metered)",
         ),
-        ({"wake_mode": "doorbell", "poll_interval": 20}, "Doorbell"),
     ],
 )
-async def test_connected_shows_the_wake_mode(
+async def test_connected_shows_how_the_base_keeps_in_touch(
     sock_path: Path, extra: dict[str, object], mode: str
 ) -> None:
     view = await _view_of(sock_path, CONNECTED | extra)
 
     assert ("Last contact", "2026-01-01 12:03 UTC") in view.facts
-    assert ("Wake mode", mode) in view.facts
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("doorbell", "shown"),
-    [
-        ("ok", "Working"),
-        ("unavailable", "Not heard by the Portal; polling meanwhile"),
-        ("ignored", "Ignored: its address isn't public; polling"),
-    ],
-)
-async def test_connected_shows_the_doorbell_health(
-    sock_path: Path, doorbell: str, shown: str
-) -> None:
-    extra: dict[str, object] = {"doorbell": doorbell}
-    view = await _view_of(sock_path, CONNECTED | extra)
-
-    assert ("Doorbell", shown) in view.facts
-
-
-@pytest.mark.asyncio
-async def test_without_a_doorbell_no_doorbell_row_is_shown(sock_path: Path) -> None:
-    extra: dict[str, object] = {"doorbell": "off"}
-    view = await _view_of(sock_path, CONNECTED | extra)
-
-    assert "Doorbell" not in dict(view.facts)
+    assert ("Connection", mode) in view.facts
+    assert not [f for f in dict(view.facts) if "Wake" in f or "Doorbell" in f]
 
 
 @pytest.mark.asyncio
@@ -409,3 +394,22 @@ async def test_the_real_agent_answers_un_claim(sock_path: Path) -> None:
         await server.wait_closed()
 
     assert view.headline == "Not connected"
+
+
+def _live(who: str) -> RemoteSession:
+    return RemoteSession(who=who, since=datetime(2026, 1, 1, 12, tzinfo=timezone.utc))
+
+
+def test_the_remote_session_banner_names_everyone_on_a_remote_session() -> None:
+    assert remote_session_banner([]) is None
+    assert (
+        remote_session_banner([_live("op@example.com")])
+        == "Remote session active: op@example.com via the Portal"
+    )
+    # Two sessions of one user (two devices) name them once.
+    assert (
+        remote_session_banner(
+            [_live("op@example.com"), _live("sam@example.com"), _live("op@example.com")]
+        )
+        == "Remote session active: op@example.com, sam@example.com via the Portal"
+    )

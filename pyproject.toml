@@ -34,7 +34,7 @@ dependencies = [
     "pyubx2>=1.2.43",
     "pyyaml>=6.0.3",
     "sp_rtk_base_relay>=4.2.3,<5",
-    "sp-rtk-portal-protocol>=0.9.0,<1",
+    "sp-rtk-portal-protocol>=0.10.0,<1",
     # TypeAliasType, for a generic type alias on Python 3.10.
     "typing-extensions>=4.12",
     "uvicorn>=0.42.0",

@@ -66,6 +66,7 @@ async def running(
         ),
     )
     r = Running(sock, state, portal, clock)
+    r.protocol_version = 1  # it polls at once, so its agent config is saved
     await r.start()
     try:
         yield r
@@ -167,7 +168,10 @@ async def test_claiming_again_makes_a_new_key(
     assert status.base_id == "n3wbas3idx"
     new_key = BaseKey.from_pem((running.state / "base_key.pem").read_bytes())
     assert new_key.thumbprint != key.thumbprint
-    assert portal.agent_polls[-1].thumbprint == new_key.thumbprint
+    # It polls (after trying its tunnel, which isn't served here) with it.
+    await running.until_true(
+        lambda: portal.agent_polls[-1].thumbprint == new_key.thumbprint
+    )
 
 
 # --- Un-claimed on the Portal --------------------------------------------------------

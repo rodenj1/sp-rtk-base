@@ -34,7 +34,7 @@ from sp_rtk_portal_protocol import (
 )
 
 from sp_rtk_base import __version__
-from sp_rtk_base.portal_agent import doorbell, lan
+from sp_rtk_base.portal_agent import lan
 from sp_rtk_base.portal_agent.connection import Connection
 from sp_rtk_base.portal_agent.doh import DohResolver, Names
 from sp_rtk_base.portal_agent.portal_api import (
@@ -45,6 +45,7 @@ from sp_rtk_base.portal_agent.portal_api import (
     UpgradeRequiredError,
 )
 from sp_rtk_base.portal_agent.protocol import (
+    MODE_UNCLAIMED,
     UPDATE_TO_KEEP_USING,
     AgentState,
     AgentStatus,
@@ -132,23 +133,19 @@ class PortalAgent:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         name: str | None = None,
         software_version: str | None = None,
-        resolve: doorbell.Resolve | None = None,
         lan_addresses: Callable[[], list[LanAddress]] = lan.lan_addresses,
         protocol_version: int = PROTOCOL_VERSION,
         tunnel_connect: Connect | None = None,
         app_port: int = APP_PORT,
-        open_udp: doorbell.OpenUdp = doorbell.open_udp,
         names: Names | None = None,
     ) -> None:
-        """``tunnel_connect``, ``app_port`` and ``open_udp`` exist for tests (a
-        websocket connector reaching a test Portal, the stub UI's port, and
-        UDP reaching a stub Doorbell server). Nothing the Portal sends can
-        change any of them.
+        """``tunnel_connect`` and ``app_port`` exist for tests (a websocket
+        connector reaching a test Portal, and the stub UI's port). Nothing the
+        Portal sends can change either.
 
-        ``names`` says where to connect for the Portal host and the Doorbell
-        host: by default a :class:`~.doh.DohResolver` (DNS-over-HTTPS to
-        public resolvers, the system resolver if that fails); ``resolve``
-        overrides it for the Doorbell host (tests)."""
+        ``names`` says where to connect for the Portal host: by default a
+        :class:`~.doh.DohResolver` (DNS-over-HTTPS to public resolvers, the
+        system resolver if that fails)."""
         self._state_dir = state_dir if state_dir is not None else state_path()
         self._doh: DohResolver | None = None
         if names is None:
@@ -161,13 +158,9 @@ class PortalAgent:
             protocol_version=protocol_version,
             names=self._names,
         )
-        self._resolve = (
-            resolve if resolve is not None else doorbell.resolve_with(self._names)
-        )
         self._lan_addresses = lan_addresses
         self._tunnel_connect = tunnel_connect
         self._app_port = app_port
-        self._open_udp = open_udp
         self._now = now
         self._sleep = sleep
         self._name = name if name is not None else socket.gethostname()
@@ -204,19 +197,19 @@ class PortalAgent:
                 portal=c.portal,
                 last_contact=conn.last_contact,
                 message=conn.upgrade_message,
-                wake_mode=conn.wake_mode,
                 poll_interval=conn.poll_interval,
                 metered=conn.metered,
-                doorbell=conn.doorbell,
                 config_revision=conn.config.revision,
                 tunnel_url=conn.config.tunnel_url,
                 notices=conn.notices,
                 needs_upgrade=conn.needs_upgrade,
+                connection_mode=conn.mode,
                 tunnel=conn.tunnel.state,
                 tunnel_since=conn.tunnel.since,
                 tunnel_streams=conn.tunnel.streams,
                 sessions=conn.sessions,
                 tunnel_events=list(conn.tunnel.events),
+                remote_events=list(conn.record.events),
             )
         if self._pairing is not None:
             p = self._pairing
@@ -225,8 +218,11 @@ class PortalAgent:
                 user_code=p.started.user_code,
                 approve_url=p.started.verification_uri_complete,
                 expires_at=p.expires_at,
+                connection_mode=MODE_UNCLAIMED,
             )
-        return AgentStatus(state="not_connected", message=self._message)
+        return AgentStatus(
+            state="not_connected", message=self._message, connection_mode=MODE_UNCLAIMED
+        )
 
     async def start_claim(self) -> AgentStatus:
         """Ask the Portal for a pairing code. Raises :class:`ClaimStartError`."""
@@ -299,7 +295,8 @@ class PortalAgent:
         self.start()
 
     def start(self) -> None:
-        """Start polling if Claimed (and not already). Needs a running loop."""
+        """Start the Connection (holding the tunnel, polling) if Claimed (and
+        not already). Needs a running loop."""
         if self._claim is None or self._key is None or self._connection_task:
             return
         self._connection = Connection(
@@ -310,12 +307,10 @@ class PortalAgent:
             now=self._now,
             sleep=self._sleep,
             software_version=self._version,
-            resolve=self._resolve,
             lan_addresses=self._lan_addresses,
             tunnel_connect=self._tunnel_connect,
             app_port=self._app_port,
             paused=self._paused,
-            open_udp=self._open_udp,
         )
         self._connection_task = asyncio.create_task(
             self._run_connection(self._connection)

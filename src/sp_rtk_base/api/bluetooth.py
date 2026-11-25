@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from sp_rtk_base.models.bluetooth_models import VerificationResult
+from sp_rtk_base.models.bluetooth_models import BluetoothVerificationResult
 from sp_rtk_base.services import get_bluetooth_verification_service
 from sp_rtk_base.services.bluetooth_service import (
     BluetoothVerificationService,
@@ -51,15 +51,16 @@ class VerificationRequest(BaseModel):
     confirm_repair: bool = False
 
 
-@router.post("/test", response_model=VerificationResult)
+@router.post("/test", response_model=BluetoothVerificationResult)
 async def verify_bluetooth_connection(
     request: VerificationRequest,
     service: BluetoothVerificationService = Depends(get_bluetooth_verification_service),
-) -> VerificationResult | JSONResponse:
+) -> BluetoothVerificationResult | JSONResponse:
     """Run a Verification against the submitted MAC and PIN.
 
     Returns:
-        The :class:`VerificationResult` — Green or Red — or a 409 when
+        The :class:`BluetoothVerificationResult` — Green or Red, with the
+        Module name heard for the MAC (or null) — or a 409 when
         the Verification was refused and nothing was touched.
     """
     try:

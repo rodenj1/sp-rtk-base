@@ -31,6 +31,12 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   A module with no name yet shows as "Unnamed module". The Input page's MAC
   box moves behind "Enter address manually"; editing the MAC clears the
   name. `PUT /api/input` now refuses a Bluetooth profile without a MAC.
+- **A Bluetooth Verification hears the Module name** (rtk_development#226):
+  `POST /api/input/bluetooth/test` returns `module_name`, the name BlueZ
+  reports for the verified MAC (null when none was heard; failing to read
+  it never changes the verdict). The Input page fills it into the form, so
+  a MAC typed by hand gains its name and the next Save persists it. The
+  Verification itself still never writes the saved profile.
 
 ### Changed
 

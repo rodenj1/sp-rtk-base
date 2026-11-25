@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 
+import httpx
 import yaml
 from fastapi.testclient import TestClient
 
@@ -131,6 +132,74 @@ class TestImportConfig:
         )
         assert resp.status_code == 200
         assert "input=configured" in resp.json()["message"]
+
+    @staticmethod
+    def _post_yaml(client: TestClient, data: dict[str, object]) -> httpx.Response:
+        return client.post(
+            "/api/config/import",
+            files={
+                "file": (
+                    "config.yaml",
+                    io.BytesIO(yaml.dump(data).encode()),
+                    "application/x-yaml",
+                )
+            },
+        )
+
+    def test_import_refuses_a_bluetooth_input_without_a_mac(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        """A restore can't save a Bluetooth Input profile with no MAC.
+
+        Saving one is refused on every path (rtk_development#222): the
+        Relay would otherwise look the module up by its Module name.
+        """
+        before = mock_config_service.get_config()
+        resp = self._post_yaml(
+            api_client_with_services,
+            {
+                "input": {
+                    "source": "bluetooth",
+                    "config": {"device_name": "RTK_BASE_TST", "pin": "1234"},
+                },
+                "destinations": [],
+                "settings": {},
+            },
+        )
+
+        assert resp.status_code == 400
+        assert "MAC" in resp.json()["detail"]
+        assert mock_config_service.get_config() == before
+
+    def test_import_keeps_the_module_name_of_a_bluetooth_input(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        """Restoring a config keeps its Bluetooth module's Module name."""
+        resp = self._post_yaml(
+            api_client_with_services,
+            {
+                "input": {
+                    "source": "bluetooth",
+                    "config": {
+                        "mac_address": "98:D3:71:FE:FC:47",
+                        "device_name": "RTK_BASE_TST",
+                        "pin": "1234",
+                    },
+                },
+                "destinations": [],
+                "settings": {},
+            },
+        )
+
+        assert resp.status_code == 200
+        saved = mock_config_service.get_config().input
+        assert saved is not None
+        assert saved.config["mac_address"] == "98:D3:71:FE:FC:47"
+        assert saved.config["device_name"] == "RTK_BASE_TST"
 
     def test_import_empty_file_returns_400(
         self,

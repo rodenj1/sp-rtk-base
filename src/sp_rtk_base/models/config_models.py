@@ -394,7 +394,8 @@ class InputProfile(BaseModel):
         given. A MAC on every saved Bluetooth profile is what keeps the
         **Module name** (``device_name``) display-only: two modules
         advertising the same name can't make the Relay reach the wrong
-        one. Checked on save (the Input page and ``PUT /api/input``)
+        one. Checked on save (the Input page, ``PUT /api/input`` and
+        ``POST /api/config/import``)
         rather than on load, so a profile already on disk still reads.
 
         Raises:

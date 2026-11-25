@@ -677,6 +677,13 @@ def input_page() -> None:
 
                         _set_status(describe_result(result))
 
+                        # The Module name heard for the verified MAC goes
+                        # into the form, so the next Save persists it —
+                        # unless the MAC was edited while the test ran.
+                        if result.module_name and _current_values()[0] == mac:
+                            bt_state["module_name"] = result.module_name
+                            _render_selected()
+
                         if result.verdict == "green":
                             bt_state["held_green"] = HeldGreen(
                                 result=result,

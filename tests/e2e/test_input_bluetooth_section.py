@@ -23,6 +23,8 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
+from sp_rtk_base.services.drivers.fake import FAKE_BT_MODULE_MAC, FAKE_BT_MODULE_NAME
+
 MAC = "98:D3:71:FE:FC:47"
 MODULE_NAME = "RTK_BASE_TST"
 
@@ -192,10 +194,10 @@ def test_a_verification_that_cannot_run_reports_legibly(
     page: Page,
     base_url: str,
 ) -> None:
-    """Confirming the repair on a runner with no adapter fails readably.
+    """Confirming the repair on a module that can't be reached fails readably.
 
-    There is no BlueZ adapter here, so the Verification cannot get past
-    building its manager. What matters is that the failure reaches the
+    The fake GPS's Bluetooth module is the only one in range, so a
+    Verification of any other MAC is Red. What matters is that the failure reaches the
     operator as a sentence in the status line rather than as a silent
     no-op or an unhandled traceback.
     """
@@ -363,3 +365,44 @@ def test_picking_a_nameless_scan_result_saves_no_module_name(
     saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
     assert saved["config"]["mac_address"] == FAKE_SCAN_NAMELESS_MAC
     assert not saved["config"].get("device_name")
+
+
+@pytest.mark.e2e
+def test_a_verification_fills_in_the_module_name_for_a_typed_mac(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """A MAC typed by hand gains the Module name a Verification heard.
+
+    The fake GPS's Bluetooth module (``FAKE_BT_MODULE_MAC``) answers the
+    Verification as a real one would. The Verification never writes the
+    saved profile itself: the name reaches it only through the next Save.
+    """
+    _put_input(api_base_url, "tcp", {"host": "127.0.0.1", "port": 5015})
+    page.goto(f"{base_url}/input")
+    expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
+    _choose_bluetooth(page)
+
+    selected = page.get_by_test_id("bt-selected-module")
+    page.get_by_label("Device Address (MAC)").fill(FAKE_BT_MODULE_MAC)
+    page.get_by_label("PIN Code").fill("2468")
+    expect(selected).to_have_text("Unnamed module")
+
+    page.get_by_role("button", name="Test Connection").click()
+    # A PIN this server hasn't proven is re-paired, with consent.
+    page.get_by_role("button", name="Remove pairing and test").click()
+
+    expect(page.get_by_role("button", name="Save & Start now →")).to_be_visible(
+        timeout=30_000
+    )
+    expect(selected).to_have_text(FAKE_BT_MODULE_NAME)
+    expect(page.get_by_test_id("bt-selected-module-mac")).to_have_text(
+        f"MAC {FAKE_BT_MODULE_MAC}"
+    )
+    unsaved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert unsaved["source"] == "tcp"
+
+    page.get_by_role("button", name="Save Input Config").click()
+    expect(page.get_by_text("Input source saved")).to_be_visible(timeout=10_000)
+    saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert saved["config"]["mac_address"] == FAKE_BT_MODULE_MAC
+    assert saved["config"]["device_name"] == FAKE_BT_MODULE_NAME

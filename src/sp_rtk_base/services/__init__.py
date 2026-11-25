@@ -235,11 +235,33 @@ wire_corrected_survey(
 )
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
-bluetooth_verification_service: BluetoothVerificationService = (
-    BluetoothVerificationService(
+
+
+def _bluetooth_verification_service() -> BluetoothVerificationService:
+    """The Bluetooth Verification: over BlueZ, or over the fake GPS's module.
+
+    The fake GPS (e2e) reaches one Bluetooth module with no BlueZ behind it.
+    """
+    if os.environ.get(FAKE_GPS_ENV) == "1":
+        from sp_rtk_base.services.drivers.fake import (
+            FakeVerificationManager,
+            FakeVerificationSocket,
+        )
+
+        return BluetoothVerificationService(
+            relay_service=relay_service,
+            config_service=config_service,
+            manager_factory=FakeVerificationManager,
+            socket_factory=FakeVerificationSocket,
+        )
+    return BluetoothVerificationService(
         relay_service=relay_service,
         config_service=config_service,
     )
+
+
+bluetooth_verification_service: BluetoothVerificationService = (
+    _bluetooth_verification_service()
 )
 
 

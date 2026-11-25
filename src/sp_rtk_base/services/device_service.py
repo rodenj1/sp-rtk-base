@@ -77,8 +77,10 @@ from sp_rtk_base.services.drivers.bluetooth_link import (
     STAGE_ADVICE,
     BluetoothLinkOpener,
     LinkStageError,
+    ModuleNameRecorder,
     StageListener,
     bluetooth_config_from,
+    write_back_module_name,
 )
 from sp_rtk_base.services.drivers.console_link import LinkOpener
 from sp_rtk_base.services.update_guard import UpdateGuard
@@ -250,7 +252,7 @@ class DeviceService:
         *,
         input_profile: Callable[[], InputProfile | None] | None = None,
         bluetooth_opener: BluetoothOpenerFactory = BluetoothLinkOpener,
-        record_module_name: Callable[[str, str | None], object] | None = None,
+        record_module_name: ModuleNameRecorder | None = None,
     ) -> None:
         """Set up a disconnected service.
 
@@ -553,7 +555,10 @@ class DeviceService:
             )
             # Reopens later in the session (a reset) report no Stages.
             opener.on_stage = None
-            await self._write_back_module_name(opener)
+            # Never raises: a name that can't be read leaves it connected.
+            await write_back_module_name(
+                self._record_module_name, opener.link.mac, opener.module_name
+            )
             return info
         except Exception as exc:
             self._forget_link()
@@ -562,23 +567,6 @@ class DeviceService:
             self._last_error = str(exc)
             logger.error("Failed to connect over %s: %s", described, exc)
             raise
-
-    async def _write_back_module_name(self, opener: BluetoothLinkOpener) -> None:
-        """Hand on the **Module name** heard for the connected MAC (#227).
-
-        Never raises: a name that can't be read or saved leaves the
-        connect connected.
-        """
-        if self._record_module_name is None:
-            return
-        mac = opener.link.mac
-        if mac is None:
-            return
-        try:
-            name = await asyncio.to_thread(opener.module_name)
-            self._record_module_name(mac, name)
-        except Exception as exc:
-            logger.warning("Module name write-back for %s failed: %s", mac, exc)
 
     @staticmethod
     def _close_failed_connect(driver: GpsReceiverDriver, opener: LinkOpener) -> None:

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -26,7 +25,7 @@ from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import BAUD_RATES, DEFAULT_BAUD
 from sp_rtk_base.services import (
-    FAKE_GPS_ENV,
+    bluetooth_manager_factory,
     get_bluetooth_verification_service,
     get_config_service,
     get_relay_service,
@@ -75,26 +74,6 @@ TCP_FIELDS: list[FieldDef] = [
     ("host", "Host", "127.0.0.1", required("Host")),
     ("port", "Port", "5015", port_validation()),
 ]
-
-
-def _try_import_bluetooth_manager() -> type | None:
-    """Attempt to import BluetoothManager from sp-rtk-base-relay.
-
-    Returns the class if available, None otherwise (dbus-fast not installed).
-    The fake GPS (e2e) gets a scan with no BlueZ behind it instead.
-    """
-    if os.environ.get(FAKE_GPS_ENV) == "1":
-        from sp_rtk_base.services.drivers.fake import FakeBluetoothScanManager
-
-        return FakeBluetoothScanManager
-    try:
-        from sp_rtk_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
-            BluetoothManager,
-        )
-
-        return BluetoothManager  # type: ignore[no-any-return]
-    except (ImportError, Exception):
-        return None
 
 
 @ui.page("/input")
@@ -240,7 +219,7 @@ def input_page() -> None:
 
             def _build_bluetooth_fields() -> None:
                 """Build Bluetooth source fields with scan + test connection."""
-                bt_manager_cls = _try_import_bluetooth_manager()
+                bt_manager_cls = bluetooth_manager_factory()
                 bt_available = bt_manager_cls is not None
 
                 if not bt_available:
@@ -322,7 +301,7 @@ def input_page() -> None:
 
                             try:
                                 mgr = await asyncio.to_thread(
-                                    bt_manager_cls  # type: ignore[misc]
+                                    bt_manager_cls  # type: ignore[arg-type]
                                 )
                                 bt_state["bt_manager"] = mgr
 

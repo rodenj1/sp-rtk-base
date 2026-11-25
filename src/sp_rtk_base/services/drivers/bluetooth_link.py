@@ -20,6 +20,7 @@ teardown order lives only in the relay.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import select
 import socket
@@ -432,6 +433,34 @@ class BluetoothLinkOpener(LinkOpener):
         raise LinkStageError(
             stage, code, f"{stage.value.capitalize()} failed: {exc}"
         ) from exc
+
+
+#: Hears ``(MAC, Module name or None)`` after a Bluetooth connect or Start,
+#: to write the name back to the saved Input profile
+#: (``ConfigService.record_module_name``).
+ModuleNameRecorder = Callable[[str, "str | None"], object]
+
+
+async def write_back_module_name(
+    record: ModuleNameRecorder | None,
+    mac: str | None,
+    read_name: Callable[[], str | None],
+    *,
+    timeout: float | None = None,
+) -> None:
+    """Hand *record* the **Module name** *read_name* hears for *mac* (#227).
+
+    *read_name* blocks on D-Bus, so it runs off the event loop, for at
+    most *timeout* seconds. Never raises: a name that can't be read or
+    saved leaves the connect or Start that reached the module standing.
+    """
+    if record is None or mac is None:
+        return
+    try:
+        name = await asyncio.wait_for(asyncio.to_thread(read_name), timeout)
+        record(mac, name)
+    except Exception as exc:
+        logger.warning("Module name write-back for %s failed: %s", mac, exc)
 
 
 def read_module_name(manager: Any, mac_address: str | None) -> str | None:

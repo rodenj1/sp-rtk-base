@@ -82,3 +82,12 @@ fixed-5 s-recovery-scan version that this poll loop was written to replace.
 - **One eviction claim is still unmeasured** and is handed to hardware
   acceptance: Verification → close → wait 45 s → Start should succeed. If it
   does not, mitigation returns as a fresh ticket with real numbers.
+- **One second manager is allowed beside a running relay: the Module name
+  read after a Bluetooth Start** (rtk_development#227). The engine's manager
+  lives inside the relay's input source, out of reach, and a
+  `BluetoothManager` cannot be built without registering a pairing agent.
+  The race above does not apply: the engine's manager claimed BlueZ's
+  default agent explicitly, the short-lived one does not claim it, never
+  pairs or connects (so BlueZ never asks its agent for a PIN), and is
+  closed, unregistering its agent, after one `Device1` read bounded by
+  `MODULE_NAME_READ_TIMEOUT_S`.

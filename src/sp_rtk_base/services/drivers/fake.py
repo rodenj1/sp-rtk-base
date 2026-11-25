@@ -273,32 +273,18 @@ class FakeBluetoothLinkOpener(BluetoothLinkOpener):
         return _NullStream()
 
 
-class FakeBluetoothScanManager:
-    """The Input page's Bluetooth scan with no BlueZ behind it.
-
-    Stands in for the Relay's ``BluetoothManager`` when the fake GPS is
-    on, so a scan and a pick can be driven end to end (e2e). The scan
-    returns at once and lists a named module and a nameless one.
-    """
-
-    def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
-        """The scan's devices; ``scan_seconds`` is not waited out."""
-        from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
-
-        return [
-            DiscoveredDevice("00:1A:7D:DA:71:14", None, paired=False),
-            DiscoveredDevice("00:1A:7D:DA:71:13", "RTK_BASE_SCAN", paired=True),
-        ]
-
-    def close(self) -> None:
-        """Nothing to release."""
-
-
-#: The one Bluetooth module a Verification can reach on the fake GPS (e2e,
-#: rtk_development#226), and the Module name it advertises. Every other
-#: MAC is out of range, so a Verification of it is Red.
-FAKE_BT_MODULE_MAC: str = "98:D3:32:70:5A:11"
-FAKE_BT_MODULE_NAME: str = "FAKE_RTK_BT"
+#: The Bluetooth modules in range of the fake GPS's BlueZ (e2e): a named
+#: one, paired, and a nameless one, unpaired. A scan lists them and a
+#: Verification reaches them (with any PIN); every other MAC is out of
+#: range, so a Verification of it is Red at ``discover``.
+FAKE_BT_MODULE_MAC: str = "00:1A:7D:DA:71:13"
+FAKE_BT_MODULE_NAME: str = "RTK_BASE_SCAN"
+FAKE_BT_NAMELESS_MAC: str = "00:1A:7D:DA:71:14"
+#: ``(MAC, Module name or None, paired)``, in the order a scan lists them.
+FAKE_BT_MODULES: tuple[tuple[str, str | None, bool], ...] = (
+    (FAKE_BT_NAMELESS_MAC, None, False),
+    (FAKE_BT_MODULE_MAC, FAKE_BT_MODULE_NAME, True),
+)
 
 
 def _bluetooth_error(message: str) -> Exception:
@@ -308,21 +294,32 @@ def _bluetooth_error(message: str) -> Exception:
     return BluetoothError(message)
 
 
-class FakeVerificationManager:
-    """The relay's ``BluetoothManager`` as the Bluetooth Verification uses it.
+class FakeBluetoothManager:
+    """The relay's ``BluetoothManager`` with no BlueZ behind it.
 
-    Wired in place of the real one when the fake GPS is on, so a
-    Verification can run end to end with no BlueZ behind it. Only
-    :data:`FAKE_BT_MODULE_MAC` is in range; it pairs with any PIN.
+    Wired in place of the real one when the fake GPS is on (see
+    ``services.bluetooth_manager_factory``), for both the Input page's
+    scan and the Bluetooth Verification, so a module picked from the
+    scan can be verified end to end. Only :data:`FAKE_BT_MODULES` are in
+    range; a scan returns at once.
     """
 
-    def __init__(self, adapter: str = "hci0") -> None:
-        self.adapter = adapter
+    def __init__(self, adapter_name: str = "hci0") -> None:
+        self.adapter_name = adapter_name
 
-    def _require_module(self, mac_address: str | None) -> str:
-        if (mac_address or "").upper() != FAKE_BT_MODULE_MAC:
-            raise _bluetooth_error(f"Device {mac_address} not found")
-        return FAKE_BT_MODULE_MAC
+    @staticmethod
+    def _module(mac_address: str | None) -> tuple[str, str | None, bool] | None:
+        wanted = (mac_address or "").upper()
+        return next((m for m in FAKE_BT_MODULES if m[0] == wanted), None)
+
+    def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
+        """The modules in range; ``scan_seconds`` is not waited out."""
+        from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
+
+        return [
+            DiscoveredDevice(mac, name, paired=paired)
+            for mac, name, paired in FAKE_BT_MODULES
+        ]
 
     def ensure_device_ready(
         self,
@@ -331,28 +328,28 @@ class FakeVerificationManager:
         mac_address: str | None = None,
         scan_timeout: int = 30,
     ) -> tuple[str, int]:
-        return self._require_module(mac_address), 1
+        module = self._module(mac_address)
+        if module is None:
+            raise _bluetooth_error(f"Device {mac_address} not found")
+        return module[0], 1
 
     def force_repair(self, mac_address: str, pin: str, scan_timeout: int = 30) -> bool:
-        try:
-            self._require_module(mac_address)
-        except Exception as exc:
-            raise _bluetooth_error(f"pair stage failed: {exc}") from exc
+        if self._module(mac_address) is None:
+            raise _bluetooth_error(f"pair stage failed: Device {mac_address} not found")
         return True
 
     def find_device_by_mac(self, mac_address: str) -> bool:
-        return mac_address.upper() == FAKE_BT_MODULE_MAC
+        return self._module(mac_address) is not None
 
     def get_module_name(self, mac_address: str) -> str | None:
-        if mac_address.upper() != FAKE_BT_MODULE_MAC:
-            return None
-        return FAKE_BT_MODULE_NAME
+        module = self._module(mac_address)
+        return module[1] if module is not None else None
 
     def disconnect_device(self, mac_address: str) -> bool:
         return True
 
     def close(self) -> None:
-        pass
+        """Nothing to release."""
 
 
 class FakeVerificationSocket:

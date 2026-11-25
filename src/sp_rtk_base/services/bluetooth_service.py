@@ -35,7 +35,10 @@ from sp_rtk_base.models.bluetooth_models import (
     build_result,
     normalize_pin,
 )
-from sp_rtk_base.services.drivers.bluetooth_link import rfcomm_socket
+from sp_rtk_base.services.drivers.bluetooth_link import (
+    read_module_name,
+    rfcomm_socket,
+)
 from sp_rtk_base.services.verification import (
     VerificationRefusedError as VerificationRefusedError,
 )
@@ -387,7 +390,7 @@ class BluetoothVerificationService:
             # closes the manager.
             discovered = recorded.get(VerificationStage.DISCOVER)
             if discovered is not None and discovered.status is StageStatus.PASSED:
-                module_name = _read_module_name(manager, mac_address)
+                module_name = read_module_name(manager, mac_address)
         finally:
             # There is deliberately no warm-ACL handoff to a following
             # Start: leaving BlueZ in a state a clean shutdown would
@@ -681,20 +684,6 @@ class BluetoothVerificationService:
                 "while it is still surveying in."
             ),
         )
-
-
-def _read_module_name(manager: Any, mac_address: str) -> str | None:
-    """The Module name BlueZ holds for *mac_address*, or ``None``.
-
-    Best-effort: the name is display-only, so failing to read it is
-    logged and never changes the verdict.
-    """
-    try:
-        name = manager.get_module_name(mac_address)
-    except Exception as exc:
-        logger.warning("Could not read the Module name of %s: %s", mac_address, exc)
-        return None
-    return name or None
 
 
 def _close_without_link(manager: Any, mac_address: str) -> None:

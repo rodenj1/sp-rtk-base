@@ -29,15 +29,21 @@ What we assert
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import math
 import os
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from sp_rtk_base.models.bluetooth_models import (
+    BluetoothVerificationResult,
+    VerificationStage,
+)
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
     BaseMode,
@@ -55,6 +61,8 @@ from sp_rtk_base.models.device_models import (
     SurveyPosition,
     UbxProtocol,
 )
+from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
+from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.device_service import DeviceService
 from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.fake import (
@@ -1033,17 +1041,84 @@ class TestFakeBluetoothConsoleLink:
         assert svc.is_connected
 
 
-class TestFakeBluetoothScanManager:
-    """The e2e stand-in for the Input page's Bluetooth scan."""
+class _StoppedRelay:
+    is_running = False
 
-    def test_lists_a_named_module_and_a_nameless_one_at_once(self) -> None:
-        from sp_rtk_base.services.drivers.fake import FakeBluetoothScanManager
 
-        mgr = FakeBluetoothScanManager()
-        found = {d.mac_address: d.name for d in mgr.discover_devices(60)}
+class TestFakeBluetoothManager:
+    """The e2e stand-in for BlueZ: one set of modules for scan and Verification.
+
+    A module picked from the fake scan must pass a fake Verification, so
+    both are served from the same table; any other MAC is out of range.
+    """
+
+    def test_a_scan_lists_a_named_module_and_a_nameless_one_at_once(self) -> None:
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothManager
+
+        mgr = FakeBluetoothManager()
+        found = {d.mac_address: (d.name, d.paired) for d in mgr.discover_devices(60)}
         mgr.close()
 
         assert found == {
-            "00:1A:7D:DA:71:13": "RTK_BASE_SCAN",
-            "00:1A:7D:DA:71:14": None,
+            "00:1A:7D:DA:71:13": ("RTK_BASE_SCAN", True),
+            "00:1A:7D:DA:71:14": (None, False),
         }
+
+    @staticmethod
+    def _verify(
+        tmp_path: Path, mac: str, *, proven: bool
+    ) -> BluetoothVerificationResult:
+        """Run a real Verification of *mac* over the fake BlueZ manager."""
+        from sp_rtk_base.services.drivers.fake import (
+            FakeBluetoothManager,
+            FakeVerificationSocket,
+        )
+
+        cfg = ConfigService(config_path=tmp_path / "config.yaml")
+        if proven:
+            profile = InputProfile(
+                source="bluetooth",
+                config={"mac_address": mac, "pin": "1234"},
+                proven_pin="1234",
+            )
+            cfg.save_config(cfg.get_config().model_copy(update={"input": profile}))
+        service = BluetoothVerificationService(
+            relay_service=_StoppedRelay(),  # type: ignore[arg-type]
+            config_service=cfg,
+            manager_factory=FakeBluetoothManager,
+            socket_factory=FakeVerificationSocket,
+            data_window_seconds=0.05,
+        )
+        return asyncio.run(service.verify(mac, "1234", confirm_repair=True))
+
+    @pytest.mark.parametrize("proven", [True, False], ids=["bonded", "re-paired"])
+    def test_the_named_scan_result_verifies_green_under_its_name(
+        self, tmp_path: Path, proven: bool
+    ) -> None:
+        result = self._verify(tmp_path, "00:1A:7D:DA:71:13", proven=proven)
+
+        assert result.verdict == "green"
+        assert result.module_name == "RTK_BASE_SCAN"
+
+    def test_the_nameless_scan_result_verifies_green_with_no_name(
+        self, tmp_path: Path
+    ) -> None:
+        result = self._verify(tmp_path, "00:1a:7d:da:71:14", proven=False)
+
+        assert result.verdict == "green"
+        assert result.module_name is None
+
+    @pytest.mark.parametrize(
+        ("proven", "failing_stage"),
+        [(True, VerificationStage.DISCOVER), (False, VerificationStage.PAIR)],
+        ids=["bonded", "re-paired"],
+    )
+    def test_any_other_mac_is_red(
+        self, tmp_path: Path, proven: bool, failing_stage: VerificationStage
+    ) -> None:
+        """Out of range: Red where the relay's own path would stop."""
+        result = self._verify(tmp_path, "AA:BB:CC:DD:EE:FF", proven=proven)
+
+        assert result.verdict == "red"
+        assert result.failing_stage == failing_stage
+        assert result.module_name is None

@@ -26,6 +26,11 @@ from playwright.sync_api import Page, expect
 MAC = "98:D3:71:FE:FC:47"
 MODULE_NAME = "RTK_BASE_TST"
 
+# What the fake GPS's Bluetooth scan lists: a named module, a nameless one.
+FAKE_SCAN_NAME = "RTK_BASE_SCAN"
+FAKE_SCAN_MAC = "00:1A:7D:DA:71:13"
+FAKE_SCAN_NAMELESS_MAC = "00:1A:7D:DA:71:14"
+
 
 def _put_input(api_base_url: str, source: str, config: dict[str, Any]) -> None:
     resp = httpx.put(
@@ -292,3 +297,69 @@ def test_a_saved_mac_without_a_module_name_opens_manual_entry(
     expect(page.get_by_test_id("bt-selected-module-mac")).to_have_text(f"MAC {MAC}")
     expect(page.get_by_label("Device Address (MAC)")).to_be_visible()
     expect(page.get_by_label("Device Address (MAC)")).to_have_value(MAC)
+
+
+@pytest.mark.e2e
+def test_picking_a_scan_result_captures_its_module_name(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """A scan pick selects the module by name, and Save keeps MAC and name.
+
+    The fake GPS stands in for BlueZ's scan (it lists a named module and
+    a nameless one). Setting the MAC from a pick is not the operator
+    editing it, so the Module name that came with the pick survives.
+    """
+    _put_input(api_base_url, "bluetooth", {"mac_address": MAC, "pin": "1234"})
+    page.goto(f"{base_url}/input")
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text(
+        "Unnamed module", timeout=15_000
+    )
+
+    page.get_by_role("button", name="Scan for Devices").click()
+    cards = page.get_by_test_id("bt-scan-card-name")
+    expect(cards).to_have_text([FAKE_SCAN_NAME, "Unnamed module"], timeout=15_000)
+
+    cards.filter(has_text=FAKE_SCAN_NAME).click()
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text(FAKE_SCAN_NAME)
+    expect(page.get_by_test_id("bt-selected-module-mac")).to_have_text(
+        f"MAC {FAKE_SCAN_MAC}"
+    )
+
+    page.get_by_role("button", name="Save Input Config").click()
+    expect(page.get_by_text("Input source saved")).to_be_visible(timeout=10_000)
+    saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert saved["config"]["mac_address"] == FAKE_SCAN_MAC
+    assert saved["config"]["device_name"] == FAKE_SCAN_NAME
+
+
+@pytest.mark.e2e
+def test_picking_a_nameless_scan_result_saves_no_module_name(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """A module that advertised no name is never saved under a placeholder."""
+    _put_input(
+        api_base_url,
+        "bluetooth",
+        {"mac_address": MAC, "device_name": MODULE_NAME, "pin": "1234"},
+    )
+    page.goto(f"{base_url}/input")
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text(
+        MODULE_NAME, timeout=15_000
+    )
+
+    page.get_by_role("button", name="Scan for Devices").click()
+    nameless = page.get_by_test_id("bt-scan-card-name").filter(
+        has_text="Unnamed module"
+    )
+    expect(nameless).to_be_visible(timeout=15_000)
+    nameless.click()
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text("Unnamed module")
+    expect(page.get_by_test_id("bt-selected-module-mac")).to_have_text(
+        f"MAC {FAKE_SCAN_NAMELESS_MAC}"
+    )
+
+    page.get_by_role("button", name="Save Input Config").click()
+    expect(page.get_by_text("Input source saved")).to_be_visible(timeout=10_000)
+    saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert saved["config"]["mac_address"] == FAKE_SCAN_NAMELESS_MAC
+    assert not saved["config"].get("device_name")

@@ -49,6 +49,7 @@ import time
 from collections import deque
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
@@ -91,6 +92,9 @@ from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.drivers.console_link import LinkOpener, LinkStream
 from sp_rtk_base.services.geodesy import llh_to_ecef
+
+if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
 
 # ---------------------------------------------------------------------------
 # Hard-coded fixtures (see module docstring for rationale)
@@ -267,6 +271,27 @@ class FakeBluetoothLinkOpener(BluetoothLinkOpener):
             ConnectStage.CONNECT, ConnectStageStatus.PASSED, message="RFCOMM channel 1"
         )
         return _NullStream()
+
+
+class FakeBluetoothScanManager:
+    """The Input page's Bluetooth scan with no BlueZ behind it.
+
+    Stands in for the Relay's ``BluetoothManager`` when the fake GPS is
+    on, so a scan and a pick can be driven end to end (e2e). The scan
+    returns at once and lists a named module and a nameless one.
+    """
+
+    def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
+        """The scan's devices; ``scan_seconds`` is not waited out."""
+        from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
+
+        return [
+            DiscoveredDevice("00:1A:7D:DA:71:14", None, paired=False),
+            DiscoveredDevice("00:1A:7D:DA:71:13", "RTK_BASE_SCAN", paired=True),
+        ]
+
+    def close(self) -> None:
+        """Nothing to release."""
 
 
 def _count_frames(data: bytes) -> int:

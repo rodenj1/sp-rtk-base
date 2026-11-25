@@ -28,7 +28,6 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_result,
     manual_entry_starts_open,
     scan_card,
-    scanned_module_name,
     selected_module,
 )
 
@@ -425,22 +424,8 @@ class TestScanCard:
         assert card.detail == "MAC 98:D3:71:FE:FC:47"
 
     def test_a_module_advertising_no_name_is_an_unnamed_module(self) -> None:
+        assert scan_card(None, "98:D3:71:FE:FC:47").text == "Unnamed module"
         assert scan_card("", "98:D3:71:FE:FC:47").text == "Unnamed module"
-        assert scan_card("Unknown", "98:D3:71:FE:FC:47").text == "Unnamed module"
-
-
-class TestScannedModuleName:
-    """Picking a scan result captures the name it advertised, if any."""
-
-    def test_the_advertised_name_is_captured(self) -> None:
-        assert scanned_module_name("RTK_BASE_TST") == "RTK_BASE_TST"
-
-    def test_no_advertised_name_captures_none(self) -> None:
-        # The scan reports a module that advertised no name as "Unknown";
-        # that placeholder is never saved as a Module name.
-        assert scanned_module_name("Unknown") is None
-        assert scanned_module_name("") is None
-        assert scanned_module_name(None) is None
 
 
 class TestManualEntryStartsOpen:

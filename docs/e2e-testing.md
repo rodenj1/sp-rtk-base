@@ -148,6 +148,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_outputs_buttons.py`         | Outputs page: Add Destination dialog, validation warning, Delete dialog          |
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
+| `test_input_bluetooth_section.py` | Input page's Bluetooth section: the selected module shown by its Module name, the MAC behind "Enter address manually", editing the MAC drops the name; a scan on the fake (`FakeBluetoothScanManager`: one named module, one nameless) whose pick selects the module by name and saves MAC and `device_name` together, and a nameless pick saves no name |
 | `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
 | `test_outputs_password_write_only.py` | A destination's password is write-only: the edit dialog shows a "(saved)" placeholder, never the password; a blank save keeps it; Remove saved password clears it |
 | `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start needs a chosen Correction source when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
@@ -277,6 +278,9 @@ unset never see it.
    changes only the pacing: each Observation still counts one second, so a
    60 s survey completes after 60 Observations (about 6 s) and still reports
    `duration_seconds` = 60.
+   The Input page's Bluetooth scan uses `FakeBluetoothScanManager` in
+   place of the Relay's `BluetoothManager`: it returns at once with a
+   named module (`RTK_BASE_SCAN`) and a nameless one.
 4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and

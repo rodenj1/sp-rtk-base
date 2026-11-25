@@ -304,25 +304,10 @@ def selected_module(mac_address: str, module_name: str | None) -> ModuleLine:
     return ModuleLine(text=module_name or UNNAMED_MODULE, detail=mac_detail(mac))
 
 
-#: What the discovery scan reports for a module that advertised no name.
-_SCAN_NO_NAME = "Unknown"
-
-
-def scanned_module_name(name: str | None) -> str | None:
-    """The Module name a scan result advertised, or ``None`` if none.
-
-    The scan's placeholder for a nameless module is never a Module name,
-    so picking that module saves no name rather than "Unknown".
-    """
-    if not name or name == _SCAN_NO_NAME:
-        return None
-    return name
-
-
 def scan_card(name: str | None, mac_address: str) -> ModuleLine:
     """A discovery scan card: the advertised Module name, MAC small."""
     return ModuleLine(
-        text=scanned_module_name(name) or UNNAMED_MODULE,
+        text=name or UNNAMED_MODULE,
         detail=mac_detail(mac_address),
     )
 

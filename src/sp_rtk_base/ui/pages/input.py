@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+import os
+from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
@@ -25,6 +26,7 @@ from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import BAUD_RATES, DEFAULT_BAUD
 from sp_rtk_base.services import (
+    FAKE_GPS_ENV,
     get_bluetooth_verification_service,
     get_config_service,
     get_relay_service,
@@ -42,7 +44,6 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_result,
     manual_entry_starts_open,
     scan_card,
-    scanned_module_name,
     selected_module,
 )
 from sp_rtk_base.ui.layout import page_layout
@@ -52,6 +53,9 @@ from sp_rtk_base.ui.validators import (
     port_validation,
     required,
 )
+
+if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,12 @@ def _try_import_bluetooth_manager() -> type | None:
     """Attempt to import BluetoothManager from sp-rtk-base-relay.
 
     Returns the class if available, None otherwise (dbus-fast not installed).
+    The fake GPS (e2e) gets a scan with no BlueZ behind it instead.
     """
+    if os.environ.get(FAKE_GPS_ENV) == "1":
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothScanManager
+
+        return FakeBluetoothScanManager
     try:
         from sp_rtk_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
             BluetoothManager,
@@ -317,7 +326,6 @@ def input_page() -> None:
                                 )
                                 bt_state["bt_manager"] = mgr
 
-                                # Get managed objects to list known/discovered devices
                                 devices = await asyncio.to_thread(
                                     _discover_bluetooth_devices,
                                     mgr,
@@ -338,10 +346,10 @@ def input_page() -> None:
                                         for dev in devices:
                                             _dev = dev
 
-                                            card = scan_card(dev["name"], dev["mac"])
+                                            card = scan_card(dev.name, dev.mac_address)
 
                                             def _pick_device(
-                                                d: dict[str, str] = _dev,
+                                                d: DiscoveredDevice = _dev,
                                                 shown: str = card.text,
                                             ) -> None:
                                                 # The MAC and its Module
@@ -352,10 +360,8 @@ def input_page() -> None:
                                                     "address_input"
                                                 )
                                                 if addr_input:
-                                                    addr_input.value = d["mac"]
-                                                bt_state["module_name"] = (
-                                                    scanned_module_name(d["name"])
-                                                )
+                                                    addr_input.value = d.mac_address
+                                                bt_state["module_name"] = d.name or None
                                                 render = bt_state.get("render_selected")
                                                 if render is not None:
                                                     render()
@@ -391,7 +397,7 @@ def input_page() -> None:
                                                         ).props(
                                                             "data-testid=bt-scan-card-mac"
                                                         )
-                                                        if dev.get("paired"):
+                                                        if dev.paired:
                                                             ui.badge("Paired").props(
                                                                 "color=positive outline"
                                                             )
@@ -906,10 +912,9 @@ def input_page() -> None:
 def _discover_bluetooth_devices(
     mgr: Any,
     scan_seconds: int = DEFAULT_BT_SCAN_DURATION_SECONDS,
-) -> list[dict[str, str]]:
-    """Discover Bluetooth devices using BluetoothManager.
+) -> list[DiscoveredDevice]:
+    """Scan with the Relay's ``BluetoothManager`` and order the results.
 
-    Scans for nearby devices and also includes already-known/paired devices.
     Called via ``asyncio.to_thread()`` since BluetoothManager is sync.
 
     Args:
@@ -919,83 +924,19 @@ def _discover_bluetooth_devices(
             defaults to :data:`DEFAULT_BT_SCAN_DURATION_SECONDS` (20).
 
     Returns:
-        List of dicts with 'name', 'mac', 'paired' keys.
-    """
-    import asyncio as _asyncio
+        The devices the scan found or BlueZ already knew: named and
+        paired first, then named, then nameless; alphabetical within.
 
+    Raises:
+        Exception: Whatever the scan raised, for the page to report.
+    """
     # Clamp to a sane positive duration so a misconfigured caller can't
-    # turn the scan into a no-op or hang the page forever.
+    # turn the scan into a no-op.
     if scan_seconds <= 0:
         scan_seconds = DEFAULT_BT_SCAN_DURATION_SECONDS
 
-    devices: list[dict[str, str]] = []
-
-    try:
-        # Use the manager's internal async method to get managed objects
-        # which includes both known and recently-discovered devices.
-        # We need to run the async discovery on the manager's own loop.
-
-        async def _get_devices() -> list[dict[str, str]]:
-            result: list[dict[str, str]] = []
-
-            if mgr._bus is None:
-                return result
-
-            try:
-                # Start a scan to find new devices
-                if mgr._adapter is not None:
-                    try:
-                        await mgr._adapter.call_start_discovery()  # type: ignore[attr-defined]
-                        await _asyncio.sleep(scan_seconds)
-                    except Exception:
-                        pass  # May fail if already scanning
-                    try:
-                        await mgr._adapter.call_stop_discovery()  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-
-                # Get all managed objects (includes discovered + paired)
-                root_intro = await mgr._get_introspection("/")
-                manager_proxy = mgr._bus.get_proxy_object("org.bluez", "/", root_intro)
-                obj_manager = manager_proxy.get_interface(
-                    "org.freedesktop.DBus.ObjectManager"
-                )
-                raw_objects = await obj_manager.call_get_managed_objects()  # type: ignore[attr-defined]
-
-                for _path, interfaces in raw_objects.items():
-                    if "org.bluez.Device1" in interfaces:
-                        props = interfaces["org.bluez.Device1"]
-                        name = mgr._unwrap_variant(props.get("Name"))
-                        address = mgr._unwrap_variant(props.get("Address"))
-                        paired = mgr._unwrap_variant(props.get("Paired", False))
-                        if address:
-                            result.append(
-                                {
-                                    "name": str(name or "Unknown"),
-                                    "mac": str(address),
-                                    "paired": "yes" if paired else "",
-                                }
-                            )
-
-            except Exception as exc:
-                logger.debug("Error getting BT devices: %s", exc)
-
-            return result
-
-        # Dispatch to the manager's background event loop
-        future = _asyncio.run_coroutine_threadsafe(_get_devices(), mgr._loop)
-        devices = future.result(timeout=30)
-
-    except Exception as exc:
-        logger.warning("Bluetooth device discovery failed: %s", exc)
-
-    # Sort: named + paired first, named + unpaired second, "Unknown" last
-    devices.sort(
-        key=lambda d: (
-            d["name"] == "Unknown",  # Unknown → bottom
-            not d.get("paired"),  # Paired → top
-            d["name"].lower(),  # Alphabetical within groups
-        )
+    devices: list[DiscoveredDevice] = mgr.discover_devices(scan_seconds)
+    return sorted(
+        devices,
+        key=lambda d: (not d.name, not d.paired, (d.name or "").lower()),
     )
-
-    return devices

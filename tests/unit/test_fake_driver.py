@@ -1031,3 +1031,19 @@ class TestFakeBluetoothConsoleLink:
         # A fresh connect works again after the session is closed.
         await svc.connect(BluetoothLink())
         assert svc.is_connected
+
+
+class TestFakeBluetoothScanManager:
+    """The e2e stand-in for the Input page's Bluetooth scan."""
+
+    def test_lists_a_named_module_and_a_nameless_one_at_once(self) -> None:
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothScanManager
+
+        mgr = FakeBluetoothScanManager()
+        found = {d.mac_address: d.name for d in mgr.discover_devices(60)}
+        mgr.close()
+
+        assert found == {
+            "00:1A:7D:DA:71:13": "RTK_BASE_SCAN",
+            "00:1A:7D:DA:71:14": None,
+        }

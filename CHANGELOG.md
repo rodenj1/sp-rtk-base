@@ -37,6 +37,12 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   it never changes the verdict). The Input page fills it into the form, so
   a MAC typed by hand gains its name and the next Save persists it. The
   Verification itself still never writes the saved profile.
+- **Saved Bluetooth profiles pick up their Module name on connect**
+  (rtk_development#227): after a Console link connect or a Relay start of a
+  Bluetooth Input profile, the base reads the module's advertised name from
+  BlueZ and, when it differs and the saved MAC is the one connected, saves
+  it as the profile's `device_name`. Only the name changes; a name that
+  can't be read never fails the connect or clears a saved name.
 
 ### Changed
 

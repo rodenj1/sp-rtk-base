@@ -250,6 +250,7 @@ class DeviceService:
         *,
         input_profile: Callable[[], InputProfile | None] | None = None,
         bluetooth_opener: BluetoothOpenerFactory = BluetoothLinkOpener,
+        record_module_name: Callable[[str, str | None], object] | None = None,
     ) -> None:
         """Set up a disconnected service.
 
@@ -258,11 +259,15 @@ class DeviceService:
                 Console link uses its device (adapter, MAC, PIN).
             bluetooth_opener: Builds the Bluetooth link's opener from that
                 device; injected by tests to reach a fake module.
+            record_module_name: Hears ``(mac, Module name)`` after each
+                Bluetooth connect, to write the name back to the saved
+                profile (``ConfigService.record_module_name``).
         """
         self._driver: GpsReceiverDriver | None = None
         self._state = DeviceConnectionState.DISCONNECTED
         self._input_profile = input_profile
         self._bluetooth_opener = bluetooth_opener
+        self._record_module_name = record_module_name
         # The Console link in use; a serial link's rate follows baud reopens.
         self._link: ConsoleLink | None = None
         # The Stages of the last Bluetooth connect, kept until the next one.
@@ -548,6 +553,7 @@ class DeviceService:
             )
             # Reopens later in the session (a reset) report no Stages.
             opener.on_stage = None
+            await self._write_back_module_name(opener)
             return info
         except Exception as exc:
             self._forget_link()
@@ -556,6 +562,23 @@ class DeviceService:
             self._last_error = str(exc)
             logger.error("Failed to connect over %s: %s", described, exc)
             raise
+
+    async def _write_back_module_name(self, opener: BluetoothLinkOpener) -> None:
+        """Hand on the **Module name** heard for the connected MAC (#227).
+
+        Never raises: a name that can't be read or saved leaves the
+        connect connected.
+        """
+        if self._record_module_name is None:
+            return
+        mac = opener.link.mac
+        if mac is None:
+            return
+        try:
+            name = await asyncio.to_thread(opener.module_name)
+            self._record_module_name(mac, name)
+        except Exception as exc:
+            logger.warning("Module name write-back for %s failed: %s", mac, exc)
 
     @staticmethod
     def _close_failed_connect(driver: GpsReceiverDriver, opener: LinkOpener) -> None:

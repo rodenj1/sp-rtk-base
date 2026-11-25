@@ -141,7 +141,12 @@ def _set_auto_start_status(
 # ---------------------------------------------------------------------------
 
 config_service: ConfigService = ConfigService()
-relay_service: RelayService = RelayService(config_service.get_config)
+# The Module name heard on a connect or a Start is written back through
+# the module global, so a reloaded ConfigService is honoured (#227).
+relay_service: RelayService = RelayService(
+    config_service.get_config,
+    record_module_name=lambda mac, name: config_service.record_module_name(mac, name),
+)
 metrics_service: MetricsService = MetricsService()
 
 
@@ -162,6 +167,7 @@ def _bluetooth_opener() -> BluetoothOpenerFactory:
 device_service: DeviceService = DeviceService(
     input_profile=lambda: config_service.get_input_config(),
     bluetooth_opener=_bluetooth_opener(),
+    record_module_name=lambda mac, name: config_service.record_module_name(mac, name),
 )
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()

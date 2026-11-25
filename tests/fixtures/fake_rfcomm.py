@@ -62,10 +62,11 @@ class FakeBlueZ:
         self.dbus_free.set()
         #: Set while a ``Device1.Disconnect`` is waiting on ``dbus_free``.
         self.disconnect_waiting = threading.Event()
-        #: The Module name BlueZ holds for the module; ``None`` for none heard.
-        self.module_name: str | None = DEVICE_NAME
-        #: Set to make reading the Module name fail, as a D-Bus error would.
-        self.module_name_unreadable = False
+        #: The Module name BlueZ holds for each MAC (``Device1.Name``).
+        self.module_names: dict[str, str] = {MAC: DEVICE_NAME}
+        #: Raised by ``get_module_name`` when set: BlueZ's device list
+        #: can't be read.
+        self.module_name_error: Exception | None = None
 
     def manager(self, adapter: str = "hci0") -> FakeBluetoothManager:
         made = FakeBluetoothManager(self, number=len(self.managers))
@@ -134,11 +135,9 @@ class FakeBluetoothManager:
 
     def get_module_name(self, mac_address: str) -> str | None:
         self._check_open()
-        if self._bluez.module_name_unreadable:
-            raise BluetoothError("Failed to list devices: org.bluez.Error.Failed")
-        if mac_address.upper() != MAC:
-            return None
-        return self._bluez.module_name
+        if self._bluez.module_name_error is not None:
+            raise self._bluez.module_name_error
+        return self._bluez.module_names.get(mac_address.upper())
 
     def disconnect_device(self, mac_address: str) -> bool:
         self._check_open()

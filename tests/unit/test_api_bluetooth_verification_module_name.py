@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sp_rtk_base_relay.core.bluetooth_manager import BluetoothError
 
 from sp_rtk_base.app import create_api_app
 from sp_rtk_base.models.config_models import InputProfile
@@ -101,7 +102,7 @@ class TestTheVerificationReportsTheModuleName:
     def test_the_module_name_is_null_when_bluez_heard_none(
         self, client: TestClient, bluez: FakeBlueZ
     ) -> None:
-        bluez.module_name = None
+        bluez.module_names.clear()
 
         body = _verify(client)
 
@@ -112,7 +113,9 @@ class TestTheVerificationReportsTheModuleName:
         self, client: TestClient, bluez: FakeBlueZ
     ) -> None:
         heard = _verify(client)
-        bluez.module_name_unreadable = True
+        bluez.module_name_error = BluetoothError(
+            "Failed to list devices: org.bluez.Error.Failed"
+        )
 
         unheard = _verify(client)
 

@@ -372,6 +372,17 @@ class BluetoothLinkOpener(LinkOpener):
         )
         return self._stream
 
+    def module_name(self) -> str | None:
+        """The **Module name** BlueZ holds for the module, read through the
+        session's manager (blocks on D-Bus).
+
+        ``None`` before the first open, when BlueZ holds no name, or when
+        the read fails: a name that can't be read never fails a connect.
+        """
+        if self._manager is None:
+            return None
+        return read_module_name(self._manager, self._config.mac_address)
+
     def close(self) -> None:
         """End the session: the open link (if any), then the manager, last."""
         self._close_stream()
@@ -421,6 +432,22 @@ class BluetoothLinkOpener(LinkOpener):
         raise LinkStageError(
             stage, code, f"{stage.value.capitalize()} failed: {exc}"
         ) from exc
+
+
+def read_module_name(manager: Any, mac_address: str | None) -> str | None:
+    """The **Module name** *manager* reads from BlueZ for *mac_address*.
+
+    Best-effort and blocking (D-Bus): ``None`` without a MAC, when BlueZ
+    holds no name, or when the read raises, which is logged and dropped.
+    """
+    if not mac_address:
+        return None
+    try:
+        name = manager.get_module_name(mac_address)
+    except Exception as exc:
+        logger.warning("Couldn't read the Module name of %s: %s", mac_address, exc)
+        return None
+    return name if isinstance(name, str) and name else None
 
 
 class _SessionManager:

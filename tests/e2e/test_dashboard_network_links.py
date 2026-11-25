@@ -347,3 +347,33 @@ def test_a_disconnected_wifi_link_shows_a_dash_with_why_on_hover(
     expect(strength).not_to_contain_text("dBm")
     strength.hover()
     expect(page.locator(".q-tooltip")).to_have_text("Wi-Fi is disconnected.")
+
+    # Reconnected while still hovered: the reason goes, leaving no bubble.
+    _write(network_links, reading(WLAN0, WLAN0_ASSOCIATED))
+    expect(strength).to_contain_text("Good", timeout=SOON_MS)
+    expect(page.locator(".q-tooltip")).to_have_count(0)
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("field", ["traffic", "address", "counters", "network"])
+def test_a_metric_with_nothing_to_explain_shows_no_tooltip_on_hover(
+    page: Page, base_url: str, network_links: Path, field: str
+) -> None:
+    """An empty grey tooltip bubble opened on hover (sp-rtk-base#303)."""
+    _write(
+        network_links,
+        HostReading(
+            interfaces=(WLAN0,),
+            addresses=ADDRESSES,
+            egress=EgressReading(source="192.0.2.20"),
+            wifi=(WLAN0_ASSOCIATED,),
+        ),
+    )
+    page.goto(f"{base_url}/")
+    metric = page.get_by_test_id(f"network-link-wlan0-{field}")
+    expect(page.get_by_test_id("network-link-wlan0-strength")).to_contain_text(
+        "Good", timeout=SOON_MS
+    )
+    metric.hover()
+    page.wait_for_timeout(1000)  # past Quasar's tooltip show delay
+    expect(page.locator(".q-tooltip")).to_have_count(0)

@@ -35,25 +35,39 @@ def set_visible(element: ui.element, visible: bool) -> None:
 
 
 class Tooltip:
-    """A tooltip whose text can change, and that can be switched off."""
+    """A tooltip whose text can change, and that can be switched off.
+
+    Switched off with Quasar's ``no-parent-event``, so hovering the metric
+    doesn't open it.  ``QTooltip`` has no ``disable`` prop: setting one only
+    left an inert HTML attribute, and the tooltip opened as an empty grey
+    bubble (sp-rtk-base#303).
+    """
 
     def __init__(self, text: str | None) -> None:
+        text = _shown(text)
         self._tooltip = ui.tooltip(text or "")
         self._text = text
         if text is None:
-            self._tooltip.props("disable")
+            self._tooltip.props("no-parent-event")
 
     def update(self, text: str | None) -> None:
-        """Show *text* on hover, or no tooltip at all for ``None``."""
+        """Show *text* on hover, or no tooltip at all for ``None`` or blank."""
+        text = _shown(text)
         if text == self._text:
             return
         if text is None:
-            self._tooltip.props("disable")
+            self._tooltip.props("no-parent-event")
+            self._tooltip.run_method("hide")
         else:
             if self._text is None:
-                self._tooltip.props(remove="disable")
+                self._tooltip.props(remove="no-parent-event")
             self._tooltip.text = text
         self._text = text
+
+
+def _shown(text: str | None) -> str | None:
+    """*text*, or ``None`` when there is nothing in it to show."""
+    return text if text and text.strip() else None
 
 
 class StatusMetric:

@@ -107,6 +107,13 @@ count, which is a different number)
 
 ### Bluetooth link
 
+**Module name**:
+The name a Bluetooth module advertises, as the base station last heard it.
+It is how the operator recognises the module; the MAC address is how the
+base station finds it. A module name is only ever displayed, never used to
+look the module up.
+_Avoid_: friendly name, device name, alias
+
 **Bluetooth link strength**:
 How well the base station's Bluetooth adapter hears the module at the far
 end of a Bluetooth Input profile, while that link is connected. About the

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
@@ -25,6 +25,7 @@ from sp_rtk_base.models.bluetooth_models import normalize_pin
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import BAUD_RATES, DEFAULT_BAUD
 from sp_rtk_base.services import (
+    bluetooth_manager_factory,
     get_bluetooth_verification_service,
     get_config_service,
     get_relay_service,
@@ -40,6 +41,9 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_green_lost,
     describe_refusal,
     describe_result,
+    manual_entry_starts_open,
+    scan_card,
+    selected_module,
 )
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
@@ -48,6 +52,9 @@ from sp_rtk_base.ui.validators import (
     port_validation,
     required,
 )
+
+if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
 
 logger = logging.getLogger(__name__)
 
@@ -67,21 +74,6 @@ TCP_FIELDS: list[FieldDef] = [
     ("host", "Host", "127.0.0.1", required("Host")),
     ("port", "Port", "5015", port_validation()),
 ]
-
-
-def _try_import_bluetooth_manager() -> type | None:
-    """Attempt to import BluetoothManager from sp-rtk-base-relay.
-
-    Returns the class if available, None otherwise (dbus-fast not installed).
-    """
-    try:
-        from sp_rtk_base_relay.core.bluetooth_manager import (  # type: ignore[import-untyped]
-            BluetoothManager,
-        )
-
-        return BluetoothManager  # type: ignore[no-any-return]
-    except (ImportError, Exception):
-        return None
 
 
 @ui.page("/input")
@@ -124,10 +116,14 @@ def input_page() -> None:
             serial_port_select: dict[str, Any] = {}  # "widget" key
             serial_baud_select: dict[str, Any] = {}
 
-            # For bluetooth: address + PIN inputs, scan results, and the
-            # Green currently in hand (a :class:`HeldGreen`, or None).
+            # For bluetooth: address + PIN inputs, scan results, the
+            # Module name that came with the MAC in the form (None until
+            # one is known), and the Green currently in hand (a
+            # :class:`HeldGreen`, or None).
             bt_state: dict[str, Any] = {
                 "address_input": None,
+                "module_name": None,
+                "render_selected": None,
                 "pin_input": None,
                 "bt_manager": None,
                 "test_status_label": None,
@@ -223,7 +219,7 @@ def input_page() -> None:
 
             def _build_bluetooth_fields() -> None:
                 """Build Bluetooth source fields with scan + test connection."""
-                bt_manager_cls = _try_import_bluetooth_manager()
+                bt_manager_cls = bluetooth_manager_factory()
                 bt_available = bt_manager_cls is not None
 
                 if not bt_available:
@@ -236,9 +232,9 @@ def input_page() -> None:
                     ).classes("text-grey-4 text-caption q-mb-sm")
                 else:
                     ui.label(
-                        "Scan for nearby Bluetooth devices or enter the "
-                        "address manually. Use Test Connection to verify "
-                        "pairing before saving."
+                        "Scan for nearby Bluetooth devices and pick yours, "
+                        "or enter its address manually. Use Test Connection "
+                        "to verify pairing before saving."
                     ).classes("text-grey-4 text-caption q-mb-sm")
 
                 # ---- Scan section (only if dbus-fast available) ----
@@ -305,11 +301,10 @@ def input_page() -> None:
 
                             try:
                                 mgr = await asyncio.to_thread(
-                                    bt_manager_cls  # type: ignore[misc]
+                                    bt_manager_cls  # type: ignore[arg-type]
                                 )
                                 bt_state["bt_manager"] = mgr
 
-                                # Get managed objects to list known/discovered devices
                                 devices = await asyncio.to_thread(
                                     _discover_bluetooth_devices,
                                     mgr,
@@ -330,17 +325,27 @@ def input_page() -> None:
                                         for dev in devices:
                                             _dev = dev
 
+                                            card = scan_card(dev.name, dev.mac_address)
+
                                             def _pick_device(
-                                                d: dict[str, str] = _dev,
+                                                d: DiscoveredDevice = _dev,
+                                                shown: str = card.text,
                                             ) -> None:
+                                                # The MAC and its Module
+                                                # name go in together, so
+                                                # a different pick
+                                                # replaces both.
                                                 addr_input = bt_state.get(
                                                     "address_input"
                                                 )
                                                 if addr_input:
-                                                    addr_input.value = d["mac"]
+                                                    addr_input.value = d.mac_address
+                                                bt_state["module_name"] = d.name or None
+                                                render = bt_state.get("render_selected")
+                                                if render is not None:
+                                                    render()
                                                 ui.notify(
-                                                    f"Selected: {d['name']} "
-                                                    f"({d['mac']})",
+                                                    f"Selected: {shown}",
                                                     type="info",
                                                 )
 
@@ -359,15 +364,19 @@ def input_page() -> None:
                                                         "text-blue text-body1"
                                                     )
                                                     with ui.column().classes("gap-0"):
+                                                        ui.label(card.text).classes(
+                                                            "text-white text-body2"
+                                                        ).props(
+                                                            "data-testid=bt-scan-card-name"
+                                                        )
                                                         ui.label(
-                                                            dev["name"] or "Unknown"
+                                                            card.detail or ""
                                                         ).classes(
-                                                            "text-white text-caption"
-                                                        )
-                                                        ui.label(dev["mac"]).classes(
                                                             "text-grey-5 text-caption"
+                                                        ).props(
+                                                            "data-testid=bt-scan-card-mac"
                                                         )
-                                                        if dev.get("paired"):
+                                                        if dev.paired:
                                                             ui.badge("Paired").props(
                                                                 "color=positive outline"
                                                             )
@@ -410,17 +419,71 @@ def input_page() -> None:
                 # as a field that pretends to be a control.
                 saved_address = ""
                 saved_pin = "0000"
+                bt_state["module_name"] = None
                 if current_input and current_input.source == "bluetooth":
                     saved_address = str(current_input.config.get("mac_address", ""))
                     saved_pin = str(current_input.config.get("pin", "0000"))
+                    bt_state["module_name"] = (
+                        str(current_input.config.get("device_name") or "") or None
+                    )
 
-                addr_input = ui.input(
-                    "Device Address (MAC)",
-                    value=saved_address,
-                    placeholder="e.g. 00:11:22:33:44:55",
-                    validation=required("Device address"),
-                ).classes("w-full")
+                # ---- Selected module: by Module name, MAC small ----
+                with ui.row().classes("items-center gap-2 q-mt-xs no-wrap"):
+                    ui.icon("bluetooth").classes("text-blue text-h6")
+                    with ui.column().classes("gap-0"):
+                        selected_name_lbl = (
+                            ui.label("")
+                            .classes("text-white text-body1")
+                            .props("data-testid=bt-selected-module")
+                        )
+                        selected_mac_lbl = (
+                            ui.label("")
+                            .classes("text-grey-5 text-caption")
+                            .props("data-testid=bt-selected-module-mac")
+                        )
+
+                # The MAC box sits behind a link: the operator recognises
+                # the module by its Module name, not by its address. It
+                # starts open when there's no name to show instead, and
+                # whenever there's no scan to pick from.
+                with (
+                    ui.expansion(
+                        "Enter address manually",
+                        value=(
+                            not bt_available or manual_entry_starts_open(current_input)
+                        ),
+                    )
+                    .classes("w-full")
+                    .props("dense header-class=text-info")
+                ):
+                    addr_input = ui.input(
+                        "Device Address (MAC)",
+                        value=saved_address,
+                        placeholder="e.g. 00:11:22:33:44:55",
+                        validation=required("Device address"),
+                    ).classes("w-full")
                 bt_state["address_input"] = addr_input
+
+                def _render_selected() -> None:
+                    shown = selected_module(
+                        str(addr_input.value or ""), bt_state.get("module_name")
+                    )
+                    selected_name_lbl.text = shown.text
+                    selected_mac_lbl.text = shown.detail or ""
+                    selected_mac_lbl.set_visibility(shown.detail is not None)
+
+                def _on_mac_edited() -> None:
+                    """A typed MAC drops the Module name heard for the old one."""
+                    bt_state["module_name"] = None
+                    _render_selected()
+
+                bt_state["render_selected"] = _render_selected
+                # The edit event is the operator typing (a scan pick sets
+                # the value server-side and never raises it), so it clears
+                # the name; any value change, typed or picked, re-renders.
+                addr_input.on("update:model-value", lambda _: _on_mac_edited())
+                addr_input.on_value_change(lambda _: _render_selected())
+                _render_selected()
 
                 pin_input = ui.input(
                     "PIN Code",
@@ -593,6 +656,13 @@ def input_page() -> None:
 
                         _set_status(describe_result(result))
 
+                        # The Module name heard for the verified MAC goes
+                        # into the form, so the next Save persists it —
+                        # unless the MAC was edited while the test ran.
+                        if result.module_name and _current_values()[0] == mac:
+                            bt_state["module_name"] = result.module_name
+                            _render_selected()
+
                         if result.verdict == "green":
                             bt_state["held_green"] = HeldGreen(
                                 result=result,
@@ -669,6 +739,8 @@ def input_page() -> None:
                 serial_port_select.clear()
                 serial_baud_select.clear()
                 bt_state["address_input"] = None
+                bt_state["module_name"] = None
+                bt_state["render_selected"] = None
                 bt_state["pin_input"] = None
                 bt_state["bt_manager"] = None
                 # A Green describes a specific device; switching source
@@ -754,6 +826,9 @@ def input_page() -> None:
                     addr_val = str(addr_inp.value if addr_inp else "").strip()
                     pin_val = str(pin_inp.value if pin_inp else "0000").strip()
 
+                    # The MAC stays required: with a MAC on every saved
+                    # profile the Relay never looks the module up by its
+                    # Module name, which stays display-only.
                     if not addr_val:
                         ui.notify(
                             "Enter a Bluetooth device address",
@@ -764,6 +839,11 @@ def input_page() -> None:
                         "mac_address": addr_val,
                         "pin": pin_val,
                     }
+                    # Cleared whenever the MAC is edited, so this is the
+                    # name heard for this MAC.
+                    module_name = bt_state.get("module_name")
+                    if module_name:
+                        config["device_name"] = module_name
 
                 # A Green in hand is what entitles this save to record
                 # a Proven PIN.  The record is still corroborated
@@ -818,10 +898,9 @@ def input_page() -> None:
 def _discover_bluetooth_devices(
     mgr: Any,
     scan_seconds: int = DEFAULT_BT_SCAN_DURATION_SECONDS,
-) -> list[dict[str, str]]:
-    """Discover Bluetooth devices using BluetoothManager.
+) -> list[DiscoveredDevice]:
+    """Scan with the Relay's ``BluetoothManager`` and order the results.
 
-    Scans for nearby devices and also includes already-known/paired devices.
     Called via ``asyncio.to_thread()`` since BluetoothManager is sync.
 
     Args:
@@ -831,83 +910,19 @@ def _discover_bluetooth_devices(
             defaults to :data:`DEFAULT_BT_SCAN_DURATION_SECONDS` (20).
 
     Returns:
-        List of dicts with 'name', 'mac', 'paired' keys.
-    """
-    import asyncio as _asyncio
+        The devices the scan found or BlueZ already knew: named and
+        paired first, then named, then nameless; alphabetical within.
 
+    Raises:
+        Exception: Whatever the scan raised, for the page to report.
+    """
     # Clamp to a sane positive duration so a misconfigured caller can't
-    # turn the scan into a no-op or hang the page forever.
+    # turn the scan into a no-op.
     if scan_seconds <= 0:
         scan_seconds = DEFAULT_BT_SCAN_DURATION_SECONDS
 
-    devices: list[dict[str, str]] = []
-
-    try:
-        # Use the manager's internal async method to get managed objects
-        # which includes both known and recently-discovered devices.
-        # We need to run the async discovery on the manager's own loop.
-
-        async def _get_devices() -> list[dict[str, str]]:
-            result: list[dict[str, str]] = []
-
-            if mgr._bus is None:
-                return result
-
-            try:
-                # Start a scan to find new devices
-                if mgr._adapter is not None:
-                    try:
-                        await mgr._adapter.call_start_discovery()  # type: ignore[attr-defined]
-                        await _asyncio.sleep(scan_seconds)
-                    except Exception:
-                        pass  # May fail if already scanning
-                    try:
-                        await mgr._adapter.call_stop_discovery()  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-
-                # Get all managed objects (includes discovered + paired)
-                root_intro = await mgr._get_introspection("/")
-                manager_proxy = mgr._bus.get_proxy_object("org.bluez", "/", root_intro)
-                obj_manager = manager_proxy.get_interface(
-                    "org.freedesktop.DBus.ObjectManager"
-                )
-                raw_objects = await obj_manager.call_get_managed_objects()  # type: ignore[attr-defined]
-
-                for _path, interfaces in raw_objects.items():
-                    if "org.bluez.Device1" in interfaces:
-                        props = interfaces["org.bluez.Device1"]
-                        name = mgr._unwrap_variant(props.get("Name"))
-                        address = mgr._unwrap_variant(props.get("Address"))
-                        paired = mgr._unwrap_variant(props.get("Paired", False))
-                        if address:
-                            result.append(
-                                {
-                                    "name": str(name or "Unknown"),
-                                    "mac": str(address),
-                                    "paired": "yes" if paired else "",
-                                }
-                            )
-
-            except Exception as exc:
-                logger.debug("Error getting BT devices: %s", exc)
-
-            return result
-
-        # Dispatch to the manager's background event loop
-        future = _asyncio.run_coroutine_threadsafe(_get_devices(), mgr._loop)
-        devices = future.result(timeout=30)
-
-    except Exception as exc:
-        logger.warning("Bluetooth device discovery failed: %s", exc)
-
-    # Sort: named + paired first, named + unpaired second, "Unknown" last
-    devices.sort(
-        key=lambda d: (
-            d["name"] == "Unknown",  # Unknown → bottom
-            not d.get("paired"),  # Paired → top
-            d["name"].lower(),  # Alphabetical within groups
-        )
+    devices: list[DiscoveredDevice] = mgr.discover_devices(scan_seconds)
+    return sorted(
+        devices,
+        key=lambda d: (not d.name, not d.paired, (d.name or "").lower()),
     )
-
-    return devices

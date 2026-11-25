@@ -16,6 +16,9 @@ scan duration back to a too-short value.
 
 from __future__ import annotations
 
+import pytest
+from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
+
 from sp_rtk_base.ui.pages import input as input_page
 
 
@@ -71,27 +74,50 @@ class TestDiscoverBluetoothDevicesScanSeconds:
         )
 
     def test_non_positive_scan_seconds_is_clamped_to_default(self) -> None:
-        """A 0/negative value is replaced with the default — never used as a sleep.
+        """A 0/negative value scans for the default — never ``sleep(0)``."""
+        mgr = _ScanMgr([])
 
-        We can't easily exercise the live D-Bus path in a unit test, but
-        we can verify the helper exits cleanly when there is no bus and
-        does not raise when given a non-positive scan duration (it must
-        silently swap in the default rather than calling ``sleep(0)`` or
-        ``sleep(-5)``, either of which would defeat the whole point).
-        """
+        input_page._discover_bluetooth_devices(mgr, scan_seconds=0)
+        input_page._discover_bluetooth_devices(mgr, scan_seconds=-5)
+        input_page._discover_bluetooth_devices(mgr, scan_seconds=45)
 
-        class _FakeMgr:
-            _bus = None  # short-circuit at the top of _get_devices
-            _loop = None
-            _adapter = None
+        default = input_page.DEFAULT_BT_SCAN_DURATION_SECONDS
+        assert mgr.scans == [default, default, 45]
 
-        # The outer try in the helper swallows attribute errors that
-        # come from _loop=None; the important contract is "does not
-        # raise on a non-positive scan_seconds", which mirrors what
-        # the UI dropdown will guarantee but the helper must enforce
-        # defensively for direct callers (tests, future scripts).
-        result = input_page._discover_bluetooth_devices(_FakeMgr(), scan_seconds=0)
-        assert result == []
 
-        result = input_page._discover_bluetooth_devices(_FakeMgr(), scan_seconds=-5)
-        assert result == []
+class TestDiscoverBluetoothDevicesListing:
+    """The scan lists what the manager's public ``discover_devices`` found."""
+
+    def test_named_paired_first_then_named_then_nameless(self) -> None:
+        mgr = _ScanMgr(
+            [
+                DiscoveredDevice("00:00:00:00:00:01", None, paired=True),
+                DiscoveredDevice("00:00:00:00:00:02", "zeta", paired=False),
+                DiscoveredDevice("00:00:00:00:00:03", "Alpha", paired=False),
+                DiscoveredDevice("00:00:00:00:00:04", "RTK_BASE_TST", paired=True),
+            ]
+        )
+
+        found = input_page._discover_bluetooth_devices(mgr, scan_seconds=20)
+
+        assert [d.mac_address[-2:] for d in found] == ["04", "03", "02", "01"]
+
+    def test_a_failed_scan_is_raised_for_the_page_to_report(self) -> None:
+        class _BrokenMgr:
+            def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
+                raise RuntimeError("BlueZ is not running")
+
+        with pytest.raises(RuntimeError, match="BlueZ is not running"):
+            input_page._discover_bluetooth_devices(_BrokenMgr(), scan_seconds=20)
+
+
+class _ScanMgr:
+    """Stands in for the Relay's ``BluetoothManager`` scan."""
+
+    def __init__(self, devices: list[DiscoveredDevice]) -> None:
+        self._devices = devices
+        self.scans: list[float] = []
+
+    def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
+        self.scans.append(scan_seconds)
+        return list(self._devices)

@@ -44,9 +44,11 @@ from sp_rtk_base.services.drivers import list_drivers
 from sp_rtk_base.ui.console_link_status import (
     MODULE_NOTE,
     SET_UP_BLUETOOTH_PROMPT,
+    ModuleLine,
     bluetooth_module_line,
     cancel_allowed,
     connected_line,
+    connected_line_detail,
     kind_locked,
     stage_rows,
 )
@@ -222,7 +224,9 @@ class ConsoleLinkPanel:
         state = status.state
         bluetooth = self._kind == "bluetooth"
 
-        self._render_status(state, connected_line(status))
+        self._render_status(
+            state, connected_line(status), connected_line_detail(status)
+        )
         self.toggle.set_enabled(not kind_locked(state))
         for serial_only in (self.port_select, self.baud_select, self.detect_btn):
             serial_only.set_visibility(not bluetooth)
@@ -242,7 +246,9 @@ class ConsoleLinkPanel:
             self._cancel_btn.set_enabled(cancel_allowed(stages))
         self._render_stages(stages)
 
-    def _render_status(self, state: DeviceConnectionState, connected: str) -> None:
+    def _render_status(
+        self, state: DeviceConnectionState, connected: str, hover: str | None
+    ) -> None:
         self._status_row.clear()
         with self._status_row:
             if state == DeviceConnectionState.CONNECTED:
@@ -257,9 +263,13 @@ class ConsoleLinkPanel:
             else:
                 ui.icon("link_off").classes("text-grey text-h6")
                 text, tone = "Disconnected", "text-grey"
-            ui.label(text).classes(tone).props("data-testid=console-link-status")
+            label = (
+                ui.label(text).classes(tone).props("data-testid=console-link-status")
+            )
+            if state == DeviceConnectionState.CONNECTED and hover:
+                label.tooltip(hover)
 
-    def _render_bluetooth_side(self, module: str | None) -> None:
+    def _render_bluetooth_side(self, module: ModuleLine | None) -> None:
         self._bluetooth_side.clear()
         with self._bluetooth_side:
             if module is None:
@@ -269,8 +279,12 @@ class ConsoleLinkPanel:
                 return
             with ui.row().classes("items-center gap-1"):
                 ui.icon("bluetooth").classes("text-blue")
-                ui.label(module).classes("text-body2").props(
+                ui.label(module.text).classes("text-body2").props(
                     "data-testid=console-link-module"
+                )
+            if module.detail:
+                ui.label(module.detail).classes("text-caption text-grey-5").props(
+                    "data-testid=console-link-module-mac"
                 )
             ui.label(MODULE_NOTE).classes("text-caption text-grey-5")
 

@@ -132,7 +132,7 @@ class TestConnectOverBluetooth:
         resp = client.post("/api/device/connect", json=BLUETOOTH)
 
         assert resp.status_code == 200, resp.text
-        assert f"over Bluetooth {DEVICE_NAME}" in resp.json()["message"]
+        assert f"over Bluetooth {DEVICE_NAME} ({MAC})" in resp.json()["message"]
         status = client.get("/api/device/status").json()
         assert status["state"] == "connected"
         assert status["link"] == {
@@ -572,6 +572,9 @@ class TestHandOffOverBluetooth:
         resp = handoff_client.post("/api/device/handoff")
 
         assert resp.status_code == 200, resp.text
+        assert resp.json()["message"] == (
+            f"Handed off Bluetooth {DEVICE_NAME} ({MAC}) to relay engine"
+        )
         status = handoff_client.get("/api/device/status").json()
         assert status["state"] == "disconnected"
         # ADR 0002's teardown, once.

@@ -63,3 +63,16 @@ from sp_rtk_base.models.verification_models import (  # noqa: E402
 from sp_rtk_base.models.verification_models import (  # noqa: E402
     build_result as build_result,
 )
+
+
+class BluetoothVerificationResult(VerificationResult):
+    """A Bluetooth Verification's outcome, with the Module name it heard.
+
+    ``module_name`` is what BlueZ reported for the verified MAC once it
+    knew the device, or ``None`` when none was heard (including when the
+    name couldn't be read: that never changes the verdict). The Input
+    page fills it into the form, so the next Save persists it; the
+    Verification itself never writes the saved profile.
+    """
+
+    module_name: str | None = None

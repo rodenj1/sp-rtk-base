@@ -24,9 +24,11 @@ from sp_rtk_base.models.device_models import (
 )
 from sp_rtk_base.ui.console_link_status import (
     SET_UP_BLUETOOTH_PROMPT,
+    ModuleLine,
     bluetooth_module_line,
     cancel_allowed,
     connected_line,
+    connected_line_detail,
     kind_locked,
     stage_rows,
 )
@@ -43,6 +45,11 @@ def _bluetooth_profile() -> InputProfile:
             "pin": "1234",
         },
     )
+
+
+def _text(line: ModuleLine | None) -> str:
+    assert line is not None
+    return line.text
 
 
 def _stages(
@@ -79,7 +86,7 @@ class TestConnectedLine:
             == "Connected: Bluetooth · RTK_BASE_TST · console port unknown"
         )
 
-    def test_a_module_without_a_name_is_named_by_its_mac(self) -> None:
+    def test_a_module_without_a_name_is_an_unnamed_module(self) -> None:
         status = DeviceStatus(
             state=DeviceConnectionState.CONNECTED,
             link=BluetoothLink(mac="98:D3:71:FE:FC:47"),
@@ -88,8 +95,26 @@ class TestConnectedLine:
 
         assert (
             connected_line(status)
-            == "Connected: Bluetooth · 98:D3:71:FE:FC:47 · console port UART2"
+            == "Connected: Bluetooth · Unnamed module · console port UART2"
         )
+
+    def test_the_mac_is_the_bluetooth_lines_hover_detail(self) -> None:
+        named = DeviceStatus(state=DeviceConnectionState.CONNECTED, link=MODULE)
+        unnamed = DeviceStatus(
+            state=DeviceConnectionState.CONNECTED,
+            link=BluetoothLink(mac="98:D3:71:FE:FC:47"),
+        )
+
+        assert connected_line_detail(named) == "MAC 98:D3:71:FE:FC:47"
+        assert connected_line_detail(unnamed) == "MAC 98:D3:71:FE:FC:47"
+
+    def test_a_serial_line_has_no_hover_detail(self) -> None:
+        status = DeviceStatus(
+            state=DeviceConnectionState.CONNECTED,
+            link=SerialLink(port="/dev/ttyUSB1", baud_rate=57600),
+        )
+
+        assert connected_line_detail(status) is None
 
     def test_serial_names_the_port_and_rate(self) -> None:
         status = DeviceStatus(
@@ -108,17 +133,31 @@ class TestConnectedLine:
 class TestBluetoothModuleLine:
     """The Bluetooth side shows the Input profile's module, or nothing to use."""
 
-    def test_names_the_module_and_its_mac(self) -> None:
+    def test_leads_with_the_module_name_with_the_mac_as_detail(self) -> None:
         line = bluetooth_module_line(_bluetooth_profile(), None)
 
         assert line is not None
-        assert line.startswith("RTK_BASE_TST · 98:D3:71:FE:FC:47 · ")
+        assert line.text.startswith("RTK_BASE_TST · ")
+        assert "98:D3:71:FE:FC:47" not in line.text
+        assert line.detail == "MAC 98:D3:71:FE:FC:47"
+
+    def test_a_profile_without_a_module_name_is_an_unnamed_module(self) -> None:
+        profile = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "98:D3:71:FE:FC:47", "pin": "1234"},
+        )
+
+        line = bluetooth_module_line(profile, None)
+
+        assert line is not None
+        assert line.text.startswith("Unnamed module · ")
+        assert line.detail == "MAC 98:D3:71:FE:FC:47"
 
     def test_pairing_is_unchecked_before_any_connect(self) -> None:
         line = bluetooth_module_line(_bluetooth_profile(), None)
 
         assert line is not None
-        assert line.endswith("pairing not checked yet")
+        assert line.text.endswith("pairing not checked yet")
 
     def test_paired_at_the_last_connect_once_one_found_or_made_the_bond(
         self,
@@ -126,10 +165,10 @@ class TestBluetoothModuleLine:
         skipped = _stages((ConnectStageStatus.SKIPPED, ConnectStageCode.BONDED))
         paired = _stages((ConnectStageStatus.PASSED, None))
 
-        assert str(bluetooth_module_line(_bluetooth_profile(), skipped)).endswith(
+        assert _text(bluetooth_module_line(_bluetooth_profile(), skipped)).endswith(
             "· paired at the last connect"
         )
-        assert str(bluetooth_module_line(_bluetooth_profile(), paired)).endswith(
+        assert _text(bluetooth_module_line(_bluetooth_profile(), paired)).endswith(
             "· paired at the last connect"
         )
 
@@ -137,7 +176,7 @@ class TestBluetoothModuleLine:
         # The PIN is only tried when there is no Bond.
         refused = _stages((ConnectStageStatus.FAILED, ConnectStageCode.PIN_REJECTED))
 
-        assert str(bluetooth_module_line(_bluetooth_profile(), refused)).endswith(
+        assert _text(bluetooth_module_line(_bluetooth_profile(), refused)).endswith(
             "· not paired at the last connect"
         )
 
@@ -150,7 +189,7 @@ class TestBluetoothModuleLine:
     ) -> None:
         failed = _stages((ConnectStageStatus.FAILED, code))
 
-        line = str(bluetooth_module_line(_bluetooth_profile(), failed))
+        line = _text(bluetooth_module_line(_bluetooth_profile(), failed))
 
         assert line.endswith("· pairing unknown")
         assert "not paired" not in line
@@ -239,3 +278,24 @@ class TestControls:
 
         assert cancel_allowed(pairing)
         assert cancel_allowed(None)
+
+
+class TestBluetoothLinkNaming:
+    """Messages name a Bluetooth link by its Module name, MAC as detail."""
+
+    def test_the_module_name_names_the_module(self) -> None:
+        assert MODULE.module_name == "RTK_BASE_TST"
+
+    def test_without_a_module_name_it_is_an_unnamed_module(self) -> None:
+        assert BluetoothLink(mac="98:D3:71:FE:FC:47").module_name == "Unnamed module"
+
+    def test_messages_lead_with_the_name_and_keep_the_mac(self) -> None:
+        assert MODULE.described == "Bluetooth RTK_BASE_TST (98:D3:71:FE:FC:47)"
+
+    def test_an_unnamed_module_is_described_with_its_mac(self) -> None:
+        link = BluetoothLink(mac="98:D3:71:FE:FC:47")
+
+        assert link.described == "Bluetooth Unnamed module (98:D3:71:FE:FC:47)"
+
+    def test_a_link_without_a_mac_is_described_by_name_alone(self) -> None:
+        assert BluetoothLink().described == "Bluetooth Unnamed module"

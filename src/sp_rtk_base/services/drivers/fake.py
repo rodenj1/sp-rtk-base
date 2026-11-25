@@ -49,6 +49,7 @@ import time
 from collections import deque
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sp_rtk_base.models.device_models import (
     ALL_RTCM_MESSAGE_IDS as _ALL_RTCM_IDS,
@@ -91,6 +92,9 @@ from sp_rtk_base.services.drivers.base import GpsReceiverDriver
 from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
 from sp_rtk_base.services.drivers.console_link import LinkOpener, LinkStream
 from sp_rtk_base.services.geodesy import llh_to_ecef
+
+if TYPE_CHECKING:
+    from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
 
 # ---------------------------------------------------------------------------
 # Hard-coded fixtures (see module docstring for rationale)
@@ -267,6 +271,101 @@ class FakeBluetoothLinkOpener(BluetoothLinkOpener):
             ConnectStage.CONNECT, ConnectStageStatus.PASSED, message="RFCOMM channel 1"
         )
         return _NullStream()
+
+
+#: The Bluetooth modules in range of the fake GPS's BlueZ (e2e): a named
+#: one, paired, and a nameless one, unpaired. A scan lists them and a
+#: Verification reaches them (with any PIN); every other MAC is out of
+#: range, so a Verification of it is Red at ``discover``.
+FAKE_BT_MODULE_MAC: str = "00:1A:7D:DA:71:13"
+FAKE_BT_MODULE_NAME: str = "RTK_BASE_SCAN"
+FAKE_BT_NAMELESS_MAC: str = "00:1A:7D:DA:71:14"
+#: ``(MAC, Module name or None, paired)``, in the order a scan lists them.
+FAKE_BT_MODULES: tuple[tuple[str, str | None, bool], ...] = (
+    (FAKE_BT_NAMELESS_MAC, None, False),
+    (FAKE_BT_MODULE_MAC, FAKE_BT_MODULE_NAME, True),
+)
+
+
+def _bluetooth_error(message: str) -> Exception:
+    """The relay's ``BluetoothError``, imported lazily like elsewhere."""
+    from sp_rtk_base_relay.core.bluetooth_manager import BluetoothError
+
+    return BluetoothError(message)
+
+
+class FakeBluetoothManager:
+    """The relay's ``BluetoothManager`` with no BlueZ behind it.
+
+    Wired in place of the real one when the fake GPS is on (see
+    ``services.bluetooth_manager_factory``), for both the Input page's
+    scan and the Bluetooth Verification, so a module picked from the
+    scan can be verified end to end. Only :data:`FAKE_BT_MODULES` are in
+    range; a scan returns at once.
+    """
+
+    def __init__(self, adapter_name: str = "hci0") -> None:
+        self.adapter_name = adapter_name
+
+    @staticmethod
+    def _module(mac_address: str | None) -> tuple[str, str | None, bool] | None:
+        wanted = (mac_address or "").upper()
+        return next((m for m in FAKE_BT_MODULES if m[0] == wanted), None)
+
+    def discover_devices(self, scan_seconds: float) -> list[DiscoveredDevice]:
+        """The modules in range; ``scan_seconds`` is not waited out."""
+        from sp_rtk_base_relay.core.bluetooth_manager import DiscoveredDevice
+
+        return [
+            DiscoveredDevice(mac, name, paired=paired)
+            for mac, name, paired in FAKE_BT_MODULES
+        ]
+
+    def ensure_device_ready(
+        self,
+        pin: str,
+        device_name: str | None = None,
+        mac_address: str | None = None,
+        scan_timeout: int = 30,
+    ) -> tuple[str, int]:
+        module = self._module(mac_address)
+        if module is None:
+            raise _bluetooth_error(f"Device {mac_address} not found")
+        return module[0], 1
+
+    def force_repair(self, mac_address: str, pin: str, scan_timeout: int = 30) -> bool:
+        if self._module(mac_address) is None:
+            raise _bluetooth_error(f"pair stage failed: Device {mac_address} not found")
+        return True
+
+    def find_device_by_mac(self, mac_address: str) -> bool:
+        return self._module(mac_address) is not None
+
+    def get_module_name(self, mac_address: str) -> str | None:
+        module = self._module(mac_address)
+        return module[1] if module is not None else None
+
+    def disconnect_device(self, mac_address: str) -> bool:
+        return True
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+class FakeVerificationSocket:
+    """An RFCOMM socket to the fake module: it connects, then sends nothing."""
+
+    def settimeout(self, value: float | None) -> None:
+        pass
+
+    def connect(self, address: tuple[str, int]) -> None:
+        pass
+
+    def recv(self, size: int) -> bytes:
+        raise TimeoutError("timed out")
+
+    def close(self) -> None:
+        pass
 
 
 def _count_frames(data: bytes) -> int:

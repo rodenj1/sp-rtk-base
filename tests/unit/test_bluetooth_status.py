@@ -18,6 +18,7 @@ from sp_rtk_base.models.bluetooth_models import (
     VerificationStage,
     build_result,
 )
+from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
 from sp_rtk_base.ui.bluetooth_status import (
     HeldGreen,
@@ -25,6 +26,9 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_green_lost,
     describe_refusal,
     describe_result,
+    manual_entry_starts_open,
+    scan_card,
+    selected_module,
 )
 
 ORDER = VerificationStage.ordered()
@@ -386,3 +390,64 @@ class TestTheChannelReachesTheOperator:
             _failed(VerificationStage.PAIR, "pin_rejected")
         )
         assert "RFCOMM" not in line.text
+
+
+class TestSelectedModule:
+    """The Input page shows the selected module by its Module name."""
+
+    def test_leads_with_the_module_name_with_the_mac_as_detail(self) -> None:
+        shown = selected_module("98:D3:71:FE:FC:47", "RTK_BASE_TST")
+
+        assert shown.text == "RTK_BASE_TST"
+        assert shown.detail == "MAC 98:D3:71:FE:FC:47"
+
+    def test_a_mac_without_a_module_name_is_an_unnamed_module(self) -> None:
+        shown = selected_module("98:D3:71:FE:FC:47", None)
+
+        assert shown.text == "Unnamed module"
+        assert shown.detail == "MAC 98:D3:71:FE:FC:47"
+
+    def test_no_mac_is_no_module_selected(self) -> None:
+        shown = selected_module("", None)
+
+        assert shown.text == "No module selected"
+        assert shown.detail is None
+
+
+class TestScanCard:
+    """Scan cards lead with the Module name; the MAC is small."""
+
+    def test_leads_with_the_advertised_name(self) -> None:
+        card = scan_card("RTK_BASE_TST", "98:D3:71:FE:FC:47")
+
+        assert card.text == "RTK_BASE_TST"
+        assert card.detail == "MAC 98:D3:71:FE:FC:47"
+
+    def test_a_module_advertising_no_name_is_an_unnamed_module(self) -> None:
+        assert scan_card(None, "98:D3:71:FE:FC:47").text == "Unnamed module"
+        assert scan_card("", "98:D3:71:FE:FC:47").text == "Unnamed module"
+
+
+class TestManualEntryStartsOpen:
+    """The MAC box starts open only when there's no name to show instead."""
+
+    def test_open_for_a_saved_mac_with_no_module_name(self) -> None:
+        profile = InputProfile(
+            source="bluetooth", config={"mac_address": "98:D3:71:FE:FC:47"}
+        )
+
+        assert manual_entry_starts_open(profile) is True
+
+    def test_closed_for_a_saved_mac_with_its_module_name(self) -> None:
+        profile = InputProfile(
+            source="bluetooth",
+            config={"mac_address": "98:D3:71:FE:FC:47", "device_name": "RTK_BASE_TST"},
+        )
+
+        assert manual_entry_starts_open(profile) is False
+
+    def test_closed_with_no_bluetooth_profile_saved(self) -> None:
+        tcp = InputProfile(source="tcp", config={"host": "h", "port": 1})
+
+        assert manual_entry_starts_open(tcp) is False
+        assert manual_entry_starts_open(None) is False

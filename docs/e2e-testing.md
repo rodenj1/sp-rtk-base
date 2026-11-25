@@ -148,6 +148,7 @@ uv run playwright show-trace test-results/.../trace.zip
 | `test_outputs_buttons.py`         | Outputs page: Add Destination dialog, validation warning, Delete dialog          |
 | `test_gps_config_buttons.py`      | Advanced GPS page: Disconnect, Save-to-Flash, Load GNSS, Apply GNSS buttons      |
 | `test_input_buttons.py`           | Input page: Save TCP host/port → success toast → YAML export round-trip          |
+| `test_input_bluetooth_section.py` | Input page's Bluetooth section: the selected module shown by its Module name, the MAC behind "Enter address manually", editing the MAC drops the name; a scan on the fake (`FakeBluetoothManager`: one named module, one nameless) whose pick selects the module by name and saves MAC and `device_name` together, and a nameless pick saves no name |
 | `test_outputs_ntrip_username.py`  | An NTRIP v2 output needs a username: Add refuses one without, v1 needs none, Edit refuses then fixes a legacy one and its card warning clears |
 | `test_outputs_password_write_only.py` | A destination's password is write-only: the edit dialog shows a "(saved)" placeholder, never the password; a blank save keeps it; Remove saved password clears it |
 | `test_survey_correction_sources.py` | Survey-In card's Plain / Corrected toggle (limits and labels swap, Start needs a chosen Correction source when corrected), New / Edit Correction source dialogs (password write-only, blank keeps it, remove, delete), last-used source preselected |
@@ -277,6 +278,24 @@ unset never see it.
    changes only the pacing: each Observation still counts one second, so a
    60 s survey completes after 60 Observations (about 6 s) and still reports
    `duration_seconds` = 60.
+   Everything that talks to BlueZ gets `FakeBluetoothManager` in place
+   of the Relay's `BluetoothManager`, chosen in one place
+   (`services.bluetooth_manager_factory()`): the Input page's Bluetooth
+   scan, the Bluetooth Verification behind Test Connection, and the
+   Module name read after a Bluetooth Start. Its modules
+   (`FAKE_BT_MODULES`) serve the scan and the Verification alike, so a
+   module picked from the scan verifies:
+   - `FAKE_BT_MODULE_MAC` `00:1A:7D:DA:71:13`, Module name
+     `RTK_BASE_SCAN` (`FAKE_BT_MODULE_NAME`), paired;
+   - `FAKE_BT_NAMELESS_MAC` `00:1A:7D:DA:71:14`, no Module name,
+     unpaired.
+
+   A scan returns at once. A Verification of either module pairs with
+   any PIN, connects over `FakeVerificationSocket` (which then sends
+   nothing, so the `data` Stage is a Warning) and reports the module's
+   Module name; any other MAC is out of range, so its Verification is
+   Red. The fake manager's behaviour is unit-tested in
+   `tests/unit/test_fake_driver.py` (`TestFakeBluetoothManager`).
 4. A function-scoped fixture `connected_gps` POSTs
    `/api/device/connect` with
    `{"vendor": "fake", "port": "FAKE", "baud_rate": 115200}` and

@@ -28,14 +28,17 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from sp_rtk_base.models.bluetooth_models import (
+    BluetoothVerificationResult,
     StageResult,
     StageStatus,
-    VerificationResult,
     VerificationStage,
     build_result,
     normalize_pin,
 )
-from sp_rtk_base.services.drivers.bluetooth_link import rfcomm_socket
+from sp_rtk_base.services.drivers.bluetooth_link import (
+    read_module_name,
+    rfcomm_socket,
+)
 from sp_rtk_base.services.verification import (
     VerificationRefusedError as VerificationRefusedError,
 )
@@ -224,7 +227,7 @@ class BluetoothVerificationService:
         pin: str,
         adapter: str = "hci0",
         confirm_repair: bool = False,
-    ) -> VerificationResult:
+    ) -> BluetoothVerificationResult:
         """Run a Verification against *mac_address*.
 
         Args:
@@ -240,7 +243,8 @@ class BluetoothVerificationService:
                 force-repair.
 
         Returns:
-            The :class:`VerificationResult` — Green or Red.
+            The :class:`BluetoothVerificationResult` — Green or Red, with
+            the Module name BlueZ reported for *mac_address*, if any.
 
         Raises:
             VerificationRefusedError: The Verification did not run and
@@ -346,7 +350,7 @@ class BluetoothVerificationService:
         pin: str,
         adapter: str,
         repair_needed: bool,
-    ) -> VerificationResult:
+    ) -> BluetoothVerificationResult:
         """Walk the five Stages, then tear down exactly as the relay does.
 
         Owns *manager* and closes it last on every path.  The RFCOMM
@@ -372,6 +376,7 @@ class BluetoothVerificationService:
 
         recorded: dict[VerificationStage, StageResult] = {}
         link: Any = None
+        module_name: str | None = None
 
         try:
             prepared = not repair_needed or self._walk_repair_path(
@@ -381,6 +386,11 @@ class BluetoothVerificationService:
                 link = self._open_link(manager, mac_address, cfg, recorded)
                 if link is not None:
                     self._read_first_frame(link.socket, cfg, recorded)
+            # Only once BlueZ knows the device, and before teardown
+            # closes the manager.
+            discovered = recorded.get(VerificationStage.DISCOVER)
+            if discovered is not None and discovered.status is StageStatus.PASSED:
+                module_name = read_module_name(manager, mac_address)
         finally:
             # There is deliberately no warm-ACL handoff to a following
             # Start: leaving BlueZ in a state a clean shutdown would
@@ -393,8 +403,11 @@ class BluetoothVerificationService:
                 # No link, so no socket: Disconnect, then the manager.
                 _close_without_link(manager, mac_address)
 
-        return build_result(
+        result = build_result(
             recorded, rfcomm_channel=link.channel if link is not None else None
+        )
+        return BluetoothVerificationResult(
+            **result.model_dump(), module_name=module_name
         )
 
     def _walk_repair_path(

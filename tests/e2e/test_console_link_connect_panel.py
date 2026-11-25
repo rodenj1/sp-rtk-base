@@ -82,7 +82,10 @@ def test_bluetooth_side_of_the_connect_panel(
     page.goto(f"{base_url}/survey")
     bluetooth_btn.click()
     expect(page.get_by_test_id("console-link-module")).to_contain_text(
-        "RTK_BASE_TST · 98:D3:71:FE:FC:47"
+        "RTK_BASE_TST · "
+    )
+    expect(page.get_by_test_id("console-link-module-mac")).to_have_text(
+        "MAC 98:D3:71:FE:FC:47"
     )
     expect(page.get_by_text("Change it on the Input page")).to_be_visible()
     _choose_fake_driver(page)

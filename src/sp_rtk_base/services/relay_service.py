@@ -8,6 +8,7 @@ dynamic destination management with async bridging via
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from collections import deque
@@ -26,6 +27,11 @@ from sp_rtk_base_relay.config import DestinationConfig, InputConfig
 from sp_rtk_base_relay.exceptions import ConfigurationError, ServiceError
 
 from sp_rtk_base.models.config_models import AppConfig, InputProfile
+from sp_rtk_base.services.drivers.bluetooth_link import (
+    ModuleNameRecorder,
+    read_module_name,
+    write_back_module_name,
+)
 from sp_rtk_base.services.relay_events import EventStream, RelayEvents
 from sp_rtk_base.services.update_guard import UpdateGuard
 
@@ -69,6 +75,46 @@ def _format_uptime(seconds: float) -> str:
     d = total // 86400
     h = (total % 86400) // 3600
     return f"{d}d {h:02d}h"
+
+
+#: How long a Start waits for the Module name read before giving up on it.
+MODULE_NAME_READ_TIMEOUT_S = 5.0
+
+
+def _default_bluetooth_manager(adapter: str) -> Any:
+    """The relay's real ``BluetoothManager``, imported late (dbus-fast)."""
+    from sp_rtk_base_relay.core.bluetooth_manager import BluetoothManager
+
+    return BluetoothManager(adapter_name=adapter)
+
+
+def _read_module_name_with_own_manager(
+    manager_factory: Callable[[str], Any], adapter: str, mac: str
+) -> str | None:
+    """Read *mac*'s Module name through a short-lived manager built here.
+
+    The engine's own manager is not reachable from here (it lives inside
+    the relay's input source), so this one is built, read once and closed.
+    Constructing a ``BluetoothManager`` always registers a pairing agent
+    with BlueZ; there is no read-only constructor. That is safe beside
+    the engine's live manager (ADR 0002):
+
+    - it is built without ``claim_default_agent``, and the engine's
+      manager claimed BlueZ's default agent explicitly, so caller-less
+      pairings keep going to the engine;
+    - it never pairs or connects, so BlueZ never sends its agent a
+      ``RequestPinCode`` of its own;
+    - it lives for one ``Device1`` read (bounded by
+      ``MODULE_NAME_READ_TIMEOUT_S``) and unregisters its agent on close.
+    """
+    manager = manager_factory(adapter)
+    try:
+        return read_module_name(manager, mac)
+    finally:
+        try:
+            manager.close()
+        except Exception as exc:
+            logger.warning("Error closing the BluetoothManager: %s", exc)
 
 
 def _summarise_input(input_config: InputConfig) -> str:
@@ -203,10 +249,26 @@ class RelayService:
     Args:
         saved_config: Returns the saved configuration that
             :meth:`start_saved` starts from (``ConfigService.get_config``).
+        bluetooth_manager_factory: Builds a ``BluetoothManager`` for an
+            adapter, to read the **Module name** after a Bluetooth start;
+            injected by tests to reach a fake BlueZ.
+        record_module_name: Hears ``(mac, Module name)`` after each
+            Bluetooth start, to write the name back to the saved profile
+            (``ConfigService.record_module_name``).
     """
 
-    def __init__(self, saved_config: Callable[[], AppConfig]) -> None:
+    def __init__(
+        self,
+        saved_config: Callable[[], AppConfig],
+        *,
+        bluetooth_manager_factory: Callable[[str], Any] | None = None,
+        record_module_name: ModuleNameRecorder | None = None,
+    ) -> None:
         self._saved_config = saved_config
+        self._bluetooth_manager_factory = (
+            bluetooth_manager_factory or _default_bluetooth_manager
+        )
+        self._record_module_name = record_module_name
         self._engine: RelayEngine | None = None
         self._input_config: InputConfig | None = None
         # Captured at each successful start so the stop log can include
@@ -382,6 +444,34 @@ class RelayService:
             trigger,
             _summarise_input(input_config),
             dest_names if dest_names else "[]",
+        )
+        await self._write_back_module_name(input_config)
+
+    async def _write_back_module_name(self, input_config: InputConfig) -> None:
+        """Hand on the **Module name** of the module the start reached (#227).
+
+        Read through a short-lived manager (see
+        :func:`_read_module_name_with_own_manager`). Never raises: a Start
+        that reached the module stays started.
+        """
+        if input_config.source != "bluetooth":
+            return
+        from sp_rtk_base.services.bluetooth_service import mac_from_input_config
+
+        mac = mac_from_input_config(input_config.config)
+        if mac is None:
+            return
+        adapter = str(input_config.config.get("adapter_name") or "hci0")
+        await write_back_module_name(
+            self._record_module_name,
+            mac,
+            functools.partial(
+                _read_module_name_with_own_manager,
+                self._bluetooth_manager_factory,
+                adapter,
+                mac,
+            ),
+            timeout=MODULE_NAME_READ_TIMEOUT_S,
         )
 
     def check_saved(self, input_profile: InputProfile | None = None) -> SavedStart:

@@ -31,13 +31,20 @@ from sp_rtk_base.fake_timing import fake_timing
 from sp_rtk_base.portal_agent.client import read_status
 from sp_rtk_base.portal_agent.protocol import socket_path
 from sp_rtk_base.services.bluetooth_link.service import BluetoothLinkService
-from sp_rtk_base.services.bluetooth_service import BluetoothVerificationService
+from sp_rtk_base.services.bluetooth_service import (
+    BluetoothVerificationService,
+    ManagerFactory,
+    SocketFactory,
+)
 from sp_rtk_base.services.config_service import ConfigService
 from sp_rtk_base.services.correction_verification import (
     CorrectionSourceVerificationService,
 )
 from sp_rtk_base.services.device_service import BluetoothOpenerFactory, DeviceService
-from sp_rtk_base.services.drivers.bluetooth_link import BluetoothLinkOpener
+from sp_rtk_base.services.drivers.bluetooth_link import (
+    BluetoothLinkOpener,
+    rfcomm_socket,
+)
 from sp_rtk_base.services.host_resources.reader import HostResourcesReader
 from sp_rtk_base.services.host_resources.service import HostResourcesService
 from sp_rtk_base.services.metrics_service import MetricsService
@@ -68,6 +75,30 @@ logger = logging.getLogger(__name__)
 
 # Set to "1" to run against the fake GPS (e2e), never on a real base station.
 FAKE_GPS_ENV = "SP_RTK_BASE_FAKE_GPS"
+
+
+def _fake_gps() -> bool:
+    """Whether this server runs against the fake GPS (e2e)."""
+    return os.environ.get(FAKE_GPS_ENV) == "1"
+
+
+def bluetooth_manager_factory() -> ManagerFactory | None:
+    """The one place that picks what talks to BlueZ: a ``BluetoothManager``.
+
+    The fake GPS (e2e) gets :class:`FakeBluetoothManager`, whose modules
+    serve the Input page's scan and the Verification alike. ``None``
+    when the relay's manager can't be imported. Called with the adapter
+    name (or nothing, for ``hci0``).
+    """
+    if _fake_gps():
+        from sp_rtk_base.services.drivers.fake import FakeBluetoothManager
+
+        return FakeBluetoothManager
+    try:
+        from sp_rtk_base_relay.core.bluetooth_manager import BluetoothManager
+    except Exception:
+        return None
+    return BluetoothManager
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +172,21 @@ def _set_auto_start_status(
 # ---------------------------------------------------------------------------
 
 config_service: ConfigService = ConfigService()
-relay_service: RelayService = RelayService(config_service.get_config)
+
+
+def _record_module_name(mac: str, name: str | None) -> None:
+    """Write the Module name heard on a connect or a Start back (#227).
+
+    Through the module global, so a reloaded ConfigService is honoured.
+    """
+    config_service.record_module_name(mac, name)
+
+
+relay_service: RelayService = RelayService(
+    config_service.get_config,
+    bluetooth_manager_factory=bluetooth_manager_factory(),
+    record_module_name=_record_module_name,
+)
 metrics_service: MetricsService = MetricsService()
 
 
@@ -150,7 +195,7 @@ def _bluetooth_opener() -> BluetoothOpenerFactory:
 
     The fake GPS (e2e) reaches a Bluetooth module with no BlueZ behind it.
     """
-    if os.environ.get(FAKE_GPS_ENV) == "1":
+    if _fake_gps():
         from sp_rtk_base.services.drivers.fake import FakeBluetoothLinkOpener
 
         return FakeBluetoothLinkOpener
@@ -162,6 +207,7 @@ def _bluetooth_opener() -> BluetoothOpenerFactory:
 device_service: DeviceService = DeviceService(
     input_profile=lambda: config_service.get_input_config(),
     bluetooth_opener=_bluetooth_opener(),
+    record_module_name=_record_module_name,
 )
 network_service: NetworkService = NetworkService()
 profile_store: ProfileStore = ProfileStore()
@@ -229,11 +275,34 @@ wire_corrected_survey(
 )
 # Signal Quality reads the Relay's MSM while it runs (every start path).
 relay_service.set_frame_subscriber(signal_quality_service)
-bluetooth_verification_service: BluetoothVerificationService = (
-    BluetoothVerificationService(
+
+
+def _bluetooth_verification_service() -> BluetoothVerificationService:
+    """The Bluetooth Verification: over BlueZ, or over the fake GPS's modules.
+
+    The fake GPS (e2e) reaches its modules with no BlueZ behind it, and an
+    RFCOMM socket to them that connects and then stays silent.
+    """
+    manager_factory = bluetooth_manager_factory()
+    if manager_factory is None:
+        return BluetoothVerificationService(
+            relay_service=relay_service, config_service=config_service
+        )
+    socket_factory: SocketFactory = rfcomm_socket
+    if _fake_gps():
+        from sp_rtk_base.services.drivers.fake import FakeVerificationSocket
+
+        socket_factory = FakeVerificationSocket
+    return BluetoothVerificationService(
         relay_service=relay_service,
         config_service=config_service,
+        manager_factory=manager_factory,
+        socket_factory=socket_factory,
     )
+
+
+bluetooth_verification_service: BluetoothVerificationService = (
+    _bluetooth_verification_service()
 )
 
 

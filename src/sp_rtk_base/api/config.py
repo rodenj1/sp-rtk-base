@@ -105,6 +105,13 @@ async def import_config(
             status_code=400, detail=f"Invalid configuration schema: {problems}"
         ) from exc
 
+    # A restore is a save too: a Bluetooth Input profile needs its MAC.
+    if config.input is not None:
+        try:
+            config.input.require_bluetooth_mac()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     names = [s.name for s in config.correction_sources]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:

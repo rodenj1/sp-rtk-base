@@ -387,6 +387,24 @@ class InputProfile(BaseModel):
             self.config["pin"] = normalize_pin(self.config.get("pin"))
         return self
 
+    def require_bluetooth_mac(self) -> None:
+        """Refuse a Bluetooth Input profile saved without a MAC.
+
+        The Relay looks a module up by its name only when no MAC is
+        given. A MAC on every saved Bluetooth profile is what keeps the
+        **Module name** (``device_name``) display-only: two modules
+        advertising the same name can't make the Relay reach the wrong
+        one. Checked on save (the Input page and ``PUT /api/input``)
+        rather than on load, so a profile already on disk still reads.
+
+        Raises:
+            ValueError: A Bluetooth profile with no MAC address.
+        """
+        if self.source != "bluetooth":
+            return
+        if not str(self.config.get("mac_address") or "").strip():
+            raise ValueError("A Bluetooth Input profile needs the module's MAC address")
+
     def to_relay_config(self) -> InputConfig:
         """Convert to sp-rtk-base-relay InputConfig dataclass.
 

@@ -40,6 +40,10 @@ from sp_rtk_base.ui.bluetooth_status import (
     describe_green_lost,
     describe_refusal,
     describe_result,
+    manual_entry_starts_open,
+    scan_card,
+    scanned_module_name,
+    selected_module,
 )
 from sp_rtk_base.ui.layout import page_layout
 from sp_rtk_base.ui.start_status import needs_setup, start_failure_text
@@ -124,10 +128,14 @@ def input_page() -> None:
             serial_port_select: dict[str, Any] = {}  # "widget" key
             serial_baud_select: dict[str, Any] = {}
 
-            # For bluetooth: address + PIN inputs, scan results, and the
-            # Green currently in hand (a :class:`HeldGreen`, or None).
+            # For bluetooth: address + PIN inputs, scan results, the
+            # Module name that came with the MAC in the form (None until
+            # one is known), and the Green currently in hand (a
+            # :class:`HeldGreen`, or None).
             bt_state: dict[str, Any] = {
                 "address_input": None,
+                "module_name": None,
+                "render_selected": None,
                 "pin_input": None,
                 "bt_manager": None,
                 "test_status_label": None,
@@ -236,9 +244,9 @@ def input_page() -> None:
                     ).classes("text-grey-4 text-caption q-mb-sm")
                 else:
                     ui.label(
-                        "Scan for nearby Bluetooth devices or enter the "
-                        "address manually. Use Test Connection to verify "
-                        "pairing before saving."
+                        "Scan for nearby Bluetooth devices and pick yours, "
+                        "or enter its address manually. Use Test Connection "
+                        "to verify pairing before saving."
                     ).classes("text-grey-4 text-caption q-mb-sm")
 
                 # ---- Scan section (only if dbus-fast available) ----
@@ -330,17 +338,29 @@ def input_page() -> None:
                                         for dev in devices:
                                             _dev = dev
 
+                                            card = scan_card(dev["name"], dev["mac"])
+
                                             def _pick_device(
                                                 d: dict[str, str] = _dev,
+                                                shown: str = card.text,
                                             ) -> None:
+                                                # The MAC and its Module
+                                                # name go in together, so
+                                                # a different pick
+                                                # replaces both.
                                                 addr_input = bt_state.get(
                                                     "address_input"
                                                 )
                                                 if addr_input:
                                                     addr_input.value = d["mac"]
+                                                bt_state["module_name"] = (
+                                                    scanned_module_name(d["name"])
+                                                )
+                                                render = bt_state.get("render_selected")
+                                                if render is not None:
+                                                    render()
                                                 ui.notify(
-                                                    f"Selected: {d['name']} "
-                                                    f"({d['mac']})",
+                                                    f"Selected: {shown}",
                                                     type="info",
                                                 )
 
@@ -359,13 +379,17 @@ def input_page() -> None:
                                                         "text-blue text-body1"
                                                     )
                                                     with ui.column().classes("gap-0"):
-                                                        ui.label(
-                                                            dev["name"] or "Unknown"
-                                                        ).classes(
-                                                            "text-white text-caption"
+                                                        ui.label(card.text).classes(
+                                                            "text-white text-body2"
+                                                        ).props(
+                                                            "data-testid=bt-scan-card-name"
                                                         )
-                                                        ui.label(dev["mac"]).classes(
+                                                        ui.label(
+                                                            card.detail or ""
+                                                        ).classes(
                                                             "text-grey-5 text-caption"
+                                                        ).props(
+                                                            "data-testid=bt-scan-card-mac"
                                                         )
                                                         if dev.get("paired"):
                                                             ui.badge("Paired").props(
@@ -410,17 +434,71 @@ def input_page() -> None:
                 # as a field that pretends to be a control.
                 saved_address = ""
                 saved_pin = "0000"
+                bt_state["module_name"] = None
                 if current_input and current_input.source == "bluetooth":
                     saved_address = str(current_input.config.get("mac_address", ""))
                     saved_pin = str(current_input.config.get("pin", "0000"))
+                    bt_state["module_name"] = (
+                        str(current_input.config.get("device_name") or "") or None
+                    )
 
-                addr_input = ui.input(
-                    "Device Address (MAC)",
-                    value=saved_address,
-                    placeholder="e.g. 00:11:22:33:44:55",
-                    validation=required("Device address"),
-                ).classes("w-full")
+                # ---- Selected module: by Module name, MAC small ----
+                with ui.row().classes("items-center gap-2 q-mt-xs no-wrap"):
+                    ui.icon("bluetooth").classes("text-blue text-h6")
+                    with ui.column().classes("gap-0"):
+                        selected_name_lbl = (
+                            ui.label("")
+                            .classes("text-white text-body1")
+                            .props("data-testid=bt-selected-module")
+                        )
+                        selected_mac_lbl = (
+                            ui.label("")
+                            .classes("text-grey-5 text-caption")
+                            .props("data-testid=bt-selected-module-mac")
+                        )
+
+                # The MAC box sits behind a link: the operator recognises
+                # the module by its Module name, not by its address. It
+                # starts open when there's no name to show instead, and
+                # whenever there's no scan to pick from.
+                with (
+                    ui.expansion(
+                        "Enter address manually",
+                        value=(
+                            not bt_available or manual_entry_starts_open(current_input)
+                        ),
+                    )
+                    .classes("w-full")
+                    .props("dense header-class=text-info")
+                ):
+                    addr_input = ui.input(
+                        "Device Address (MAC)",
+                        value=saved_address,
+                        placeholder="e.g. 00:11:22:33:44:55",
+                        validation=required("Device address"),
+                    ).classes("w-full")
                 bt_state["address_input"] = addr_input
+
+                def _render_selected() -> None:
+                    shown = selected_module(
+                        str(addr_input.value or ""), bt_state.get("module_name")
+                    )
+                    selected_name_lbl.text = shown.text
+                    selected_mac_lbl.text = shown.detail or ""
+                    selected_mac_lbl.set_visibility(shown.detail is not None)
+
+                def _on_mac_edited() -> None:
+                    """A typed MAC drops the Module name heard for the old one."""
+                    bt_state["module_name"] = None
+                    _render_selected()
+
+                bt_state["render_selected"] = _render_selected
+                # The edit event is the operator typing (a scan pick sets
+                # the value server-side and never raises it), so it clears
+                # the name; any value change, typed or picked, re-renders.
+                addr_input.on("update:model-value", lambda _: _on_mac_edited())
+                addr_input.on_value_change(lambda _: _render_selected())
+                _render_selected()
 
                 pin_input = ui.input(
                     "PIN Code",
@@ -669,6 +747,8 @@ def input_page() -> None:
                 serial_port_select.clear()
                 serial_baud_select.clear()
                 bt_state["address_input"] = None
+                bt_state["module_name"] = None
+                bt_state["render_selected"] = None
                 bt_state["pin_input"] = None
                 bt_state["bt_manager"] = None
                 # A Green describes a specific device; switching source
@@ -754,6 +834,9 @@ def input_page() -> None:
                     addr_val = str(addr_inp.value if addr_inp else "").strip()
                     pin_val = str(pin_inp.value if pin_inp else "0000").strip()
 
+                    # The MAC stays required: with a MAC on every saved
+                    # profile the Relay never looks the module up by its
+                    # Module name, which stays display-only.
                     if not addr_val:
                         ui.notify(
                             "Enter a Bluetooth device address",
@@ -764,6 +847,11 @@ def input_page() -> None:
                         "mac_address": addr_val,
                         "pin": pin_val,
                     }
+                    # Cleared whenever the MAC is edited, so this is the
+                    # name heard for this MAC.
+                    module_name = bt_state.get("module_name")
+                    if module_name:
+                        config["device_name"] = module_name
 
                 # A Green in hand is what entitles this save to record
                 # a Proven PIN.  The record is still corroborated

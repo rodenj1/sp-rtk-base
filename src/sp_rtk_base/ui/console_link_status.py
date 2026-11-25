@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from sp_rtk_base.models.config_models import InputProfile
 from sp_rtk_base.models.device_models import (
+    UNNAMED_MODULE,
     BluetoothLink,
     ConnectStage,
     ConnectStageCode,
@@ -44,6 +45,19 @@ _STAGE_LABEL: dict[ConnectStage, str] = {
 
 
 @dataclass(frozen=True)
+class ModuleLine:
+    """The Bluetooth side's module line, and the MAC shown small under it."""
+
+    text: str
+    detail: str | None
+
+
+def mac_detail(mac: str | None) -> str | None:
+    """The MAC as the small detail or hover beside a Module name."""
+    return f"MAC {mac}" if mac else None
+
+
+@dataclass(frozen=True)
 class StageRow:
     """One row of the Stage list: the Stage, where it stands, and why."""
 
@@ -53,7 +67,11 @@ class StageRow:
 
 
 def connected_line(status: DeviceStatus) -> str:
-    """The status line for a connected Console link."""
+    """The status line for a connected Console link.
+
+    A Bluetooth link names its module by Module name;
+    :func:`connected_line_detail` gives the MAC for the hover.
+    """
     link = status.link
     if isinstance(link, BluetoothLink):
         port = status.console_port.value if status.console_port else "unknown"
@@ -63,9 +81,17 @@ def connected_line(status: DeviceStatus) -> str:
     return "Connected"
 
 
+def connected_line_detail(status: DeviceStatus) -> str | None:
+    """The hover on the connected status line: a Bluetooth link's MAC."""
+    link = status.link
+    if isinstance(link, BluetoothLink):
+        return mac_detail(link.mac)
+    return None
+
+
 def bluetooth_module_line(
     profile: InputProfile | None, stages: list[ConnectStageResult] | None
-) -> str | None:
+) -> ModuleLine | None:
     """The Input profile's module, as the Bluetooth side shows it.
 
     ``None`` when the Input profile isn't Bluetooth: the side shows
@@ -73,12 +99,17 @@ def bluetooth_module_line(
     can't be read from BlueZ cheaply (ADR 0001: no public ``Paired``
     accessor), so the line says what the last connect found, and says so:
     a Bond can be lost since (a Force-repair, an eviction).
+
+    The line leads with the Module name (or :data:`UNNAMED_MODULE`); the
+    MAC is the small detail under it.
     """
     if profile is None or profile.source != "bluetooth":
         return None
-    name = str(profile.config.get("device_name") or "Unnamed module")
-    mac = str(profile.config.get("mac_address") or "no MAC")
-    return f"{name} · {mac} · {_pairing(stages)}"
+    name = str(profile.config.get("device_name") or UNNAMED_MODULE)
+    mac = str(profile.config.get("mac_address") or "") or None
+    return ModuleLine(
+        text=f"{name} · {_pairing(stages)}", detail=mac_detail(mac) or "no MAC"
+    )
 
 
 def _pairing(stages: list[ConnectStageResult] | None) -> str:

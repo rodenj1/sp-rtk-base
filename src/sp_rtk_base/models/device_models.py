@@ -95,6 +95,11 @@ class SerialLink(BaseModel):
         return f"{self.port} @ {self.baud_rate}"
 
 
+#: How the operator sees a Bluetooth module whose Module name the base
+#: hasn't heard yet. Its MAC goes beside it as the detail.
+UNNAMED_MODULE = "Unnamed module"
+
+
 class BluetoothLink(BaseModel):
     """A Bluetooth Console link, to a module wired to a receiver UART.
 
@@ -106,7 +111,7 @@ class BluetoothLink(BaseModel):
 
     kind: Literal["bluetooth"] = "bluetooth"
     device_name: str | None = Field(
-        default=None, description="The module's name, from the Input profile"
+        default=None, description="The module's Module name, from the Input profile"
     )
     mac: str | None = Field(
         default=None, description="The module's MAC address, from the Input profile"
@@ -114,12 +119,18 @@ class BluetoothLink(BaseModel):
 
     @property
     def module_name(self) -> str:
-        """The module as the operator knows it: its name, else its MAC."""
-        return self.device_name or self.mac or "unnamed module"
+        """The module as the operator knows it: its Module name, if known."""
+        return self.device_name or UNNAMED_MODULE
 
     @property
     def described(self) -> str:
-        """The link as messages and logs name it."""
+        """The link as messages and logs name it.
+
+        The Module name leads; the MAC follows as the detail, so a log
+        line still says exactly which module BlueZ was asked for.
+        """
+        if self.mac:
+            return f"Bluetooth {self.module_name} ({self.mac})"
         return f"Bluetooth {self.module_name}"
 
 

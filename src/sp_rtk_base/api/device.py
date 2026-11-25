@@ -851,7 +851,7 @@ async def _handoff_bluetooth(
 
     return DeviceActionResponse(
         status="ok",
-        message=f"Handed off {link.module_name} to relay engine",
+        message=f"Handed off {link.described} to relay engine",
     )
 
 

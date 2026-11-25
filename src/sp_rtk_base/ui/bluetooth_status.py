@@ -36,7 +36,10 @@ from sp_rtk_base.models.bluetooth_models import (
     VerificationStage,
     normalize_pin,
 )
+from sp_rtk_base.models.config_models import InputProfile
+from sp_rtk_base.models.device_models import UNNAMED_MODULE
 from sp_rtk_base.services.bluetooth_service import VerificationRefusedError
+from sp_rtk_base.ui.console_link_status import ModuleLine, mac_detail
 from sp_rtk_base.ui.status_line import StatusLine
 from sp_rtk_base.ui.verification_status import countdown_label as countdown_label
 
@@ -277,3 +280,61 @@ def describe_green_lost(reason: GreenLostReason) -> StatusLine:
         The status line and its tone.
     """
     return StatusLine(text=_GREEN_LOST_COPY[reason], tone="warning")
+
+
+#: The Input page's selected-module display before any MAC is in the form.
+NO_MODULE_SELECTED = "No module selected"
+
+
+def selected_module(mac_address: str, module_name: str | None) -> ModuleLine:
+    """The Input page's selected module: Module name first, MAC as detail.
+
+    Args:
+        mac_address: The MAC currently in the form.
+        module_name: The Module name that came with that MAC, if any.
+            The page clears it whenever the MAC is edited, so a name is
+            never shown beside a MAC it wasn't heard from.
+
+    Returns:
+        The line to show and the MAC detail under it.
+    """
+    mac = mac_address.strip()
+    if not mac:
+        return ModuleLine(text=NO_MODULE_SELECTED, detail=None)
+    return ModuleLine(text=module_name or UNNAMED_MODULE, detail=mac_detail(mac))
+
+
+#: What the discovery scan reports for a module that advertised no name.
+_SCAN_NO_NAME = "Unknown"
+
+
+def scanned_module_name(name: str | None) -> str | None:
+    """The Module name a scan result advertised, or ``None`` if none.
+
+    The scan's placeholder for a nameless module is never a Module name,
+    so picking that module saves no name rather than "Unknown".
+    """
+    if not name or name == _SCAN_NO_NAME:
+        return None
+    return name
+
+
+def scan_card(name: str | None, mac_address: str) -> ModuleLine:
+    """A discovery scan card: the advertised Module name, MAC small."""
+    return ModuleLine(
+        text=scanned_module_name(name) or UNNAMED_MODULE,
+        detail=mac_detail(mac_address),
+    )
+
+
+def manual_entry_starts_open(profile: InputProfile | None) -> bool:
+    """Whether "Enter address manually" starts open.
+
+    Open when the saved Bluetooth Input profile has a MAC but no Module
+    name: the selected-module display could only say "Unnamed module",
+    so the MAC the operator typed is shown where they typed it.
+    """
+    if profile is None or profile.source != "bluetooth":
+        return False
+    has_mac = bool(str(profile.config.get("mac_address") or "").strip())
+    return has_mac and not profile.config.get("device_name")

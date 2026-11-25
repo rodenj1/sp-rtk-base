@@ -286,3 +286,69 @@ class TestPutInputCannotMintAProvenPin:
         saved = mock_config_service.get_input_config()
         assert saved is not None
         assert saved.proven_pin is None
+
+
+class TestPutInputBluetoothModuleName:
+    """A Bluetooth Input profile keeps its Module name beside the MAC.
+
+    The MAC stays required: the Relay looks a module up by name only
+    when no MAC is given, so a MAC on every saved profile is what keeps
+    the Module name display-only.
+    """
+
+    def test_the_mac_and_module_name_are_both_persisted(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {
+                    "mac_address": "98:D3:71:FE:FC:47",
+                    "device_name": "RTK_BASE_TST",
+                    "pin": "1234",
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["config"]["device_name"] == "RTK_BASE_TST"
+        saved = mock_config_service.get_input_config()
+        assert saved is not None
+        assert saved.config["mac_address"] == "98:D3:71:FE:FC:47"
+        assert saved.config["device_name"] == "RTK_BASE_TST"
+
+    def test_a_bluetooth_profile_without_a_mac_is_refused(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {"device_name": "RTK_BASE_TST", "pin": "1234"},
+            },
+        )
+
+        assert resp.status_code == 400
+        assert "MAC" in resp.json()["message"]
+        assert mock_config_service.get_input_config() is None
+
+    def test_a_blank_mac_is_refused(
+        self,
+        api_client_with_services: TestClient,
+        mock_config_service: ConfigService,
+    ) -> None:
+        resp = api_client_with_services.put(
+            "/api/input",
+            json={
+                "source": "bluetooth",
+                "config": {"mac_address": "  ", "device_name": "RTK_BASE_TST"},
+            },
+        )
+
+        assert resp.status_code == 400
+        assert mock_config_service.get_input_config() is None

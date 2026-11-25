@@ -9,13 +9,57 @@ would first be seen by an operator.
 
 What this pins is deliberately narrow: the section builds without
 raising, the fields that should exist do, and the "RFCOMM Channel"
-field that #131 removed stays gone.
+field that #131 removed stays gone. It also pins how the section names
+the selected module (rtk_development#225): by its Module name, with the
+MAC text box behind "Enter address manually".
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
+
+import httpx
 import pytest
 from playwright.sync_api import Page, expect
+
+MAC = "98:D3:71:FE:FC:47"
+MODULE_NAME = "RTK_BASE_TST"
+
+
+def _put_input(api_base_url: str, source: str, config: dict[str, Any]) -> None:
+    resp = httpx.put(
+        f"{api_base_url}/api/input",
+        json={"source": source, "config": config},
+        timeout=5.0,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.fixture()
+def saved_input(api_base_url: str) -> Iterator[None]:
+    """Put the saved Input profile back as it was after the test."""
+    before = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    try:
+        yield
+    finally:
+        if before.get("configured"):
+            _put_input(api_base_url, before["source"], before["config"])
+
+
+def _choose_bluetooth(page: Page) -> None:
+    """Switch the form to Bluetooth and open "Enter address manually".
+
+    Whether the manual entry starts open depends on the saved Input
+    profile another test may have left, so open it only if it's shut.
+    """
+    page.get_by_label("Source Type").click()
+    page.get_by_role("option", name="bluetooth").click()
+    expect(page.get_by_text("Enter address manually")).to_be_visible(timeout=10_000)
+    mac_field = page.get_by_label("Device Address (MAC)")
+    if not mac_field.is_visible():
+        page.get_by_text("Enter address manually").click()
+    expect(mac_field).to_be_visible(timeout=10_000)
 
 
 @pytest.mark.e2e
@@ -33,8 +77,7 @@ def test_bluetooth_section_renders_without_the_rfcomm_channel_field(
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
 
-    page.get_by_label("Source Type").click()
-    page.get_by_role("option", name="bluetooth").click()
+    _choose_bluetooth(page)
 
     # The fields that survive.
     expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
@@ -72,9 +115,7 @@ def test_save_and_start_is_not_offered_without_a_green(
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
 
-    page.get_by_label("Source Type").click()
-    page.get_by_role("option", name="bluetooth").click()
-    expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
+    _choose_bluetooth(page)
 
     expect(page.get_by_role("button", name="Save & Start now →")).not_to_be_visible()
 
@@ -95,17 +136,13 @@ def test_switching_source_away_and_back_rebuilds_cleanly(
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
 
     for _ in range(3):
-        page.get_by_label("Source Type").click()
-        page.get_by_role("option", name="bluetooth").click()
-        expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
+        _choose_bluetooth(page)
 
         page.get_by_label("Source Type").click()
         page.get_by_role("option", name="tcp").click()
         expect(page.get_by_label("Host")).to_be_visible(timeout=10_000)
 
-    page.get_by_label("Source Type").click()
-    page.get_by_role("option", name="bluetooth").click()
-    expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
+    _choose_bluetooth(page)
     expect(page.get_by_role("button", name="Test Connection")).to_be_visible()
     expect(page.get_by_label("RFCOMM Channel")).to_have_count(0)
 
@@ -128,9 +165,7 @@ def test_an_unproven_pin_asks_before_it_destroys_anything(
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
 
-    page.get_by_label("Source Type").click()
-    page.get_by_role("option", name="bluetooth").click()
-    expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
+    _choose_bluetooth(page)
 
     page.get_by_label("Device Address (MAC)").fill("AA:BB:CC:DD:EE:FF")
     page.get_by_label("PIN Code").fill("4321")
@@ -162,9 +197,7 @@ def test_a_verification_that_cannot_run_reports_legibly(
     page.goto(f"{base_url}/input")
     expect(page.locator("text=Input Source").first).to_be_visible(timeout=15_000)
 
-    page.get_by_label("Source Type").click()
-    page.get_by_role("option", name="bluetooth").click()
-    expect(page.get_by_label("Device Address (MAC)")).to_be_visible(timeout=10_000)
+    _choose_bluetooth(page)
 
     page.get_by_label("Device Address (MAC)").fill("AA:BB:CC:DD:EE:FF")
     page.get_by_label("PIN Code").fill("4321")
@@ -180,3 +213,82 @@ def test_a_verification_that_cannot_run_reports_legibly(
     expect(page.get_by_role("button", name="Test Connection")).to_be_enabled(
         timeout=30_000
     )
+
+
+@pytest.mark.e2e
+def test_the_selected_module_is_shown_by_its_module_name(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """The section leads with the Module name; the MAC sits behind a link.
+
+    Editing the MAC clears the Module name at once: a name never sits
+    next to a MAC it wasn't heard from, and Save doesn't persist it.
+    """
+    _put_input(
+        api_base_url,
+        "bluetooth",
+        {"mac_address": MAC, "device_name": MODULE_NAME, "pin": "1234"},
+    )
+    page.goto(f"{base_url}/input")
+
+    selected = page.get_by_test_id("bt-selected-module")
+    selected_mac = page.get_by_test_id("bt-selected-module-mac")
+    mac_field = page.get_by_label("Device Address (MAC)")
+    expect(selected).to_have_text(MODULE_NAME, timeout=15_000)
+    expect(selected_mac).to_have_text(f"MAC {MAC}")
+    # A saved profile that names its module keeps the MAC box shut.
+    expect(mac_field).to_be_hidden()
+
+    page.get_by_text("Enter address manually").click()
+    expect(mac_field).to_be_visible()
+    expect(mac_field).to_have_value(MAC)
+
+    mac_field.fill("AA:BB:CC:DD:EE:FF")
+    expect(selected).to_have_text("Unnamed module")
+    expect(selected_mac).to_have_text("MAC AA:BB:CC:DD:EE:FF")
+
+    page.get_by_role("button", name="Save Input Config").click()
+    expect(page.get_by_text("Input source saved")).to_be_visible(timeout=10_000)
+    saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert saved["config"]["mac_address"] == "AA:BB:CC:DD:EE:FF"
+    assert not saved["config"].get("device_name")
+
+
+@pytest.mark.e2e
+def test_saving_keeps_the_module_name_that_came_with_the_mac(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """A save that leaves the MAC alone keeps its Module name."""
+    _put_input(
+        api_base_url,
+        "bluetooth",
+        {"mac_address": MAC, "device_name": MODULE_NAME, "pin": "1234"},
+    )
+    page.goto(f"{base_url}/input")
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text(
+        MODULE_NAME, timeout=15_000
+    )
+
+    page.get_by_label("PIN Code").fill("4321")
+    page.get_by_role("button", name="Save Input Config").click()
+    expect(page.get_by_text("Input source saved")).to_be_visible(timeout=10_000)
+
+    saved = httpx.get(f"{api_base_url}/api/input", timeout=5.0).json()
+    assert saved["config"]["mac_address"] == MAC
+    assert saved["config"]["device_name"] == MODULE_NAME
+
+
+@pytest.mark.e2e
+def test_a_saved_mac_without_a_module_name_opens_manual_entry(
+    page: Page, base_url: str, api_base_url: str, saved_input: None
+) -> None:
+    """With no name to show, the MAC is shown where it was typed."""
+    _put_input(api_base_url, "bluetooth", {"mac_address": MAC, "pin": "1234"})
+    page.goto(f"{base_url}/input")
+
+    expect(page.get_by_test_id("bt-selected-module")).to_have_text(
+        "Unnamed module", timeout=15_000
+    )
+    expect(page.get_by_test_id("bt-selected-module-mac")).to_have_text(f"MAC {MAC}")
+    expect(page.get_by_label("Device Address (MAC)")).to_be_visible()
+    expect(page.get_by_label("Device Address (MAC)")).to_have_value(MAC)

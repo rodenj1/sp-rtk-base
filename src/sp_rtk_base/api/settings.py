@@ -105,6 +105,7 @@ async def update_input_config(
             source=request.source,  # type: ignore[arg-type]
             config=request.config,
         )
+        profile.require_bluetooth_mac()
         config_svc.save_input_config(profile)
         logger.info("Updated input config: source=%s", request.source)
 

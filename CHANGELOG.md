@@ -23,6 +23,14 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   ("Remote session active: <email>, <email> via the Portal"), on `:8080`
   and inside the Portal's frame; it clears within a few seconds of the last
   Remote session ending.
+- **Bluetooth modules are shown by their Module name** (rtk_development#225):
+  picking a module from the Input page's scan saves its advertised name
+  (`device_name`) with its MAC, and the Input page, the Console link's
+  Bluetooth side, the "Connected: Bluetooth · …" line and handoff and
+  connect messages lead with that name, the MAC as small detail or hover.
+  A module with no name yet shows as "Unnamed module". The Input page's MAC
+  box moves behind "Enter address manually"; editing the MAC clears the
+  name. `PUT /api/input` now refuses a Bluetooth profile without a MAC.
 
 ### Changed
 

@@ -7,6 +7,8 @@ unavailable.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -25,6 +27,22 @@ def _sources(page: Page, api_base_url: str) -> dict[str, Any]:
     assert response.ok, response.text()
     payload: dict[str, Any] = response.json()
     return payload
+
+
+def _wait_for_source(
+    page: Page, api_base_url: str, ready: Callable[[dict[str, Any]], bool]
+) -> dict[str, Any]:
+    """The first saved source once ``ready`` holds for it.
+
+    A "Saved '<name>'" toast can't mark an edit's save: the create before
+    it shows the same text, and that toast may still be on screen.
+    """
+    deadline = time.monotonic() + 10
+    while True:
+        source: dict[str, Any] = _sources(page, api_base_url)["sources"][0]
+        if ready(source) or time.monotonic() > deadline:
+            return source
+        time.sleep(0.2)
 
 
 def _create_in_dialog(page: Page, name: str) -> None:
@@ -115,7 +133,7 @@ def test_editing_keeps_a_blank_password_removes_it_on_request_and_deletes(
     page.get_by_label("Port", exact=True).fill("2102")
     page.get_by_role("button", name="Save", exact=True).click()
     expect(page.locator("text=Saved 'my-caster'").first).to_be_visible(timeout=10_000)
-    source = _sources(page, api_base_url)["sources"][0]
+    source = _wait_for_source(page, api_base_url, lambda s: s["port"] == 2102)
     assert (source["port"], source["has_password"]) == (2102, True)
 
     # Remove the saved password explicitly
@@ -123,7 +141,8 @@ def test_editing_keeps_a_blank_password_removes_it_on_request_and_deletes(
     page.get_by_role("button", name="Remove saved password").click()
     page.get_by_role("button", name="Save", exact=True).click()
     expect(page.locator("text=Saved 'my-caster'").first).to_be_visible(timeout=10_000)
-    assert _sources(page, api_base_url)["sources"][0]["has_password"] is False
+    source = _wait_for_source(page, api_base_url, lambda s: not s["has_password"])
+    assert source["has_password"] is False
 
     # Delete it
     page.get_by_role("button", name="Edit Correction source").click()

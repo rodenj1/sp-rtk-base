@@ -30,6 +30,13 @@ from sp_rtk_base.services.drivers.fake import (
 )
 
 MAC = "98:D3:71:FE:FC:47"
+# Out of the fake GPS's Bluetooth range. Each test that runs a Verification
+# against an unreachable module gets its own MAC: a confirmed re-pair that
+# fails leaves its MAC Stranded on the shared e2e server, and a Stranded
+# MAC (no Bond left to destroy) skips the consent dialog for whichever test
+# uses it next.
+UNPROVEN_PIN_MAC = "AA:BB:CC:DD:EE:01"
+UNREACHABLE_MAC = "AA:BB:CC:DD:EE:02"
 MODULE_NAME = "RTK_BASE_TST"
 
 
@@ -173,7 +180,7 @@ def test_an_unproven_pin_asks_before_it_destroys_anything(
 
     _choose_bluetooth(page)
 
-    page.get_by_label("Device Address (MAC)").fill("AA:BB:CC:DD:EE:FF")
+    page.get_by_label("Device Address (MAC)").fill(UNPROVEN_PIN_MAC)
     page.get_by_label("PIN Code").fill("4321")
     page.get_by_role("button", name="Test Connection").click()
 
@@ -185,7 +192,7 @@ def test_an_unproven_pin_asks_before_it_destroys_anything(
     # Cancelling touches nothing and leaves the form as it was.
     page.get_by_role("button", name="Cancel").click()
     expect(page.locator("text=Re-pair with this PIN?")).not_to_be_visible()
-    expect(page.get_by_label("Device Address (MAC)")).to_have_value("AA:BB:CC:DD:EE:FF")
+    expect(page.get_by_label("Device Address (MAC)")).to_have_value(UNPROVEN_PIN_MAC)
 
 
 @pytest.mark.e2e
@@ -205,7 +212,7 @@ def test_a_verification_that_cannot_run_reports_legibly(
 
     _choose_bluetooth(page)
 
-    page.get_by_label("Device Address (MAC)").fill("AA:BB:CC:DD:EE:FF")
+    page.get_by_label("Device Address (MAC)").fill(UNREACHABLE_MAC)
     page.get_by_label("PIN Code").fill("4321")
     page.get_by_role("button", name="Test Connection").click()
     expect(page.locator("text=Re-pair with this PIN?")).to_be_visible(timeout=15_000)

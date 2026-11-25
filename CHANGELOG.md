@@ -9,16 +9,21 @@ Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcomm
 the changelog can be regenerated automatically via `uv run cz bump`.
 
 
-## Unreleased
+## v0.15.0 (2026-11-25)
+
+The Portal agent changes in this release (the held tunnel, its reconnects
+and polling fallback, the Remote session record and banner, and the
+Doorbell's removal) are **beta** and may still change. Entries marked
+*(Portal, beta)* belong to them. The Bluetooth Module name changes are stable.
 
 ### Added
 
-- **The base keeps its own record of Remote sessions** (rtk_development#203,
+- *(Portal, beta)* **The base keeps its own record of Remote sessions** (rtk_development#203,
   ADR 0005): the Event log now shows each Wake, each Remote session start
   (who, Operator or Shared user) and each end (who, and why: left, idle,
   paused, lease expired, revoked, hard cap), next to the tunnel's opens and
   closes. The Portal agent's status gains session ids and `remote_events`.
-- **"Remote session active" banner on every page** (rtk_development#210):
+- *(Portal, beta)* **"Remote session active" banner on every page** (rtk_development#210):
   while anyone uses the base through the Portal, each page names them
   ("Remote session active: <email>, <email> via the Portal"), on `:8080`
   and inside the Portal's frame; it clears within a few seconds of the last
@@ -43,10 +48,19 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   BlueZ and, when it differs and the saved MAC is the one connected, saves
   it as the profile's `device_name`. Only the name changes; a name that
   can't be read never fails the connect or clears a saved name.
+- **A config import refuses a Bluetooth Input profile without a MAC**
+  (rtk_development#222), as `PUT /api/input` does: the base finds the
+  module by its MAC, never by its Module name. An import keeps a profile's
+  `device_name`.
 
 ### Changed
 
-- **A Claimed base holds its tunnel to the Portal open** (rtk_development#204,
+- **The Input page's Bluetooth scan reports a failed scan** as "Scan
+  failed: …" instead of "No devices found", and uses the Relay's public
+  device listing (sp-rtk-base-relay 4.3.0, rtk_development#224), which lists
+  only the base's own adapter. The "Enter address manually" box also
+  starts open when the base has no Bluetooth support.
+- *(Portal, beta)* **A Claimed base holds its tunnel to the Portal open** (rtk_development#204,
   ADR 0006, protocol version 2): the Portal agent opens it on Claim and on
   start with no Wake, pings the Portal every 50 s (the agent config's
   `ping_interval`), and opens it again after a drop, so Open remotely
@@ -55,25 +69,24 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   Remote session instead. A version 1 Portal agent still polls and opens
   its tunnel only on a Wake. The agent's status reports its connection
   mode (holding, reconnecting, polling or unclaimed).
-- **While it holds its tunnel, the Portal agent talks to the Portal on it**
+- *(Portal, beta)* **While it holds its tunnel, the Portal agent talks to the Portal on it**
   (rtk_development#205): it makes no HTTPS polls or Check-ins, sends its
   Check-ins (now with its connection mode) on the tunnel on connect, every
   5 min and on any change (noticed within 20 s, metered or not), and hears the agent config, metered flag,
   notices and Remote sessions (and each session's end) on the tunnel within
   a second of a change on the Portal.
-- **Pausing remote access keeps the tunnel** (rtk_development#207): a
+- *(Portal, beta)* **Pausing remote access keeps the tunnel** (rtk_development#207): a
   paused Portal agent keeps holding its tunnel (and keeps Checking in), so
   the Portal still shows the base online with "Remote access paused".
   Pausing ends the tunnel's open streams, and the agent refuses every new
   one before it reaches the base's UI; resuming needs no reconnect.
-- **The Portal agent keeps its HTTPS connection to the Portal open between
+- *(Portal, beta)* **The Portal agent keeps its HTTPS connection to the Portal open between
   polls and Check-ins** (rtk_development#201), instead of letting it go
   after 5 s idle and paying a new TCP connection and TLS handshake (~6 kB)
   on every 20 s poll. It lets a connection go on its own only once it sat
   idle 30 s past the poll interval (whatever the interval), and reconnects
   when the Portal or the network closes one first.
-
-- **After its tunnel drops, the Portal agent spreads its reconnects out**
+- *(Portal, beta)* **After its tunnel drops, the Portal agent spreads its reconnects out**
   (rtk_development#206): its first retry waits a random 0-60 s, then each
   failed open doubles the window the next wait is drawn from (full jitter),
   up to the agent config's `reconnect_backoff_cap` (default 10 min), and a
@@ -82,7 +95,7 @@ the changelog can be regenerated automatically via `uv run cz bump`.
   restart brought every base back at once. While reconnecting it makes no
   HTTPS polls or Check-ins, so the Portal shows the base offline 2 min after
   the drop.
-- **A base whose network won't let its tunnel open falls back to polling**
+- *(Portal, beta)* **A base whose network won't let its tunnel open falls back to polling**
   (rtk_development#209): after 3 tunnel opens fail in a row while its HTTPS
   Check-in gets through, the Portal agent polls (and answers Wakes) as a
   version 1 agent does, and tries its tunnel again every 15 min (the agent
@@ -93,7 +106,7 @@ the changelog can be regenerated automatically via `uv run cz bump`.
 
 ### Removed
 
-- **The Portal agent's Doorbell** (rtk_development#200, ADR 0006): the agent
+- *(Portal, beta)* **The Portal agent's Doorbell** (rtk_development#200, ADR 0006): the agent
   no longer sends UDP keepalives or listens for rings, and its status and
   the local Portal page no longer show a wake mode or Doorbell health. The
   page shows the base's connection instead ("Polling every 20 s"). An agent

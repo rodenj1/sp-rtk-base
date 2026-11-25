@@ -573,6 +573,37 @@ class ConfigService:
         updated = config.model_copy(update={"input": input_config})
         self.save_config(updated)
 
+    def record_module_name(self, mac_address: str, module_name: str | None) -> bool:
+        """Write back the **Module name** heard from *mac_address* (#227).
+
+        Called once the base has reached the module (a Console link
+        connect, a Relay start). Updates only the saved Bluetooth Input
+        profile's ``device_name``, and only when a name was heard, it
+        differs from the saved one, and the saved profile's MAC is the
+        one it was heard from: a name always goes with its own MAC. The
+        PIN, the Proven PIN record and every other setting stay as saved.
+        A ``None`` never clears a saved name.
+
+        Returns:
+            Whether the saved profile was updated.
+        """
+        if not module_name:
+            return False
+        stored = self.get_input_config()
+        if stored is None or stored.source != "bluetooth":
+            return False
+        stored_mac = str(stored.config.get("mac_address") or "")
+        if stored_mac.upper() != mac_address.upper():
+            return False
+        if stored.config.get("device_name") == module_name:
+            return False
+        updated = stored.model_copy(
+            update={"config": {**stored.config, "device_name": module_name}}
+        )
+        self.save_config(self.get_config().model_copy(update={"input": updated}))
+        logger.info("Module name for %s is now %r", mac_address, module_name)
+        return True
+
     @staticmethod
     def _settle_proven_pin(
         incoming: InputProfile,

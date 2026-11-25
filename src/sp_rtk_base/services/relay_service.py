@@ -71,6 +71,33 @@ def _format_uptime(seconds: float) -> str:
     return f"{d}d {h:02d}h"
 
 
+#: How long a Start waits for the Module name read before giving up on it.
+MODULE_NAME_READ_TIMEOUT_S = 5.0
+
+
+def _default_bluetooth_manager(adapter: str) -> Any:
+    """The relay's real ``BluetoothManager``, imported late (dbus-fast)."""
+    from sp_rtk_base_relay.core.bluetooth_manager import BluetoothManager
+
+    return BluetoothManager(adapter_name=adapter)
+
+
+def _read_module_name(
+    manager_factory: Callable[[str], Any], adapter: str, mac: str
+) -> str | None:
+    """Read *mac*'s Module name through a manager built and closed here."""
+    from sp_rtk_base.services.drivers.bluetooth_link import read_module_name
+
+    manager = manager_factory(adapter)
+    try:
+        return read_module_name(manager, mac)
+    finally:
+        try:
+            manager.close()
+        except Exception as exc:
+            logger.warning("Error closing the BluetoothManager: %s", exc)
+
+
 def _summarise_input(input_config: InputConfig) -> str:
     """Render an input source into a one-token-ish summary for logs.
 
@@ -203,10 +230,26 @@ class RelayService:
     Args:
         saved_config: Returns the saved configuration that
             :meth:`start_saved` starts from (``ConfigService.get_config``).
+        bluetooth_manager_factory: Builds a ``BluetoothManager`` for an
+            adapter, to read the **Module name** after a Bluetooth start;
+            injected by tests to reach a fake BlueZ.
+        record_module_name: Hears ``(mac, Module name)`` after each
+            Bluetooth start, to write the name back to the saved profile
+            (``ConfigService.record_module_name``).
     """
 
-    def __init__(self, saved_config: Callable[[], AppConfig]) -> None:
+    def __init__(
+        self,
+        saved_config: Callable[[], AppConfig],
+        *,
+        bluetooth_manager_factory: Callable[[str], Any] | None = None,
+        record_module_name: Callable[[str, str | None], object] | None = None,
+    ) -> None:
         self._saved_config = saved_config
+        self._bluetooth_manager_factory = (
+            bluetooth_manager_factory or _default_bluetooth_manager
+        )
+        self._record_module_name = record_module_name
         self._engine: RelayEngine | None = None
         self._input_config: InputConfig | None = None
         # Captured at each successful start so the stop log can include
@@ -383,6 +426,33 @@ class RelayService:
             _summarise_input(input_config),
             dest_names if dest_names else "[]",
         )
+        await self._write_back_module_name(input_config)
+
+    async def _write_back_module_name(self, input_config: InputConfig) -> None:
+        """Hand on the **Module name** of the module the start reached (#227).
+
+        The Relay's own manager is the engine's; a short-lived one reads
+        BlueZ's name for the MAC (it never claims the default agent).
+        Never raises: a Start that reached the module stays started.
+        """
+        if self._record_module_name is None or input_config.source != "bluetooth":
+            return
+        from sp_rtk_base.services.bluetooth_service import mac_from_input_config
+
+        mac = mac_from_input_config(input_config.config)
+        if mac is None:
+            return
+        adapter = str(input_config.config.get("adapter_name") or "hci0")
+        try:
+            name = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _read_module_name, self._bluetooth_manager_factory, adapter, mac
+                ),
+                timeout=MODULE_NAME_READ_TIMEOUT_S,
+            )
+            self._record_module_name(mac, name)
+        except Exception as exc:
+            logger.warning("Module name write-back for %s failed: %s", mac, exc)
 
     def check_saved(self, input_profile: InputProfile | None = None) -> SavedStart:
         """Check the saved configuration can start, without starting it.
